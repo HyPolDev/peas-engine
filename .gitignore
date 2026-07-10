@@ -1,6 +1,14 @@
 node_modules/
 dist/
 coverage/
+.audit-mutation-*/
+scale-metrics-*.json
+audit-evidence-*.json
+audit-test-results.json
+audit-mutation-results.json
+.commit-validation/
+release-manifest-*.json
+audit-input/
 *.log
 *.sqlite
 *.sqlite-shm
