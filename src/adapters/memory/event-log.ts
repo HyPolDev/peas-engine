@@ -1,70 +1,69 @@
 import {
+  assertPageLimit,
   computeContentHash,
   computeEventHash,
+  deriveEventId,
+  draftFromStored,
+  providerKey,
   type AppendResult,
+  type CaptureDependencies,
   type CapturedEvent,
+  type EventDraft,
   type EventLog,
-  type NewEvent,
+  type EventPage,
   type StoredEvent,
-  validateNewEvent,
+  validateEventDraft,
 } from "../../core/event.js";
 import { canonicalJson, cloneJson, type JsonValue } from "../../core/json.js";
 
-function newEventFromStored(event: StoredEvent): NewEvent {
-  const value: Record<string, JsonValue> = {
-    envelopeVersion: event.envelopeVersion,
-    eventId: event.eventId,
-    type: event.type,
-    schemaVersion: event.schemaVersion,
-    source: event.source,
-    subject: event.subject,
-    streamVersion: event.streamVersion,
-    occurredAtMs: event.occurredAtMs,
-    observedAtMs: event.observedAtMs,
-    correlationId: event.correlationId,
-    payload: event.payload,
-  };
-  if (event.causationId !== undefined) value["causationId"] = event.causationId;
-  if (event.dedupeKey !== undefined) value["dedupeKey"] = event.dedupeKey;
-  return value as NewEvent;
+function copyEvent(event: StoredEvent): StoredEvent {
+  return cloneJson(event as unknown as JsonValue) as StoredEvent;
+}
+
+function assertTrustedTime(value: number): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError("Trusted receipt time must be a non-negative safe integer");
+  }
 }
 
 export class InMemoryEventLog implements EventLog {
+  readonly #clock: CaptureDependencies["clock"];
   readonly #events: StoredEvent[] = [];
-  readonly #eventIds = new Map<string, StoredEvent>();
-  readonly #dedupeKeys = new Map<string, StoredEvent>();
-  readonly #streamVersions = new Map<string, number>();
+  readonly #providerEvents = new Map<string, StoredEvent>();
+  readonly #streamVersions = new Map<string, bigint>();
 
-  append(value: NewEvent): AppendResult {
-    const input = validateNewEvent(value);
-    const duplicateById = this.#eventIds.get(input.eventId);
-    const dedupeIdentity = input.dedupeKey ? `${input.source}\u0000${input.dedupeKey}` : undefined;
-    const duplicateByDedupe = dedupeIdentity ? this.#dedupeKeys.get(dedupeIdentity) : undefined;
-    const duplicate = duplicateById ?? duplicateByDedupe;
-    if (duplicate !== undefined) {
-      if (
-        canonicalJson(newEventFromStored(duplicate) as unknown as JsonValue) !==
-        canonicalJson(input)
-      ) {
-        throw new Error(`Conflicting duplicate event ${input.eventId}`);
+  constructor(dependencies: CaptureDependencies) {
+    this.#clock = dependencies.clock;
+  }
+
+  async append(value: EventDraft): Promise<AppendResult> {
+    const input = validateEventDraft(value);
+    const identityKey = providerKey(input.provider);
+    const existing = this.#providerEvents.get(identityKey);
+    if (existing !== undefined) {
+      if (existing.provider.artifactHash !== input.provider.artifactHash) {
+        throw new Error(
+          `Provider record ${input.provider.provider}/${input.provider.recordId}/${input.provider.revisionId} changed content without a new revision`,
+        );
       }
-      return {
-        event: cloneJson(duplicate as unknown as JsonValue) as StoredEvent,
-        appended: false,
-      };
+      if (
+        canonicalJson(draftFromStored(existing) as unknown as JsonValue) !== canonicalJson(input)
+      ) {
+        throw new Error(`Provider redelivery metadata conflicts for ${input.provider.recordId}`);
+      }
+      return { event: copyEvent(existing), disposition: "redelivery" };
     }
 
-    const latestStreamVersion = this.#streamVersions.get(input.subject) ?? 0;
-    if (input.streamVersion !== latestStreamVersion + 1) {
-      throw new Error(
-        `Expected stream version ${latestStreamVersion + 1} for ${input.subject}, received ${input.streamVersion}`,
-      );
-    }
-
+    const receivedAtMs = this.#clock.nowMs();
+    assertTrustedTime(receivedAtMs);
     const previous = this.#events.at(-1);
+    const streamVersion = (this.#streamVersions.get(input.subject) ?? 0n) + 1n;
     const captured: CapturedEvent = {
       ...input,
-      logicalAtMs: Math.max(previous?.logicalAtMs ?? 0, input.observedAtMs),
+      eventId: deriveEventId(input.provider),
+      streamVersion: streamVersion.toString(),
+      receivedAtMs,
+      logicalAtMs: Math.max(previous?.logicalAtMs ?? 0, receivedAtMs),
     };
     const contentHash = computeContentHash(captured);
     const withoutEventHash = {
@@ -73,20 +72,35 @@ export class InMemoryEventLog implements EventLog {
       contentHash,
       previousEventHash: previous?.eventHash ?? "0".repeat(64),
     };
-    const stored: StoredEvent = {
+    const event: StoredEvent = {
       ...withoutEventHash,
       eventHash: computeEventHash(withoutEventHash),
     };
-    const immutable = cloneJson(stored as unknown as JsonValue) as StoredEvent;
-
+    const immutable = copyEvent(event);
     this.#events.push(immutable);
-    this.#eventIds.set(immutable.eventId, immutable);
-    if (dedupeIdentity !== undefined) this.#dedupeKeys.set(dedupeIdentity, immutable);
-    this.#streamVersions.set(immutable.subject, immutable.streamVersion);
-    return { event: cloneJson(immutable as unknown as JsonValue) as StoredEvent, appended: true };
+    this.#providerEvents.set(identityKey, immutable);
+    this.#streamVersions.set(input.subject, streamVersion);
+    return { event: copyEvent(immutable), disposition: "appended" };
   }
 
-  readAll(): readonly StoredEvent[] {
-    return this.#events.map((event) => cloneJson(event as unknown as JsonValue) as StoredEvent);
+  async get(position: string): Promise<StoredEvent | undefined> {
+    const numeric = BigInt(position);
+    if (numeric < 1n || numeric > BigInt(this.#events.length)) return undefined;
+    const event = this.#events[Number(numeric - 1n)];
+    return event ? copyEvent(event) : undefined;
+  }
+
+  async readAfter(position: string, limit: number): Promise<EventPage> {
+    assertPageLimit(limit);
+    const cursor = BigInt(position);
+    if (cursor < 0n) throw new RangeError("Event cursor cannot be negative");
+    const start = Number(cursor);
+    const selected = this.#events.slice(start, start + limit).map(copyEvent);
+    const nextPosition = selected.at(-1)?.position ?? position;
+    return {
+      events: selected,
+      nextPosition,
+      hasMore: BigInt(nextPosition) < BigInt(this.#events.length),
+    };
   }
 }
