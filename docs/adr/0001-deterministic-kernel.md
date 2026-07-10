@@ -18,16 +18,22 @@ Global event position is the processing order. Source occurrence time remains bu
 arrive out of order. Wall-clock observation time is captured at ingress, while `logicalAtMs` is
 persisted once and cannot regress.
 
-Reducer output drafts are ordered. The processor derives each immutable output ID from reducer
-identity, input event hash, category, ordinal, and canonical body hash. It maintains separate state
-and decision-chain hashes. The decision chain advances for every event, including events with no
-outputs.
+Reducer output drafts are ordered. The processor derives each immutable output ID from run identity,
+input event hash, category, ordinal, deduplication key, and canonical body hash. Each run maintains
+separate state and decision-chain hashes. The decision chain advances for every event, including
+events with no outputs.
 
 Canonical JSON is an RFC 8785-style encoding over PEAS' narrower JSON domain. Numbers must be safe
 integers. Financial decimals are strings or scaled integers.
 
-External effects are at-least-once. A worker uses the deterministic job/outbox ID as the provider
-idempotency key and captures outcomes as new events. Replay never dispatches effects.
+Dispatch is at-least-once for effects whose provider supports an idempotency key. A worker uses the
+deterministic job/outbox ID for that key and captures lease acquisition and outcomes as new events.
+Lease attempts use monotonically increasing fencing tokens. A run's immutable manifest controls
+whether its intents become dispatchable; replay is not protected by an in-memory mode switch.
+
+When an external submission has an unknown outcome, the operational row enters `ambiguous` and is
+not retried automatically. Reconciliation must resolve it. This rule is mandatory for brokerage
+orders and other non-idempotent financial effects.
 
 ## Consequences
 
@@ -35,3 +41,4 @@ idempotency key and captures outcomes as new events. Replay never dispatches eff
 - Reducers cannot call clocks, random generators, databases, filesystems, or networks.
 - Configuration and rule changes require explicit versions and new golden vectors.
 - Hash changes expose semantic or serialization drift immediately.
+- Stale workers cannot commit results after a lease is reclaimed.
