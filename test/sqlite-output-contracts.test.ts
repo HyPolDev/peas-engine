@@ -234,10 +234,11 @@ function assertRejectedUpgrade(
 }
 
 test("migration 004 validates every historical output before recording the upgrade", () => {
-  assert.deepEqual(
-    migrations.at(-1) && { version: migrations.at(-1)?.version, name: migrations.at(-1)?.name },
-    { version: 4, name: "004_processing_output_upgrade_guards.sql" },
-  );
+  const outputUpgrade = migrations.find((migration) => migration.version === 4);
+  assert.deepEqual(outputUpgrade && { version: outputUpgrade.version, name: outputUpgrade.name }, {
+    version: 4,
+    name: "004_processing_output_upgrade_guards.sql",
+  });
   const baseline = migrations.slice(0, 2);
 
   assertRejectedUpgrade((database) => {
