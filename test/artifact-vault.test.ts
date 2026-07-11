@@ -20,7 +20,11 @@ import { SqliteArtifactRepository } from "../src/adapters/artifacts/sqlite-artif
 import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
 import { sanitizeRequestIdentity } from "../src/artifacts/identity.js";
 import { assertSafeByteAddition } from "../src/artifacts/validation.js";
-import type { ArtifactVaultConfig, StoreArtifactRequest } from "../src/artifacts/artifact-store.js";
+import type {
+  ArtifactVaultConfig,
+  ReconciliationReport,
+  StoreArtifactRequest,
+} from "../src/artifacts/artifact-store.js";
 import { ManualClock } from "../src/core/clock.js";
 
 const migrations = loadMigrations(join(process.cwd(), "migrations"));
@@ -229,7 +233,7 @@ test("attempt identity rejects metadata, content, and incomplete replay conflict
   const original = request("conflict-attempt", Buffer.from("original"));
   await store.store(original);
   await assert.rejects(
-    () => store.store({ ...request("conflict-attempt", Buffer.from("changed")) }),
+    () => store.store({ ...request("conflict-attempt", Buffer.from("originaL")) }),
     /conflicts/u,
   );
   const changedMetadata = request("conflict-attempt", Buffer.from("original"));
@@ -339,6 +343,17 @@ test("expired takeover fences a still-live stale writer before install and SQLit
   const pending = stale.store(staleRequest);
   await stagedPromise;
   clock.advanceBy(11);
+  database
+    .prepare(
+      "UPDATE artifact_writer_fence SET generation = generation + 1, owner_token = 'live-takeover', expires_at_ms = ? WHERE singleton = 1",
+    )
+    .run(clock.nowMs() + 10);
+  rmSync(join(root, "artifacts", "locks", "writer.lock"), { force: true });
+  resume();
+  await assert.rejects(() => pending, /lease was lost/u);
+  database
+    .prepare("UPDATE artifact_writer_fence SET expires_at_ms = ? WHERE singleton = 1")
+    .run(clock.nowMs());
   const winner = await DurableArtifactStore.open({
     repository,
     clock,
@@ -356,8 +371,20 @@ test("expired takeover fences a still-live stale writer before install and SQLit
     },
   });
   context.after(() => winner.close());
-  resume();
-  await assert.rejects(() => pending, /lease was lost/u);
+  const staleDigest = createHash("sha256").update("stale").digest("hex");
+  assert.equal(
+    existsSync(
+      join(
+        root,
+        "artifacts",
+        "sha256",
+        staleDigest.slice(0, 2),
+        staleDigest.slice(2, 4),
+        staleDigest,
+      ),
+    ),
+    false,
+  );
   assert.equal(
     (
       database
@@ -497,6 +524,24 @@ test("tampered and missing committed content fails before consumer bytes", async
   assert.equal(report.missingArtifacts >= 1, true);
 });
 
+test("oversized corrupt reads stop after one bounded chunk", async (context) => {
+  const { root, store } = await harness(context, { streamHighWaterMarkBytes: 8 });
+  const stored = await store.store(request("bounded-read", Buffer.from("tiny")));
+  const path = join(
+    root,
+    "artifacts",
+    "sha256",
+    stored.artifact.digest.slice(0, 2),
+    stored.artifact.digest.slice(2, 4),
+    stored.artifact.digest,
+  );
+  writeFileSync(path, Buffer.alloc(1_024 * 1_024, 7));
+  await assert.rejects(() => store.read(stored.artifact.digest), /exceeded committed size/u);
+  assert.deepEqual(readdirSync(join(root, "artifacts", "snapshots")), []);
+  const quarantined = readdirSync(join(root, "artifacts", "quarantine"));
+  assert.equal(quarantined.length, 1);
+});
+
 test("reconciliation expires attempts and quarantines unowned stages", async (context) => {
   const { root, repository, clock, database, store } = await harness(context);
   const requestIdentity = sanitizeRequestIdentity({
@@ -534,16 +579,35 @@ test("reconciliation expires attempts and quarantines unowned stages", async (co
   assert.deepEqual(readdirSync(join(root, "artifacts", "snapshots")), []);
 });
 
+test("reconciliation obeys item budgets and converges across restart cursors", async (context) => {
+  const { root, store } = await harness(context);
+  for (let index = 0; index < 7; index += 1)
+    writeFileSync(join(root, "artifacts", "staging", `budget-${index}.part`), "partial");
+  let calls = 0;
+  let report: ReconciliationReport;
+  do {
+    report = await store.reconcile({ maxItems: 2, maxElapsedMs: 10_000 });
+    calls += 1;
+    assert.equal(calls < 10, true);
+  } while (report.continuationCursor !== null);
+  assert.equal(calls >= 4, true);
+  assert.deepEqual(readdirSync(join(root, "artifacts", "staging")), []);
+});
+
 test("immutable artifact evidence rejects updates and deletes", async (context) => {
-  const { database, store } = await harness(context);
+  const { root, database, store } = await harness(context);
   await store.store(request("immutable", Buffer.from("entity")));
+  writeFileSync(join(root, "artifacts", "staging", "immutable-incident.part"), "partial");
+  await store.reconcile();
   for (const table of [
     "artifact_retrieval_attempts",
     "artifact_retrieval_outcomes",
     "artifact_blobs",
     "artifact_observations",
+    "artifact_integrity_incidents",
   ]) {
     assert.throws(() => database.prepare(`DELETE FROM ${table}`).run(), /immutable/u);
+    assert.throws(() => database.prepare(`UPDATE ${table} SET rowid = rowid`).run(), /immutable/u);
   }
 });
 

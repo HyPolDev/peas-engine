@@ -215,6 +215,99 @@ const mutants = [
     ],
     test: "json-inert-boundary.test.js",
   },
+  {
+    name: "vault-lease-preinstall-fence",
+    category: "vault",
+    file: "src/adapters/artifacts/durable-artifact-store.ts",
+    changes: [
+      {
+        from: "await this.#lease.renewAndAssert();",
+        to: "if (false) await this.#lease.renewAndAssert();",
+        expectedOccurrences: 3,
+        occurrence: 2,
+      },
+    ],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-exact-redelivery-content",
+    category: "vault",
+    file: "src/adapters/artifacts/durable-artifact-store.ts",
+    changes: [
+      {
+        from: 'hash.digest("hex") !== completed.artifact.digest',
+        to: "completed.artifact.digest !== completed.artifact.digest",
+      },
+    ],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-corrupt-read-byte-cap",
+    category: "vault",
+    file: "src/adapters/artifacts/durable-artifact-store.ts",
+    changes: [
+      {
+        from: "if (sizeBytes > artifact.sizeBytes) {",
+        to: "if (sizeBytes > Number.MAX_SAFE_INTEGER) {",
+      },
+    ],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-verified-before-delivery",
+    category: "vault",
+    file: "src/adapters/artifacts/durable-artifact-store.ts",
+    changes: [
+      {
+        from: "if (digestRead !== artifact.digest || sizeBytes !== artifact.sizeBytes) {",
+        to: "if (artifact.digest !== artifact.digest || sizeBytes !== artifact.sizeBytes) {",
+      },
+    ],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-relational-reconciliation",
+    category: "vault",
+    file: "src/adapters/artifacts/sqlite-artifact-repository.ts",
+    changes: [
+      {
+        from: "if (pairs.some(([canonical, relational]) => canonical !== relational))",
+        to: "if (false && pairs.some(([canonical, relational]) => canonical !== relational))",
+      },
+    ],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-orphan-digest-classification",
+    category: "vault",
+    file: "src/adapters/artifacts/durable-artifact-store.ts",
+    changes: [
+      {
+        from: 'if (verified.digest !== name) throw new Error("digest mismatch");',
+        to: 'if (false && verified.digest !== name) throw new Error("digest mismatch");',
+      },
+    ],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-filesystem-ancestor-rejection",
+    category: "vault",
+    file: "src/adapters/artifacts/durable-artifact-store.ts",
+    changes: [
+      {
+        from: "if (!info.isDirectory() || info.isSymbolicLink() || info.dev !== device)",
+        to: "if (info.dev !== device)",
+      },
+    ],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-reconciliation-item-budget",
+    category: "vault",
+    file: "src/adapters/artifacts/durable-artifact-store.ts",
+    changes: [{ from: "processed >= maxItems ||", to: "false ||" }],
+    test: "artifact-vault.test.js",
+  },
 ];
 
 function replaceChecked(source, change, mutantName) {
@@ -263,7 +356,11 @@ function run(command, args, cwd) {
   });
 }
 
-for (const mutant of mutants) {
+const selectedMutants =
+  process.env["PEAS_MUTATION_CATEGORY"] === "vault"
+    ? mutants.filter(({ category }) => category === "vault")
+    : mutants;
+for (const mutant of selectedMutants) {
   const temporary = mkdtempSync(join(workspace, ".audit-mutation-"));
   const resolvedTemporary = resolve(temporary);
   if (
@@ -303,7 +400,11 @@ for (const mutant of mutants) {
   }
 }
 
+const vaultMutants = mutants.filter(({ category }) => category === "vault");
+const kernelMutants = mutants.filter(({ category }) => category !== "vault");
 console.log(`Targeted mutation gate passed: ${mutants.length}/${mutants.length} killed`);
+console.log(`Kernel mutations: ${kernelMutants.length}/${kernelMutants.length} killed`);
+console.log(`Artifact-vault mutations: ${vaultMutants.length}/${vaultMutants.length} killed`);
 writeFileSync(
   join(workspace, "audit-mutation-results.json"),
   `${JSON.stringify(
@@ -312,6 +413,10 @@ writeFileSync(
       status: "passed",
       killed: mutants.length,
       total: mutants.length,
+      kernelKilled: kernelMutants.length,
+      kernelTotal: kernelMutants.length,
+      vaultKilled: vaultMutants.length,
+      vaultTotal: vaultMutants.length,
       mutants: mutants.map(({ name, test }) => ({ name, test })),
     },
     null,

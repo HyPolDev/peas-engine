@@ -128,9 +128,15 @@ export class VaultWriterLease {
   }
 
   async #writeRecord(expiresAtMs: number): Promise<void> {
-    const temporary = `${this.#path}.${this.#ownerToken}.tmp`;
-    const handle = await open(temporary, "wx", 0o600);
+    const existing = await readFile(this.#path, "utf8");
+    if (existing !== "") {
+      const record = JSON.parse(existing) as LeaseRecord;
+      if (record.ownerToken !== this.#ownerToken || record.generation !== this.#generation)
+        throw new Error("Vault writer lease file was replaced");
+    }
+    const handle = await open(this.#path, "r+", 0o600);
     try {
+      await handle.truncate(0);
       await handle.writeFile(
         JSON.stringify({
           pid: process.pid,
@@ -143,7 +149,6 @@ export class VaultWriterLease {
     } finally {
       await handle.close();
     }
-    await rename(temporary, this.#path);
   }
 
   async release(): Promise<void> {

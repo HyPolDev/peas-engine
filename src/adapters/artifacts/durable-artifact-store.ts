@@ -14,6 +14,7 @@ import type {
   IncidentKind,
   IntegrityIncident,
   ReconciliationReport,
+  ReconciliationBudget,
   RetrievalAttempt,
   StoreArtifactRequest,
   StoreArtifactResult,
@@ -500,8 +501,19 @@ export class DurableArtifactStore implements ArtifactStore {
     return this.#repository.readObservations(digest, afterSequence, limit);
   }
 
-  async reconcile(): Promise<ReconciliationReport> {
+  async reconcile(budget: Partial<ReconciliationBudget> = {}): Promise<ReconciliationReport> {
     this.#repository.verifyAllEvidence();
+    const maxItems = budget.maxItems ?? 1_000;
+    const maxElapsedMs = budget.maxElapsedMs ?? 1_000;
+    if (
+      !Number.isSafeInteger(maxItems) ||
+      maxItems < 1 ||
+      !Number.isSafeInteger(maxElapsedMs) ||
+      maxElapsedMs < 1
+    )
+      throw new RangeError("Invalid reconciliation budget");
+    const started = Date.now();
+    let processed = 0;
     const report = {
       validArtifacts: 0,
       adoptedOrphans: 0,
@@ -510,13 +522,24 @@ export class DurableArtifactStore implements ArtifactStore {
       quarantinedObjects: 0,
       missingArtifacts: 0,
       incidents: [] as string[],
+      continuationCursor: null as string | null,
     };
-    for (const name of await readdir(this.#paths.snapshots))
+    const exhausted = (): boolean => processed >= maxItems || Date.now() - started >= maxElapsedMs;
+    const continueLater = (): ReconciliationReport => ({
+      ...report,
+      continuationCursor: "restart-v1",
+    });
+    for (const name of await readdir(this.#paths.snapshots)) {
+      if (exhausted()) return continueLater();
       await rm(safeChild(this.#paths.snapshots, name), { force: true });
+      processed += 1;
+    }
     const openAttempts = new Map(
       this.#repository.listOpenAttempts().map((attempt) => [attempt.stagingId, attempt]),
     );
     for (const name of await readdir(this.#paths.staging)) {
+      if (exhausted()) return continueLater();
+      processed += 1;
       const stagingId = name.endsWith(".part") ? name.slice(0, -5) : null;
       const attempt = stagingId === null ? undefined : openAttempts.get(stagingId);
       const path = safeChild(this.#paths.staging, name);
@@ -545,6 +568,8 @@ export class DurableArtifactStore implements ArtifactStore {
       }
     }
     for (const attempt of openAttempts.values()) {
+      if (exhausted()) return continueLater();
+      processed += 1;
       if (this.#clock.nowMs() - attempt.recordedAtMs >= this.#config.stageExpiryMs) {
         this.#repository.finishAttempt({
           attemptId: attempt.attemptId,
@@ -557,6 +582,8 @@ export class DurableArtifactStore implements ArtifactStore {
       }
     }
     for (const first of await readdir(this.#paths.content)) {
+      if (exhausted()) return continueLater();
+      processed += 1;
       const firstPath = safeChild(this.#paths.content, first);
       if (!(await lstat(firstPath)).isDirectory()) {
         await this.#quarantine(firstPath, randomUUID());
@@ -564,6 +591,8 @@ export class DurableArtifactStore implements ArtifactStore {
         continue;
       }
       for (const second of await readdir(firstPath)) {
+        if (exhausted()) return continueLater();
+        processed += 1;
         const secondPath = safeChild(firstPath, second);
         if (!(await lstat(secondPath)).isDirectory()) {
           await this.#quarantine(secondPath, randomUUID());
@@ -571,6 +600,8 @@ export class DurableArtifactStore implements ArtifactStore {
           continue;
         }
         for (const name of await readdir(secondPath)) {
+          if (exhausted()) return continueLater();
+          processed += 1;
           const path = safeChild(secondPath, name);
           try {
             assertArtifactDigest(name);
@@ -604,6 +635,8 @@ export class DurableArtifactStore implements ArtifactStore {
       }
     }
     for (const artifact of this.#repository.listArtifacts()) {
+      if (exhausted()) return continueLater();
+      processed += 1;
       const path = await this.#contentPath(artifact.digest, false, false);
       try {
         await stat(path);

@@ -122,6 +122,12 @@ export type ReconciliationReport = Readonly<{
   quarantinedObjects: number;
   missingArtifacts: number;
   incidents: readonly IncidentId[];
+  continuationCursor: string | null;
+}>;
+
+export type ReconciliationBudget = Readonly<{
+  maxItems: number;
+  maxElapsedMs: number;
 }>;
 
 export type ArtifactVaultConfig = Readonly<{
@@ -148,5 +154,5 @@ export interface ArtifactStore {
     afterSequence: string,
     limit: number,
   ): Promise<ArtifactPage<ArtifactObservation>>;
-  reconcile(): Promise<ReconciliationReport>;
+  reconcile(budget?: Partial<ReconciliationBudget>): Promise<ReconciliationReport>;
 }
