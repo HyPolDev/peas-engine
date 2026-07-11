@@ -53,6 +53,7 @@ export function deriveIncidentId(parts: {
   stagingId: string | null;
   claimedDigest: string | null;
   detailHash: string | null;
+  nonce: string;
 }): string {
   return canonicalHash("peas/artifact-incident-id/v1", parts);
 }

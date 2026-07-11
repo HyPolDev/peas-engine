@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -45,6 +53,8 @@ async function harness(
       stageExpiryMs: 1_000,
       writerLeaseBehavior: "fail",
       writerLeaseWaitMs: 0,
+      writerLeaseDurationMs: 30_000,
+      writerLeaseRenewalMs: 10_000,
       ...overrides,
     },
   });
@@ -161,6 +171,84 @@ test("does not persist raw paths or query secrets", async (context) => {
   assert.equal(serialized.includes("never-store"), false);
 });
 
+test("persistence boundary rejects unsafe strings without leaking sentinel secrets", async (context) => {
+  const { database, store } = await harness(context);
+  const sentinel = "SENTINEL_SECRET_7f3b";
+  const base = request("safe-attempt", Buffer.from("entity"));
+  const attempts = ["provider", "recordId", "revisionId"] as const;
+  for (const field of attempts) {
+    const unsafe = {
+      ...base,
+      attempt: {
+        ...base.attempt,
+        attemptId: `unsafe-${field}`,
+        [field]: `https://user:${sentinel}@example.test/?token=${sentinel}`,
+      },
+    };
+    await assert.rejects(() => store.store(unsafe));
+  }
+  for (const field of ["etag", "lastModified", "mediaType", "contentEncoding"] as const) {
+    const unsafe = {
+      ...base,
+      attempt: { ...base.attempt, attemptId: `unsafe-${field}` },
+      response: { ...base.response, [field]: `Bearer ${sentinel}\r\nCookie: ${sentinel}` },
+    };
+    await assert.rejects(() => store.store(unsafe));
+  }
+  assert.equal(database.serialize().includes(sentinel), false);
+});
+
+test("exact redelivery returns the committed result without fabricating evidence", async (context) => {
+  const { database, store } = await harness(context);
+  const bytes = Buffer.from("redelivered entity");
+  const first = await store.store(request("same-attempt", bytes));
+  const replay = await store.store(request("same-attempt", bytes));
+  assert.deepEqual(replay.artifact, first.artifact);
+  assert.deepEqual(replay.observation, first.observation);
+  assert.equal(replay.disposition, "deduplicated");
+  assert.equal(
+    (
+      database.prepare("SELECT count(*) count FROM artifact_observations").get() as {
+        count: bigint;
+      }
+    ).count,
+    1n,
+  );
+  assert.equal(
+    (
+      database.prepare("SELECT count(*) count FROM artifact_retrieval_outcomes").get() as {
+        count: bigint;
+      }
+    ).count,
+    1n,
+  );
+});
+
+test("attempt identity rejects metadata, content, and incomplete replay conflicts", async (context) => {
+  const { repository, store, clock } = await harness(context);
+  const original = request("conflict-attempt", Buffer.from("original"));
+  await store.store(original);
+  await assert.rejects(
+    () => store.store({ ...request("conflict-attempt", Buffer.from("changed")) }),
+    /conflicts/u,
+  );
+  const changedMetadata = request("conflict-attempt", Buffer.from("original"));
+  await assert.rejects(
+    () =>
+      store.store({ ...changedMetadata, attempt: { ...changedMetadata.attempt, revisionId: "2" } }),
+    /conflicts/u,
+  );
+  repository.recordAttempt({
+    ...request("incomplete-attempt", Buffer.alloc(0)).attempt,
+    stagingId: "incomplete-stage",
+    recordedAtMs: clock.nowMs(),
+  });
+  await assert.rejects(
+    () => store.store(request("incomplete-attempt", Buffer.alloc(0))),
+    /incomplete or terminal/u,
+  );
+});
+
 test("rejects oversized streams with a terminal outcome and no artifact", async (context) => {
   const { database, store } = await harness(context, { maxArtifactBytes: 3 });
   await assert.rejects(() => store.store(request("oversized", Buffer.from("four"))), /byte limit/u);
@@ -212,10 +300,76 @@ test("a second writer process boundary is explicit", async (context) => {
           stageExpiryMs: 1,
           writerLeaseBehavior: "fail",
           writerLeaseWaitMs: 0,
+          writerLeaseDurationMs: 30_000,
+          writerLeaseRenewalMs: 10_000,
         },
       }),
     /lease/u,
   );
+});
+
+test("expired takeover fences a still-live stale writer before install and SQLite commit", async (context) => {
+  const {
+    root,
+    repository,
+    clock,
+    database,
+    store: stale,
+  } = await harness(context, {
+    writerLeaseDurationMs: 10,
+    writerLeaseRenewalMs: 5,
+  });
+  let resume!: () => void;
+  let staged!: () => void;
+  const stagedPromise = new Promise<void>((resolve) => {
+    staged = resolve;
+  });
+  const resumePromise = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  async function* paused(): AsyncGenerator<Buffer> {
+    yield Buffer.from("stale");
+    staged();
+    await resumePromise;
+  }
+  const staleRequest = {
+    ...request("stale-writer", Buffer.alloc(0)),
+    entityBytes: Readable.from(paused()),
+  };
+  const pending = stale.store(staleRequest);
+  await stagedPromise;
+  clock.advanceBy(11);
+  const winner = await DurableArtifactStore.open({
+    repository,
+    clock,
+    config: {
+      runtimeRoot: root,
+      maxArtifactBytes: 1_024,
+      maxVaultBytes: 4_096,
+      maxConcurrentWrites: 1,
+      streamHighWaterMarkBytes: 17,
+      stageExpiryMs: 1_000,
+      writerLeaseBehavior: "fail",
+      writerLeaseWaitMs: 0,
+      writerLeaseDurationMs: 10,
+      writerLeaseRenewalMs: 5,
+    },
+  });
+  context.after(() => winner.close());
+  resume();
+  await assert.rejects(() => pending, /lease was lost/u);
+  assert.equal(
+    (
+      database
+        .prepare(
+          "SELECT count(*) count FROM artifact_observations WHERE attempt_id = 'stale-writer'",
+        )
+        .get() as { count: bigint }
+    ).count,
+    0n,
+  );
+  const committed = await winner.store(request("winner", Buffer.from("winner")));
+  assert.equal(committed.observation.attemptId, "winner");
 });
 
 test("reconciliation adopts valid orphans without fabricating observations", async (context) => {
@@ -265,6 +419,44 @@ test("invalid orphans are quarantined without false artifact metadata", async (c
     1n,
   );
   assert.equal(existsSync(join(directory, claimed)), false);
+});
+
+test("same-clock incidents and quarantine objects remain distinct", async (context) => {
+  const { root, database, store } = await harness(context);
+  const directory = join(root, "artifacts", "staging");
+  writeFileSync(join(directory, "collision-one.part"), "one");
+  writeFileSync(join(directory, "collision-two.part"), "two");
+  const report = await store.reconcile();
+  assert.equal(new Set(report.incidents).size, 2);
+  assert.equal(readdirSync(join(root, "artifacts", "quarantine")).length, 2);
+  assert.equal(
+    (
+      database.prepare("SELECT count(*) count FROM artifact_integrity_incidents").get() as {
+        count: bigint;
+      }
+    ).count,
+    2n,
+  );
+});
+
+test("canonical evidence reads fail closed on relational-only forgery", async (context) => {
+  const { database, store } = await harness(context);
+  const stored = await store.store(request("forgery-attempt", Buffer.from("entity")));
+  database.exec(
+    "DROP TRIGGER artifact_attempts_no_update; DROP TRIGGER artifact_observations_no_update; DROP TRIGGER artifact_blobs_no_update;",
+  );
+  database.prepare("UPDATE artifact_retrieval_attempts SET provider = 'forged'").run();
+  await assert.rejects(() => store.getAttempt("forgery-attempt"), /relational mismatch/u);
+  database.prepare("UPDATE artifact_retrieval_attempts SET provider = 'fixture-provider'").run();
+  database.prepare("UPDATE artifact_observations SET etag = 'forged'").run();
+  await assert.rejects(
+    () => store.getObservation(stored.observation.observationId),
+    /relational mismatch/u,
+  );
+  database.prepare("UPDATE artifact_observations SET etag = '\"fixture\"'").run();
+  database.prepare("UPDATE artifact_blobs SET size_bytes = size_bytes + 1").run();
+  await assert.rejects(() => store.stat(stored.artifact.digest), /relational mismatch/u);
+  await assert.rejects(() => store.reconcile(), /relational mismatch/u);
 });
 
 test("tampered and missing committed content fails before consumer bytes", async (context) => {
@@ -377,4 +569,24 @@ test("runtime roots follow the binding Windows and Linux policy", () => {
     /origin/u,
   );
   assert.throws(() => assertSafeByteAddition(Number.MAX_SAFE_INTEGER, 1), /overflow/u);
+});
+
+test("real platform ancestor links cannot redirect staging outside the vault", async (context) => {
+  const { root, store } = await harness(context);
+  const staging = join(root, "artifacts", "staging");
+  const escapeTarget = join(root, "escape-target");
+  mkdirSync(escapeTarget);
+  rmSync(staging, { recursive: true });
+  try {
+    symlinkSync(escapeTarget, staging, process.platform === "win32" ? "junction" : "dir");
+  } catch (error) {
+    assert.fail(
+      `platform runner cannot create required ${process.platform === "win32" ? "junction" : "symlink"}: ${String(error)}`,
+    );
+  }
+  await assert.rejects(
+    () => store.store(request("link-escape", Buffer.from("entity"))),
+    /unsafe|trusted/u,
+  );
+  assert.deepEqual(readdirSync(escapeTarget), []);
 });

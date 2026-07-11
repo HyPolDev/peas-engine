@@ -37,7 +37,16 @@ CREATE TABLE artifact_blobs (
   algorithm TEXT NOT NULL CHECK (algorithm = 'sha256'),
   size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0 AND size_bytes <= 9007199254740991),
   committed_at_ms INTEGER NOT NULL CHECK (committed_at_ms >= 0),
-  provenance TEXT NOT NULL CHECK (provenance IN ('retrieval', 'recovered-orphan'))
+  provenance TEXT NOT NULL CHECK (provenance IN ('retrieval', 'recovered-orphan')),
+  blob_json TEXT NOT NULL,
+  blob_hash TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE artifact_writer_fence (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  generation INTEGER NOT NULL CHECK (generation > 0),
+  owner_token TEXT NOT NULL,
+  expires_at_ms INTEGER NOT NULL CHECK (expires_at_ms >= 0)
 ) STRICT;
 
 CREATE TABLE artifact_observations (

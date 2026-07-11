@@ -133,6 +133,8 @@ export type ArtifactVaultConfig = Readonly<{
   stageExpiryMs: number;
   writerLeaseBehavior: "fail" | "wait";
   writerLeaseWaitMs: number;
+  writerLeaseDurationMs: number;
+  writerLeaseRenewalMs: number;
 }>;
 
 export interface ArtifactStore {

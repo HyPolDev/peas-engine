@@ -7,11 +7,23 @@ import type {
   RetrievalAttempt,
   RetrievalAttemptOutcome,
   SafeHttpResponseMetadata,
+  StoreArtifactResult,
 } from "../../artifacts/artifact-store.js";
 import { canonicalHash } from "../../core/hash.js";
 import { canonicalJson, type JsonValue } from "../../core/json.js";
 
 type AttemptRow = {
+  attempt_id: string;
+  provider: string;
+  provider_record_id: string;
+  provider_revision_id: string;
+  started_at_ms: bigint;
+  recorded_at_ms: bigint;
+  request_method: string;
+  request_origin: string;
+  request_path_hash: string;
+  request_route_label: string;
+  request_identity_hash: string;
   staging_id: string;
   attempt_json: string;
   attempt_hash: string;
@@ -22,12 +34,38 @@ type BlobRow = {
   size_bytes: bigint;
   committed_at_ms: bigint;
   provenance: "retrieval" | "recovered-orphan";
+  blob_json: string;
+  blob_hash: string;
 };
 type ObservationRow = {
   sequence: bigint;
   observation_json: string;
   observation_hash: string;
+  observation_id: string;
+  attempt_id: string;
+  artifact_digest: string;
+  provider: string;
+  provider_record_id: string;
+  provider_revision_id: string;
+  retrieved_at_ms: bigint;
+  request_method: string;
+  request_origin: string;
+  request_path_hash: string;
+  request_route_label: string;
+  request_identity_hash: string;
+  status_code: bigint;
+  etag: string | null;
+  last_modified: string | null;
+  media_type: string | null;
+  content_encoding: string | null;
+  declared_content_length: bigint | null;
+  transport_decoded: bigint;
 };
+
+function relationalMismatch(label: string, pairs: readonly (readonly [unknown, unknown])[]): void {
+  if (pairs.some(([canonical, relational]) => canonical !== relational))
+    throw new Error(`${label} relational mismatch`);
+}
 
 function safeNumber(value: bigint, label: string): number {
   const number = Number(value);
@@ -48,6 +86,47 @@ export class SqliteArtifactRepository {
 
   constructor(database: SqliteDatabase) {
     this.#database = database;
+  }
+
+  claimWriter(ownerToken: string, nowMs: number, durationMs: number): number {
+    return this.#database
+      .transaction(() => {
+        const row = this.#database
+          .prepare(
+            "SELECT generation, expires_at_ms FROM artifact_writer_fence WHERE singleton = 1",
+          )
+          .get() as { generation: bigint; expires_at_ms: bigint } | undefined;
+        if (row !== undefined && safeNumber(row.expires_at_ms, "writer lease expiry") > nowMs) {
+          throw new Error("Vault writer fence is held");
+        }
+        const generation =
+          row === undefined ? 1 : safeNumber(row.generation, "writer generation") + 1;
+        this.#database
+          .prepare(`INSERT INTO artifact_writer_fence
+        (singleton, generation, owner_token, expires_at_ms) VALUES (1, ?, ?, ?)
+        ON CONFLICT(singleton) DO UPDATE SET generation=excluded.generation,
+          owner_token=excluded.owner_token, expires_at_ms=excluded.expires_at_ms`)
+          .run(generation, ownerToken, nowMs + durationMs);
+        return generation;
+      })
+      .immediate();
+  }
+
+  renewWriter(ownerToken: string, generation: number, nowMs: number, durationMs: number): void {
+    const result = this.#database
+      .prepare(`UPDATE artifact_writer_fence
+      SET expires_at_ms = ? WHERE singleton = 1 AND owner_token = ? AND generation = ?
+      AND expires_at_ms >= ?`)
+      .run(nowMs + durationMs, ownerToken, generation, nowMs);
+    if (result.changes !== 1) throw new Error("Vault writer lease was lost");
+  }
+
+  assertWriter(ownerToken: string, generation: number, nowMs: number): void {
+    const row = this.#database
+      .prepare(`SELECT 1 present FROM artifact_writer_fence
+      WHERE singleton = 1 AND owner_token = ? AND generation = ? AND expires_at_ms >= ?`)
+      .get(ownerToken, generation, nowMs);
+    if (row === undefined) throw new Error("Vault writer lease was lost");
   }
 
   recordAttempt(attempt: RetrievalAttempt): void {
@@ -79,9 +158,7 @@ export class SqliteArtifactRepository {
 
   getAttempt(id: string): RetrievalAttempt | undefined {
     const row = this.#database
-      .prepare(
-        "SELECT staging_id, attempt_json, attempt_hash FROM artifact_retrieval_attempts WHERE attempt_id = ?",
-      )
+      .prepare("SELECT * FROM artifact_retrieval_attempts WHERE attempt_id = ?")
       .get(id) as AttemptRow | undefined;
     if (row === undefined) return undefined;
     const attempt = parseCanonical<RetrievalAttempt>(
@@ -89,9 +166,35 @@ export class SqliteArtifactRepository {
       row.attempt_hash,
       "peas/artifact-attempt/v1",
     );
-    if (attempt.attemptId !== id || attempt.stagingId !== row.staging_id)
-      throw new Error("Artifact attempt relational mismatch");
+    relationalMismatch("Artifact attempt", [
+      [attempt.attemptId, row.attempt_id],
+      [attempt.stagingId, row.staging_id],
+      [attempt.provider, row.provider],
+      [attempt.recordId, row.provider_record_id],
+      [attempt.revisionId, row.provider_revision_id],
+      [attempt.startedAtMs, safeNumber(row.started_at_ms, "attempt start")],
+      [attempt.recordedAtMs, safeNumber(row.recorded_at_ms, "attempt record time")],
+      [attempt.request.method, row.request_method],
+      [attempt.request.origin, row.request_origin],
+      [attempt.request.pathHash, row.request_path_hash],
+      [attempt.request.routeLabel, row.request_route_label],
+      [attempt.request.identityHash, row.request_identity_hash],
+    ]);
     return attempt;
+  }
+
+  getCompletedResult(attemptId: string): StoreArtifactResult | undefined {
+    const row = this.#database
+      .prepare(`SELECT o.*
+      FROM artifact_observations o
+      JOIN artifact_retrieval_outcomes r ON r.attempt_id = o.attempt_id
+      WHERE o.attempt_id = ? AND r.outcome = 'succeeded'`)
+      .get(attemptId) as ObservationRow | undefined;
+    if (row === undefined) return undefined;
+    const observation = this.#parseObservation(row);
+    const artifact = this.stat(observation.artifactDigest);
+    if (artifact === undefined) throw new Error("Completed artifact metadata is missing");
+    return { artifact, observation, disposition: "deduplicated" };
   }
 
   finishAttempt(outcome: RetrievalAttemptOutcome): void {
@@ -116,17 +219,26 @@ export class SqliteArtifactRepository {
     artifact: ArtifactMetadata,
     observation: ArtifactObservation,
     response: SafeHttpResponseMetadata,
+    fence: Readonly<{ ownerToken: string; generation: number; nowMs: number }>,
   ): "created" | "deduplicated" {
     return this.#database
       .transaction(() => {
+        this.assertWriter(fence.ownerToken, fence.generation, fence.nowMs);
         const existing = this.stat(artifact.digest);
         let disposition: "created" | "deduplicated" = "deduplicated";
         if (existing === undefined) {
           this.#database
             .prepare(`INSERT INTO artifact_blobs (
-          digest, algorithm, size_bytes, committed_at_ms, provenance
-        ) VALUES (?, 'sha256', ?, ?, ?)`)
-            .run(artifact.digest, artifact.sizeBytes, artifact.committedAtMs, artifact.provenance);
+          digest, algorithm, size_bytes, committed_at_ms, provenance, blob_json, blob_hash
+        ) VALUES (?, 'sha256', ?, ?, ?, ?, ?)`)
+            .run(
+              artifact.digest,
+              artifact.sizeBytes,
+              artifact.committedAtMs,
+              artifact.provenance,
+              canonicalJson(artifact as unknown as JsonValue),
+              canonicalHash("peas/artifact-blob/v1", artifact as unknown as JsonValue),
+            );
           disposition = "created";
         } else if (existing.sizeBytes !== artifact.sizeBytes) {
           throw new Error("Artifact metadata size conflict");
@@ -183,9 +295,15 @@ export class SqliteArtifactRepository {
   adoptArtifact(artifact: ArtifactMetadata): boolean {
     const result = this.#database
       .prepare(`INSERT OR IGNORE INTO artifact_blobs (
-      digest, algorithm, size_bytes, committed_at_ms, provenance
-    ) VALUES (?, 'sha256', ?, ?, 'recovered-orphan')`)
-      .run(artifact.digest, artifact.sizeBytes, artifact.committedAtMs);
+      digest, algorithm, size_bytes, committed_at_ms, provenance, blob_json, blob_hash
+    ) VALUES (?, 'sha256', ?, ?, 'recovered-orphan', ?, ?)`)
+      .run(
+        artifact.digest,
+        artifact.sizeBytes,
+        artifact.committedAtMs,
+        canonicalJson(artifact as unknown as JsonValue),
+        canonicalHash("peas/artifact-blob/v1", artifact as unknown as JsonValue),
+      );
     return result.changes === 1;
   }
 
@@ -194,18 +312,25 @@ export class SqliteArtifactRepository {
       .prepare("SELECT * FROM artifact_blobs WHERE digest = ?")
       .get(digest) as BlobRow | undefined;
     if (row === undefined) return undefined;
-    return {
-      digest: row.digest,
-      algorithm: row.algorithm,
-      sizeBytes: safeNumber(row.size_bytes, "artifact size"),
-      committedAtMs: safeNumber(row.committed_at_ms, "artifact commit time"),
-      provenance: row.provenance,
-    };
+    const artifact = parseCanonical<ArtifactMetadata>(
+      row.blob_json,
+      row.blob_hash,
+      "peas/artifact-blob/v1",
+    );
+    if (
+      artifact.digest !== row.digest ||
+      artifact.algorithm !== row.algorithm ||
+      artifact.sizeBytes !== safeNumber(row.size_bytes, "artifact size") ||
+      artifact.committedAtMs !== safeNumber(row.committed_at_ms, "artifact commit time") ||
+      artifact.provenance !== row.provenance
+    )
+      throw new Error("Artifact blob relational mismatch");
+    return artifact;
   }
 
   getObservation(id: string): ArtifactObservation | undefined {
     const row = this.#database
-      .prepare(`SELECT sequence, observation_json, observation_hash
+      .prepare(`SELECT *
       FROM artifact_observations WHERE observation_id = ?`)
       .get(id) as ObservationRow | undefined;
     return row === undefined ? undefined : this.#parseObservation(row, id);
@@ -218,7 +343,7 @@ export class SqliteArtifactRepository {
   ): ArtifactPage<ArtifactObservation> {
     const after = BigInt(afterSequence);
     const rows = this.#database
-      .prepare(`SELECT sequence, observation_json, observation_hash
+      .prepare(`SELECT *
       FROM artifact_observations WHERE artifact_digest = ? AND sequence > ?
       ORDER BY sequence LIMIT ?`)
       .all(digest, after, limit + 1) as ObservationRow[];
@@ -257,29 +382,69 @@ export class SqliteArtifactRepository {
     const rows = this.#database
       .prepare("SELECT * FROM artifact_blobs ORDER BY digest")
       .all() as BlobRow[];
-    return rows.map((row) => ({
-      digest: row.digest,
-      algorithm: row.algorithm,
-      sizeBytes: safeNumber(row.size_bytes, "artifact size"),
-      committedAtMs: safeNumber(row.committed_at_ms, "artifact commit time"),
-      provenance: row.provenance,
-    }));
+    return rows.map((row) => this.stat(row.digest) as ArtifactMetadata);
   }
 
   listOpenAttempts(): readonly RetrievalAttempt[] {
     const rows = this.#database
-      .prepare(`SELECT a.staging_id, a.attempt_json, a.attempt_hash
+      .prepare(`SELECT a.*
       FROM artifact_retrieval_attempts a
       LEFT JOIN artifact_retrieval_outcomes o ON o.attempt_id = a.attempt_id
       WHERE o.attempt_id IS NULL ORDER BY a.attempt_id`)
       .all() as AttemptRow[];
-    return rows.map((row) =>
-      parseCanonical<RetrievalAttempt>(
-        row.attempt_json,
-        row.attempt_hash,
-        "peas/artifact-attempt/v1",
-      ),
-    );
+    return rows.map((row) => this.getAttempt(row.attempt_id) as RetrievalAttempt);
+  }
+
+  verifyAllEvidence(): void {
+    for (const row of this.#database
+      .prepare("SELECT attempt_id FROM artifact_retrieval_attempts")
+      .all() as { attempt_id: string }[])
+      this.getAttempt(row.attempt_id);
+    for (const row of this.#database
+      .prepare("SELECT * FROM artifact_retrieval_outcomes")
+      .all() as Array<Record<string, unknown>>) {
+      const outcome = parseCanonical<RetrievalAttemptOutcome>(
+        row["outcome_json"] as string,
+        row["outcome_hash"] as string,
+        "peas/artifact-attempt-outcome/v1",
+      );
+      relationalMismatch("Artifact outcome", [
+        [outcome.attemptId, row["attempt_id"]],
+        [outcome.outcome, row["outcome"]],
+        [outcome.completedAtMs, safeNumber(row["completed_at_ms"] as bigint, "outcome completion")],
+        [outcome.reasonCode, row["reason_code"]],
+        [outcome.detailHash, row["detail_hash"]],
+      ]);
+    }
+    for (const row of this.#database
+      .prepare("SELECT * FROM artifact_observations")
+      .all() as ObservationRow[])
+      this.#parseObservation(row);
+    for (const row of this.#database
+      .prepare("SELECT * FROM artifact_integrity_incidents")
+      .all() as Array<Record<string, unknown>>) {
+      const incident = parseCanonical<IntegrityIncident>(
+        row["incident_json"] as string,
+        row["incident_hash"] as string,
+        "peas/artifact-incident/v1",
+      );
+      const numberOrNull = (value: unknown, label: string): number | null =>
+        value === null ? null : safeNumber(value as bigint, label);
+      relationalMismatch("Artifact incident", [
+        [incident.incidentId, row["incident_id"]],
+        [incident.kind, row["kind"]],
+        [incident.recordedAtMs, safeNumber(row["recorded_at_ms"] as bigint, "incident time")],
+        [incident.stagingId, row["staging_id"]],
+        [incident.claimedDigest, row["claimed_digest"]],
+        [
+          incident.expectedSizeBytes,
+          numberOrNull(row["expected_size_bytes"], "incident expected size"),
+        ],
+        [incident.actualSizeBytes, numberOrNull(row["actual_size_bytes"], "incident actual size")],
+        [incident.detailHash, row["detail_hash"]],
+      ]);
+    }
+    this.listArtifacts();
   }
 
   #parseObservation(row: ObservationRow, expectedId?: string): ArtifactObservation {
@@ -292,6 +457,32 @@ export class SqliteArtifactRepository {
     if (expectedId !== undefined && observation.observationId !== expectedId) {
       throw new Error("Artifact observation relational mismatch");
     }
+    relationalMismatch("Artifact observation", [
+      [observation.observationId, row.observation_id],
+      [observation.attemptId, row.attempt_id],
+      [observation.artifactDigest, row.artifact_digest],
+      [observation.provider, row.provider],
+      [observation.recordId, row.provider_record_id],
+      [observation.revisionId, row.provider_revision_id],
+      [observation.retrievedAtMs, safeNumber(row.retrieved_at_ms, "observation retrieval time")],
+      [observation.request.method, row.request_method],
+      [observation.request.origin, row.request_origin],
+      [observation.request.pathHash, row.request_path_hash],
+      [observation.request.routeLabel, row.request_route_label],
+      [observation.request.identityHash, row.request_identity_hash],
+      [observation.response.statusCode, safeNumber(row.status_code, "status")],
+      [observation.response.etag, row.etag],
+      [observation.response.lastModified, row.last_modified],
+      [observation.response.mediaType, row.media_type],
+      [observation.response.contentEncoding, row.content_encoding],
+      [
+        observation.response.declaredContentLength,
+        row.declared_content_length === null
+          ? null
+          : safeNumber(row.declared_content_length, "declared length"),
+      ],
+      [observation.response.transportDecoded, row.transport_decoded === 1n],
+    ]);
     return observation;
   }
 }

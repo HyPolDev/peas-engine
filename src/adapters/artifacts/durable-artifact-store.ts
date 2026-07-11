@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, link, mkdir, open, readdir, rename, rm, stat } from "node:fs/promises";
+import { lstat, link, mkdir, open, readdir, rm, stat } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
-import { join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 
 import type {
   ArtifactDigest,
@@ -41,6 +41,7 @@ type Paths = Readonly<{
   snapshots: string;
   quarantine: string;
   locks: string;
+  device: number;
 }>;
 
 class Semaphore {
@@ -64,6 +65,25 @@ class Semaphore {
 }
 
 async function ensurePlainDirectory(path: string): Promise<void> {
+  const missing: string[] = [];
+  let cursor = resolve(path);
+  for (;;) {
+    try {
+      const info = await lstat(cursor);
+      if (!info.isDirectory() || info.isSymbolicLink())
+        throw new ArtifactVaultError(
+          "unsafe-filesystem-object",
+          "Vault path contains an unsafe filesystem object",
+        );
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      missing.push(cursor);
+      const parent = dirname(cursor);
+      if (parent === cursor) throw error;
+      cursor = parent;
+    }
+  }
   await mkdir(path, { recursive: true, mode: 0o700 });
   const info = await lstat(path);
   if (!info.isDirectory() || info.isSymbolicLink()) {
@@ -71,6 +91,25 @@ async function ensurePlainDirectory(path: string): Promise<void> {
       "unsafe-filesystem-object",
       "Vault path contains an unsafe filesystem object",
     );
+  }
+}
+
+async function assertTrustedPath(root: string, path: string, device: number): Promise<void> {
+  const rel = relative(root, path);
+  if (rel === ".." || rel.startsWith(`..${sep}`))
+    throw new ArtifactVaultError(
+      "unsafe-filesystem-object",
+      "Vault path escaped its configured root",
+    );
+  let cursor = root;
+  for (const part of rel.split(sep).filter(Boolean).slice(0, -1)) {
+    cursor = join(cursor, part);
+    const info = await lstat(cursor);
+    if (!info.isDirectory() || info.isSymbolicLink() || info.dev !== device)
+      throw new ArtifactVaultError(
+        "unsafe-filesystem-object",
+        "Vault ancestor is not a trusted same-volume directory",
+      );
   }
 }
 
@@ -143,7 +182,7 @@ export class DurableArtifactStore implements ArtifactStore {
     const config = validateVaultConfig(dependencies.config);
     await ensurePlainDirectory(resolve(config.runtimeRoot));
     const root = resolve(config.runtimeRoot, "artifacts");
-    const paths: Paths = {
+    const paths: Omit<Paths, "device"> = {
       root,
       content: join(root, "sha256"),
       staging: join(root, "staging"),
@@ -152,16 +191,22 @@ export class DurableArtifactStore implements ArtifactStore {
       locks: join(root, "locks"),
     };
     for (const path of Object.values(paths)) await ensurePlainDirectory(path);
-    const lease = await VaultWriterLease.acquire(
-      join(paths.locks, "writer.lock"),
-      config.writerLeaseBehavior,
-      config.writerLeaseWaitMs,
-    );
+    const device = (await lstat(root)).dev;
+    const trustedPaths = { ...paths, device };
+    const lease = await VaultWriterLease.acquire({
+      path: join(paths.locks, "writer.lock"),
+      behavior: config.writerLeaseBehavior,
+      waitMs: config.writerLeaseWaitMs,
+      durationMs: config.writerLeaseDurationMs,
+      renewalMs: config.writerLeaseRenewalMs,
+      repository: dependencies.repository,
+      clock: dependencies.clock,
+    });
     return new DurableArtifactStore(
       dependencies.repository,
       dependencies.clock,
       config,
-      paths,
+      trustedPaths,
       lease,
     );
   }
@@ -174,8 +219,67 @@ export class DurableArtifactStore implements ArtifactStore {
     const attemptDraft = validateRetrievalAttempt(request.attempt);
     const response = validateHttpResponseMetadata(request.response);
     const release = await this.#semaphore.acquire();
+    const existingAttempt = this.#repository.getAttempt(attemptDraft.attemptId);
+    if (existingAttempt !== undefined) {
+      try {
+        const completed = this.#repository.getCompletedResult(attemptDraft.attemptId);
+        if (completed === undefined) {
+          throw new ArtifactVaultError(
+            "artifact-integrity-failure",
+            "Attempt identity is already incomplete or terminal",
+          );
+        }
+        const immutableDraft = (({ stagingId: _staging, recordedAtMs: _recorded, ...draft }) =>
+          draft)(existingAttempt);
+        if (
+          canonicalHash(
+            "peas/artifact-redelivery-attempt/v1",
+            immutableDraft as unknown as JsonValue,
+          ) !==
+            canonicalHash(
+              "peas/artifact-redelivery-attempt/v1",
+              attemptDraft as unknown as JsonValue,
+            ) ||
+          canonicalHash(
+            "peas/artifact-redelivery-response/v1",
+            completed.observation.response as unknown as JsonValue,
+          ) !==
+            canonicalHash("peas/artifact-redelivery-response/v1", response as unknown as JsonValue)
+        ) {
+          throw new ArtifactVaultError(
+            "artifact-integrity-failure",
+            "Attempt identity conflicts with committed metadata",
+          );
+        }
+        const hash = createHash("sha256");
+        let sizeBytes = 0;
+        for await (const value of request.entityBytes) {
+          const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value as Uint8Array);
+          sizeBytes = assertSafeByteAddition(sizeBytes, chunk.byteLength);
+          if (sizeBytes > this.#config.maxArtifactBytes)
+            throw new ArtifactVaultError(
+              "artifact-too-large",
+              "Artifact exceeds configured byte limit",
+            );
+          hash.update(chunk);
+        }
+        if (
+          sizeBytes !== completed.artifact.sizeBytes ||
+          hash.digest("hex") !== completed.artifact.digest
+        ) {
+          throw new ArtifactVaultError(
+            "artifact-integrity-failure",
+            "Attempt identity conflicts with committed content",
+          );
+        }
+        return completed;
+      } finally {
+        release();
+      }
+    }
     const stagingId = randomUUID();
     const stagePath = safeChild(this.#paths.staging, `${stagingId}.part`);
+    await assertTrustedPath(this.#paths.root, stagePath, this.#paths.device);
     const attempt: RetrievalAttempt = {
       ...attemptDraft,
       stagingId,
@@ -183,6 +287,7 @@ export class DurableArtifactStore implements ArtifactStore {
     };
     let reserved = 0;
     try {
+      await this.#lease.renewAndAssert();
       this.#repository.recordAttempt(attempt);
       const handle = await open(stagePath, "wx", 0o600);
       const hash = createHash("sha256");
@@ -215,6 +320,7 @@ export class DurableArtifactStore implements ArtifactStore {
 
       const digest = hash.digest("hex");
       const finalPath = await this.#contentPath(digest, true);
+      await this.#lease.renewAndAssert();
       let converged = false;
       try {
         await link(stagePath, finalPath);
@@ -272,7 +378,13 @@ export class DurableArtifactStore implements ArtifactStore {
           observationWithoutHash as unknown as JsonValue,
         ),
       };
-      const disposition = this.#repository.commitSuccess(artifact, observation, response);
+      await this.#lease.renewAndAssert();
+      const disposition = this.#repository.commitSuccess(
+        artifact,
+        observation,
+        response,
+        this.#lease.fence(),
+      );
       return { artifact, observation, disposition: converged ? "deduplicated" : disposition };
     } catch (error) {
       await rm(stagePath, { force: true }).catch(() => undefined);
@@ -309,6 +421,7 @@ export class DurableArtifactStore implements ArtifactStore {
     const source = await this.#contentPath(digest, false, false);
     const snapshotId = randomUUID();
     const snapshotPath = safeChild(this.#paths.snapshots, `${snapshotId}.verified`);
+    await assertTrustedPath(this.#paths.root, snapshotPath, this.#paths.device);
     let sourceHandle: FileHandle;
     try {
       sourceHandle = await open(source, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
@@ -333,6 +446,12 @@ export class DurableArtifactStore implements ArtifactStore {
         if (bytesRead === 0) break;
         const chunk = buffer.subarray(0, bytesRead);
         sizeBytes = assertSafeByteAddition(sizeBytes, bytesRead);
+        if (sizeBytes > artifact.sizeBytes) {
+          throw new ArtifactVaultError(
+            "artifact-integrity-failure",
+            "Artifact exceeded committed size during snapshot verification",
+          );
+        }
         hash.update(chunk);
         await snapshotHandle.write(chunk);
         position += bytesRead;
@@ -382,6 +501,7 @@ export class DurableArtifactStore implements ArtifactStore {
   }
 
   async reconcile(): Promise<ReconciliationReport> {
+    this.#repository.verifyAllEvidence();
     const report = {
       validArtifacts: 0,
       adoptedOrphans: 0,
@@ -517,6 +637,7 @@ export class DurableArtifactStore implements ArtifactStore {
       await ensurePlainDirectory(second);
     }
     const path = safeChild(second, digest);
+    await assertTrustedPath(this.#paths.root, path, this.#paths.device);
     if (requireExisting && !create) await lstat(path);
     return path;
   }
@@ -529,7 +650,14 @@ export class DurableArtifactStore implements ArtifactStore {
     actual: number | null,
   ): Promise<string> {
     const recordedAtMs = this.#clock.nowMs();
-    const seed = { kind, recordedAtMs, stagingId, claimedDigest, detailHash: null };
+    const seed = {
+      kind,
+      recordedAtMs,
+      stagingId,
+      claimedDigest,
+      detailHash: null,
+      nonce: randomUUID(),
+    };
     const incident: IntegrityIncident = {
       incidentId: deriveIncidentId(seed),
       kind,
@@ -546,8 +674,11 @@ export class DurableArtifactStore implements ArtifactStore {
 
   async #quarantine(path: string, token: string): Promise<void> {
     const target = safeChild(this.#paths.quarantine, `${token}.quarantined`);
-    await rename(path, target).catch(async (error: NodeJS.ErrnoException) => {
-      if (error.code !== "ENOENT") throw error;
-    });
+    await assertTrustedPath(this.#paths.root, target, this.#paths.device);
+    await link(path, target)
+      .then(async () => rm(path))
+      .catch(async (error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+      });
   }
 }
