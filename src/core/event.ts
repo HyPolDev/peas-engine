@@ -2,7 +2,17 @@ import { z } from "zod";
 
 import type { Clock } from "./clock.js";
 import { canonicalHash } from "./hash.js";
-import { assertJson, cloneJson, type JsonObject, type JsonValue } from "./json.js";
+import {
+  assertJson,
+  assertJsonWithinLimits,
+  assertSchemaPrototypeSafety,
+  cloneJson,
+  inertJsonSnapshot,
+  parseJsonWithinLimits,
+  type JsonLimits,
+  type JsonObject,
+  type JsonValue,
+} from "./json.js";
 
 export type ProviderIdentity = Readonly<{
   provider: string;
@@ -60,10 +70,60 @@ export interface EventLog {
 
 export type CaptureDependencies = Readonly<{ clock: Clock }>;
 
+/** Hard capture-boundary budgets for normalized, untrusted provider data. */
+export const EVENT_PAYLOAD_LIMITS = Object.freeze({
+  maxDepth: 32,
+  maxNodes: 50_000,
+  maxArrayLength: 10_000,
+  maxObjectKeys: 10_000,
+  maxStringBytes: 256 * 1_024,
+  maxCanonicalBytes: 1_024 * 1_024,
+}) satisfies JsonLimits;
+const EVENT_ENVELOPE_LIMITS = Object.freeze({
+  maxDepth: EVENT_PAYLOAD_LIMITS.maxDepth + 1,
+  maxNodes: EVENT_PAYLOAD_LIMITS.maxNodes + 32,
+  maxArrayLength: EVENT_PAYLOAD_LIMITS.maxArrayLength,
+  maxObjectKeys: EVENT_PAYLOAD_LIMITS.maxObjectKeys,
+  maxStringBytes: EVENT_PAYLOAD_LIMITS.maxStringBytes,
+  maxCanonicalBytes: EVENT_PAYLOAD_LIMITS.maxCanonicalBytes + 16_384,
+}) satisfies JsonLimits;
+export const EVENT_SERIALIZED_LIMIT_BYTES = EVENT_ENVELOPE_LIMITS.maxCanonicalBytes;
+
 const identifier = z.string().min(1).max(512);
 const hash = z.string().regex(/^[0-9a-f]{64}$/u);
 const epochMs = z.number().int().nonnegative().safe();
 const positiveDecimal = z.string().regex(/^[1-9]\d*$/u);
+const jsonObjectSchema = z.custom<JsonObject>(
+  (value) =>
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === null,
+  "Expected an inert JSON object",
+);
+const EVENT_SCHEMA_FIELDS = Object.freeze([
+  "envelopeVersion",
+  "type",
+  "schemaVersion",
+  "source",
+  "subject",
+  "occurredAtMs",
+  "correlationId",
+  "causationId",
+  "provider",
+  "recordId",
+  "revisionId",
+  "artifactHash",
+  "payload",
+  "eventId",
+  "streamVersion",
+  "receivedAtMs",
+  "logicalAtMs",
+  "position",
+  "contentHash",
+  "previousEventHash",
+  "eventHash",
+]);
 const providerIdentitySchema = z
   .object({
     provider: identifier,
@@ -83,7 +143,7 @@ const eventDraftSchema = z
     correlationId: identifier,
     causationId: identifier.optional(),
     provider: providerIdentitySchema,
-    payload: z.record(z.string(), z.unknown()),
+    payload: jsonObjectSchema,
   })
   .strict();
 const capturedEventSchema = eventDraftSchema
@@ -103,17 +163,40 @@ const storedEventSchema = capturedEventSchema
   })
   .strict();
 
-export function validateEventDraft(value: unknown): EventDraft {
-  const parsed = eventDraftSchema.parse(value);
-  assertJson(parsed.payload);
+function parseEventDraft(value: unknown): EventDraft {
+  assertSchemaPrototypeSafety(EVENT_SCHEMA_FIELDS);
+  const parsed = eventDraftSchema.parse(inertJsonSnapshot(value as JsonValue));
+  assertJsonWithinLimits(parsed.payload, EVENT_PAYLOAD_LIMITS, "$.payload");
   return cloneJson(parsed as EventDraft as unknown as JsonValue) as EventDraft;
+}
+
+function parseStoredEvent(value: unknown): StoredEvent {
+  assertSchemaPrototypeSafety(EVENT_SCHEMA_FIELDS);
+  const parsed = storedEventSchema.parse(inertJsonSnapshot(value as JsonValue));
+  assertJsonWithinLimits(parsed.payload, EVENT_PAYLOAD_LIMITS, "$.payload");
+  assertJson(parsed);
+  return cloneJson(parsed as StoredEvent as unknown as JsonValue) as StoredEvent;
+}
+
+export function validateEventDraft(value: unknown): EventDraft {
+  assertJsonWithinLimits(value, EVENT_ENVELOPE_LIMITS, "$.event");
+  return parseEventDraft(value);
+}
+
+/** Bounds a serialized draft before parsing and applies the complete capture-boundary schema. */
+export function validateEventDraftJson(serialized: string): EventDraft {
+  return parseEventDraft(parseJsonWithinLimits(serialized, EVENT_ENVELOPE_LIMITS, "$.event"));
 }
 
 /** Strictly validates the complete durable envelope before any hash or chain checks. */
 export function validateStoredEvent(value: unknown): StoredEvent {
-  const parsed = storedEventSchema.parse(value);
-  assertJson(parsed);
-  return cloneJson(parsed as StoredEvent as unknown as JsonValue) as StoredEvent;
+  assertJsonWithinLimits(value, EVENT_ENVELOPE_LIMITS, "$.event");
+  return parseStoredEvent(value);
+}
+
+/** Bounds serialized durable input before parsing, schema validation, or hash verification. */
+export function validateStoredEventJson(serialized: string): StoredEvent {
+  return parseStoredEvent(parseJsonWithinLimits(serialized, EVENT_ENVELOPE_LIMITS, "$.event"));
 }
 
 export function providerKey(identity: ProviderIdentity): string {

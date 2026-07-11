@@ -1,6 +1,6 @@
 {
   "name": "peas-engine",
-  "version": "0.1.0",
+  "version": "0.2.0-kernel-rc.2",
   "private": true,
   "description": "Auditable deterministic event-processing and replay engine",
   "type": "module",
@@ -14,6 +14,7 @@
     "verify:candidate": "node scripts/verify-candidate.mjs",
     "write:evidence": "node scripts/write-audit-evidence.mjs",
     "reconcile:evidence": "node scripts/reconcile-audit-evidence.mjs",
+    "package:rc-evidence": "node scripts/package-rc-evidence.mjs",
     "clean": "node scripts/clean-dist.mjs",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",

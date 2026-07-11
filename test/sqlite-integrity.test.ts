@@ -354,7 +354,8 @@ test("output audit reads and claims reconcile all duplicated delivery metadata",
           "UPDATE processing_outputs SET not_before_logical_ms = not_before_logical_ms + 86400000 WHERE output_id = ?",
         )
         .run(target.output_id).changes,
-    () => store.claimJobs(manifest.runId, "audit-worker", BASE_TIME_MS, 1_000, 100),
+    () =>
+      store.claimJobs(manifest.runId, "audit-worker", BASE_TIME_MS + 2 * 86_400_000, 1_000, 100),
   );
   assert.equal(
     (

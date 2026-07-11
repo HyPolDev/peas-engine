@@ -1,22 +1,35 @@
-import type { SqliteDatabase } from "./database.js";
-import { readVerifiedStoredEventAt } from "./event-log.js";
-
 import { canonicalHash } from "../../core/hash.js";
-import { assertJson, canonicalJson, type JsonObject, type JsonValue } from "../../core/json.js";
 import {
-  computeAggregateCheckpointHash,
-  computeRunCursorHash,
-  assertRunEffectPolicy,
+  canonicalJson,
+  parseJsonWithinLimits,
+  type JsonObject,
+  type JsonValue,
+} from "../../core/json.js";
+import {
   type AggregateCheckpoint,
   type AggregatePage,
+  computeAggregateCheckpointHash,
+  computeRunCursorHash,
+  createGenesisRunCursor,
   type OutputPage,
+  PERSISTED_PROCESSING_JSON_LIMITS,
   type ProcessingCommit,
   type ProcessingStore,
   type RunCursor,
   type RunRegistration,
   type StoredOutput,
-  verifyProcessingCommit,
+  validateAggregateId,
+  validateCommittedAggregateCheckpoint,
+  validateProcessingCommit,
+  validateRunCursor,
+  validateRunManifestJson,
+  validateRunRegistration,
+  validateStoredOutput,
+  validateStoredOutputBody,
+  verifyProcessingTransition,
 } from "../../core/processor.js";
+import type { SqliteDatabase } from "./database.js";
+import { readVerifiedStoredEventAt } from "./event-log.js";
 
 type RunRow = {
   run_id: string;
@@ -56,7 +69,7 @@ type OutputRow = {
   input_event_id: string;
   input_position: bigint;
   aggregate_id: string;
-  category: "decision" | "job" | "outbox";
+  category: string;
   ordinal: bigint;
   dedupe_key: string | null;
   not_before_logical_ms: bigint | null;
@@ -65,7 +78,6 @@ type OutputRow = {
   envelope_hash: string;
 };
 
-type PositionRow = { processed_position: bigint };
 type SequenceRow = { sequence: bigint | null };
 type LeaseStateRow = {
   output_id: string;
@@ -83,15 +95,14 @@ export type ClaimedIntent = Readonly<{
 
 function safeNumber(value: bigint, label: string): number {
   const number = Number(value);
-  if (!Number.isSafeInteger(number))
-    throw new RangeError(`${label} exceeds JavaScript safe integers`);
+  if (!Number.isSafeInteger(number) || number < 0) {
+    throw new RangeError(`${label} must be a non-negative safe integer`);
+  }
   return number;
 }
 
 function parseJson(serialized: string): JsonValue {
-  const value: unknown = JSON.parse(serialized);
-  assertJson(value);
-  return value;
+  return parseJsonWithinLimits(serialized, PERSISTED_PROCESSING_JSON_LIMITS, "persisted JSON");
 }
 
 function parseJsonObject(serialized: string, label: string): JsonObject {
@@ -138,20 +149,20 @@ export class SqliteProcessingStore<TState extends JsonObject> implements Process
   }
 
   async ensureRun(registration: RunRegistration): Promise<void> {
-    assertRunEffectPolicy(registration.manifest);
+    const verified = validateRunRegistration(registration);
     this.#database
       .transaction(() => {
-        const existing = this.#runRow(registration.manifest.runId);
-        const manifestJson = canonicalJson(registration.manifest);
+        const existing = this.#runRow(verified.manifest.runId);
+        const manifestJson = canonicalJson(verified.manifest);
         if (existing !== undefined) {
           if (
             existing.manifest_json !== manifestJson ||
-            existing.manifest_hash !== registration.manifestHash ||
-            existing.behavior_hash !== registration.behaviorHash ||
-            existing.run_kind !== registration.manifest.kind ||
-            existing.effects_allowed !== BigInt(registration.manifest.effectsAllowed ? 1 : 0)
+            existing.manifest_hash !== verified.manifestHash ||
+            existing.behavior_hash !== verified.behaviorHash ||
+            existing.run_kind !== verified.manifest.kind ||
+            existing.effects_allowed !== BigInt(verified.manifest.effectsAllowed ? 1 : 0)
           ) {
-            throw new Error(`Run ${registration.manifest.runId} is already registered differently`);
+            throw new Error(`Run ${verified.manifest.runId} is already registered differently`);
           }
           return;
         }
@@ -162,12 +173,12 @@ export class SqliteProcessingStore<TState extends JsonObject> implements Process
             ) VALUES (?, ?, ?, ?, ?, ?)`,
           )
           .run(
-            registration.manifest.runId,
-            registration.manifest.kind,
-            BigInt(registration.manifest.effectsAllowed ? 1 : 0),
+            verified.manifest.runId,
+            verified.manifest.kind,
+            BigInt(verified.manifest.effectsAllowed ? 1 : 0),
             manifestJson,
-            registration.manifestHash,
-            registration.behaviorHash,
+            verified.manifestHash,
+            verified.behaviorHash,
           );
       })
       .immediate();
@@ -182,27 +193,14 @@ export class SqliteProcessingStore<TState extends JsonObject> implements Process
       )
       .get(runId) as CursorRow | undefined;
     if (row === undefined) return undefined;
-    const cursor: RunCursor = {
-      runId: row.run_id,
-      manifestHash: row.manifest_hash,
-      behaviorHash: row.behavior_hash,
-      processedPosition: row.processed_position.toString(),
-      logicalAtMs: safeNumber(row.logical_at_ms, "Cursor logical time"),
-      lastEventHash: row.last_event_hash,
-      stateHead: row.state_head,
-      decisionHead: row.decision_head,
-      cursorHash: row.cursor_hash,
-    };
-    const { cursorHash, ...withoutHash } = cursor;
-    if (cursorHash !== computeRunCursorHash(withoutHash))
-      throw new Error("Run cursor hash mismatch");
-    return cursor;
+    return this.#cursorFromRow(row);
   }
 
   async loadAggregate(
     runId: string,
     aggregateId: string,
   ): Promise<AggregateCheckpoint<TState> | undefined> {
+    validateAggregateId(aggregateId);
     const row = this.#database
       .prepare(
         `SELECT run_id, aggregate_id, version, last_input_position, state_json,
@@ -214,7 +212,8 @@ export class SqliteProcessingStore<TState extends JsonObject> implements Process
   }
 
   async commit(value: ProcessingCommit<TState>): Promise<void> {
-    this.#database.transaction(() => this.#commitInTransaction(value)).immediate();
+    const snapshot = validateProcessingCommit<TState>(value);
+    this.#database.transaction(() => this.#commitInTransaction(snapshot)).immediate();
   }
 
   async readOutputsAfter(runId: string, sequence: string, limit: number): Promise<OutputPage> {
@@ -245,6 +244,7 @@ export class SqliteProcessingStore<TState extends JsonObject> implements Process
     limit: number,
   ): Promise<AggregatePage<TState>> {
     assertLimit(limit);
+    if (aggregateId !== "") validateAggregateId(aggregateId);
     const rows = this.#database
       .prepare(
         `SELECT run_id, aggregate_id, version, last_input_position, state_json,
@@ -331,26 +331,28 @@ export class SqliteProcessingStore<TState extends JsonObject> implements Process
     ) {
       throw new Error(`Event ${value.event.position} is not the exact persisted event`);
     }
-    const current = this.#database
-      .prepare("SELECT processed_position FROM run_cursors WHERE run_id = ?")
-      .get(value.cursor.runId) as PositionRow | undefined;
-    const currentPosition = current?.processed_position.toString() ?? "0";
-    if (currentPosition !== value.expectedPosition) {
-      throw new Error(
-        `Cursor concurrency conflict: expected ${value.expectedPosition}, found ${currentPosition}`,
-      );
-    }
     const run = this.#runRow(value.cursor.runId);
     if (run === undefined) throw new Error(`Run ${value.cursor.runId} is not registered`);
-    const manifest = parseJsonObject(
-      run.manifest_json,
-      "Stored run manifest",
-    ) as RunRegistration["manifest"];
-    verifyProcessingCommit(value, {
+    const manifest = validateRunManifestJson(run.manifest_json);
+    const registration: RunRegistration = {
       manifest,
       manifestHash: run.manifest_hash,
       behaviorHash: run.behavior_hash,
-    });
+    };
+    const current = this.#database
+      .prepare(
+        `SELECT run_id, manifest_hash, behavior_hash, processed_position, logical_at_ms,
+                last_event_hash, state_head, decision_head, cursor_hash
+         FROM run_cursors WHERE run_id = ?`,
+      )
+      .get(value.cursor.runId) as CursorRow | undefined;
+    const previous = current ? this.#cursorFromRow(current) : createGenesisRunCursor(registration);
+    if (previous.processedPosition !== value.expectedPosition) {
+      throw new Error(
+        `Cursor concurrency conflict: expected ${value.expectedPosition}, found ${previous.processedPosition}`,
+      );
+    }
+    value = verifyProcessingTransition(value, registration, previous);
 
     const priorAggregate = this.#database
       .prepare("SELECT version FROM aggregate_checkpoints WHERE run_id = ? AND aggregate_id = ?")
@@ -471,16 +473,8 @@ export class SqliteProcessingStore<TState extends JsonObject> implements Process
       )
       .get(runId) as RunRow | undefined;
     if (row === undefined) return undefined;
-    const manifest = parseJsonObject(row.manifest_json, "Stored run manifest");
-    const behaviorValue = manifest["behavior"];
-    if (
-      behaviorValue === null ||
-      typeof behaviorValue !== "object" ||
-      Array.isArray(behaviorValue)
-    ) {
-      throw new Error("Stored run behavior is malformed");
-    }
-    const behavior = behaviorValue as JsonObject;
+    const manifest = validateRunManifestJson(row.manifest_json);
+    const behavior = manifest.behavior;
     if (canonicalJson(manifest) !== row.manifest_json) {
       throw new Error("Stored run manifest is not canonically encoded");
     }
@@ -489,6 +483,9 @@ export class SqliteProcessingStore<TState extends JsonObject> implements Process
     }
     if (canonicalHash("peas/run-behavior/v2", behavior) !== row.behavior_hash) {
       throw new Error("Stored run behavior hash mismatch");
+    }
+    if (row.effects_allowed !== 0n && row.effects_allowed !== 1n) {
+      throw new Error("Stored run effects-allowed column is invalid");
     }
     if (
       manifest["runId"] !== row.run_id ||
@@ -500,9 +497,31 @@ export class SqliteProcessingStore<TState extends JsonObject> implements Process
     return row;
   }
 
+  #cursorFromRow(row: CursorRow): RunCursor {
+    const cursor = validateRunCursor({
+      runId: row.run_id,
+      manifestHash: row.manifest_hash,
+      behaviorHash: row.behavior_hash,
+      processedPosition: row.processed_position.toString(),
+      logicalAtMs: safeNumber(row.logical_at_ms, "Cursor logical time"),
+      lastEventHash: row.last_event_hash,
+      stateHead: row.state_head,
+      decisionHead: row.decision_head,
+      cursorHash: row.cursor_hash,
+    });
+    const { cursorHash, ...withoutHash } = cursor;
+    if (cursorHash !== computeRunCursorHash(withoutHash)) {
+      throw new Error("Run cursor hash mismatch");
+    }
+    return cursor;
+  }
+
   #aggregateFromRow(row: AggregateRow): AggregateCheckpoint<TState> {
     const state = parseJsonObject(row.state_json, "Stored aggregate state") as TState;
-    const checkpoint: AggregateCheckpoint<TState> = {
+    if (canonicalJson(state) !== row.state_json) {
+      throw new Error("Stored aggregate state is not canonically encoded");
+    }
+    const checkpoint = validateCommittedAggregateCheckpoint<TState>({
       runId: row.run_id,
       aggregateId: row.aggregate_id,
       version: row.version.toString(),
@@ -510,24 +529,12 @@ export class SqliteProcessingStore<TState extends JsonObject> implements Process
       state,
       stateHash: row.state_hash,
       checkpointHash: row.checkpoint_hash,
-    };
+    });
     const run = this.#runRow(row.run_id);
     if (run === undefined) throw new Error(`Run ${row.run_id} is not registered`);
-    const manifest = parseJsonObject(run.manifest_json, "Stored run manifest");
-    const behaviorValue = manifest["behavior"];
-    if (
-      behaviorValue === null ||
-      typeof behaviorValue !== "object" ||
-      Array.isArray(behaviorValue)
-    ) {
-      throw new Error("Stored run behavior is malformed");
-    }
-    const behavior = behaviorValue as JsonObject;
-    const reducerName = behavior["reducerName"];
-    const reducerVersion = behavior["reducerVersion"];
-    if (typeof reducerName !== "string" || typeof reducerVersion !== "string") {
-      throw new Error("Stored reducer identity is malformed");
-    }
+    const manifest = validateRunManifestJson(run.manifest_json);
+    const reducerName = manifest.behavior.reducerName;
+    const reducerVersion = manifest.behavior.reducerVersion;
     const expectedStateHash = canonicalHash(
       `peas/state/${reducerName}/${reducerVersion}`,
       checkpoint.state,
@@ -544,15 +551,21 @@ export class SqliteProcessingStore<TState extends JsonObject> implements Process
 
   #outputFromRow(row: OutputRow): StoredOutput {
     if (row.sequence < 1n) throw new Error("Output sequence is invalid on audit read");
+    if (row.aggregate_id.length === 0) {
+      throw new Error("Output aggregate ID is empty on audit read");
+    }
+    if (row.category !== "decision" && row.category !== "job" && row.category !== "outbox") {
+      throw new Error(`Unsupported output category ${String(row.category)} on audit read`);
+    }
     const expectedEnvelopeHash = computeOutputEnvelopeHash(row);
     if (row.envelope_hash !== expectedEnvelopeHash) {
       throw new Error("Output relational envelope hash mismatch on audit read");
     }
-    const body = parseJsonObject(row.body_json, "Stored output body");
-    if (canonicalJson(body) !== row.body_json) {
+    const parsedBody = parseJsonObject(row.body_json, "Stored output body");
+    if (canonicalJson(parsedBody) !== row.body_json) {
       throw new Error("Output body is not canonically encoded on audit read");
     }
-    const expectedBodyHash = canonicalHash(`peas/output-body/${row.category}/v2`, body);
+    const expectedBodyHash = canonicalHash(`peas/output-body/${row.category}/v2`, parsedBody);
     if (row.body_hash !== expectedBodyHash)
       throw new Error("Output body hash mismatch on audit read");
     const run = this.#runRow(row.run_id);
@@ -573,29 +586,19 @@ export class SqliteProcessingStore<TState extends JsonObject> implements Process
       bodyHash: row.body_hash,
     });
     if (row.output_id !== expectedOutputId) throw new Error("Output ID mismatch on audit read");
-    const bodyDedupeKey = body["dedupeKey"];
-    const bodyNotBefore = body["notBeforeLogicalMs"];
-    if (row.category === "decision") {
-      if (row.dedupe_key !== null || row.not_before_logical_ms !== null) {
-        throw new Error("Decision delivery columns mismatch on audit read");
-      }
-    } else {
-      if (typeof bodyDedupeKey !== "string" || bodyDedupeKey !== row.dedupe_key) {
-        throw new Error("Output dedupe column mismatch on audit read");
-      }
-      if (row.category === "job") {
-        const relationalNotBefore =
-          row.not_before_logical_ms === null
-            ? null
-            : safeNumber(row.not_before_logical_ms, "Output not-before time");
-        if (bodyNotBefore !== relationalNotBefore) {
-          throw new Error("Job not-before column mismatch on audit read");
-        }
-      } else if (row.not_before_logical_ms !== null || bodyNotBefore !== undefined) {
-        throw new Error("Outbox not-before column mismatch on audit read");
-      }
+    const notBeforeLogicalMs =
+      row.not_before_logical_ms === null
+        ? null
+        : safeNumber(row.not_before_logical_ms, "Output not-before time");
+    const body = validateStoredOutputBody(row.category, parsedBody, {
+      runId: row.run_id,
+      dedupeKey: row.dedupe_key,
+      notBeforeLogicalMs,
+    });
+    if (canonicalJson(body) !== row.body_json) {
+      throw new Error("Output body does not match its canonical category contract");
     }
-    return {
+    return validateStoredOutput({
       sequence: row.sequence.toString(),
       outputId: row.output_id,
       runId: row.run_id,
@@ -605,13 +608,10 @@ export class SqliteProcessingStore<TState extends JsonObject> implements Process
       category: row.category,
       ordinal,
       dedupeKey: row.dedupe_key,
-      notBeforeLogicalMs:
-        row.not_before_logical_ms === null
-          ? null
-          : safeNumber(row.not_before_logical_ms, "Output not-before time"),
+      notBeforeLogicalMs,
       body,
       bodyHash: row.body_hash,
-    };
+    });
   }
 
   #claim(
@@ -627,10 +627,8 @@ export class SqliteProcessingStore<TState extends JsonObject> implements Process
     assertLimit(limit);
     if (workerId.length === 0) throw new TypeError("Worker ID cannot be empty");
     const table = category === "job" ? "jobs" : "outbox";
-    const dueExpression =
-      category === "job"
-        ? "json_extract(o.body_json, '$.notBeforeLogicalMs')"
-        : "CAST(0 AS INTEGER)";
+    const categoryLiteral = category === "job" ? "'job'" : "'outbox'";
+    const dueExpression = category === "job" ? "o.not_before_logical_ms" : "CAST(0 AS INTEGER)";
     const leaseExpiresAtMs = nowMs + leaseMs;
     if (!Number.isSafeInteger(leaseExpiresAtMs)) throw new RangeError("Lease expiry overflow");
     return this.#database
@@ -640,10 +638,11 @@ export class SqliteProcessingStore<TState extends JsonObject> implements Process
             `SELECT o.sequence, o.output_id, o.run_id, o.input_event_id, o.input_position,
                     o.aggregate_id, o.category, o.ordinal, o.dedupe_key,
                     o.not_before_logical_ms, o.body_json, o.body_hash, o.envelope_hash
-             FROM ${table} d
-             JOIN processing_outputs o ON o.output_id = d.output_id
+             FROM processing_outputs o INDEXED BY processing_outputs_dispatch_order
+             JOIN ${table} d ON d.output_id = o.output_id
              JOIN run_manifests r ON r.run_id = o.run_id
              WHERE o.run_id = ?
+               AND o.category = ${categoryLiteral}
                AND r.effects_allowed = 1
                AND r.run_kind = 'live'
                AND ${dueExpression} <= ?

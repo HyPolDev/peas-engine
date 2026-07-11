@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -104,6 +105,45 @@ function fileSize(path: string): number {
   return existsSync(path) ? statSync(path).size : 0;
 }
 
+type ScaleBudget = Readonly<{
+  minThroughputPerSecond: number;
+  maxP95Ms: number;
+  maxP99Ms: number;
+  maxSlopePerEvent: number;
+  maxProcessingRssDeltaBytes: number;
+  maxDatabaseBytes: number;
+  maxWalBytes: number;
+}>;
+
+type ScalePolicy = Readonly<{
+  policyVersion: 1;
+  metricsVersion: 2;
+  measurementModel: "event-processing-then-streaming-audit-scan";
+  workload: Readonly<{
+    name: "sparse-single-source-per-issuer-v1";
+    sourcesPerIssuer: 1;
+    writerCount: 1;
+  }>;
+  budgets: Readonly<Record<string, ScaleBudget>>;
+}>;
+
+const SCALE_POLICY_PATH = "config/scale-policy.v1.json";
+const scalePolicyBytes = readFileSync(SCALE_POLICY_PATH);
+const scalePolicy = JSON.parse(scalePolicyBytes.toString("utf8")) as ScalePolicy;
+assert.equal(scalePolicy.policyVersion, 1);
+assert.equal(scalePolicy.metricsVersion, 2);
+assert.equal(scalePolicy.measurementModel, "event-processing-then-streaming-audit-scan");
+assert.deepEqual(scalePolicy.workload, {
+  name: "sparse-single-source-per-issuer-v1",
+  sourcesPerIssuer: 1,
+  writerCount: 1,
+});
+assert.deepEqual(Object.keys(scalePolicy.budgets).sort(), ["1000", "10000", "100000"]);
+const scalePolicySha256 = createHash("sha256").update(scalePolicyBytes).digest("hex");
+const SCALE_BUDGETS = new Map<number, ScaleBudget>(
+  Object.entries(scalePolicy.budgets).map(([count, budget]) => [Number(count), budget]),
+);
+
 function verifiedCandidateGitIdentity(): {
   candidateCommitSha: string;
   worktreeClean: boolean;
@@ -141,12 +181,16 @@ async function runSqliteScale(
   const database = openSqliteDatabase(databasePath, migrations);
   const clock = new ManualClock(BASE_TIME_MS);
   const eventLog = new SqliteEventLog(database, { clock });
+  const store = new SqliteProcessingStore<EarningsClusterState>(database);
+  const manifest = makeManifest(`sqlite-scale-${label}`, "research", false);
   const processor = new DeterministicProcessor({
     reducer: new EarningsClusterReducer(),
-    store: new SqliteProcessingStore<EarningsClusterState>(database),
+    store,
     eventLog,
-    manifest: makeManifest(`sqlite-scale-${label}`, "research", false),
+    manifest,
   });
+  const budget = SCALE_BUDGETS.get(clusterCount);
+  if (budget === undefined) throw new Error(`Missing scale budget for ${clusterCount} clusters`);
   const latencies: number[] = [];
   const rssBefore = process.memoryUsage().rss;
   const started = performance.now();
@@ -162,44 +206,119 @@ async function runSqliteScale(
       clock.advanceBy(1);
     }
     const elapsedMs = performance.now() - started;
-    const snapshot = await processor.snapshot(1_000);
+    const rssAfterProcessing = process.memoryUsage().rss;
+    const auditScanStarted = performance.now();
+    const cursor = await store.loadCursor(manifest.runId);
+    let aggregateCount = 0;
+    let maxCheckpointBytes = 0;
+    let aggregateCursor = "";
+    while (true) {
+      const page = await store.readAggregatesAfter(manifest.runId, aggregateCursor, 1_000);
+      for (const aggregate of page.aggregates) {
+        aggregateCount += 1;
+        maxCheckpointBytes = Math.max(
+          maxCheckpointBytes,
+          Buffer.byteLength(canonicalJson(aggregate.state), "utf8"),
+        );
+      }
+      aggregateCursor = page.nextAggregateId;
+      if (!page.hasMore) break;
+    }
+    let outputCount = 0;
+    let outputCursor = "0";
+    while (true) {
+      const page = await store.readOutputsAfter(manifest.runId, outputCursor, 1_000);
+      outputCount += page.outputs.length;
+      outputCursor = page.nextSequence;
+      if (!page.hasMore) break;
+    }
+    const auditScanMs = performance.now() - auditScanStarted;
+    const rssAfterAuditScan = process.memoryUsage().rss;
     const sorted = [...latencies].sort((left, right) => left - right);
-    const maxCheckpointBytes = Math.max(
-      ...snapshot.aggregates.map((aggregate) =>
-        Buffer.byteLength(canonicalJson(aggregate.state), "utf8"),
-      ),
-    );
     const { candidateCommitSha, worktreeClean } = verifiedCandidateGitIdentity();
-    assert.equal(snapshot.cursor.processedPosition, String(clusterCount));
-    assert.equal(snapshot.aggregates.length, clusterCount);
+    assert.ok(cursor);
+    assert.equal(cursor.processedPosition, String(clusterCount));
+    assert.equal(aggregateCount, clusterCount);
+    assert.ok(outputCount >= clusterCount, "audit scan did not observe the expected outputs");
     assert.ok(maxCheckpointBytes < 32_000, `checkpoint exceeded 32 KiB: ${maxCheckpointBytes}`);
     const integrityCheck = database.pragma("integrity_check", { simple: true });
     assert.equal(integrityCheck, "ok");
+    const throughputPerSecond = clusterCount / (elapsedMs / 1_000);
+    const latencyMs = {
+      p50: quantile(sorted, 0.5),
+      p95: quantile(sorted, 0.95),
+      p99: quantile(sorted, 0.99),
+      max: sorted.at(-1) ?? 0,
+      slopePerEvent: linearSlope(latencies),
+    };
+    const processingRssDelta = rssAfterProcessing - rssBefore;
+    const storageBytes = {
+      database: fileSize(databasePath),
+      wal: fileSize(`${databasePath}-wal`),
+    };
+    assert.ok(
+      throughputPerSecond >= budget.minThroughputPerSecond,
+      `throughput ${throughputPerSecond}/s fell below ${budget.minThroughputPerSecond}/s`,
+    );
+    assert.ok(latencyMs.p95 <= budget.maxP95Ms, `p95 ${latencyMs.p95}ms exceeded budget`);
+    assert.ok(latencyMs.p99 <= budget.maxP99Ms, `p99 ${latencyMs.p99}ms exceeded budget`);
+    assert.ok(
+      latencyMs.slopePerEvent <= budget.maxSlopePerEvent,
+      `latency slope ${latencyMs.slopePerEvent}ms/event exceeded budget`,
+    );
+    assert.ok(
+      processingRssDelta <= budget.maxProcessingRssDeltaBytes,
+      `processing RSS delta ${processingRssDelta} exceeded budget`,
+    );
+    assert.ok(
+      storageBytes.database <= budget.maxDatabaseBytes,
+      `database size ${storageBytes.database} exceeded budget`,
+    );
+    assert.ok(
+      storageBytes.wal <= budget.maxWalBytes,
+      `WAL size ${storageBytes.wal} exceeded budget`,
+    );
     const metrics = {
+      metricsVersion: scalePolicy.metricsVersion,
+      measurementModel: scalePolicy.measurementModel,
+      scalePolicy: {
+        policyVersion: scalePolicy.policyVersion,
+        path: SCALE_POLICY_PATH,
+        fileSha256: scalePolicySha256,
+      },
+      workload: {
+        name: scalePolicy.workload.name,
+        eventCount: clusterCount,
+        issuerCount: clusterCount,
+        sourcesPerIssuer: scalePolicy.workload.sourcesPerIssuer,
+        writerCount: scalePolicy.workload.writerCount,
+      },
       gateStatus: "passed",
       integrityCheck,
       candidateCommitSha,
       worktreeClean,
       clusterCount,
       elapsedMs,
-      throughputPerSecond: clusterCount / (elapsedMs / 1_000),
-      latencyMs: {
-        p50: quantile(sorted, 0.5),
-        p95: quantile(sorted, 0.95),
-        p99: quantile(sorted, 0.99),
-        max: sorted.at(-1) ?? 0,
-        slopePerEvent: linearSlope(latencies),
-      },
+      throughputPerSecond,
+      latencyMs,
       rssBytes: {
         before: rssBefore,
-        after: process.memoryUsage().rss,
-        delta: process.memoryUsage().rss - rssBefore,
+        afterProcessing: rssAfterProcessing,
+        processingDelta: processingRssDelta,
+        afterAuditScan: rssAfterAuditScan,
+        auditScanDelta: rssAfterAuditScan - rssAfterProcessing,
+        after: rssAfterAuditScan,
+        delta: rssAfterAuditScan - rssBefore,
       },
-      storageBytes: {
-        database: fileSize(databasePath),
-        wal: fileSize(`${databasePath}-wal`),
+      auditScan: {
+        pageSize: 1_000,
+        elapsedMs: auditScanMs,
+        aggregateCount,
+        outputCount,
       },
+      storageBytes,
       maxCheckpointBytes,
+      performanceBudget: budget,
     };
     context.diagnostic(`PEAS SQLite scale metrics: ${JSON.stringify(metrics)}`);
     const metricsPath = process.env["PEAS_SCALE_METRICS_PATH"];

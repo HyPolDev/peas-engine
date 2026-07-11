@@ -8,6 +8,13 @@ This repository intentionally stops at the kernel boundary. HTTP ingestion, Expr
 market-data providers, analysis workers, and brokerage integrations belong in adapters and vertical
 slices built on these contracts.
 
+## Release status
+
+`v0.2.0-kernel-rc.1` is immutable historical audit evidence. Its post-audit decision is
+`CONDITIONAL GO`, not a frozen-kernel release: two persistence/manifest trust-boundary fixes and a
+fresh same-SHA RC.2 evidence set are required before merge. See the
+[RC.1 post-audit disposition](docs/audit/kernel-v2-rc1-disposition.md).
+
 ## Requirements
 
 - Node.js 24.17.0, pinned by `.node-version`
@@ -134,6 +141,14 @@ SQLite is the first durable single-writer implementation. Read projections and e
 independently. When multi-node processing requires more write concurrency, a PostgreSQL adapter can
 implement the existing asynchronous ports, but it must preserve envelope bytes, run manifests,
 transaction boundaries, output identities, fencing behavior, and replay hashes.
+
+The SQLite adapter uses synchronous `better-sqlite3` calls despite the asynchronous port shape. A
+live deployment therefore requires a dedicated single writer, bounded batches, a bounded queue,
+and backpressure. The sparse 100k gate is durability evidence, not proof of dense or end-to-end
+pipeline capacity. `snapshot()` intentionally materializes a complete audit and is not the
+production large-run read API. Because immutable output storage grows approximately with
+`events x retained runs`, large research sweeps require database rotation, verified archives, and a
+retention policy.
 
 See [ADR 0001](docs/adr/0001-deterministic-kernel.md),
 [ADR 0002](docs/adr/0002-storage-and-scaling.md), and

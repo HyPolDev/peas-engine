@@ -15,9 +15,10 @@ import {
   type EventPage,
   type StoredEvent,
   validateEventDraft,
+  validateStoredEventJson,
   verifyStoredEvent,
 } from "../../core/event.js";
-import { assertJson, canonicalJson, cloneJson, type JsonValue } from "../../core/json.js";
+import { canonicalJson, cloneJson, type JsonValue } from "../../core/json.js";
 
 type EventRow = {
   position: bigint;
@@ -43,9 +44,7 @@ const EVENT_COLUMNS = `position, event_id, provider_key, provider, provider_reco
   received_at_ms, logical_at_ms, event_json, content_hash, previous_event_hash, event_hash`;
 
 function parseStoredEvent(serialized: string): StoredEvent {
-  const value: unknown = JSON.parse(serialized);
-  assertJson(value);
-  const event = value as StoredEvent;
+  const event = validateStoredEventJson(serialized);
   verifyStoredEvent(event);
   return event;
 }

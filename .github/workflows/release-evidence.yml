@@ -71,6 +71,9 @@ jobs:
         run: npm run reconcile:evidence -- audit-input
         env:
           PEAS_RELEASE_MANIFEST_PATH: release-manifest-${{ env.PEAS_CANDIDATE_SHA }}.json
+          PEAS_EXPECTED_REPOSITORY: ${{ github.repository }}
+          PEAS_EXPECTED_CI_RUN_ID: ${{ inputs.ci_run_id }}
+          PEAS_EXPECTED_100K_RUN_ID: ${{ inputs.nightly_run_id }}
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: peas-release-manifest-${{ env.PEAS_CANDIDATE_SHA }}

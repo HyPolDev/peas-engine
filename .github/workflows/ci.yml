@@ -45,7 +45,11 @@ jobs:
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: peas-${{ matrix.gate }}-${{ env.PEAS_CANDIDATE_SHA }}
-          path: audit-evidence-${{ matrix.gate }}-${{ env.PEAS_CANDIDATE_SHA }}.json
+          path: |
+            audit-evidence-${{ matrix.gate }}-${{ env.PEAS_CANDIDATE_SHA }}.json
+            audit-test-results.json
+            audit-mutation-results.json
+          if-no-files-found: error
           retention-days: 90
 
   scale-10k:
@@ -123,6 +127,8 @@ jobs:
           path: |
             scale-metrics-*.json
             audit-evidence-scale-100k-${{ env.PEAS_CANDIDATE_SHA }}.json
+            audit-test-results.json
+            audit-mutation-results.json
           if-no-files-found: error
           retention-days: 90
 
@@ -152,6 +158,9 @@ jobs:
       - run: npm run reconcile:evidence -- audit-input
         env:
           PEAS_RELEASE_MANIFEST_PATH: release-manifest-${{ env.PEAS_CANDIDATE_SHA }}.json
+          PEAS_EXPECTED_REPOSITORY: ${{ github.repository }}
+          PEAS_EXPECTED_CI_RUN_ID: ${{ github.run_id }}
+          PEAS_EXPECTED_100K_RUN_ID: ${{ github.run_id }}
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: peas-release-manifest-${{ env.PEAS_CANDIDATE_SHA }}

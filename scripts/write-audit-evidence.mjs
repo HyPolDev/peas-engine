@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 
 function git(...args) {
   return execFileSync("git", args, { encoding: "utf8", windowsHide: true }).trim();
@@ -42,9 +42,13 @@ const npmUserAgent = process.env.npm_config_user_agent ?? "unknown";
 const goldenPath = "fixtures/earnings-cluster.v2.golden.json";
 const capturePath = "fixtures/earnings-cluster.v2.captured.ndjson";
 const packageLockPath = "package-lock.json";
+const scalePolicyPath = "config/scale-policy.v1.json";
 const goldenBytes = readFileSync(goldenPath);
 const captureBytes = readFileSync(capturePath);
 const packageLockBytes = readFileSync(packageLockPath);
+const scalePolicyBytes = readFileSync(scalePolicyPath);
+const scalePolicy = JSON.parse(scalePolicyBytes.toString("utf8"));
+if (scalePolicy.policyVersion !== 1) throw new Error("Unsupported scale policy version");
 const golden = JSON.parse(goldenBytes.toString("utf8"));
 const npmVersion = npmUserAgent.match(/^npm\/([^\s]+)/u)?.[1] ?? "unknown";
 if (process.env.CI === "true" && npmVersion === "unknown") {
@@ -182,6 +186,9 @@ const evidence = {
   sourceInputs: {
     packageLockPath,
     packageLockSha256: sha256(packageLockBytes),
+    scalePolicyPath,
+    scalePolicySha256: sha256(scalePolicyBytes),
+    scalePolicyVersion: scalePolicy.policyVersion,
   },
   checkResults,
   scaleMetrics,

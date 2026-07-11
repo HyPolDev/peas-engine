@@ -1,11 +1,18 @@
+import { z } from "zod";
+
 import type { EventLog, StoredEvent } from "./event.js";
-import { verifyStoredEvent } from "./event.js";
+import { validateStoredEvent, verifyStoredEvent } from "./event.js";
 import { canonicalHash, hashParts } from "./hash.js";
 import {
   assertJson,
+  assertJsonWithinLimits,
+  assertSchemaPrototypeSafety,
   canonicalJson,
   cloneJson,
   deepFreezeJson,
+  inertJsonSnapshot,
+  parseJsonWithinLimits,
+  type JsonLimits,
   type JsonObject,
   type JsonValue,
 } from "./json.js";
@@ -172,6 +179,497 @@ export interface ProcessingStore<TState extends JsonObject> {
 
 const runKinds = new Set<RunKind>(["live", "replay", "shadow", "research", "paper"]);
 
+const hashSchema = z.string().regex(/^[0-9a-f]{64}$/u);
+const nonEmptyStringSchema = z.string().min(1).max(512);
+const jsonObjectSchema = z.custom<JsonObject>(
+  (value) =>
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === null,
+  "Expected an inert JSON object",
+);
+const runIdentitiesSchema = z
+  .object({
+    extractorVersion: z.string().min(1, "Extractor version cannot be empty").max(512),
+    featureSetId: nonEmptyStringSchema.nullable(),
+    modelId: nonEmptyStringSchema.nullable(),
+    promptId: nonEmptyStringSchema.nullable(),
+    datasetId: nonEmptyStringSchema.nullable(),
+  })
+  .strict();
+const runBehaviorSchema = z
+  .object({
+    reducerName: nonEmptyStringSchema,
+    reducerVersion: nonEmptyStringSchema,
+    buildDigest: hashSchema,
+    schemaRegistryDigest: hashSchema,
+    configuration: jsonObjectSchema,
+    identities: runIdentitiesSchema,
+  })
+  .strict();
+const runManifestV2Schema = z
+  .object({
+    manifestVersion: z.literal(2),
+    runId: nonEmptyStringSchema,
+    kind: z.enum(["live", "replay", "shadow", "research", "paper"]),
+    effectsAllowed: z.boolean(),
+    canonicalizationVersion: z.literal("peas-json-v1"),
+    behavior: runBehaviorSchema,
+  })
+  .strict();
+const runRegistrationSchema = z
+  .object({
+    manifest: z.unknown(),
+    manifestHash: hashSchema,
+    behaviorHash: hashSchema,
+  })
+  .strict();
+const safeNonnegativeIntegerSchema = z.number().int().nonnegative().safe();
+const positiveDecimalSchema = z.string().regex(/^[1-9]\d*$/u);
+const nonnegativeDecimalSchema = z.string().regex(/^(?:0|[1-9]\d*)$/u);
+const aggregateIdSchema = z
+  .string()
+  .min(1)
+  .max(512)
+  .regex(/^[A-Za-z0-9._:-]+$/u, "Aggregate ID must use the portable ASCII identifier alphabet");
+const decisionBodySchema = z
+  .object({
+    type: nonEmptyStringSchema,
+    payload: jsonObjectSchema,
+  })
+  .strict();
+const jobBodySchema = z
+  .object({
+    jobId: hashSchema,
+    type: nonEmptyStringSchema,
+    dedupeKey: nonEmptyStringSchema,
+    notBeforeLogicalMs: safeNonnegativeIntegerSchema,
+    inputBundleHash: hashSchema,
+    payload: jsonObjectSchema,
+  })
+  .strict();
+const outboxBodySchema = z
+  .object({
+    messageId: hashSchema,
+    topic: nonEmptyStringSchema,
+    dedupeKey: nonEmptyStringSchema,
+    payload: jsonObjectSchema,
+  })
+  .strict();
+const outputCommonShape = {
+  outputId: hashSchema,
+  runId: nonEmptyStringSchema,
+  inputEventId: hashSchema,
+  inputPosition: positiveDecimalSchema,
+  aggregateId: aggregateIdSchema,
+  ordinal: safeNonnegativeIntegerSchema,
+  bodyHash: hashSchema,
+} as const;
+const decisionOutputSchema = z
+  .object({
+    ...outputCommonShape,
+    category: z.literal("decision"),
+    dedupeKey: z.null(),
+    notBeforeLogicalMs: z.null(),
+    body: decisionBodySchema,
+  })
+  .strict();
+const jobOutputSchema = z
+  .object({
+    ...outputCommonShape,
+    category: z.literal("job"),
+    dedupeKey: nonEmptyStringSchema,
+    notBeforeLogicalMs: safeNonnegativeIntegerSchema,
+    body: jobBodySchema,
+  })
+  .strict();
+const outboxOutputSchema = z
+  .object({
+    ...outputCommonShape,
+    category: z.literal("outbox"),
+    dedupeKey: nonEmptyStringSchema,
+    notBeforeLogicalMs: z.null(),
+    body: outboxBodySchema,
+  })
+  .strict();
+const immutableOutputSchema = z.discriminatedUnion("category", [
+  decisionOutputSchema,
+  jobOutputSchema,
+  outboxOutputSchema,
+]);
+const storedOutputSchema = z.discriminatedUnion("category", [
+  decisionOutputSchema.extend({ sequence: positiveDecimalSchema }).strict(),
+  jobOutputSchema.extend({ sequence: positiveDecimalSchema }).strict(),
+  outboxOutputSchema.extend({ sequence: positiveDecimalSchema }).strict(),
+]);
+const runCursorSchema = z
+  .object({
+    runId: nonEmptyStringSchema,
+    manifestHash: hashSchema,
+    behaviorHash: hashSchema,
+    processedPosition: nonnegativeDecimalSchema,
+    logicalAtMs: safeNonnegativeIntegerSchema,
+    lastEventHash: hashSchema,
+    stateHead: hashSchema,
+    decisionHead: hashSchema,
+    cursorHash: hashSchema,
+  })
+  .strict();
+const aggregateCheckpointSchema = z
+  .object({
+    runId: nonEmptyStringSchema,
+    aggregateId: aggregateIdSchema,
+    version: nonnegativeDecimalSchema,
+    lastInputPosition: nonnegativeDecimalSchema,
+    state: jsonObjectSchema,
+    stateHash: hashSchema,
+    checkpointHash: hashSchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if ((value.version === "0") !== (value.lastInputPosition === "0")) {
+      context.addIssue({
+        code: "custom",
+        path: ["version"],
+        message: "Aggregate checkpoint must be exact 0/0 genesis or positive/positive",
+      });
+    }
+  });
+const committedAggregateCheckpointSchema = aggregateCheckpointSchema
+  .safeExtend({
+    version: positiveDecimalSchema,
+    lastInputPosition: positiveDecimalSchema,
+  })
+  .strict();
+const processingCommitSchema = z
+  .object({
+    expectedPosition: nonnegativeDecimalSchema,
+    event: z.unknown(),
+    cursor: runCursorSchema,
+    aggregate: committedAggregateCheckpointSchema,
+    outputs: z.array(immutableOutputSchema).max(100_000),
+  })
+  .strict();
+const PROCESSOR_SCHEMA_FIELDS = Object.freeze([
+  "extractorVersion",
+  "featureSetId",
+  "modelId",
+  "promptId",
+  "datasetId",
+  "reducerName",
+  "reducerVersion",
+  "buildDigest",
+  "schemaRegistryDigest",
+  "configuration",
+  "identities",
+  "manifestVersion",
+  "runId",
+  "kind",
+  "effectsAllowed",
+  "canonicalizationVersion",
+  "behavior",
+  "manifest",
+  "manifestHash",
+  "behaviorHash",
+  "type",
+  "payload",
+  "jobId",
+  "dedupeKey",
+  "notBeforeLogicalMs",
+  "inputBundleHash",
+  "messageId",
+  "topic",
+  "outputId",
+  "inputEventId",
+  "inputPosition",
+  "aggregateId",
+  "ordinal",
+  "bodyHash",
+  "category",
+  "body",
+  "sequence",
+  "processedPosition",
+  "logicalAtMs",
+  "lastEventHash",
+  "stateHead",
+  "decisionHead",
+  "cursorHash",
+  "version",
+  "lastInputPosition",
+  "state",
+  "stateHash",
+  "checkpointHash",
+  "expectedPosition",
+  "event",
+  "cursor",
+  "aggregate",
+  "outputs",
+]);
+
+function processorSchemaSnapshot(value: unknown): JsonValue {
+  assertSchemaPrototypeSafety(PROCESSOR_SCHEMA_FIELDS);
+  return inertJsonSnapshot(value as JsonValue);
+}
+const RUN_CONFIGURATION_LIMITS = Object.freeze({
+  maxDepth: 32,
+  maxNodes: 50_000,
+  maxArrayLength: 10_000,
+  maxObjectKeys: 10_000,
+  maxStringBytes: 1_048_576,
+  maxCanonicalBytes: 1_048_576,
+}) satisfies JsonLimits;
+const RUN_MANIFEST_LIMITS = Object.freeze({
+  maxDepth: RUN_CONFIGURATION_LIMITS.maxDepth + 2,
+  maxNodes: RUN_CONFIGURATION_LIMITS.maxNodes + 64,
+  maxArrayLength: RUN_CONFIGURATION_LIMITS.maxArrayLength,
+  maxObjectKeys: RUN_CONFIGURATION_LIMITS.maxObjectKeys,
+  maxStringBytes: RUN_CONFIGURATION_LIMITS.maxStringBytes,
+  maxCanonicalBytes: RUN_CONFIGURATION_LIMITS.maxCanonicalBytes + 16_384,
+}) satisfies JsonLimits;
+export const RUN_MANIFEST_SERIALIZED_LIMIT_BYTES = RUN_MANIFEST_LIMITS.maxCanonicalBytes;
+const RUN_REGISTRATION_LIMITS = Object.freeze({
+  ...RUN_MANIFEST_LIMITS,
+  maxDepth: RUN_CONFIGURATION_LIMITS.maxDepth + 3,
+  maxNodes: RUN_CONFIGURATION_LIMITS.maxNodes + 72,
+  maxCanonicalBytes: RUN_CONFIGURATION_LIMITS.maxCanonicalBytes + 17_408,
+}) satisfies JsonLimits;
+
+/** Shared write/read budget for persisted aggregate state and processing-output bodies. */
+export const PERSISTED_PROCESSING_JSON_LIMITS = Object.freeze({
+  maxDepth: 64,
+  maxNodes: 500_000,
+  maxArrayLength: 100_000,
+  maxObjectKeys: 100_000,
+  maxStringBytes: 4 * 1_048_576,
+  maxCanonicalBytes: 16 * 1_048_576,
+}) satisfies JsonLimits;
+const PERSISTED_PROCESSING_COMMIT_LIMITS = Object.freeze({
+  maxDepth: PERSISTED_PROCESSING_JSON_LIMITS.maxDepth + 3,
+  maxNodes: 1_000_000,
+  maxArrayLength: PERSISTED_PROCESSING_JSON_LIMITS.maxArrayLength,
+  maxObjectKeys: PERSISTED_PROCESSING_JSON_LIMITS.maxObjectKeys,
+  maxStringBytes: PERSISTED_PROCESSING_JSON_LIMITS.maxStringBytes,
+  maxCanonicalBytes: 64 * 1_048_576,
+}) satisfies JsonLimits;
+
+function snapshotRunManifestWithinLimits(value: unknown): JsonValue {
+  assertJsonWithinLimits(value, RUN_MANIFEST_LIMITS, "$.manifest");
+  const snapshot = processorSchemaSnapshot(value);
+  if (snapshot === null || typeof snapshot !== "object" || Array.isArray(snapshot)) return snapshot;
+  const behavior = (snapshot as Record<string, unknown>)["behavior"];
+  if (behavior === null || typeof behavior !== "object" || Array.isArray(behavior)) return snapshot;
+  if (!Object.hasOwn(behavior, "configuration")) return snapshot;
+  assertJsonWithinLimits(
+    (behavior as Record<string, unknown>)["configuration"],
+    RUN_CONFIGURATION_LIMITS,
+    "$.behavior.configuration",
+  );
+  return snapshot;
+}
+
+/** Strictly validates the complete supported run-manifest contract at runtime. */
+export function validateRunManifest<TConfig extends JsonObject = JsonObject>(
+  value: unknown,
+): RunManifest<TConfig> {
+  const snapshot = snapshotRunManifestWithinLimits(value);
+  const parsed = runManifestV2Schema.parse(snapshot);
+  assertJsonWithinLimits(
+    parsed.behavior.configuration,
+    RUN_CONFIGURATION_LIMITS,
+    "$.behavior.configuration",
+  );
+  assertJson(parsed);
+  return cloneJson(parsed as unknown as JsonValue) as RunManifest<TConfig>;
+}
+
+export function validateRunManifestJson<TConfig extends JsonObject = JsonObject>(
+  serialized: string,
+): RunManifest<TConfig> {
+  return validateRunManifest<TConfig>(
+    parseJsonWithinLimits(serialized, RUN_MANIFEST_LIMITS, "$.manifest"),
+  );
+}
+
+/** Derives, rather than accepts, the immutable identity hashes for a valid V2 manifest. */
+export function deriveRunRegistration<TConfig extends JsonObject = JsonObject>(
+  value: unknown,
+): RunRegistration<TConfig> {
+  const manifest = validateRunManifest<TConfig>(value);
+  assertRunEffectPolicy(manifest);
+  return {
+    manifest,
+    manifestHash: canonicalHash("peas/run-manifest/v2", manifest),
+    behaviorHash: canonicalHash("peas/run-behavior/v2", manifest.behavior),
+  };
+}
+
+/** Recomputes and verifies caller-supplied registration hashes at a persistence boundary. */
+export function validateRunRegistration<TConfig extends JsonObject = JsonObject>(
+  value: unknown,
+): RunRegistration<TConfig> {
+  assertJsonWithinLimits(value, RUN_REGISTRATION_LIMITS, "$.registration");
+  const parsed = runRegistrationSchema.parse(processorSchemaSnapshot(value));
+  const derived = deriveRunRegistration<TConfig>(parsed.manifest);
+  if (parsed.manifestHash !== derived.manifestHash) {
+    throw new Error("Run manifest hash mismatch");
+  }
+  if (parsed.behaviorHash !== derived.behaviorHash) {
+    throw new Error("Run behavior hash mismatch");
+  }
+  return derived;
+}
+
+/** Rejects active or pathologically large commit envelopes before adapters inspect any field. */
+export function assertProcessingCommitEnvelope(value: unknown): void {
+  assertJsonWithinLimits(value, PERSISTED_PROCESSING_COMMIT_LIMITS, "$.processingCommit");
+}
+
+export function validateAggregateId(value: unknown): string {
+  return aggregateIdSchema.parse(value);
+}
+
+export function validateRunCursor(value: unknown): RunCursor {
+  assertJsonWithinLimits(value, PERSISTED_PROCESSING_JSON_LIMITS, "$.runCursor");
+  const parsed = runCursorSchema.parse(processorSchemaSnapshot(value));
+  return cloneJson(parsed as unknown as JsonValue) as RunCursor;
+}
+
+export function validateAggregateCheckpoint<TState extends JsonObject = JsonObject>(
+  value: unknown,
+): AggregateCheckpoint<TState> {
+  assertJsonWithinLimits(value, PERSISTED_PROCESSING_JSON_LIMITS, "$.aggregateCheckpoint");
+  const parsed = aggregateCheckpointSchema.parse(processorSchemaSnapshot(value));
+  return cloneJson(parsed as unknown as JsonValue) as AggregateCheckpoint<TState>;
+}
+
+export function validateCommittedAggregateCheckpoint<TState extends JsonObject = JsonObject>(
+  value: unknown,
+): AggregateCheckpoint<TState> {
+  assertJsonWithinLimits(value, PERSISTED_PROCESSING_JSON_LIMITS, "$.aggregateCheckpoint");
+  const parsed = committedAggregateCheckpointSchema.parse(processorSchemaSnapshot(value));
+  return cloneJson(parsed as unknown as JsonValue) as AggregateCheckpoint<TState>;
+}
+
+export type StoredOutputBodyMetadata = Readonly<{
+  runId: string;
+  dedupeKey: string | null;
+  notBeforeLogicalMs: number | null;
+}>;
+
+/** Strict category-specific body validation shared by commits, audit reads, and claims. */
+export function validateStoredOutputBody(
+  category: OutputCategory,
+  value: unknown,
+  metadata: StoredOutputBodyMetadata,
+): JsonObject {
+  assertJsonWithinLimits(value, PERSISTED_PROCESSING_JSON_LIMITS, `$.output.${category}.body`);
+  nonEmptyStringSchema.parse(metadata.runId);
+  if (category === "decision") {
+    if (metadata.dedupeKey !== null || metadata.notBeforeLogicalMs !== null) {
+      throw new Error("Decision output has operational delivery metadata");
+    }
+    const body = decisionBodySchema.parse(processorSchemaSnapshot(value));
+    return cloneJson(body as unknown as JsonValue) as JsonObject;
+  }
+  if (category === "job") {
+    if (metadata.dedupeKey === null || metadata.notBeforeLogicalMs === null) {
+      throw new Error("Job output requires dedupe and scheduling metadata");
+    }
+    const body = jobBodySchema.parse(processorSchemaSnapshot(value));
+    if (body.dedupeKey !== metadata.dedupeKey) {
+      throw new Error("Output dedupe metadata mismatch");
+    }
+    if (body.notBeforeLogicalMs !== metadata.notBeforeLogicalMs) {
+      throw new Error("Job not-before metadata mismatch");
+    }
+    if (
+      body.jobId !==
+      deriveJobId(metadata.runId, body.dedupeKey, body.payload as unknown as JsonObject)
+    ) {
+      throw new Error("Job ID integrity mismatch");
+    }
+    return cloneJson(body as unknown as JsonValue) as JsonObject;
+  }
+  if (category !== "outbox") {
+    throw new TypeError(`Unsupported output category ${String(category)}`);
+  }
+  if (metadata.dedupeKey === null || metadata.notBeforeLogicalMs !== null) {
+    throw new Error("Outbox output delivery metadata mismatch");
+  }
+  const body = outboxBodySchema.parse(processorSchemaSnapshot(value));
+  if (body.dedupeKey !== metadata.dedupeKey) {
+    throw new Error("Output dedupe metadata mismatch");
+  }
+  if (
+    body.messageId !==
+    deriveMessageId(metadata.runId, body.dedupeKey, body.payload as unknown as JsonObject)
+  ) {
+    throw new Error("Message ID integrity mismatch");
+  }
+  return cloneJson(body as unknown as JsonValue) as JsonObject;
+}
+
+export function validateImmutableOutput(value: unknown): ImmutableOutput {
+  assertJsonWithinLimits(value, PERSISTED_PROCESSING_JSON_LIMITS, "$.immutableOutput");
+  const parsed = immutableOutputSchema.parse(processorSchemaSnapshot(value));
+  const body = validateStoredOutputBody(parsed.category, parsed.body, {
+    runId: parsed.runId,
+    dedupeKey: parsed.dedupeKey,
+    notBeforeLogicalMs: parsed.notBeforeLogicalMs,
+  });
+  return cloneJson({ ...parsed, body } as unknown as JsonValue) as ImmutableOutput;
+}
+
+export function validateStoredOutput(value: unknown): StoredOutput {
+  assertJsonWithinLimits(value, PERSISTED_PROCESSING_JSON_LIMITS, "$.storedOutput");
+  const parsed = storedOutputSchema.parse(processorSchemaSnapshot(value));
+  const body = validateStoredOutputBody(parsed.category, parsed.body, {
+    runId: parsed.runId,
+    dedupeKey: parsed.dedupeKey,
+    notBeforeLogicalMs: parsed.notBeforeLogicalMs,
+  });
+  return cloneJson({ ...parsed, body } as unknown as JsonValue) as StoredOutput;
+}
+
+/** Creates the only canonical snapshot that may be verified and persisted by a store. */
+export function validateProcessingCommit<TState extends JsonObject = JsonObject>(
+  value: unknown,
+): ProcessingCommit<TState> {
+  assertProcessingCommitEnvelope(value);
+  const schemaValue = processorSchemaSnapshot(value);
+  if (schemaValue !== null && typeof schemaValue === "object" && !Array.isArray(schemaValue)) {
+    const candidates = (schemaValue as Record<string, unknown>)["outputs"];
+    if (Array.isArray(candidates)) {
+      for (const candidate of candidates) {
+        if (candidate !== null && typeof candidate === "object" && !Array.isArray(candidate)) {
+          const category = (candidate as Record<string, unknown>)["category"];
+          if (category !== "decision" && category !== "job" && category !== "outbox") {
+            throw new TypeError(`Unsupported output category ${String(category)}`);
+          }
+        }
+      }
+    }
+  }
+  const parsed = processingCommitSchema.parse(schemaValue);
+  const snapshot = {
+    expectedPosition: parsed.expectedPosition,
+    event: validateStoredEvent(parsed.event),
+    cursor: validateRunCursor(parsed.cursor),
+    aggregate: validateAggregateCheckpoint<TState>(parsed.aggregate),
+    outputs: parsed.outputs.map((output) => validateImmutableOutput(output)),
+  } satisfies ProcessingCommit<TState>;
+  return cloneJson(snapshot as unknown as JsonValue) as ProcessingCommit<TState>;
+}
+
+export function computeOutputDedupeIdentity(
+  runId: string,
+  category: Exclude<OutputCategory, "decision">,
+  dedupeKey: string,
+): string {
+  return canonicalHash("peas/output-dedupe-identity/v2", { runId, category, dedupeKey });
+}
+
 export function assertRunEffectPolicy(manifest: RunManifest): void {
   if (!runKinds.has(manifest.kind)) throw new TypeError(`Unsupported run kind ${manifest.kind}`);
   if (typeof manifest.effectsAllowed !== "boolean") {
@@ -199,7 +697,16 @@ export function deriveMessageId(runId: string, dedupeKey: string, payload: JsonO
 }
 
 export function computeRunCursorHash(cursor: Omit<RunCursor, "cursorHash">): string {
-  return canonicalHash("peas/run-cursor/v2", cursor);
+  return canonicalHash("peas/run-cursor/v2", {
+    runId: cursor.runId,
+    manifestHash: cursor.manifestHash,
+    behaviorHash: cursor.behaviorHash,
+    processedPosition: cursor.processedPosition,
+    logicalAtMs: cursor.logicalAtMs,
+    lastEventHash: cursor.lastEventHash,
+    stateHead: cursor.stateHead,
+    decisionHead: cursor.decisionHead,
+  });
 }
 
 export function computeAggregateCheckpointHash<TState extends JsonObject>(
@@ -212,6 +719,20 @@ export function computeAggregateCheckpointHash<TState extends JsonObject>(
     lastInputPosition: checkpoint.lastInputPosition,
     stateHash: checkpoint.stateHash,
   });
+}
+
+export function createGenesisRunCursor(registration: RunRegistration): RunCursor {
+  const withoutHash = {
+    runId: registration.manifest.runId,
+    manifestHash: registration.manifestHash,
+    behaviorHash: registration.behaviorHash,
+    processedPosition: "0",
+    logicalAtMs: 0,
+    lastEventHash: "0".repeat(64),
+    stateHead: hashParts("peas/state-head/genesis/v2", registration.behaviorHash),
+    decisionHead: hashParts("peas/decision-head/genesis/v2", registration.behaviorHash),
+  } satisfies Omit<RunCursor, "cursorHash">;
+  return { ...withoutHash, cursorHash: computeRunCursorHash(withoutHash) };
 }
 
 function requiredObject(value: JsonValue | undefined, label: string): JsonObject {
@@ -231,7 +752,9 @@ function requiredString(value: JsonValue | undefined, label: string): string {
 export function verifyProcessingCommit<TState extends JsonObject>(
   value: ProcessingCommit<TState>,
   registration: RunRegistration,
-): void {
+): ProcessingCommit<TState> {
+  value = validateProcessingCommit<TState>(value);
+  verifyStoredEvent(value.event);
   const { cursorHash, ...cursorWithoutHash } = value.cursor;
   if (cursorHash !== computeRunCursorHash(cursorWithoutHash)) {
     throw new Error("Run cursor hash mismatch in commit");
@@ -261,6 +784,16 @@ export function verifyProcessingCommit<TState extends JsonObject>(
   ) {
     throw new Error("Aggregate checkpoint does not match its input event or run");
   }
+  requiredString(value.aggregate.aggregateId, "Aggregate ID");
+  if (typeof value.aggregate.version !== "string" || !/^[1-9]\d*$/u.test(value.aggregate.version)) {
+    throw new TypeError("Aggregate version must be a canonical positive decimal integer");
+  }
+  requiredObject(value.aggregate.state, "Aggregate state");
+  assertJsonWithinLimits(
+    value.aggregate.state,
+    PERSISTED_PROCESSING_JSON_LIMITS,
+    "$.aggregate.state",
+  );
   const expectedStateHash = canonicalHash(
     `peas/state/${registration.manifest.behavior.reducerName}/${registration.manifest.behavior.reducerVersion}`,
     value.aggregate.state,
@@ -269,7 +802,46 @@ export function verifyProcessingCommit<TState extends JsonObject>(
     throw new Error("Aggregate state hash mismatch in commit");
   }
 
+  if (!Array.isArray(value.outputs)) throw new TypeError("Commit outputs must be an array");
+  const categoryRanks = new Map<OutputCategory, number>([
+    ["decision", 0],
+    ["job", 1],
+    ["outbox", 2],
+  ]);
+  const nextOrdinals = [0, 0, 0];
+  const outputIds = new Set<string>();
+  const dedupeIdentities = new Set<string>();
+  let previousCategoryRank = -1;
+
   for (const output of value.outputs) {
+    if (
+      output.category !== "decision" &&
+      output.category !== "job" &&
+      output.category !== "outbox"
+    ) {
+      throw new TypeError(`Unsupported output category ${String(output.category)}`);
+    }
+    const categoryRank = categoryRanks.get(output.category);
+    if (categoryRank === undefined) throw new TypeError("Unsupported output category");
+    if (!Number.isSafeInteger(output.ordinal) || output.ordinal < 0) {
+      throw new RangeError("Output ordinal must be a non-negative safe integer");
+    }
+    if (categoryRank < previousCategoryRank) {
+      throw new Error("Outputs are not in canonical decision, job, outbox category order");
+    }
+    previousCategoryRank = categoryRank;
+    if (outputIds.has(output.outputId)) {
+      throw new Error(`Duplicate output ID ${output.outputId} in commit`);
+    }
+    outputIds.add(output.outputId);
+    const expectedOrdinal = nextOrdinals[categoryRank];
+    if (expectedOrdinal === undefined || output.ordinal !== expectedOrdinal) {
+      throw new Error(
+        `Non-contiguous ${output.category} output ordinal: expected ${String(expectedOrdinal)}, received ${output.ordinal}`,
+      );
+    }
+    nextOrdinals[categoryRank] = expectedOrdinal + 1;
+
     if (
       output.runId !== value.cursor.runId ||
       output.inputEventId !== value.event.eventId ||
@@ -278,6 +850,12 @@ export function verifyProcessingCommit<TState extends JsonObject>(
     ) {
       throw new Error("Output metadata does not match its input event, aggregate, or run");
     }
+    requiredObject(output.body, "Output body");
+    assertJsonWithinLimits(
+      output.body,
+      PERSISTED_PROCESSING_JSON_LIMITS,
+      `$.outputs[${output.category}:${output.ordinal}].body`,
+    );
     const expectedBodyHash = canonicalHash(`peas/output-body/${output.category}/v2`, output.body);
     if (output.bodyHash !== expectedBodyHash) throw new Error("Output body hash mismatch");
     const expectedOutputId = canonicalHash("peas/output-id/v2", {
@@ -291,40 +869,104 @@ export function verifyProcessingCommit<TState extends JsonObject>(
     });
     if (output.outputId !== expectedOutputId) throw new Error("Output ID integrity mismatch");
 
-    const payload = requiredObject(output.body["payload"], "Output payload");
+    const body = validateStoredOutputBody(output.category, output.body, {
+      runId: output.runId,
+      dedupeKey: output.dedupeKey,
+      notBeforeLogicalMs: output.notBeforeLogicalMs,
+    });
     if (output.category === "decision") {
-      requiredString(output.body["type"], "Decision type");
-      if (output.dedupeKey !== null || output.notBeforeLogicalMs !== null) {
-        throw new Error("Decision output has operational delivery metadata");
-      }
       continue;
     }
-    const bodyDedupeKey = requiredString(output.body["dedupeKey"], "Output dedupe key");
-    if (bodyDedupeKey !== output.dedupeKey) throw new Error("Output dedupe metadata mismatch");
+    const bodyDedupeKey = requiredString(body["dedupeKey"], "Output dedupe key");
+    const dedupeIdentity = computeOutputDedupeIdentity(
+      output.runId,
+      output.category,
+      bodyDedupeKey,
+    );
+    if (dedupeIdentities.has(dedupeIdentity)) {
+      throw new Error(`Duplicate ${output.category} dedupe key in commit`);
+    }
+    dedupeIdentities.add(dedupeIdentity);
     if (output.category === "job") {
-      requiredString(output.body["type"], "Job type");
-      const bodyJobId = requiredString(output.body["jobId"], "Job ID");
-      if (bodyJobId !== deriveJobId(output.runId, bodyDedupeKey, payload)) {
-        throw new Error("Job ID integrity mismatch");
-      }
-      if (output.body["notBeforeLogicalMs"] !== output.notBeforeLogicalMs) {
-        throw new Error("Job not-before metadata mismatch");
-      }
-      assertHash(
-        requiredString(output.body["inputBundleHash"], "Input bundle hash"),
-        "Input bundle hash",
-      );
+      requiredString(body["jobId"], "Job ID");
+      requiredString(body["type"], "Job type");
+      requiredString(body["inputBundleHash"], "Input bundle hash");
       continue;
     }
-    requiredString(output.body["topic"], "Outbox topic");
-    const bodyMessageId = requiredString(output.body["messageId"], "Message ID");
-    if (bodyMessageId !== deriveMessageId(output.runId, bodyDedupeKey, payload)) {
-      throw new Error("Message ID integrity mismatch");
-    }
-    if (output.notBeforeLogicalMs !== null) {
-      throw new Error("Outbox output has unexpected not-before metadata");
+    requiredString(body["topic"], "Outbox topic");
+    requiredString(body["messageId"], "Message ID");
+  }
+  return value;
+}
+
+/** Binds a commit to the complete cursor that immediately precedes it. */
+export function verifyProcessingTransition<TState extends JsonObject>(
+  value: ProcessingCommit<TState>,
+  registration: RunRegistration,
+  previous: RunCursor,
+): ProcessingCommit<TState> {
+  value = verifyProcessingCommit(value, registration);
+  previous = validateRunCursor(previous);
+
+  const { cursorHash: previousCursorHash, ...previousWithoutHash } = previous;
+  if (previousCursorHash !== computeRunCursorHash(previousWithoutHash)) {
+    throw new Error("Prior run cursor hash mismatch in commit");
+  }
+  if (
+    previous.runId !== registration.manifest.runId ||
+    previous.manifestHash !== registration.manifestHash ||
+    previous.behaviorHash !== registration.behaviorHash
+  ) {
+    throw new Error("Prior cursor does not match its immutable run manifest");
+  }
+  if (previous.processedPosition === "0") {
+    const genesis = createGenesisRunCursor(registration);
+    if (canonicalJson(previous as unknown as JsonValue) !== canonicalJson(genesis)) {
+      throw new Error("Prior cursor is not the canonical run genesis");
     }
   }
+  if (value.expectedPosition !== previous.processedPosition) {
+    throw new Error("Commit expected position does not match the prior cursor");
+  }
+  const expectedEventPosition = BigInt(previous.processedPosition) + 1n;
+  if (BigInt(value.event.position) !== expectedEventPosition) {
+    throw new Error(
+      `Non-contiguous processing position: expected ${expectedEventPosition}, received ${value.event.position}`,
+    );
+  }
+  if (value.event.previousEventHash !== previous.lastEventHash) {
+    throw new Error(`Event chain mismatch at position ${value.event.position}`);
+  }
+  if (value.event.logicalAtMs < previous.logicalAtMs) {
+    throw new Error(`Logical clock regression at event position ${value.event.position}`);
+  }
+
+  const expectedStateHead = hashParts(
+    "peas/state-head/step/v2",
+    previous.stateHead,
+    value.event.eventHash,
+    value.aggregate.aggregateId,
+    value.aggregate.stateHash,
+  );
+  if (value.cursor.stateHead !== expectedStateHead) {
+    throw new Error("Run state head is not derived from the prior cursor");
+  }
+  const semanticOutputs = value.outputs.map(({ category, ordinal, body, bodyHash }) => ({
+    category,
+    ordinal,
+    body,
+    bodyHash,
+  }));
+  const expectedDecisionHead = hashParts(
+    "peas/decision-head/step/v2",
+    previous.decisionHead,
+    value.event.eventHash,
+    canonicalJson(semanticOutputs as unknown as JsonValue),
+  );
+  if (value.cursor.decisionHead !== expectedDecisionHead) {
+    throw new Error("Run decision head is not derived from the prior cursor");
+  }
+  return value;
 }
 
 function assertNonEmpty(value: string, label: string): void {
@@ -359,6 +1001,11 @@ function outputBody(
   if (category === "decision") {
     const decision = draft as DecisionDraft;
     assertNonEmpty(decision.type, "Decision type");
+    assertJsonWithinLimits(
+      decision.payload,
+      PERSISTED_PROCESSING_JSON_LIMITS,
+      "$.decision.payload",
+    );
     return {
       body: { type: decision.type, payload: decision.payload },
       dedupeKey: null,
@@ -371,6 +1018,7 @@ function outputBody(
     assertNonEmpty(job.dedupeKey, "Job dedupe key");
     assertHash(job.inputBundleHash, "Job input bundle hash");
     assertLogicalMs(job.notBeforeLogicalMs, "Job not-before time");
+    assertJsonWithinLimits(job.payload, PERSISTED_PROCESSING_JSON_LIMITS, "$.job.payload");
     const expectedJobId = deriveJobId(runId, job.dedupeKey, job.payload);
     if (job.jobId !== expectedJobId) throw new Error(`Invalid deterministic job ID ${job.jobId}`);
     return {
@@ -390,6 +1038,7 @@ function outputBody(
   const outbox = draft as OutboxDraft;
   assertNonEmpty(outbox.topic, "Outbox topic");
   assertNonEmpty(outbox.dedupeKey, "Outbox dedupe key");
+  assertJsonWithinLimits(outbox.payload, PERSISTED_PROCESSING_JSON_LIMITS, "$.outbox.payload");
   const expectedMessageId = deriveMessageId(runId, outbox.dedupeKey, outbox.payload);
   if (outbox.messageId !== expectedMessageId) {
     throw new Error(`Invalid deterministic message ID ${outbox.messageId}`);
@@ -423,27 +1072,22 @@ export class DeterministicProcessor<TState extends JsonObject, TConfig extends J
     this.#reducer = options.reducer;
     this.#store = options.store;
     this.#eventLog = options.eventLog;
-    assertJson(options.manifest);
-    assertRunEffectPolicy(options.manifest);
-    if (options.manifest.behavior.reducerName !== options.reducer.name) {
+    const registration = deriveRunRegistration<TConfig>(options.manifest);
+    const manifest = registration.manifest;
+    if (manifest.behavior.reducerName !== options.reducer.name) {
       throw new Error("Manifest reducer name does not match the reducer");
     }
-    if (options.manifest.behavior.reducerVersion !== options.reducer.version) {
+    if (manifest.behavior.reducerVersion !== options.reducer.version) {
       throw new Error("Manifest reducer version does not match the reducer");
     }
-    assertNonEmpty(options.manifest.runId, "Run ID");
-    assertNonEmpty(options.manifest.behavior.identities.extractorVersion, "Extractor version");
-    for (const [name, identity] of Object.entries(options.manifest.behavior.identities)) {
+    assertNonEmpty(manifest.runId, "Run ID");
+    assertNonEmpty(manifest.behavior.identities.extractorVersion, "Extractor version");
+    for (const [name, identity] of Object.entries(manifest.behavior.identities)) {
       if (identity !== null) assertNonEmpty(identity, `Run identity ${name}`);
     }
-    assertHash(options.manifest.behavior.buildDigest, "Build digest");
-    assertHash(options.manifest.behavior.schemaRegistryDigest, "Schema registry digest");
-    const manifest = cloneJson(options.manifest as unknown as JsonValue) as RunManifest<TConfig>;
-    this.#registration = {
-      manifest,
-      manifestHash: canonicalHash("peas/run-manifest/v2", manifest),
-      behaviorHash: canonicalHash("peas/run-behavior/v2", manifest.behavior),
-    };
+    assertHash(manifest.behavior.buildDigest, "Build digest");
+    assertHash(manifest.behavior.schemaRegistryDigest, "Schema registry digest");
+    this.#registration = registration;
     this.#configHash = canonicalHash("peas/reducer-config/v2", manifest.behavior.configuration);
   }
 
@@ -453,10 +1097,11 @@ export class DeterministicProcessor<TState extends JsonObject, TConfig extends J
 
   async process(event: StoredEvent): Promise<RunCursor> {
     await this.#initialize();
-    const previous =
-      (await this.#store.loadCursor(this.#registration.manifest.runId)) ?? this.#genesis();
-    this.#verifyCursor(previous);
+    event = validateStoredEvent(event);
     verifyStoredEvent(event);
+    let previous =
+      (await this.#store.loadCursor(this.#registration.manifest.runId)) ?? this.#genesis();
+    previous = this.#verifyCursor(previous);
 
     const currentPosition = BigInt(event.position);
     const previousPosition = BigInt(previous.processedPosition);
@@ -476,8 +1121,7 @@ export class DeterministicProcessor<TState extends JsonObject, TConfig extends J
       throw new Error(`Logical clock regression at event position ${event.position}`);
     }
 
-    const aggregateId = this.#reducer.route(event);
-    assertNonEmpty(aggregateId, "Aggregate ID");
+    const aggregateId = validateAggregateId(this.#reducer.route(event));
     const priorAggregate =
       (await this.#store.loadAggregate(this.#registration.manifest.runId, aggregateId)) ??
       this.#aggregateGenesis(aggregateId);
@@ -492,7 +1136,14 @@ export class DeterministicProcessor<TState extends JsonObject, TConfig extends J
       config: deepFreezeJson(cloneJson(this.#registration.manifest.behavior.configuration)),
       configHash: this.#configHash,
     });
+    assertJsonWithinLimits(
+      transition.state,
+      PERSISTED_PROCESSING_JSON_LIMITS,
+      "$.aggregate.transitionState",
+    );
     const nextState = this.#reducer.parseState(transition.state);
+    requiredObject(nextState, "Aggregate state");
+    assertJsonWithinLimits(nextState, PERSISTED_PROCESSING_JSON_LIMITS, "$.aggregate.state");
     assertJson(nextState);
     const canonicalState = cloneJson(nextState);
     const stateHash = canonicalHash(
@@ -680,23 +1331,22 @@ export class DeterministicProcessor<TState extends JsonObject, TConfig extends J
   }
 
   #genesis(): RunCursor {
-    const withoutHash = {
-      runId: this.#registration.manifest.runId,
-      manifestHash: this.#registration.manifestHash,
-      behaviorHash: this.#registration.behaviorHash,
-      processedPosition: "0",
-      logicalAtMs: 0,
-      lastEventHash: "0".repeat(64),
-      stateHead: hashParts("peas/state-head/genesis/v2", this.#registration.behaviorHash),
-      decisionHead: hashParts("peas/decision-head/genesis/v2", this.#registration.behaviorHash),
-    } satisfies Omit<RunCursor, "cursorHash">;
-    return { ...withoutHash, cursorHash: computeRunCursorHash(withoutHash) };
+    return createGenesisRunCursor(this.#registration);
   }
 
   #aggregateGenesis(aggregateId: string): AggregateCheckpoint<TState> {
-    const state = this.#reducer.parseState(
-      this.#reducer.initialState(aggregateId, this.#registration.manifest.behavior.configuration),
+    const initialState = this.#reducer.initialState(
+      aggregateId,
+      this.#registration.manifest.behavior.configuration,
     );
+    assertJsonWithinLimits(
+      initialState,
+      PERSISTED_PROCESSING_JSON_LIMITS,
+      "$.aggregate.initialState",
+    );
+    const state = this.#reducer.parseState(initialState);
+    requiredObject(state, "Initial aggregate state");
+    assertJsonWithinLimits(state, PERSISTED_PROCESSING_JSON_LIMITS, "$.aggregate.initialState");
     const stateHash = canonicalHash(
       `peas/state/${this.#reducer.name}/${this.#reducer.version}`,
       state,
@@ -712,7 +1362,8 @@ export class DeterministicProcessor<TState extends JsonObject, TConfig extends J
     return { ...withoutHash, checkpointHash: computeAggregateCheckpointHash(withoutHash) };
   }
 
-  #verifyCursor(cursor: RunCursor): void {
+  #verifyCursor(cursor: RunCursor): RunCursor {
+    cursor = validateRunCursor(cursor);
     if (cursor.runId !== this.#registration.manifest.runId)
       throw new Error("Run cursor ID mismatch");
     if (cursor.manifestHash !== this.#registration.manifestHash) {
@@ -724,10 +1375,19 @@ export class DeterministicProcessor<TState extends JsonObject, TConfig extends J
     const { cursorHash, ...withoutHash } = cursor;
     if (cursorHash !== computeRunCursorHash(withoutHash))
       throw new Error("Run cursor hash mismatch");
+    return cursor;
   }
 
   #verifyAggregate(checkpoint: AggregateCheckpoint<TState>): TState {
+    checkpoint = validateAggregateCheckpoint<TState>(checkpoint);
+    assertJsonWithinLimits(
+      checkpoint.state,
+      PERSISTED_PROCESSING_JSON_LIMITS,
+      "$.aggregate.storedState",
+    );
     const state = this.#reducer.parseState(checkpoint.state);
+    requiredObject(state, "Stored aggregate state");
+    assertJsonWithinLimits(state, PERSISTED_PROCESSING_JSON_LIMITS, "$.aggregate.storedState");
     const expectedStateHash = canonicalHash(
       `peas/state/${this.#reducer.name}/${this.#reducer.version}`,
       state,
@@ -762,9 +1422,21 @@ export class DeterministicProcessor<TState extends JsonObject, TConfig extends J
         if (draft === undefined)
           throw new Error(`Missing ${category} output at ordinal ${ordinal}`);
         const materialized = outputBody(category, draft, this.#registration.manifest.runId);
+        assertJsonWithinLimits(
+          materialized.body,
+          PERSISTED_PROCESSING_JSON_LIMITS,
+          `$.outputs[${category}:${ordinal}].body`,
+        );
         assertJson(materialized.body);
         if (materialized.dedupeKey !== null) {
-          const identity = `${category}\u0000${materialized.dedupeKey}`;
+          if (category === "decision") {
+            throw new Error("Decision output cannot have a dedupe key");
+          }
+          const identity = computeOutputDedupeIdentity(
+            this.#registration.manifest.runId,
+            category,
+            materialized.dedupeKey,
+          );
           if (dedupe.has(identity))
             throw new Error(`Duplicate ${category} dedupe key in transition`);
           dedupe.add(identity);

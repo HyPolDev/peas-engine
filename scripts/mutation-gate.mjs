@@ -66,6 +66,155 @@ const mutants = [
     ],
     test: "property.test.js",
   },
+  {
+    name: "inert-own-property-enumeration",
+    file: "src/core/json.ts",
+    changes: [
+      {
+        from: "const ownKeys = Reflect.ownKeys(value);",
+        to: "const ownKeys = Object.keys(value);",
+        expectedOccurrences: 2,
+        occurrence: 1,
+      },
+    ],
+    test: "json-inert-boundary.test.js",
+  },
+  {
+    name: "strict-processing-commit-shape",
+    file: "src/core/processor.ts",
+    changes: [
+      {
+        from: "const parsed = processingCommitSchema.parse(schemaValue);",
+        to: "const parsed = schemaValue as unknown as z.infer<typeof processingCommitSchema>;",
+      },
+    ],
+    test: "processing-store-boundary.test.js",
+  },
+  {
+    name: "memory-stored-event-verification",
+    edits: [
+      {
+        file: "src/core/processor.ts",
+        changes: [
+          {
+            from: "event: validateStoredEvent(parsed.event),",
+            to: "event: parsed.event as StoredEvent,",
+          },
+          {
+            from: "verifyStoredEvent(value.event);",
+            to: "if (false) verifyStoredEvent(value.event);",
+          },
+        ],
+      },
+      {
+        file: "src/adapters/memory/processing-store.ts",
+        changes: [
+          {
+            from: "const persistedEvent = validateStoredEvent(storedEvent);",
+            to: "const persistedEvent = storedEvent;",
+          },
+          {
+            from: "verifyStoredEvent(persistedEvent);",
+            to: "if (false) verifyStoredEvent(persistedEvent);",
+          },
+        ],
+      },
+    ],
+    test: "processing-store-boundary.test.js",
+  },
+  {
+    name: "stored-output-category-contract",
+    edits: [
+      {
+        file: "src/core/processor.ts",
+        changes: [
+          {
+            from: "const parsed = storedOutputSchema.parse(processorSchemaSnapshot(value));",
+            to: "const parsed = processorSchemaSnapshot(value) as unknown as z.infer<typeof storedOutputSchema>;",
+          },
+          {
+            from: `const body = validateStoredOutputBody(parsed.category, parsed.body, {
+    runId: parsed.runId,
+    dedupeKey: parsed.dedupeKey,
+    notBeforeLogicalMs: parsed.notBeforeLogicalMs,
+  });`,
+            to: "const body = parsed.body as JsonObject;",
+            expectedOccurrences: 2,
+            occurrence: 2,
+          },
+        ],
+      },
+      {
+        file: "src/adapters/sqlite/processing-store.ts",
+        changes: [
+          {
+            from: `const body = validateStoredOutputBody(row.category, parsedBody, {
+      runId: row.run_id,
+      dedupeKey: row.dedupe_key,
+      notBeforeLogicalMs,
+    });`,
+            to: "const body = parsedBody;",
+          },
+        ],
+      },
+    ],
+    test: "sqlite-output-contracts.test.js",
+  },
+  {
+    name: "migration-output-upgrade-preflight",
+    file: "migrations/004_processing_output_upgrade_guards.sql",
+    changes: [
+      {
+        from: "SELECT CASE\n  WHEN EXISTS (",
+        to: "SELECT CASE\n  WHEN 0 AND EXISTS (",
+      },
+    ],
+    test: "sqlite-output-contracts.test.js",
+  },
+  {
+    name: "canonical-aggregate-state-read",
+    file: "src/adapters/sqlite/processing-store.ts",
+    changes: [
+      {
+        from: "if (canonicalJson(state) !== row.state_json) {",
+        to: "if (false && canonicalJson(state) !== row.state_json) {",
+      },
+    ],
+    test: "sqlite-output-contracts.test.js",
+  },
+  {
+    name: "portable-aggregate-identifier",
+    file: "src/core/processor.ts",
+    changes: [
+      {
+        from: "return aggregateIdSchema.parse(value);",
+        to: "return String(value);",
+      },
+    ],
+    test: "processing-store-boundary.test.js",
+  },
+  {
+    name: "canonical-dedupe-tuple",
+    file: "src/adapters/memory/processing-store.ts",
+    changes: [
+      {
+        from: "const key = computeOutputDedupeIdentity(output.runId, output.category, output.dedupeKey);",
+        to: 'const key = output.runId + "\\u0000" + output.category + "\\u0000" + output.dedupeKey;',
+      },
+    ],
+    test: "processing-store-boundary.test.js",
+  },
+  {
+    name: "serialized-json-byte-preflight",
+    file: "src/core/json.ts",
+    changes: [
+      {
+        from: "assertSerializedJsonWithinLimit(serialized, limits.maxCanonicalBytes, rootPath);",
+        to: "if (false) assertSerializedJsonWithinLimit(serialized, limits.maxCanonicalBytes, rootPath);",
+      },
+    ],
+    test: "json-inert-boundary.test.js",
+  },
 ];
 
 function replaceChecked(source, change, mutantName) {
@@ -125,10 +274,13 @@ for (const mutant of mutants) {
   }
   try {
     copyAuditWorkspace(resolvedTemporary);
-    const mutatedPath = join(resolvedTemporary, mutant.file);
-    let source = readFileSync(mutatedPath, "utf8");
-    for (const change of mutant.changes) source = replaceChecked(source, change, mutant.name);
-    writeFileSync(mutatedPath, source, "utf8");
+    const edits = mutant.edits ?? [{ file: mutant.file, changes: mutant.changes }];
+    for (const edit of edits) {
+      const mutatedPath = join(resolvedTemporary, edit.file);
+      let source = readFileSync(mutatedPath, "utf8");
+      for (const change of edit.changes) source = replaceChecked(source, change, mutant.name);
+      writeFileSync(mutatedPath, source, "utf8");
+    }
 
     const compile = run(
       process.execPath,

@@ -51,8 +51,8 @@ jobs:
         env:
           PEAS_GATE_NAME: scale-100k-linux
           PEAS_GATE_COMMAND: npm run check && PEAS_SCALE_100K=1 npm run test:scale
-          PEAS_TRIGGER_KIND: workflow_dispatch
-          PEAS_TRIGGER_VALUE: ${{ env.PEAS_CANDIDATE_SHA }}
+          PEAS_TRIGGER_KIND: ${{ github.event_name }}
+          PEAS_TRIGGER_VALUE: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha || github.event.schedule }}
           PEAS_TRIGGER_ACTOR: ${{ github.actor }}
           PEAS_EVIDENCE_PATH: audit-evidence-scale-100k-${{ env.PEAS_CANDIDATE_SHA }}.json
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -61,5 +61,7 @@ jobs:
           path: |
             scale-metrics-*.json
             audit-evidence-scale-100k-${{ env.PEAS_CANDIDATE_SHA }}.json
+            audit-test-results.json
+            audit-mutation-results.json
           if-no-files-found: error
           retention-days: 90

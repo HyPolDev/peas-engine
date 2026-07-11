@@ -1,19 +1,27 @@
 import type { EventLog } from "../../core/event.js";
+import { validateStoredEvent, verifyStoredEvent } from "../../core/event.js";
 import { canonicalHash } from "../../core/hash.js";
 import { canonicalJson, cloneJson, type JsonObject, type JsonValue } from "../../core/json.js";
 import {
-  computeAggregateCheckpointHash,
-  computeRunCursorHash,
-  assertRunEffectPolicy,
-  verifyProcessingCommit,
   type AggregateCheckpoint,
   type AggregatePage,
+  computeAggregateCheckpointHash,
+  computeOutputDedupeIdentity,
+  computeRunCursorHash,
+  createGenesisRunCursor,
   type OutputPage,
   type ProcessingCommit,
   type ProcessingStore,
   type RunCursor,
   type RunRegistration,
   type StoredOutput,
+  validateAggregateId,
+  validateCommittedAggregateCheckpoint,
+  validateProcessingCommit,
+  validateRunCursor,
+  validateRunRegistration,
+  validateStoredOutput,
+  verifyProcessingTransition,
 } from "../../core/processor.js";
 
 function copy<T>(value: T): T {
@@ -35,20 +43,21 @@ export class InMemoryProcessingStore<TState extends JsonObject> implements Proce
   }
 
   async ensureRun(registration: RunRegistration): Promise<void> {
-    assertRunEffectPolicy(registration.manifest);
-    const existing = this.#runs.get(registration.manifest.runId);
+    const verified = validateRunRegistration(registration);
+    const existing = this.#runs.get(verified.manifest.runId);
     if (existing !== undefined) {
-      if (canonicalJson(existing as unknown as JsonValue) !== canonicalJson(registration)) {
-        throw new Error(`Run ${registration.manifest.runId} is already registered differently`);
+      if (canonicalJson(existing as unknown as JsonValue) !== canonicalJson(verified)) {
+        throw new Error(`Run ${verified.manifest.runId} is already registered differently`);
       }
       return;
     }
-    this.#runs.set(registration.manifest.runId, copy(registration));
+    this.#runs.set(verified.manifest.runId, copy(verified));
   }
 
   async loadCursor(runId: string): Promise<RunCursor | undefined> {
-    const cursor = this.#cursors.get(runId);
-    if (cursor === undefined) return undefined;
+    const stored = this.#cursors.get(runId);
+    if (stored === undefined) return undefined;
+    const cursor = validateRunCursor(stored);
     const { cursorHash, ...withoutHash } = cursor;
     if (cursorHash !== computeRunCursorHash(withoutHash)) {
       throw new Error("Run cursor hash mismatch on audit read");
@@ -60,16 +69,23 @@ export class InMemoryProcessingStore<TState extends JsonObject> implements Proce
     runId: string,
     aggregateId: string,
   ): Promise<AggregateCheckpoint<TState> | undefined> {
-    const aggregate = this.#aggregates.get(runId)?.get(aggregateId);
-    if (aggregate === undefined) return undefined;
+    validateAggregateId(aggregateId);
+    const stored = this.#aggregates.get(runId)?.get(aggregateId);
+    if (stored === undefined) return undefined;
+    const aggregate = validateCommittedAggregateCheckpoint<TState>(stored);
     this.#verifyAggregate(aggregate);
     return copy(aggregate);
   }
 
   async commit(value: ProcessingCommit<TState>): Promise<void> {
-    const persistedEvent = await this.#eventLog.get(value.event.position);
+    value = validateProcessingCommit<TState>(value);
+    const storedEvent = await this.#eventLog.get(value.event.position);
+    if (storedEvent === undefined) {
+      throw new Error(`Event ${value.event.position} is not the exact persisted event`);
+    }
+    const persistedEvent = validateStoredEvent(storedEvent);
+    verifyStoredEvent(persistedEvent);
     if (
-      persistedEvent === undefined ||
       persistedEvent.eventId !== value.event.eventId ||
       persistedEvent.eventHash !== value.event.eventHash ||
       canonicalJson(persistedEvent as unknown as JsonValue) !==
@@ -78,15 +94,15 @@ export class InMemoryProcessingStore<TState extends JsonObject> implements Proce
       throw new Error(`Event ${value.event.position} is not the exact persisted event`);
     }
 
-    const currentPosition = this.#cursors.get(value.cursor.runId)?.processedPosition ?? "0";
-    if (currentPosition !== value.expectedPosition) {
-      throw new Error(
-        `Cursor concurrency conflict: expected ${value.expectedPosition}, found ${currentPosition}`,
-      );
-    }
     const registration = this.#runs.get(value.cursor.runId);
     if (registration === undefined) throw new Error(`Run ${value.cursor.runId} is not registered`);
-    verifyProcessingCommit(value, registration);
+    const previous = this.#cursors.get(value.cursor.runId) ?? createGenesisRunCursor(registration);
+    if (previous.processedPosition !== value.expectedPosition) {
+      throw new Error(
+        `Cursor concurrency conflict: expected ${value.expectedPosition}, found ${previous.processedPosition}`,
+      );
+    }
+    value = verifyProcessingTransition(value, registration, previous);
 
     const priorAggregate = this.#aggregates
       .get(value.cursor.runId)
@@ -103,7 +119,10 @@ export class InMemoryProcessingStore<TState extends JsonObject> implements Proce
       const expectedBodyHash = canonicalHash(`peas/output-body/${output.category}/v2`, output.body);
       if (output.bodyHash !== expectedBodyHash) throw new Error(`Output body hash mismatch`);
       if (output.dedupeKey !== null) {
-        const key = `${output.runId}\u0000${output.category}\u0000${output.dedupeKey}`;
+        if (output.category === "decision") {
+          throw new Error("Decision output cannot have a dedupe key");
+        }
+        const key = computeOutputDedupeIdentity(output.runId, output.category, output.dedupeKey);
         const existing =
           this.#dedupeKeys.get(key) ??
           mutablePendingDedupe.find(([candidate]) => candidate === key)?.[1];
@@ -142,10 +161,11 @@ export class InMemoryProcessingStore<TState extends JsonObject> implements Proce
       .filter((output) => output.runId === runId && BigInt(output.sequence) > cursor)
       .slice(0, limit)
       .map((output) => {
-        const expected = canonicalHash(`peas/output-body/${output.category}/v2`, output.body);
-        if (output.bodyHash !== expected)
+        const validated = validateStoredOutput(output);
+        const expected = canonicalHash(`peas/output-body/${validated.category}/v2`, validated.body);
+        if (validated.bodyHash !== expected)
           throw new Error(`Output body hash mismatch on audit read`);
-        return copy(output);
+        return copy(validated);
       });
     const nextSequence = selected.at(-1)?.sequence ?? sequence;
     const hasMore = this.#outputs.some(
@@ -162,6 +182,7 @@ export class InMemoryProcessingStore<TState extends JsonObject> implements Proce
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) {
       throw new RangeError("Aggregate page limit is invalid");
     }
+    if (aggregateId.length > 0) validateAggregateId(aggregateId);
     const values = [...(this.#aggregates.get(runId)?.values() ?? [])]
       .filter((aggregate) => aggregate.aggregateId > aggregateId)
       .sort((left, right) => (left.aggregateId < right.aggregateId ? -1 : 1));
@@ -187,6 +208,7 @@ export class InMemoryProcessingStore<TState extends JsonObject> implements Proce
   }
 
   #verifyAggregate(aggregate: AggregateCheckpoint<TState>): void {
+    aggregate = validateCommittedAggregateCheckpoint<TState>(aggregate);
     const registration = this.#runs.get(aggregate.runId);
     if (registration === undefined) throw new Error(`Run ${aggregate.runId} is not registered`);
     const expectedStateHash = canonicalHash(
