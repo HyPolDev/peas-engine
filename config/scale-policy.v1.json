@@ -1,0 +1,39 @@
+{
+  "policyVersion": 1,
+  "metricsVersion": 2,
+  "measurementModel": "event-processing-then-streaming-audit-scan",
+  "workload": {
+    "name": "sparse-single-source-per-issuer-v1",
+    "sourcesPerIssuer": 1,
+    "writerCount": 1
+  },
+  "budgets": {
+    "1000": {
+      "minThroughputPerSecond": 20,
+      "maxP95Ms": 250,
+      "maxP99Ms": 500,
+      "maxSlopePerEvent": 0.05,
+      "maxProcessingRssDeltaBytes": 536870912,
+      "maxDatabaseBytes": 67108864,
+      "maxWalBytes": 67108864
+    },
+    "10000": {
+      "minThroughputPerSecond": 20,
+      "maxP95Ms": 250,
+      "maxP99Ms": 500,
+      "maxSlopePerEvent": 0.02,
+      "maxProcessingRssDeltaBytes": 1073741824,
+      "maxDatabaseBytes": 335544320,
+      "maxWalBytes": 67108864
+    },
+    "100000": {
+      "minThroughputPerSecond": 20,
+      "maxP95Ms": 250,
+      "maxP99Ms": 500,
+      "maxSlopePerEvent": 0.005,
+      "maxProcessingRssDeltaBytes": 3221225472,
+      "maxDatabaseBytes": 3221225472,
+      "maxWalBytes": 67108864
+    }
+  }
+}

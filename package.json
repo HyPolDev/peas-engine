@@ -1,0 +1,44 @@
+{
+  "name": "peas-engine",
+  "version": "0.2.0-kernel-rc.2",
+  "private": true,
+  "description": "Auditable deterministic event-processing and replay engine",
+  "type": "module",
+  "packageManager": "npm@12.0.0",
+  "engines": {
+    "node": "24.17.0",
+    "npm": "12.0.0"
+  },
+  "scripts": {
+    "verify:runtime": "node scripts/verify-runtime.mjs",
+    "verify:candidate": "node scripts/verify-candidate.mjs",
+    "write:evidence": "node scripts/write-audit-evidence.mjs",
+    "reconcile:evidence": "node scripts/reconcile-audit-evidence.mjs",
+    "package:rc-evidence": "node scripts/package-rc-evidence.mjs",
+    "clean": "node scripts/clean-dist.mjs",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run clean && npm run build && node --test dist/test/**/*.test.js",
+    "test:coverage": "npm run clean && npm run build && node --test --experimental-test-coverage --test-coverage-lines=90 --test-coverage-branches=80 --test-coverage-functions=95 --test-coverage-include=dist/src/**/*.js --test-reporter=spec --test-reporter=./scripts/audit-test-reporter.mjs --test-reporter-destination=stdout --test-reporter-destination=audit-test-results.json dist/test/**/*.test.js",
+    "test:mutation": "node scripts/mutation-gate.mjs",
+    "test:scale": "npm run clean && npm run build && node --test dist/test/persistence-scale.test.js",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome lint .",
+    "check": "npm run verify:runtime && npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run test:mutation"
+  },
+  "dependencies": {
+    "better-sqlite3": "12.11.1",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.3",
+    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "24.13.3",
+    "fast-check": "4.9.0",
+    "typescript": "7.0.2"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true
+  }
+}

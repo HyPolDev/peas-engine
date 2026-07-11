@@ -1,0 +1,67 @@
+name: Nightly audit
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact candidate commit SHA to audit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  PEAS_CANDIDATE_SHA: ${{ inputs.candidate_sha || github.sha }}
+
+concurrency:
+  group: nightly-audit
+  cancel-in-progress: false
+
+jobs:
+  scale-100k:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Reject a manual run from a different ref
+        if: ${{ github.event_name == 'workflow_dispatch' && github.sha != inputs.candidate_sha }}
+        run: |
+          echo "::error::Dispatch ref ${{ github.sha }} does not match candidate ${{ inputs.candidate_sha }}"
+          exit 1
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ env.PEAS_CANDIDATE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm install --global npm@12.0.0 --no-fund --no-audit
+      - run: npm run verify:runtime
+      - run: npm ci
+      - run: npm run verify:candidate
+      - run: npm run check
+      - run: npm run test:scale
+        env:
+          PEAS_SCALE_100K: "1"
+          PEAS_SCALE_METRICS_PATH: "scale-metrics-{label}.json"
+      - run: npm run write:evidence
+        env:
+          PEAS_GATE_NAME: scale-100k-linux
+          PEAS_GATE_COMMAND: npm run check && PEAS_SCALE_100K=1 npm run test:scale
+          PEAS_TRIGGER_KIND: ${{ github.event_name }}
+          PEAS_TRIGGER_VALUE: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha || github.event.schedule }}
+          PEAS_TRIGGER_ACTOR: ${{ github.actor }}
+          PEAS_EVIDENCE_PATH: audit-evidence-scale-100k-${{ env.PEAS_CANDIDATE_SHA }}.json
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: peas-scale-metrics-100k-${{ env.PEAS_CANDIDATE_SHA }}
+          path: |
+            scale-metrics-*.json
+            audit-evidence-scale-100k-${{ env.PEAS_CANDIDATE_SHA }}.json
+            audit-test-results.json
+            audit-mutation-results.json
+          if-no-files-found: error
+          retention-days: 90

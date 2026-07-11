@@ -1,0 +1,169 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  PEAS_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            gate: check-linux
+          - runner: windows-2025
+            gate: check-windows
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ env.PEAS_CANDIDATE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm install --global npm@12.0.0 --no-fund --no-audit
+      - run: npm run verify:runtime
+      - run: npm ci
+      - run: npm run verify:candidate
+      - run: npm run check
+      - run: npm run write:evidence
+        env:
+          PEAS_GATE_NAME: ${{ matrix.gate }}
+          PEAS_GATE_COMMAND: npm run check
+          PEAS_EVIDENCE_PATH: audit-evidence-${{ matrix.gate }}-${{ env.PEAS_CANDIDATE_SHA }}.json
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: peas-${{ matrix.gate }}-${{ env.PEAS_CANDIDATE_SHA }}
+          path: |
+            audit-evidence-${{ matrix.gate }}-${{ env.PEAS_CANDIDATE_SHA }}.json
+            audit-test-results.json
+            audit-mutation-results.json
+          if-no-files-found: error
+          retention-days: 90
+
+  scale-10k:
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ env.PEAS_CANDIDATE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm install --global npm@12.0.0 --no-fund --no-audit
+      - run: npm run verify:runtime
+      - run: npm ci
+      - run: npm run verify:candidate
+      - run: npm run test:scale
+        env:
+          PEAS_SCALE_10K: "1"
+          PEAS_SCALE_METRICS_PATH: "scale-metrics-{label}.json"
+      - run: npm run write:evidence
+        env:
+          PEAS_GATE_NAME: scale-10k-linux
+          PEAS_GATE_COMMAND: PEAS_SCALE_10K=1 npm run test:scale
+          PEAS_EVIDENCE_PATH: audit-evidence-scale-10k-${{ env.PEAS_CANDIDATE_SHA }}.json
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: peas-scale-metrics-10k-${{ env.PEAS_CANDIDATE_SHA }}
+          path: |
+            scale-metrics-*.json
+            audit-evidence-scale-10k-${{ env.PEAS_CANDIDATE_SHA }}.json
+          if-no-files-found: error
+          retention-days: 90
+
+  scale-100k:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'audit-100k'
+    needs: [check, scale-10k]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ env.PEAS_CANDIDATE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm install --global npm@12.0.0 --no-fund --no-audit
+      - run: npm run verify:runtime
+      - run: npm ci
+      - run: npm run verify:candidate
+      - run: npm run check
+      - run: npm run test:scale
+        env:
+          PEAS_SCALE_100K: "1"
+          PEAS_SCALE_METRICS_PATH: "scale-metrics-{label}.json"
+      - run: npm run write:evidence
+        env:
+          PEAS_GATE_NAME: scale-100k-linux
+          PEAS_GATE_COMMAND: npm run check && PEAS_SCALE_100K=1 npm run test:scale
+          PEAS_TRIGGER_KIND: pull_request_label
+          PEAS_TRIGGER_VALUE: audit-100k
+          PEAS_TRIGGER_ACTOR: ${{ github.actor }}
+          PEAS_EVIDENCE_PATH: audit-evidence-scale-100k-${{ env.PEAS_CANDIDATE_SHA }}.json
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: peas-scale-metrics-100k-${{ env.PEAS_CANDIDATE_SHA }}
+          path: |
+            scale-metrics-*.json
+            audit-evidence-scale-100k-${{ env.PEAS_CANDIDATE_SHA }}.json
+            audit-test-results.json
+            audit-mutation-results.json
+          if-no-files-found: error
+          retention-days: 90
+
+  reconcile-release:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'audit-100k'
+    needs: [check, scale-10k, scale-100k]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ env.PEAS_CANDIDATE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm install --global npm@12.0.0 --no-fund --no-audit
+      - run: npm run verify:runtime
+      - run: npm run verify:candidate
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          pattern: peas-*-${{ env.PEAS_CANDIDATE_SHA }}
+          path: audit-input
+      - run: npm run reconcile:evidence -- audit-input
+        env:
+          PEAS_RELEASE_MANIFEST_PATH: release-manifest-${{ env.PEAS_CANDIDATE_SHA }}.json
+          PEAS_EXPECTED_REPOSITORY: ${{ github.repository }}
+          PEAS_EXPECTED_CI_RUN_ID: ${{ github.run_id }}
+          PEAS_EXPECTED_100K_RUN_ID: ${{ github.run_id }}
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: peas-release-manifest-${{ env.PEAS_CANDIDATE_SHA }}
+          path: release-manifest-${{ env.PEAS_CANDIDATE_SHA }}.json
+          if-no-files-found: error
+          retention-days: 90

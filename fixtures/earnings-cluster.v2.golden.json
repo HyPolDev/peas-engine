@@ -1,0 +1,9 @@
+{
+  "eventHead": "f8dfdb7463a99bbbc02f743c5ce9a44d3e86d396af6d8840ad5a17a78b5c40a2",
+  "stateHead": "367f028726824a36859c5a5a6694804173581ccc4ba935984744257ba9b32a6c",
+  "decisionHead": "c7f1e64abf42673241d10d6218ec7b4e5412bc5c4c24b5b3673ccea79ba95453",
+  "aggregateCount": 2,
+  "outputCount": 20,
+  "rejectionCount": 2,
+  "maxAggregateBytes": 4717
+}
