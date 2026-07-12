@@ -165,7 +165,13 @@ function waitForWorkerMessage(
     };
     const onMessage = (message: unknown): void => {
       if (typeof message !== "object" || message === null || !("type" in message)) return;
-      if ((message as { type: unknown }).type !== expectedType) return;
+      const actualType = (message as { type: unknown }).type;
+      if (actualType !== expectedType) {
+        if (actualType !== "result") return;
+        cleanup();
+        reject(new Error(`Artifact worker failed before ${expectedType}`));
+        return;
+      }
       cleanup();
       resolve(message as Record<string, unknown>);
     };

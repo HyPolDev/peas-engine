@@ -303,7 +303,7 @@ const mutants = [
     name: "vault-reconciliation-item-budget",
     category: "vault",
     file: "src/adapters/artifacts/durable-artifact-store.ts",
-    changes: [{ from: "processed >= maxItems ||", to: "false ||" }],
+    changes: [{ from: "processed >= maxItems ||", to: "processed > maxItems ||" }],
     test: "artifact-vault.test.js",
   },
   {
