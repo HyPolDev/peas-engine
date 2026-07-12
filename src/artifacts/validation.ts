@@ -5,6 +5,7 @@ import type {
   RetrievalAttemptDraft,
   SafeHttpResponseMetadata,
 } from "./artifact-store.js";
+import { canonicalHash } from "../core/hash.js";
 
 const digest = z.string().regex(/^[0-9a-f]{64}$/u);
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u);
@@ -96,7 +97,25 @@ export function assertArtifactDigest(value: string): void {
 }
 
 export function validateRetrievalAttempt(value: unknown): RetrievalAttemptDraft {
-  return attempt.parse(value) as RetrievalAttemptDraft;
+  const parsed = attempt.parse(value);
+  return {
+    ...parsed,
+    attemptId: persistedIdentifier("attempt", parsed.attemptId),
+    provider: persistedIdentifier("provider", parsed.provider),
+    recordId: persistedIdentifier("record", parsed.recordId),
+    revisionId: persistedIdentifier("revision", parsed.revisionId),
+  } as RetrievalAttemptDraft;
+}
+
+export function persistedRetrievalAttemptId(value: string): string {
+  return persistedIdentifier("attempt", identifier.parse(value));
+}
+
+function persistedIdentifier(
+  kind: "attempt" | "provider" | "record" | "revision",
+  value: string,
+): string {
+  return canonicalHash(`peas/artifact-${kind}-identifier/v1`, { value });
 }
 
 export function validateHttpResponseMetadata(value: unknown): SafeHttpResponseMetadata {

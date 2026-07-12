@@ -26,6 +26,7 @@ import {
   assertArtifactDigest,
   assertSafeByteAddition,
   validateHttpResponseMetadata,
+  persistedRetrievalAttemptId,
   validateRetrievalAttempt,
   validateVaultConfig,
 } from "../../artifacts/validation.js";
@@ -291,7 +292,7 @@ export class DurableArtifactStore implements ArtifactStore {
     let reserved = 0;
     try {
       await this.#lease.renewAndAssert();
-      this.#repository.recordAttempt(attempt);
+      this.#repository.recordAttempt(attempt, this.#lease.fence());
       const handle = await open(stagePath, "wx", 0o600);
       const hash = createHash("sha256");
       let sizeBytes = 0;
@@ -390,19 +391,23 @@ export class DurableArtifactStore implements ArtifactStore {
       );
       return { artifact, observation, disposition: converged ? "deduplicated" : disposition };
     } catch (error) {
-      await rm(stagePath, { force: true }).catch(() => undefined);
       try {
-        this.#repository.finishAttempt({
-          attemptId: attemptDraft.attemptId,
-          outcome: error instanceof Error && error.name === "AbortError" ? "abandoned" : "failed",
-          completedAtMs: this.#clock.nowMs(),
-          reasonCode: error instanceof ArtifactVaultError ? error.code : "write-failed",
-          detailHash: canonicalHash("peas/artifact-error/v1", {
-            name: error instanceof Error ? error.name : "unknown",
-          }),
-        });
+        await this.#lease.renewAndAssert();
+        await rm(stagePath, { force: true }).catch(() => undefined);
+        this.#repository.finishAttempt(
+          {
+            attemptId: attemptDraft.attemptId,
+            outcome: error instanceof Error && error.name === "AbortError" ? "abandoned" : "failed",
+            completedAtMs: this.#clock.nowMs(),
+            reasonCode: error instanceof ArtifactVaultError ? error.code : "write-failed",
+            detailHash: canonicalHash("peas/artifact-error/v1", {
+              name: error instanceof Error ? error.name : "unknown",
+            }),
+          },
+          this.#lease.fence(),
+        );
       } catch {
-        // A committed success is already terminal; never replace it with a failure.
+        // A committed success is terminal, and a stale writer must not mutate evidence or staging.
       }
       throw error;
     } finally {
@@ -487,7 +492,7 @@ export class DurableArtifactStore implements ArtifactStore {
   }
 
   async getAttempt(id: string): Promise<RetrievalAttempt | undefined> {
-    return this.#repository.getAttempt(id);
+    return this.#repository.getAttempt(persistedRetrievalAttemptId(id));
   }
   async getObservation(id: string): Promise<ArtifactObservation | undefined> {
     return this.#repository.getObservation(id);
@@ -504,6 +509,7 @@ export class DurableArtifactStore implements ArtifactStore {
   }
 
   async reconcile(budget: Partial<ReconciliationBudget> = {}): Promise<ReconciliationReport> {
+    await this.#lease.renewAndAssert();
     this.#repository.verifyAllEvidence();
     const maxItems = budget.maxItems ?? 1_000;
     const maxElapsedMs = budget.maxElapsedMs ?? 1_000;
@@ -533,6 +539,7 @@ export class DurableArtifactStore implements ArtifactStore {
     });
     for (const name of await readdir(this.#paths.snapshots)) {
       if (exhausted()) return continueLater();
+      await this.#lease.renewAndAssert();
       await rm(safeChild(this.#paths.snapshots, name), { force: true });
       processed += 1;
     }
@@ -554,13 +561,17 @@ export class DurableArtifactStore implements ArtifactStore {
       }
       const age = this.#clock.nowMs() - attempt.recordedAtMs;
       if (age >= this.#config.stageExpiryMs) {
-        this.#repository.finishAttempt({
-          attemptId: attempt.attemptId,
-          outcome: "expired",
-          completedAtMs: this.#clock.nowMs(),
-          reasonCode: "stage-expired",
-          detailHash: null,
-        });
+        await this.#lease.renewAndAssert();
+        this.#repository.finishAttempt(
+          {
+            attemptId: attempt.attemptId,
+            outcome: "expired",
+            completedAtMs: this.#clock.nowMs(),
+            reasonCode: "stage-expired",
+            detailHash: null,
+          },
+          this.#lease.fence(),
+        );
         const id = await this.#incident("expired-stage", stagingId, null, null, null);
         report.incidents.push(id);
         await this.#quarantine(path, id);
@@ -573,13 +584,17 @@ export class DurableArtifactStore implements ArtifactStore {
       if (exhausted()) return continueLater();
       processed += 1;
       if (this.#clock.nowMs() - attempt.recordedAtMs >= this.#config.stageExpiryMs) {
-        this.#repository.finishAttempt({
-          attemptId: attempt.attemptId,
-          outcome: "expired",
-          completedAtMs: this.#clock.nowMs(),
-          reasonCode: "stage-missing",
-          detailHash: null,
-        });
+        await this.#lease.renewAndAssert();
+        this.#repository.finishAttempt(
+          {
+            attemptId: attempt.attemptId,
+            outcome: "expired",
+            completedAtMs: this.#clock.nowMs(),
+            reasonCode: "stage-missing",
+            detailHash: null,
+          },
+          this.#lease.fence(),
+        );
         report.expiredStages += 1;
       }
     }
@@ -611,13 +626,17 @@ export class DurableArtifactStore implements ArtifactStore {
             if (verified.digest !== name) throw new Error("digest mismatch");
             const existing = this.#repository.stat(name);
             if (existing === undefined) {
-              this.#repository.adoptArtifact({
-                digest: name,
-                algorithm: "sha256",
-                sizeBytes: verified.sizeBytes,
-                committedAtMs: this.#clock.nowMs(),
-                provenance: "recovered-orphan",
-              });
+              await this.#lease.renewAndAssert();
+              this.#repository.adoptArtifact(
+                {
+                  digest: name,
+                  algorithm: "sha256",
+                  sizeBytes: verified.sizeBytes,
+                  committedAtMs: this.#clock.nowMs(),
+                  provenance: "recovered-orphan",
+                },
+                this.#lease.fence(),
+              );
               report.adoptedOrphans += 1;
             } else if (existing.sizeBytes !== verified.sizeBytes) throw new Error("size mismatch");
             else report.validArtifacts += 1;
@@ -684,6 +703,7 @@ export class DurableArtifactStore implements ArtifactStore {
     expected: number | null,
     actual: number | null,
   ): Promise<string> {
+    await this.#lease.renewAndAssert();
     const recordedAtMs = this.#clock.nowMs();
     const seed = {
       kind,
@@ -703,11 +723,12 @@ export class DurableArtifactStore implements ArtifactStore {
       actualSizeBytes: actual,
       detailHash: null,
     };
-    this.#repository.recordIncident(incident);
+    this.#repository.recordIncident(incident, this.#lease.fence());
     return incident.incidentId;
   }
 
   async #quarantine(path: string, token: string): Promise<void> {
+    await this.#lease.renewAndAssert();
     const target = safeChild(this.#paths.quarantine, `${token}.quarantined`);
     await assertTrustedPath(this.#paths.root, target, this.#paths.device);
     await link(path, target)

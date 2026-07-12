@@ -3,7 +3,7 @@ import { open, readFile, rename, rm } from "node:fs/promises";
 
 import { ArtifactVaultError } from "../../artifacts/errors.js";
 import type { Clock } from "../../core/clock.js";
-import type { SqliteArtifactRepository } from "./sqlite-artifact-repository.js";
+import type { SqliteArtifactRepository, WriterFence } from "./sqlite-artifact-repository.js";
 
 type LeaseRecord = Readonly<{
   pid: number;
@@ -103,11 +103,11 @@ export class VaultWriterLease {
     }
   }
 
-  fence(): Readonly<{ ownerToken: string; generation: number; nowMs: number }> {
+  fence(): WriterFence {
     return {
       ownerToken: this.#ownerToken,
       generation: this.#generation,
-      nowMs: this.#clock.nowMs(),
+      nowMs: () => this.#clock.nowMs(),
     };
   }
 

@@ -17,15 +17,22 @@ import test from "node:test";
 import { DurableArtifactStore } from "../src/adapters/artifacts/durable-artifact-store.js";
 import { defaultPeasRuntimeRoot } from "../src/adapters/artifacts/runtime-root.js";
 import { SqliteArtifactRepository } from "../src/adapters/artifacts/sqlite-artifact-repository.js";
+import type { WriterFence } from "../src/adapters/artifacts/sqlite-artifact-repository.js";
 import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
-import { sanitizeRequestIdentity } from "../src/artifacts/identity.js";
-import { assertSafeByteAddition } from "../src/artifacts/validation.js";
+import { deriveObservationId, sanitizeRequestIdentity } from "../src/artifacts/identity.js";
+import {
+  assertSafeByteAddition,
+  persistedRetrievalAttemptId,
+  validateRetrievalAttempt,
+} from "../src/artifacts/validation.js";
 import type {
   ArtifactVaultConfig,
   ReconciliationReport,
   StoreArtifactRequest,
 } from "../src/artifacts/artifact-store.js";
 import { ManualClock } from "../src/core/clock.js";
+import { canonicalHash } from "../src/core/hash.js";
+import type { JsonValue } from "../src/core/json.js";
 
 const migrations = loadMigrations(join(process.cwd(), "migrations"));
 
@@ -111,6 +118,20 @@ async function consume(stream: Readable): Promise<Buffer> {
   const chunks: Buffer[] = [];
   for await (const chunk of stream) chunks.push(Buffer.from(chunk as Uint8Array));
   return Buffer.concat(chunks);
+}
+
+function activeFence(
+  database: ReturnType<typeof openSqliteDatabase>,
+  clock: ManualClock,
+): WriterFence {
+  const row = database
+    .prepare("SELECT owner_token, generation FROM artifact_writer_fence WHERE singleton = 1")
+    .get() as { owner_token: string; generation: bigint };
+  return {
+    ownerToken: row.owner_token,
+    generation: Number(row.generation),
+    nowMs: () => clock.nowMs(),
+  };
 }
 
 test("stores entity bytes, separates evidence, deduplicates, and reads verified snapshots", async (context) => {
@@ -209,6 +230,28 @@ test("persistence boundary rejects unsafe strings without leaking sentinel secre
   assert.equal(database.serialize().includes(sentinel), false);
 });
 
+test("grammar-valid external identifiers are irreversibly hashed before persistence", async (context) => {
+  const { database, store } = await harness(context);
+  const sentinel = "OpaqueSecretToken_7f3b.Valid-But-Sensitive";
+  const value = request(sentinel, Buffer.from("entity"));
+  await store.store({
+    ...value,
+    attempt: {
+      ...value.attempt,
+      provider: sentinel,
+      recordId: sentinel,
+      revisionId: sentinel,
+    },
+  });
+  const serialized = database.serialize();
+  assert.equal(serialized.includes(sentinel), false);
+  assert.notEqual(persistedRetrievalAttemptId(sentinel), sentinel);
+  assert.equal(
+    (await store.getAttempt(sentinel))?.attemptId,
+    persistedRetrievalAttemptId(sentinel),
+  );
+});
+
 test("exact redelivery returns the committed result without fabricating evidence", async (context) => {
   const { database, store } = await harness(context);
   const bytes = Buffer.from("redelivered entity");
@@ -235,8 +278,27 @@ test("exact redelivery returns the committed result without fabricating evidence
   );
 });
 
+test("exact redelivery verifies the joined terminal outcome before retry decisions", async (context) => {
+  const { database, store } = await harness(context);
+  const replay = request("forged-outcome-replay", Buffer.from("entity"));
+  await store.store(replay);
+  database.exec("DROP TRIGGER artifact_outcomes_no_update");
+  database
+    .prepare("UPDATE artifact_retrieval_outcomes SET outcome = 'failed' WHERE attempt_id = ?")
+    .run(persistedRetrievalAttemptId("forged-outcome-replay"));
+  await assert.rejects(() => store.store(replay), /outcome relational mismatch/u);
+  assert.equal(
+    (
+      database.prepare("SELECT count(*) count FROM artifact_observations").get() as {
+        count: bigint;
+      }
+    ).count,
+    1n,
+  );
+});
+
 test("attempt identity rejects metadata, content, and incomplete replay conflicts", async (context) => {
-  const { repository, store, clock } = await harness(context);
+  const { database, repository, store, clock } = await harness(context);
   const original = request("conflict-attempt", Buffer.from("original"));
   await store.store(original);
   await assert.rejects(
@@ -249,11 +311,14 @@ test("attempt identity rejects metadata, content, and incomplete replay conflict
       store.store({ ...changedMetadata, attempt: { ...changedMetadata.attempt, revisionId: "2" } }),
     /conflicts/u,
   );
-  repository.recordAttempt({
-    ...request("incomplete-attempt", Buffer.alloc(0)).attempt,
-    stagingId: "incomplete-stage",
-    recordedAtMs: clock.nowMs(),
-  });
+  repository.recordAttempt(
+    {
+      ...validateRetrievalAttempt(request("incomplete-attempt", Buffer.alloc(0)).attempt),
+      stagingId: "incomplete-stage",
+      recordedAtMs: clock.nowMs(),
+    },
+    activeFence(database, clock),
+  );
   await assert.rejects(
     () => store.store(request("incomplete-attempt", Buffer.alloc(0))),
     /incomplete or terminal/u,
@@ -358,6 +423,23 @@ test("expired takeover fences a still-live stale writer before install and SQLit
   rmSync(join(root, "artifacts", "locks", "writer.lock"), { force: true });
   resume();
   await assert.rejects(() => pending, /lease was lost/u);
+  assert.equal(
+    (
+      database
+        .prepare("SELECT count(*) count FROM artifact_retrieval_outcomes WHERE attempt_id = ?")
+        .get(persistedRetrievalAttemptId("stale-writer")) as { count: bigint }
+    ).count,
+    0n,
+  );
+  assert.equal(readdirSync(join(root, "artifacts", "staging")).length, 1);
+  writeFileSync(join(root, "artifacts", "staging", "stale-reconcile.part"), "partial");
+  const databaseBefore = database.serialize();
+  const stagingBefore = readdirSync(join(root, "artifacts", "staging")).sort();
+  const quarantineBefore = readdirSync(join(root, "artifacts", "quarantine")).sort();
+  await assert.rejects(() => stale.reconcile(), /lease was lost/u);
+  assert.deepEqual(database.serialize(), databaseBefore);
+  assert.deepEqual(readdirSync(join(root, "artifacts", "staging")).sort(), stagingBefore);
+  assert.deepEqual(readdirSync(join(root, "artifacts", "quarantine")).sort(), quarantineBefore);
   database
     .prepare("UPDATE artifact_writer_fence SET expires_at_ms = ? WHERE singleton = 1")
     .run(clock.nowMs());
@@ -395,15 +477,69 @@ test("expired takeover fences a still-live stale writer before install and SQLit
   assert.equal(
     (
       database
-        .prepare(
-          "SELECT count(*) count FROM artifact_observations WHERE attempt_id = 'stale-writer'",
-        )
-        .get() as { count: bigint }
+        .prepare("SELECT count(*) count FROM artifact_observations WHERE attempt_id = ?")
+        .get(persistedRetrievalAttemptId("stale-writer")) as { count: bigint }
     ).count,
     0n,
   );
   const committed = await winner.store(request("winner", Buffer.from("winner")));
-  assert.equal(committed.observation.attemptId, "winner");
+  assert.equal(committed.observation.attemptId, persistedRetrievalAttemptId("winner"));
+});
+
+test("transaction mutations evaluate lease expiry from a fresh clock reading", async (context) => {
+  const { database, repository, clock } = await harness(context);
+  const bytes = Buffer.from("paused-before-transaction");
+  const raw = request("expired-before-commit", bytes);
+  const draft = { ...raw, attempt: validateRetrievalAttempt(raw.attempt) };
+  const fence = activeFence(database, clock);
+  repository.recordAttempt(
+    { ...draft.attempt, stagingId: "expired-before-commit-stage", recordedAtMs: clock.nowMs() },
+    fence,
+  );
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const artifact = {
+    digest,
+    algorithm: "sha256" as const,
+    sizeBytes: bytes.length,
+    committedAtMs: clock.nowMs(),
+    provenance: "retrieval" as const,
+  };
+  const observationWithoutHash = {
+    observationId: deriveObservationId(draft.attempt, digest, draft.response),
+    attemptId: draft.attempt.attemptId,
+    artifactDigest: digest,
+    provider: draft.attempt.provider,
+    recordId: draft.attempt.recordId,
+    revisionId: draft.attempt.revisionId,
+    retrievedAtMs: clock.nowMs(),
+    request: draft.attempt.request,
+    response: draft.response,
+  };
+  const observation = {
+    ...observationWithoutHash,
+    observationHash: canonicalHash(
+      "peas/artifact-observation/v1",
+      observationWithoutHash as unknown as JsonValue,
+    ),
+  };
+  clock.advanceBy(30_001);
+  assert.throws(
+    () => repository.commitSuccess(artifact, observation, draft.response, fence),
+    /lease was lost/u,
+  );
+  assert.equal(
+    (database.prepare("SELECT count(*) count FROM artifact_blobs").get() as { count: bigint })
+      .count,
+    0n,
+  );
+  assert.equal(
+    (
+      database.prepare("SELECT count(*) count FROM artifact_retrieval_outcomes").get() as {
+        count: bigint;
+      }
+    ).count,
+    0n,
+  );
 });
 
 test("reconciliation adopts valid orphans without fabricating observations", async (context) => {
@@ -479,9 +615,14 @@ test("canonical evidence reads fail closed on relational-only forgery", async (c
   database.exec(
     "DROP TRIGGER artifact_attempts_no_update; DROP TRIGGER artifact_observations_no_update; DROP TRIGGER artifact_blobs_no_update;",
   );
+  const originalProvider = (
+    database.prepare("SELECT provider FROM artifact_retrieval_attempts").get() as {
+      provider: string;
+    }
+  ).provider;
   database.prepare("UPDATE artifact_retrieval_attempts SET provider = 'forged'").run();
   await assert.rejects(() => store.getAttempt("forgery-attempt"), /relational mismatch/u);
-  database.prepare("UPDATE artifact_retrieval_attempts SET provider = 'fixture-provider'").run();
+  database.prepare("UPDATE artifact_retrieval_attempts SET provider = ?").run(originalProvider);
   database.prepare("UPDATE artifact_observations SET etag = 'forged'").run();
   await assert.rejects(
     () => store.getObservation(stored.observation.observationId),
@@ -557,16 +698,19 @@ test("reconciliation expires attempts and quarantines unowned stages", async (co
     path: "/stage",
     routeLabel: "fixture.stage",
   });
-  repository.recordAttempt({
-    attemptId: "expired-attempt",
-    stagingId: "expired-stage",
-    provider: "fixture",
-    recordId: "record",
-    revisionId: "1",
-    startedAtMs: clock.nowMs(),
-    recordedAtMs: clock.nowMs(),
-    request: requestIdentity,
-  });
+  repository.recordAttempt(
+    {
+      attemptId: "expired-attempt",
+      stagingId: "expired-stage",
+      provider: "fixture",
+      recordId: "record",
+      revisionId: "1",
+      startedAtMs: clock.nowMs(),
+      recordedAtMs: clock.nowMs(),
+      request: requestIdentity,
+    },
+    activeFence(database, clock),
+  );
   writeFileSync(join(root, "artifacts", "staging", "expired-stage.part"), "partial");
   writeFileSync(join(root, "artifacts", "staging", "unowned.part"), "partial");
   writeFileSync(join(root, "artifacts", "snapshots", "abandoned.verified"), "partial");

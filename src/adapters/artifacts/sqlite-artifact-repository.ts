@@ -81,6 +81,12 @@ function parseCanonical<T>(serialized: string, hash: string, domain: string): T 
   return value as T;
 }
 
+export type WriterFence = Readonly<{
+  ownerToken: string;
+  generation: number;
+  nowMs: () => number;
+}>;
+
 export class SqliteArtifactRepository {
   readonly #database: SqliteDatabase;
 
@@ -121,15 +127,25 @@ export class SqliteArtifactRepository {
     if (result.changes !== 1) throw new Error("Vault writer lease was lost");
   }
 
-  assertWriter(ownerToken: string, generation: number, nowMs: number): void {
+  assertWriter(fence: WriterFence): void {
+    const nowMs = fence.nowMs();
     const row = this.#database
       .prepare(`SELECT 1 present FROM artifact_writer_fence
       WHERE singleton = 1 AND owner_token = ? AND generation = ? AND expires_at_ms >= ?`)
-      .get(ownerToken, generation, nowMs);
+      .get(fence.ownerToken, fence.generation, nowMs);
     if (row === undefined) throw new Error("Vault writer lease was lost");
   }
 
-  recordAttempt(attempt: RetrievalAttempt): void {
+  recordAttempt(attempt: RetrievalAttempt, fence: WriterFence): void {
+    this.#database
+      .transaction(() => {
+        this.assertWriter(fence);
+        this.#insertAttempt(attempt);
+      })
+      .immediate();
+  }
+
+  #insertAttempt(attempt: RetrievalAttempt): void {
     const json = canonicalJson(attempt as unknown as JsonValue);
     const hash = canonicalHash("peas/artifact-attempt/v1", attempt as unknown as JsonValue);
     this.#database
@@ -184,20 +200,28 @@ export class SqliteArtifactRepository {
   }
 
   getCompletedResult(attemptId: string): StoreArtifactResult | undefined {
+    const outcome = this.#getOutcome(attemptId);
+    if (outcome === undefined || outcome.outcome !== "succeeded") return undefined;
     const row = this.#database
-      .prepare(`SELECT o.*
-      FROM artifact_observations o
-      JOIN artifact_retrieval_outcomes r ON r.attempt_id = o.attempt_id
-      WHERE o.attempt_id = ? AND r.outcome = 'succeeded'`)
+      .prepare(`SELECT * FROM artifact_observations WHERE attempt_id = ?`)
       .get(attemptId) as ObservationRow | undefined;
-    if (row === undefined) return undefined;
+    if (row === undefined) throw new Error("Succeeded artifact observation is missing");
     const observation = this.#parseObservation(row);
     const artifact = this.stat(observation.artifactDigest);
     if (artifact === undefined) throw new Error("Completed artifact metadata is missing");
     return { artifact, observation, disposition: "deduplicated" };
   }
 
-  finishAttempt(outcome: RetrievalAttemptOutcome): void {
+  finishAttempt(outcome: RetrievalAttemptOutcome, fence: WriterFence): void {
+    this.#database
+      .transaction(() => {
+        this.assertWriter(fence);
+        this.#insertOutcome(outcome);
+      })
+      .immediate();
+  }
+
+  #insertOutcome(outcome: RetrievalAttemptOutcome): void {
     const json = canonicalJson(outcome as unknown as JsonValue);
     const hash = canonicalHash("peas/artifact-attempt-outcome/v1", outcome as unknown as JsonValue);
     this.#database
@@ -219,11 +243,11 @@ export class SqliteArtifactRepository {
     artifact: ArtifactMetadata,
     observation: ArtifactObservation,
     response: SafeHttpResponseMetadata,
-    fence: Readonly<{ ownerToken: string; generation: number; nowMs: number }>,
+    fence: WriterFence,
   ): "created" | "deduplicated" {
     return this.#database
       .transaction(() => {
-        this.assertWriter(fence.ownerToken, fence.generation, fence.nowMs);
+        this.assertWriter(fence);
         const existing = this.stat(artifact.digest);
         let disposition: "created" | "deduplicated" = "deduplicated";
         if (existing === undefined) {
@@ -244,7 +268,7 @@ export class SqliteArtifactRepository {
           throw new Error("Artifact metadata size conflict");
         }
 
-        this.finishAttempt({
+        this.#insertOutcome({
           attemptId: observation.attemptId,
           outcome: "succeeded",
           completedAtMs: artifact.committedAtMs,
@@ -292,19 +316,24 @@ export class SqliteArtifactRepository {
       .immediate();
   }
 
-  adoptArtifact(artifact: ArtifactMetadata): boolean {
-    const result = this.#database
-      .prepare(`INSERT OR IGNORE INTO artifact_blobs (
+  adoptArtifact(artifact: ArtifactMetadata, fence: WriterFence): boolean {
+    return this.#database
+      .transaction(() => {
+        this.assertWriter(fence);
+        const result = this.#database
+          .prepare(`INSERT OR IGNORE INTO artifact_blobs (
       digest, algorithm, size_bytes, committed_at_ms, provenance, blob_json, blob_hash
     ) VALUES (?, 'sha256', ?, ?, 'recovered-orphan', ?, ?)`)
-      .run(
-        artifact.digest,
-        artifact.sizeBytes,
-        artifact.committedAtMs,
-        canonicalJson(artifact as unknown as JsonValue),
-        canonicalHash("peas/artifact-blob/v1", artifact as unknown as JsonValue),
-      );
-    return result.changes === 1;
+          .run(
+            artifact.digest,
+            artifact.sizeBytes,
+            artifact.committedAtMs,
+            canonicalJson(artifact as unknown as JsonValue),
+            canonicalHash("peas/artifact-blob/v1", artifact as unknown as JsonValue),
+          );
+        return result.changes === 1;
+      })
+      .immediate();
   }
 
   stat(digest: string): ArtifactMetadata | undefined {
@@ -356,7 +385,16 @@ export class SqliteArtifactRepository {
     };
   }
 
-  recordIncident(incident: IntegrityIncident): void {
+  recordIncident(incident: IntegrityIncident, fence: WriterFence): void {
+    this.#database
+      .transaction(() => {
+        this.assertWriter(fence);
+        this.#insertIncident(incident);
+      })
+      .immediate();
+  }
+
+  #insertIncident(incident: IntegrityIncident): void {
     const json = canonicalJson(incident as unknown as JsonValue);
     const hash = canonicalHash("peas/artifact-incident/v1", incident as unknown as JsonValue);
     this.#database
@@ -401,21 +439,9 @@ export class SqliteArtifactRepository {
       .all() as { attempt_id: string }[])
       this.getAttempt(row.attempt_id);
     for (const row of this.#database
-      .prepare("SELECT * FROM artifact_retrieval_outcomes")
-      .all() as Array<Record<string, unknown>>) {
-      const outcome = parseCanonical<RetrievalAttemptOutcome>(
-        row["outcome_json"] as string,
-        row["outcome_hash"] as string,
-        "peas/artifact-attempt-outcome/v1",
-      );
-      relationalMismatch("Artifact outcome", [
-        [outcome.attemptId, row["attempt_id"]],
-        [outcome.outcome, row["outcome"]],
-        [outcome.completedAtMs, safeNumber(row["completed_at_ms"] as bigint, "outcome completion")],
-        [outcome.reasonCode, row["reason_code"]],
-        [outcome.detailHash, row["detail_hash"]],
-      ]);
-    }
+      .prepare("SELECT attempt_id FROM artifact_retrieval_outcomes")
+      .all() as Array<{ attempt_id: string }>)
+      this.#getOutcome(row.attempt_id);
     for (const row of this.#database
       .prepare("SELECT * FROM artifact_observations")
       .all() as ObservationRow[])
@@ -445,6 +471,26 @@ export class SqliteArtifactRepository {
       ]);
     }
     this.listArtifacts();
+  }
+
+  #getOutcome(attemptId: string): RetrievalAttemptOutcome | undefined {
+    const row = this.#database
+      .prepare("SELECT * FROM artifact_retrieval_outcomes WHERE attempt_id = ?")
+      .get(attemptId) as Record<string, unknown> | undefined;
+    if (row === undefined) return undefined;
+    const outcome = parseCanonical<RetrievalAttemptOutcome>(
+      row["outcome_json"] as string,
+      row["outcome_hash"] as string,
+      "peas/artifact-attempt-outcome/v1",
+    );
+    relationalMismatch("Artifact outcome", [
+      [outcome.attemptId, row["attempt_id"]],
+      [outcome.outcome, row["outcome"]],
+      [outcome.completedAtMs, safeNumber(row["completed_at_ms"] as bigint, "outcome completion")],
+      [outcome.reasonCode, row["reason_code"]],
+      [outcome.detailHash, row["detail_hash"]],
+    ]);
+    return outcome;
   }
 
   #parseObservation(row: ObservationRow, expectedId?: string): ArtifactObservation {
