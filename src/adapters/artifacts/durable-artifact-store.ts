@@ -66,27 +66,29 @@ class Semaphore {
 }
 
 async function ensurePlainDirectory(path: string): Promise<void> {
-  const missing: string[] = [];
-  let cursor = resolve(path);
+  const resolved = resolve(path);
+  const ancestors: string[] = [];
+  let cursor = resolved;
   for (;;) {
+    ancestors.push(cursor);
+    const parent = dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  for (const ancestor of ancestors.reverse()) {
     try {
-      const info = await lstat(cursor);
+      const info = await lstat(ancestor);
       if (!info.isDirectory() || info.isSymbolicLink())
         throw new ArtifactVaultError(
           "unsafe-filesystem-object",
           "Vault path contains an unsafe filesystem object",
         );
-      break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      missing.push(cursor);
-      const parent = dirname(cursor);
-      if (parent === cursor) throw error;
-      cursor = parent;
     }
   }
-  await mkdir(path, { recursive: true, mode: 0o700 });
-  const info = await lstat(path);
+  await mkdir(resolved, { recursive: true, mode: 0o700 });
+  const info = await lstat(resolved);
   if (!info.isDirectory() || info.isSymbolicLink()) {
     throw new ArtifactVaultError(
       "unsafe-filesystem-object",

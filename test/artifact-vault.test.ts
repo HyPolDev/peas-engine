@@ -37,6 +37,25 @@ type Harness = Readonly<{
   store: DurableArtifactStore;
 }>;
 
+function vaultConfig(
+  runtimeRoot: string,
+  overrides: Partial<ArtifactVaultConfig> = {},
+): ArtifactVaultConfig {
+  return {
+    runtimeRoot,
+    maxArtifactBytes: 1_024,
+    maxVaultBytes: 4_096,
+    maxConcurrentWrites: 2,
+    streamHighWaterMarkBytes: 17,
+    stageExpiryMs: 1_000,
+    writerLeaseBehavior: "fail",
+    writerLeaseWaitMs: 0,
+    writerLeaseDurationMs: 30_000,
+    writerLeaseRenewalMs: 10_000,
+    ...overrides,
+  };
+}
+
 async function harness(
   context: test.TestContext,
   overrides: Partial<ArtifactVaultConfig> = {},
@@ -48,19 +67,7 @@ async function harness(
   const store = await DurableArtifactStore.open({
     repository,
     clock,
-    config: {
-      runtimeRoot: root,
-      maxArtifactBytes: 1_024,
-      maxVaultBytes: 4_096,
-      maxConcurrentWrites: 2,
-      streamHighWaterMarkBytes: 17,
-      stageExpiryMs: 1_000,
-      writerLeaseBehavior: "fail",
-      writerLeaseWaitMs: 0,
-      writerLeaseDurationMs: 30_000,
-      writerLeaseRenewalMs: 10_000,
-      ...overrides,
-    },
+    config: vaultConfig(root, overrides),
   });
   context.after(async () => {
     await store.close();
@@ -653,4 +660,42 @@ test("real platform ancestor links cannot redirect staging outside the vault", a
     /unsafe|trusted/u,
   );
   assert.deepEqual(readdirSync(escapeTarget), []);
+});
+
+test("junctions or symlinks above existing and missing runtime roots fail before target mutation", async (context) => {
+  const fixture = mkdtempSync(join(tmpdir(), "peas-artifact-ancestor-"));
+  context.after(() => {
+    const prefix = join(tmpdir(), "peas-artifact-ancestor-");
+    if (!fixture.startsWith(prefix)) throw new Error("Unsafe ancestor test cleanup path");
+    rmSync(fixture, { recursive: true, force: true });
+  });
+  for (const exists of [true, false]) {
+    for (const depth of [0, 1, 2]) {
+      const name = `${exists ? "existing" : "missing"}-${depth}`;
+      const target = join(fixture, `${name}-target`);
+      const linkedParent = join(fixture, `${name}-link`);
+      mkdirSync(target);
+      symlinkSync(target, linkedParent, process.platform === "win32" ? "junction" : "dir");
+      const suffix = Array.from({ length: depth + 1 }, (_, index) => `level-${index}`);
+      const targetRuntime = join(target, ...suffix);
+      const runtimeRoot = join(linkedParent, ...suffix);
+      if (exists) mkdirSync(targetRuntime, { recursive: true });
+      const database = openSqliteDatabase(join(fixture, `${name}.sqlite`), migrations);
+      const repository = new SqliteArtifactRepository(database);
+      try {
+        await assert.rejects(
+          () =>
+            DurableArtifactStore.open({
+              repository,
+              clock: new ManualClock(1_800_000_000_000),
+              config: vaultConfig(runtimeRoot),
+            }),
+          /unsafe filesystem object/u,
+        );
+        assert.equal(existsSync(join(targetRuntime, "artifacts")), false);
+      } finally {
+        database.close();
+      }
+    }
+  }
 });
