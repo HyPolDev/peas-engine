@@ -221,10 +221,8 @@ const mutants = [
     file: "src/adapters/artifacts/durable-artifact-store.ts",
     changes: [
       {
-        from: "await this.#lease.renewAndAssert();",
-        to: "if (false) await this.#lease.renewAndAssert();",
-        expectedOccurrences: 3,
-        occurrence: 2,
+        from: "await this.#lease.renewAndAssert();\n      let converged = false;",
+        to: "let converged = false;",
       },
     ],
     test: "artifact-vault.test.js",
@@ -306,6 +304,118 @@ const mutants = [
     category: "vault",
     file: "src/adapters/artifacts/durable-artifact-store.ts",
     changes: [{ from: "processed >= maxItems ||", to: "false ||" }],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-nested-runtime-ancestor-rejection",
+    category: "vault",
+    file: "src/adapters/artifacts/durable-artifact-store.ts",
+    changes: [
+      {
+        from: "for (const ancestor of ancestors.reverse()) {",
+        to: "for (const ancestor of [resolved]) {",
+      },
+    ],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-transaction-fresh-expiry",
+    category: "vault",
+    file: "src/adapters/artifacts/sqlite-artifact-repository.ts",
+    changes: [{ from: "const nowMs = fence.nowMs();", to: "const nowMs = 0;" }],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-opaque-identifier-persistence",
+    category: "vault",
+    file: "src/artifacts/validation.ts",
+    changes: [
+      {
+        from: "return canonicalHash(`peas/artifact-" + "$" + "{kind}-identifier/v1`, { value });",
+        to: "return value;",
+      },
+    ],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-redelivery-outcome-reconciliation",
+    category: "vault",
+    file: "src/adapters/artifacts/sqlite-artifact-repository.ts",
+    changes: [
+      {
+        from: "const outcome = this.#getOutcome(attemptId);",
+        to: 'const outcome = { outcome: "succeeded" as const };',
+      },
+    ],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-stale-failure-outcome-fence",
+    category: "vault",
+    edits: [
+      {
+        file: "src/adapters/artifacts/durable-artifact-store.ts",
+        changes: [
+          {
+            from: "await this.#lease.renewAndAssert();\n        await rm(stagePath",
+            to: "await rm(stagePath",
+          },
+        ],
+      },
+      {
+        file: "src/adapters/artifacts/sqlite-artifact-repository.ts",
+        changes: [
+          {
+            from: "this.assertWriter(fence);\n        this.#insertOutcome(outcome);",
+            to: "this.#insertOutcome(outcome);",
+          },
+        ],
+      },
+    ],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-stale-reconciliation-fence",
+    category: "vault",
+    file: "src/adapters/artifacts/durable-artifact-store.ts",
+    changes: [
+      {
+        from: "async reconcile(budget: Partial<ReconciliationBudget> = {}): Promise<ReconciliationReport> {\n    await this.#lease.renewAndAssert();",
+        to: "async reconcile(budget: Partial<ReconciliationBudget> = {}): Promise<ReconciliationReport> {",
+      },
+      {
+        from: "if (exhausted()) return continueLater();\n      await this.#lease.renewAndAssert();\n      await rm(safeChild(this.#paths.snapshots, name), { force: true });",
+        to: "if (exhausted()) return continueLater();\n      await rm(safeChild(this.#paths.snapshots, name), { force: true });",
+      },
+    ],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-success-transaction-atomicity",
+    category: "vault",
+    file: "src/adapters/artifacts/sqlite-artifact-repository.ts",
+    changes: [
+      {
+        from: "return this.#database\n      .transaction(() => {\n        this.assertWriter(fence);\n        const existing = this.stat(artifact.digest);",
+        to: "return (() => {\n        this.assertWriter(fence);\n        const existing = this.stat(artifact.digest);",
+      },
+      {
+        from: "return disposition;\n      })\n      .immediate();",
+        to: "return disposition;\n      })();",
+      },
+    ],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-incident-update-immutability",
+    category: "vault",
+    file: "migrations/005_artifact_vault.sql",
+    changes: [
+      {
+        from: "CREATE TRIGGER artifact_incidents_no_update BEFORE UPDATE ON artifact_integrity_incidents",
+        to: "CREATE TRIGGER artifact_incidents_no_update BEFORE UPDATE ON artifact_integrity_incidents WHEN 0",
+      },
+    ],
     test: "artifact-vault.test.js",
   },
 ];

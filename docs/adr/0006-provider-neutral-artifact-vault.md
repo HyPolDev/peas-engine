@@ -14,10 +14,13 @@ observations, and integrity incidents.
 
 Filesystem installation and SQLite commit are not atomic. A single leased vault-writer process
 uses an expiring lease with a random owner identity and monotonically increasing SQLite fencing
-generation. The lease is renewed at half-duration or faster and at write commit boundaries.
-Ownership is checked immediately before filesystem installation and again inside the immediate
-SQLite success transaction. A writer that loses ownership cannot commit trusted metadata; a crash
-or takeover may leave only a recoverable content orphan. PID liveness is not an ownership signal.
+generation. The lease is renewed at half-duration or faster and at every mutation boundary.
+Ownership is checked immediately before filesystem installation and again inside every immediate
+SQLite mutation transaction using a fresh clock reading obtained after the transaction begins.
+Attempt creation and terminal outcomes, artifact adoption, incident insertion, reconciliation, and
+quarantine installation are fenced as well as successful commits. A writer that loses ownership
+cannot commit trusted metadata or continue reconciliation; a crash or takeover may leave only a
+recoverable stage or content orphan. PID liveness is not an ownership signal.
 
 An exact replay of a completed attempt consumes and verifies the redelivered bytes, then returns the
 original artifact and observation without creating evidence. Reuse of an attempt identity with
@@ -28,19 +31,20 @@ The vault uses bounded in-process concurrency, bounded streaming, safe-integer s
 reconciliation. Valid verified filesystem orphans may be adopted without invented retrieval
 observations. Invalid or ambiguous objects can be quarantined without an artifact metadata row.
 Quarantine installation is exclusive and never replaces an existing object. Incident identity
-includes fresh entropy so same-clock incidents remain distinct. Reconciliation accepts explicit
-item and elapsed-time budgets and returns a continuation marker when another idempotent pass is
-required. Corrupt reads stop after observing at most one configured read chunk beyond committed
-size and never expose bytes before snapshot verification. Quarantine has no automatic restoration
-path.
+includes fresh entropy so same-clock incidents remain distinct. Corrupt reads stop after observing
+at most one configured read chunk beyond committed size and never expose bytes before snapshot
+verification. Quarantine has no automatic restoration path.
 
 Persisted request metadata is limited to the method, sanitized origin, a path hash, a reviewed safe
 route label, and allowlisted response facts. Raw paths, queries, full URLs, credentials, cookies,
 authorization data, arbitrary headers, and provider filenames are never persisted or used in a
-filesystem path. Persisted identifiers and response facts use field-specific grammars that reject
-controls, CRLF, URI-shaped values, userinfo, query/fragment delimiters, and other disallowed forms;
-generic secret guessing is not the trust boundary. Canonical JSON/hash records are checked against
-every duplicated relational value for attempts, outcomes, blobs, observations, and incidents.
+filesystem path. Externally supplied attempt, provider, record, and revision identifiers are
+validated and then persisted only as domain-separated SHA-256 identities; their raw forms never
+cross the vault persistence boundary. Persisted response facts use field-specific grammars that
+reject controls, CRLF, URI-shaped values, userinfo, query/fragment delimiters, and other disallowed
+forms. Canonical JSON/hash records are checked against every duplicated relational value for
+attempts, outcomes, blobs, observations, and incidents, including the outcome consulted by exact
+redelivery.
 
 The runtime root is `%LOCALAPPDATA%\peas-engine` on Windows. Linux uses
 `$XDG_DATA_HOME/peas-engine`, falling back to `~/.local/share/peas-engine`.
@@ -49,6 +53,24 @@ Operation-time checks reject Linux symbolic links and Windows directory junction
 Node filesystem API. These checks narrow replacement races but do not claim kernel-enforced
 directory-handle-relative resolution on platforms where Node does not expose it; hostile local
 administrators remain outside the threat model.
+
+## Unresolved bounded-reconciliation architecture
+
+The current `maxItems` and `maxElapsedMs` interface bounds mutation work after enumeration, but it
+does not bound all pre-work. SQLite verification and open-attempt reads materialize complete result
+sets, and Node's portable directory API provides neither a durable directory cookie nor ordered
+seek-by-name semantics. Reopening a directory after a crash cannot resume a large enumeration from
+an opaque position without rescanning an unbounded prefix. The existing `restart-v1` marker is
+therefore not a durable phase/key cursor and is not a release-grade availability guarantee.
+
+The enforceable alternative is a broader vault layout revision: all vault writes enter through a
+SQLite-maintained inventory and bounded sharded directories, reconciliation persists a phase/key
+work queue in SQLite, and platform-specific native directory enumeration supplies durable cookies
+where orphan discovery outside that inventory remains required. Migration and compatibility rules
+for existing flat staging, snapshots, and quarantine directories are required. Until that design
+is implemented and crash-tested, hostile or very large directories and evidence tables can exceed
+a requested reconciliation time or memory budget. PR 2A remains NO-GO on that availability risk;
+the item/time fields must not be represented as a complete bound.
 
 ## Kernel boundary
 

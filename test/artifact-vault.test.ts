@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { type ChildProcess, fork } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -35,6 +36,7 @@ import { canonicalHash } from "../src/core/hash.js";
 import type { JsonValue } from "../src/core/json.js";
 
 const migrations = loadMigrations(join(process.cwd(), "migrations"));
+const artifactWorkerPath = join(process.cwd(), "test", "fixtures", "artifact-vault-worker.mjs");
 
 type Harness = Readonly<{
   root: string;
@@ -132,6 +134,62 @@ function activeFence(
     generation: Number(row.generation),
     nowMs: () => clock.nowMs(),
   };
+}
+
+function waitForWorkerMessage(
+  child: ChildProcess,
+  expectedType: "staged" | "result",
+): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const cleanup = (): void => {
+      child.off("message", onMessage);
+      child.off("error", onError);
+      child.off("exit", onExit);
+    };
+    const onMessage = (message: unknown): void => {
+      if (typeof message !== "object" || message === null || !("type" in message)) return;
+      if ((message as { type: unknown }).type !== expectedType) return;
+      cleanup();
+      resolve(message as Record<string, unknown>);
+    };
+    const onError = (error: Error): void => {
+      cleanup();
+      reject(error);
+    };
+    const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
+      cleanup();
+      reject(
+        new Error(`Artifact worker exited early (code=${String(code)}, signal=${String(signal)})`),
+      );
+    };
+    child.on("message", onMessage);
+    child.once("error", onError);
+    child.once("exit", onExit);
+  });
+}
+
+function waitForWorkerExit(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    child.once("exit", () => resolve());
+    child.once("error", reject);
+  });
+}
+
+function processFixture(
+  context: test.TestContext,
+  name: string,
+): { root: string; databasePath: string } {
+  const root = mkdtempSync(join(tmpdir(), `peas-artifact-${name}-`));
+  context.after(() => {
+    const prefix = join(tmpdir(), `peas-artifact-${name}-`);
+    if (!root.startsWith(prefix)) throw new Error("Unsafe process fixture cleanup path");
+    rmSync(root, { recursive: true, force: true });
+  });
+  const databasePath = join(root, "vault.sqlite");
+  const database = openSqliteDatabase(databasePath, migrations);
+  database.close();
+  return { root, databasePath };
 }
 
 test("stores entity bytes, separates evidence, deduplicates, and reads verified snapshots", async (context) => {
@@ -433,12 +491,15 @@ test("expired takeover fences a still-live stale writer before install and SQLit
   );
   assert.equal(readdirSync(join(root, "artifacts", "staging")).length, 1);
   writeFileSync(join(root, "artifacts", "staging", "stale-reconcile.part"), "partial");
+  writeFileSync(join(root, "artifacts", "snapshots", "stale-reconcile.verified"), "partial");
   const databaseBefore = database.serialize();
   const stagingBefore = readdirSync(join(root, "artifacts", "staging")).sort();
+  const snapshotsBefore = readdirSync(join(root, "artifacts", "snapshots")).sort();
   const quarantineBefore = readdirSync(join(root, "artifacts", "quarantine")).sort();
   await assert.rejects(() => stale.reconcile(), /lease was lost/u);
   assert.deepEqual(database.serialize(), databaseBefore);
   assert.deepEqual(readdirSync(join(root, "artifacts", "staging")).sort(), stagingBefore);
+  assert.deepEqual(readdirSync(join(root, "artifacts", "snapshots")).sort(), snapshotsBefore);
   assert.deepEqual(readdirSync(join(root, "artifacts", "quarantine")).sort(), quarantineBefore);
   database
     .prepare("UPDATE artifact_writer_fence SET expires_at_ms = ? WHERE singleton = 1")
@@ -540,6 +601,113 @@ test("transaction mutations evaluate lease expiry from a fresh clock reading", a
     ).count,
     0n,
   );
+});
+
+test("successful evidence commit is atomic when observation insertion aborts", async (context) => {
+  const { database, store } = await harness(context);
+  database.exec(`CREATE TRIGGER artifact_test_reject_observation
+    BEFORE INSERT ON artifact_observations BEGIN SELECT RAISE(ABORT, 'synthetic observation failure'); END`);
+  await assert.rejects(
+    () => store.store(request("atomic-success", Buffer.from("atomic"))),
+    /synthetic observation failure/u,
+  );
+  assert.equal(
+    (database.prepare("SELECT count(*) count FROM artifact_blobs").get() as { count: bigint })
+      .count,
+    0n,
+  );
+  assert.equal(
+    (
+      database.prepare("SELECT count(*) count FROM artifact_observations").get() as {
+        count: bigint;
+      }
+    ).count,
+    0n,
+  );
+  const outcomes = database
+    .prepare("SELECT outcome FROM artifact_retrieval_outcomes")
+    .all() as Array<{ outcome: string }>;
+  assert.deepEqual(outcomes, [{ outcome: "failed" }]);
+});
+
+test("a separate-process stale writer cannot append outcomes or mutate staging after takeover", async (context) => {
+  const { root, databasePath } = processFixture(context, "takeover");
+  const child = fork(artifactWorkerPath, [databasePath, root, "1800000000000"], {
+    stdio: ["ignore", "ignore", "pipe", "ipc"],
+  });
+  context.after(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  });
+  await waitForWorkerMessage(child, "staged");
+  const database = openSqliteDatabase(databasePath, migrations);
+  try {
+    database
+      .prepare(
+        "UPDATE artifact_writer_fence SET generation = generation + 1, owner_token = 'parent-takeover', expires_at_ms = ? WHERE singleton = 1",
+      )
+      .run(1_800_000_030_000);
+    rmSync(join(root, "artifacts", "locks", "writer.lock"), { force: true });
+    const stagingBefore = readdirSync(join(root, "artifacts", "staging")).sort();
+    child.send({ type: "resume" });
+    const result = await waitForWorkerMessage(child, "result");
+    assert.equal(result["status"], "rejected");
+    assert.match(String(result["message"]), /lease was lost/u);
+    assert.equal(
+      (
+        database
+          .prepare("SELECT count(*) count FROM artifact_retrieval_outcomes WHERE attempt_id = ?")
+          .get(persistedRetrievalAttemptId("cross-process-stale")) as { count: bigint }
+      ).count,
+      0n,
+    );
+    assert.deepEqual(readdirSync(join(root, "artifacts", "staging")).sort(), stagingBefore);
+  } finally {
+    database.close();
+    child.send({ type: "close" });
+    await waitForWorkerExit(child);
+  }
+});
+
+test("hard-killed staged writer leaves only recoverable evidence for fenced reconciliation", async (context) => {
+  const { root, databasePath } = processFixture(context, "hard-kill");
+  const child = fork(artifactWorkerPath, [databasePath, root, "1800000000000"], {
+    stdio: ["ignore", "ignore", "pipe", "ipc"],
+  });
+  await waitForWorkerMessage(child, "staged");
+  child.kill("SIGKILL");
+  await waitForWorkerExit(child);
+  const database = openSqliteDatabase(databasePath, migrations);
+  const repository = new SqliteArtifactRepository(database);
+  const clock = new ManualClock(1_800_000_030_001);
+  const recovered = await DurableArtifactStore.open({
+    repository,
+    clock,
+    config: vaultConfig(root),
+  });
+  try {
+    assert.equal(
+      (
+        database.prepare("SELECT count(*) count FROM artifact_retrieval_outcomes").get() as {
+          count: bigint;
+        }
+      ).count,
+      0n,
+    );
+    assert.equal(readdirSync(join(root, "artifacts", "staging")).length, 1);
+    const report = await recovered.reconcile();
+    assert.equal(report.expiredStages, 1);
+    assert.equal(
+      (
+        database
+          .prepare("SELECT outcome FROM artifact_retrieval_outcomes WHERE attempt_id = ?")
+          .get(persistedRetrievalAttemptId("cross-process-stale")) as { outcome: string }
+      ).outcome,
+      "expired",
+    );
+  } finally {
+    await recovered.close();
+    database.close();
+  }
 });
 
 test("reconciliation adopts valid orphans without fabricating observations", async (context) => {
