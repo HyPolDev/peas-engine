@@ -27,8 +27,15 @@ original artifact and observation without creating evidence. Reuse of an attempt
 different immutable metadata, response facts, or content is a conflict. Incomplete or non-success
 terminal identities are not automatically reused; reconciliation must first classify them.
 
-The vault uses bounded in-process concurrency, bounded streaming, safe-integer sizes, and restart
-reconciliation. Valid verified filesystem orphans may be adopted without invented retrieval
+The vault uses bounded in-process concurrency, bounded streaming, safe-integer sizes, and durable
+restart reconciliation. Reconciliation state is canonical-hashed in SQLite and binds a monotonic
+generation, phase, database key, content shard, and caller continuation token. Evidence validation
+uses keyset pagination with SQL `LIMIT`; open attempts and artifact checks are paged rather than
+materialized. Filesystem enumeration uses `opendir()` and fails closed when any audited directory
+exceeds 256 entries. That strict fanout cap makes filename-key resumption bounded even though Node
+does not expose portable durable directory cookies. The cursor advances only after its represented
+read or filesystem action succeeds, and stale, tampered, or generation-mismatched cursors fail
+closed. Valid verified filesystem orphans may be adopted without invented retrieval
 observations. Invalid or ambiguous objects can be quarantined without an artifact metadata row.
 Quarantine installation is exclusive and never replaces an existing object. Incident identity
 includes fresh entropy so same-clock incidents remain distinct. Corrupt reads stop after observing
@@ -39,7 +46,8 @@ Persisted request metadata is limited to the method, sanitized origin, a path ha
 route label, and allowlisted response facts. Raw paths, queries, full URLs, credentials, cookies,
 authorization data, arbitrary headers, and provider filenames are never persisted or used in a
 filesystem path. Externally supplied attempt, provider, record, and revision identifiers are
-validated and then persisted only as domain-separated SHA-256 identities; their raw forms never
+validated and then persisted only as versioned, domain-separated `att1_`, `prv1_`, `rec1_`, and
+`rev1_` SHA-256 identities; their raw forms never
 cross the vault persistence boundary. Persisted response facts use field-specific grammars that
 reject controls, CRLF, URI-shaped values, userinfo, query/fragment delimiters, and other disallowed
 forms. Canonical JSON/hash records are checked against every duplicated relational value for
@@ -54,23 +62,12 @@ Node filesystem API. These checks narrow replacement races but do not claim kern
 directory-handle-relative resolution on platforms where Node does not expose it; hostile local
 administrators remain outside the threat model.
 
-## Unresolved bounded-reconciliation architecture
-
-The current `maxItems` and `maxElapsedMs` interface bounds mutation work after enumeration, but it
-does not bound all pre-work. SQLite verification and open-attempt reads materialize complete result
-sets, and Node's portable directory API provides neither a durable directory cookie nor ordered
-seek-by-name semantics. Reopening a directory after a crash cannot resume a large enumeration from
-an opaque position without rescanning an unbounded prefix. The existing `restart-v1` marker is
-therefore not a durable phase/key cursor and is not a release-grade availability guarantee.
-
-The enforceable alternative is a broader vault layout revision: all vault writes enter through a
-SQLite-maintained inventory and bounded sharded directories, reconciliation persists a phase/key
-work queue in SQLite, and platform-specific native directory enumeration supplies durable cookies
-where orphan discovery outside that inventory remains required. Migration and compatibility rules
-for existing flat staging, snapshots, and quarantine directories are required. Until that design
-is implemented and crash-tested, hostile or very large directories and evidence tables can exceed
-a requested reconciliation time or memory budget. PR 2A remains NO-GO on that availability risk;
-the item/time fields must not be represented as a complete bound.
+The item budget counts verified database rows, actions, and empty phase/shard transitions. The byte
+budget bounds orphan hashing and must be at least one configured artifact. The elapsed budget is
+checked between bounded operations; a single SQLite `LIMIT` query or at-most-257-entry directory
+read is the maximum non-preemptible unit. Reports expose rows visited, directory entries read,
+bytes hashed, and elapsed time. Unmanaged directories above the fanout cap are classified as unsafe
+and retained untouched for operator inspection rather than partially enumerated or adopted.
 
 ## Kernel boundary
 

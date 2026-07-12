@@ -88,6 +88,36 @@ export type WriterFence = Readonly<{
   nowMs: () => number;
 }>;
 
+export type ReconciliationPhase =
+  | "attempts"
+  | "outcomes"
+  | "blobs"
+  | "observations"
+  | "incidents"
+  | "snapshots"
+  | "staging"
+  | "open-attempts"
+  | "content"
+  | "missing-content";
+
+export type PersistedReconciliationState = Readonly<{
+  generation: number;
+  phase: ReconciliationPhase;
+  shard: number;
+  afterKey: string;
+  cursorToken: string;
+}>;
+
+type ReconciliationStateRow = {
+  generation: bigint;
+  phase: ReconciliationPhase;
+  shard: bigint;
+  after_key: string;
+  cursor_token: string;
+  state_json: string;
+  state_hash: string;
+};
+
 export class SqliteArtifactRepository {
   readonly #database: SqliteDatabase;
 
@@ -135,6 +165,157 @@ export class SqliteArtifactRepository {
       WHERE singleton = 1 AND owner_token = ? AND generation = ? AND expires_at_ms >= ?`)
       .get(fence.ownerToken, fence.generation, nowMs);
     if (row === undefined) throw new Error("Vault writer lease was lost");
+  }
+
+  loadReconciliationState(
+    expectedCursor: string | null,
+    fence: WriterFence,
+  ): PersistedReconciliationState {
+    return this.#database
+      .transaction(() => {
+        this.assertWriter(fence);
+        const row = this.#database
+          .prepare("SELECT * FROM artifact_reconciliation_state WHERE singleton = 1")
+          .get() as ReconciliationStateRow | undefined;
+        if (row === undefined) {
+          if (expectedCursor !== null) throw new Error("Reconciliation cursor is stale");
+          return this.#insertReconciliationState({
+            generation: 1,
+            phase: "attempts",
+            shard: 0,
+            afterKey: "",
+          });
+        }
+        const state = this.#parseReconciliationState(row);
+        if (expectedCursor === null || expectedCursor !== state.cursorToken)
+          throw new Error("Reconciliation cursor is stale or invalid");
+        return state;
+      })
+      .immediate();
+  }
+
+  advanceReconciliationState(
+    current: PersistedReconciliationState,
+    next: Readonly<{ phase: ReconciliationPhase; shard: number; afterKey: string }>,
+    fence: WriterFence,
+  ): PersistedReconciliationState {
+    return this.#database
+      .transaction(() => {
+        this.assertWriter(fence);
+        const result = this.#database
+          .prepare(`DELETE FROM artifact_reconciliation_state
+            WHERE singleton = 1 AND generation = ? AND cursor_token = ?`)
+          .run(current.generation, current.cursorToken);
+        if (result.changes !== 1) throw new Error("Reconciliation cursor generation was lost");
+        return this.#insertReconciliationState({
+          generation: current.generation + 1,
+          phase: next.phase,
+          shard: next.shard,
+          afterKey: next.afterKey,
+        });
+      })
+      .immediate();
+  }
+
+  completeReconciliation(current: PersistedReconciliationState, fence: WriterFence): void {
+    this.#database
+      .transaction(() => {
+        this.assertWriter(fence);
+        const result = this.#database
+          .prepare(`DELETE FROM artifact_reconciliation_state
+            WHERE singleton = 1 AND generation = ? AND cursor_token = ?`)
+          .run(current.generation, current.cursorToken);
+        if (result.changes !== 1) throw new Error("Reconciliation cursor generation was lost");
+      })
+      .immediate();
+  }
+
+  verifyEvidencePage(
+    phase: "attempts" | "outcomes" | "blobs" | "observations" | "incidents",
+    afterKey: string,
+    limit: number,
+  ): Readonly<{ visited: number; lastKey: string; done: boolean }> {
+    if (phase === "attempts") {
+      const rows = this.#database
+        .prepare(`SELECT attempt_id FROM artifact_retrieval_attempts
+          WHERE attempt_id > ? ORDER BY attempt_id LIMIT ?`)
+        .all(afterKey, limit) as Array<{ attempt_id: string }>;
+      for (const row of rows.slice(0, limit)) this.getAttempt(row.attempt_id);
+      return this.#pageResult(
+        rows.map((row) => row.attempt_id),
+        afterKey,
+        limit,
+      );
+    }
+    if (phase === "outcomes") {
+      const rows = this.#database
+        .prepare(`SELECT sequence, attempt_id FROM artifact_retrieval_outcomes
+          WHERE sequence > ? ORDER BY sequence LIMIT ?`)
+        .all(BigInt(afterKey || "0"), limit) as Array<{ sequence: bigint; attempt_id: string }>;
+      for (const row of rows.slice(0, limit)) this.#getOutcome(row.attempt_id);
+      return this.#pageResult(
+        rows.map((row) => row.sequence.toString()),
+        afterKey,
+        limit,
+      );
+    }
+    if (phase === "blobs") {
+      const rows = this.#database
+        .prepare(`SELECT digest FROM artifact_blobs WHERE digest > ? ORDER BY digest LIMIT ?`)
+        .all(afterKey, limit) as Array<{ digest: string }>;
+      for (const row of rows.slice(0, limit)) this.stat(row.digest);
+      return this.#pageResult(
+        rows.map((row) => row.digest),
+        afterKey,
+        limit,
+      );
+    }
+    if (phase === "observations") {
+      const rows = this.#database
+        .prepare(`SELECT * FROM artifact_observations WHERE sequence > ? ORDER BY sequence LIMIT ?`)
+        .all(BigInt(afterKey || "0"), limit) as ObservationRow[];
+      for (const row of rows.slice(0, limit)) this.#parseObservation(row);
+      return this.#pageResult(
+        rows.map((row) => row.sequence.toString()),
+        afterKey,
+        limit,
+      );
+    }
+    const rows = this.#database
+      .prepare(
+        `SELECT * FROM artifact_integrity_incidents WHERE sequence > ? ORDER BY sequence LIMIT ?`,
+      )
+      .all(BigInt(afterKey || "0"), limit) as Array<Record<string, unknown>>;
+    for (const row of rows.slice(0, limit)) this.#parseIncident(row);
+    return this.#pageResult(
+      rows.map((row) => (row["sequence"] as bigint).toString()),
+      afterKey,
+      limit,
+    );
+  }
+
+  getAttemptByStagingId(stagingId: string): RetrievalAttempt | undefined {
+    const row = this.#database
+      .prepare("SELECT attempt_id FROM artifact_retrieval_attempts WHERE staging_id = ?")
+      .get(stagingId) as { attempt_id: string } | undefined;
+    return row === undefined ? undefined : this.getAttempt(row.attempt_id);
+  }
+
+  readOpenAttemptsPage(afterAttemptId: string, limit: number): readonly RetrievalAttempt[] {
+    const rows = this.#database
+      .prepare(`SELECT a.attempt_id FROM artifact_retrieval_attempts a
+        LEFT JOIN artifact_retrieval_outcomes o ON o.attempt_id = a.attempt_id
+        WHERE o.attempt_id IS NULL AND a.attempt_id > ?
+        ORDER BY a.attempt_id LIMIT ?`)
+      .all(afterAttemptId, limit) as Array<{ attempt_id: string }>;
+    return rows.map((row) => this.getAttempt(row.attempt_id) as RetrievalAttempt);
+  }
+
+  readArtifactsPage(afterDigest: string, limit: number): readonly ArtifactMetadata[] {
+    const rows = this.#database
+      .prepare("SELECT digest FROM artifact_blobs WHERE digest > ? ORDER BY digest LIMIT ?")
+      .all(afterDigest, limit) as Array<{ digest: string }>;
+    return rows.map((row) => this.stat(row.digest) as ArtifactMetadata);
   }
 
   recordAttempt(attempt: RetrievalAttempt, fence: WriterFence): void {
@@ -470,29 +651,94 @@ export class SqliteArtifactRepository {
       this.#parseObservation(row);
     for (const row of this.#database
       .prepare("SELECT * FROM artifact_integrity_incidents")
-      .all() as Array<Record<string, unknown>>) {
-      const incident = parseCanonical<IntegrityIncident>(
-        row["incident_json"] as string,
-        row["incident_hash"] as string,
-        "peas/artifact-incident/v1",
-      );
-      const numberOrNull = (value: unknown, label: string): number | null =>
-        value === null ? null : safeNumber(value as bigint, label);
-      relationalMismatch("Artifact incident", [
-        [incident.incidentId, row["incident_id"]],
-        [incident.kind, row["kind"]],
-        [incident.recordedAtMs, safeNumber(row["recorded_at_ms"] as bigint, "incident time")],
-        [incident.stagingId, row["staging_id"]],
-        [incident.claimedDigest, row["claimed_digest"]],
-        [
-          incident.expectedSizeBytes,
-          numberOrNull(row["expected_size_bytes"], "incident expected size"),
-        ],
-        [incident.actualSizeBytes, numberOrNull(row["actual_size_bytes"], "incident actual size")],
-        [incident.detailHash, row["detail_hash"]],
-      ]);
-    }
+      .all() as Array<Record<string, unknown>>)
+      this.#parseIncident(row);
     this.listArtifacts();
+  }
+
+  #insertReconciliationState(
+    state: Readonly<{
+      generation: number;
+      phase: ReconciliationPhase;
+      shard: number;
+      afterKey: string;
+    }>,
+  ): PersistedReconciliationState {
+    const value = {
+      generation: state.generation,
+      phase: state.phase,
+      shard: state.shard,
+      afterKey: state.afterKey,
+    };
+    const json = canonicalJson(value as unknown as JsonValue);
+    const hash = canonicalHash(
+      "peas/artifact-reconciliation-state/v1",
+      value as unknown as JsonValue,
+    );
+    this.#database
+      .prepare(`INSERT INTO artifact_reconciliation_state (
+      singleton, generation, phase, shard, after_key, cursor_token, state_json, state_hash
+    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(state.generation, state.phase, state.shard, state.afterKey, hash, json, hash);
+    return { ...state, cursorToken: hash };
+  }
+
+  #parseReconciliationState(row: ReconciliationStateRow): PersistedReconciliationState {
+    const value = parseCanonical<{
+      generation: number;
+      phase: ReconciliationPhase;
+      shard: number;
+      afterKey: string;
+    }>(row.state_json, row.state_hash, "peas/artifact-reconciliation-state/v1");
+    relationalMismatch("Artifact reconciliation state", [
+      [value.generation, safeNumber(row.generation, "reconciliation generation")],
+      [value.phase, row.phase],
+      [value.shard, safeNumber(row.shard, "reconciliation shard")],
+      [value.afterKey, row.after_key],
+      [row.state_hash, row.cursor_token],
+    ]);
+    return { ...value, cursorToken: row.cursor_token };
+  }
+
+  #pageResult(
+    keys: readonly string[],
+    afterKey: string,
+    limit: number,
+  ): Readonly<{
+    visited: number;
+    lastKey: string;
+    done: boolean;
+  }> {
+    const selected = keys.slice(0, limit);
+    return {
+      visited: keys.length,
+      lastKey: selected.at(-1) ?? afterKey,
+      done: keys.length < limit,
+    };
+  }
+
+  #parseIncident(row: Record<string, unknown>): IntegrityIncident {
+    const incident = parseCanonical<IntegrityIncident>(
+      row["incident_json"] as string,
+      row["incident_hash"] as string,
+      "peas/artifact-incident/v1",
+    );
+    const numberOrNull = (value: unknown, label: string): number | null =>
+      value === null ? null : safeNumber(value as bigint, label);
+    relationalMismatch("Artifact incident", [
+      [incident.incidentId, row["incident_id"]],
+      [incident.kind, row["kind"]],
+      [incident.recordedAtMs, safeNumber(row["recorded_at_ms"] as bigint, "incident time")],
+      [incident.stagingId, row["staging_id"]],
+      [incident.claimedDigest, row["claimed_digest"]],
+      [
+        incident.expectedSizeBytes,
+        numberOrNull(row["expected_size_bytes"], "incident expected size"),
+      ],
+      [incident.actualSizeBytes, numberOrNull(row["actual_size_bytes"], "incident actual size")],
+      [incident.detailHash, row["detail_hash"]],
+    ]);
+    return incident;
   }
 
   #getOutcome(attemptId: string): RetrievalAttemptOutcome | undefined {

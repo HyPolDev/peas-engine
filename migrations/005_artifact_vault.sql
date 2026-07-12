@@ -65,6 +65,23 @@ CREATE TABLE artifact_writer_fence (
   expires_at_ms INTEGER NOT NULL CHECK (expires_at_ms >= 0)
 ) STRICT;
 
+CREATE TABLE artifact_reconciliation_state (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  generation INTEGER NOT NULL CHECK (generation > 0),
+  phase TEXT NOT NULL CHECK (phase IN (
+    'attempts', 'outcomes', 'blobs', 'observations', 'incidents',
+    'snapshots', 'staging', 'open-attempts', 'content', 'missing-content'
+  )),
+  shard INTEGER NOT NULL CHECK (shard >= 0 AND shard <= 65536),
+  after_key TEXT NOT NULL,
+  cursor_token TEXT NOT NULL CHECK (
+    length(cursor_token) = 64 AND cursor_token = lower(cursor_token) AND
+    cursor_token NOT GLOB '*[^0-9a-f]*'
+  ),
+  state_json TEXT NOT NULL,
+  state_hash TEXT NOT NULL
+) STRICT;
+
 CREATE TABLE artifact_observations (
   sequence INTEGER PRIMARY KEY,
   observation_id TEXT NOT NULL UNIQUE,

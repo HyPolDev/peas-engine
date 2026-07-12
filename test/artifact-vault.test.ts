@@ -19,6 +19,10 @@ import { DurableArtifactStore } from "../src/adapters/artifacts/durable-artifact
 import { defaultPeasRuntimeRoot } from "../src/adapters/artifacts/runtime-root.js";
 import { SqliteArtifactRepository } from "../src/adapters/artifacts/sqlite-artifact-repository.js";
 import type { WriterFence } from "../src/adapters/artifacts/sqlite-artifact-repository.js";
+import type {
+  PersistedReconciliationState,
+  ReconciliationPhase,
+} from "../src/adapters/artifacts/sqlite-artifact-repository.js";
 import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
 import { deriveObservationId, sanitizeRequestIdentity } from "../src/artifacts/identity.js";
 import {
@@ -39,6 +43,12 @@ import type { JsonValue } from "../src/core/json.js";
 
 const migrations = loadMigrations(join(process.cwd(), "migrations"));
 const artifactWorkerPath = join(process.cwd(), "test", "fixtures", "artifact-vault-worker.mjs");
+const reconciliationWorkerPath = join(
+  process.cwd(),
+  "test",
+  "fixtures",
+  "artifact-reconciliation-worker.mjs",
+);
 
 type Harness = Readonly<{
   root: string;
@@ -140,10 +150,15 @@ function activeFence(
 
 function waitForWorkerMessage(
   child: ChildProcess,
-  expectedType: "staged" | "result",
+  expectedType: "ready" | "staged" | "result",
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Artifact worker timed out before ${expectedType}`));
+    }, 5_000);
     const cleanup = (): void => {
+      clearTimeout(timeout);
       child.off("message", onMessage);
       child.off("error", onError);
       child.off("exit", onExit);
@@ -762,6 +777,49 @@ test("hard-killed staged writer leaves only recoverable evidence for fenced reco
   }
 });
 
+test("hard kill after cursor advancement resumes from the durable generation", async (context) => {
+  const { root, databasePath } = processFixture(context, "cursor-kill");
+  const child = fork(reconciliationWorkerPath, [databasePath, root, "1800000000000"], {
+    stdio: ["ignore", "ignore", "pipe", "ipc"],
+  });
+  await waitForWorkerMessage(child, "ready");
+  child.send({ type: "reconcile", cursor: null });
+  const result = await waitForWorkerMessage(child, "result");
+  const cursor = String(result["cursor"]);
+  assert.match(cursor, /^[0-9a-f]{64}$/u);
+  child.kill("SIGKILL");
+  await waitForWorkerExit(child);
+
+  const database = openSqliteDatabase(databasePath, migrations);
+  const before = database.prepare("SELECT generation FROM artifact_reconciliation_state").get() as {
+    generation: bigint;
+  };
+  const clock = new ManualClock(1_800_000_030_001);
+  const recovered = await DurableArtifactStore.open({
+    repository: new SqliteArtifactRepository(database),
+    clock,
+    config: vaultConfig(root),
+  });
+  try {
+    const resumed = await recovered.reconcile({
+      cursor,
+      maxItems: 1,
+      maxElapsedMs: 10_000,
+      maxBytes: 1_024,
+    });
+    assert.notEqual(resumed.continuationCursor, cursor);
+    const after = database
+      .prepare("SELECT generation FROM artifact_reconciliation_state")
+      .get() as {
+      generation: bigint;
+    };
+    assert.equal(after.generation, before.generation + 1n);
+  } finally {
+    await recovered.close();
+    database.close();
+  }
+});
+
 test("reconciliation adopts valid orphans without fabricating observations", async (context) => {
   const { root, database, store } = await harness(context);
   const bytes = Buffer.from("recovered entity");
@@ -835,6 +893,7 @@ test("canonical evidence reads fail closed on relational-only forgery", async (c
   database.exec(
     "DROP TRIGGER artifact_attempts_no_update; DROP TRIGGER artifact_observations_no_update; DROP TRIGGER artifact_blobs_no_update;",
   );
+  database.pragma("ignore_check_constraints = ON");
   const originalProvider = (
     database.prepare("SELECT provider FROM artifact_retrieval_attempts").get() as {
       provider: string;
@@ -958,13 +1017,200 @@ test("reconciliation obeys item budgets and converges across restart cursors", a
     writeFileSync(join(root, "artifacts", "staging", `budget-${index}.part`), "partial");
   let calls = 0;
   let report: ReconciliationReport;
+  let cursor: string | null = null;
   do {
-    report = await store.reconcile({ maxItems: 2, maxElapsedMs: 10_000 });
+    report = await store.reconcile({ cursor, maxItems: 2, maxElapsedMs: 10_000 });
+    cursor = report.continuationCursor;
     calls += 1;
-    assert.equal(calls < 10, true);
+    assert.equal(calls < 30, true);
   } while (report.continuationCursor !== null);
   assert.equal(calls >= 4, true);
   assert.deepEqual(readdirSync(join(root, "artifacts", "staging")), []);
+});
+
+test("one-item reconciliation bounds database rows, bytes, elapsed time, and memory", async (context) => {
+  const { database, repository, clock, store } = await harness(context);
+  const fence = activeFence(database, clock);
+  for (let index = 0; index < 100; index += 1) {
+    repository.recordAttempt(
+      createPersistedRetrievalAttempt(
+        validateRetrievalAttempt(request(`bounded-row-${index}`, Buffer.alloc(0)).attempt),
+        `bounded-row-stage-${index}`,
+        clock.nowMs(),
+      ),
+      fence,
+    );
+  }
+  const heapBefore = process.memoryUsage().heapUsed;
+  const first = await store.reconcile({ maxItems: 1, maxElapsedMs: 10_000, maxBytes: 1_024 });
+  const heapDelta = Math.max(0, process.memoryUsage().heapUsed - heapBefore);
+  assert.equal(first.rowsVisited, 1);
+  assert.equal(first.directoryEntriesRead, 0);
+  assert.equal(first.bytesHashed, 0);
+  assert.equal(first.continuationCursor === null, false);
+  assert.equal(first.elapsedMs < 1_000, true);
+  assert.equal(heapDelta < 16 * 1_024 * 1_024, true);
+  const timed = await store.reconcile({
+    cursor: first.continuationCursor,
+    maxItems: 1,
+    maxElapsedMs: 1,
+    maxBytes: 1_024,
+  });
+  assert.equal(timed.rowsVisited <= 1, true);
+  assert.equal(timed.elapsedMs < 1_000, true);
+});
+
+test("one-item directory reconciliation has a fixed enumeration bound", async (context) => {
+  const { root, store } = await harness(context);
+  const toStaging = await store.reconcile({ maxItems: 6, maxElapsedMs: 10_000, maxBytes: 6_144 });
+  assert.ok(toStaging.continuationCursor);
+  for (let index = 0; index < 50; index += 1)
+    writeFileSync(join(root, "artifacts", "staging", `bounded-dir-${index}.part`), "x");
+  const directoryPage = await store.reconcile({
+    cursor: toStaging.continuationCursor,
+    maxItems: 1,
+    maxElapsedMs: 10_000,
+    maxBytes: 1_024,
+  });
+  assert.equal(directoryPage.directoryEntriesRead, 50);
+  assert.equal(directoryPage.quarantinedObjects, 1);
+});
+
+test("reconciliation rejects stale, tampered, and generation-mismatched cursors", async (context) => {
+  const { database, repository, clock, store } = await harness(context);
+  const first = await store.reconcile({ maxItems: 1, maxElapsedMs: 10_000, maxBytes: 1_024 });
+  assert.ok(first.continuationCursor);
+  const tampered = `${first.continuationCursor.slice(0, -1)}${first.continuationCursor.endsWith("0") ? "1" : "0"}`;
+  await assert.rejects(
+    () => store.reconcile({ cursor: tampered, maxItems: 1, maxElapsedMs: 10_000, maxBytes: 1_024 }),
+    /cursor is stale or invalid/u,
+  );
+  const second = await store.reconcile({
+    cursor: first.continuationCursor,
+    maxItems: 1,
+    maxElapsedMs: 10_000,
+    maxBytes: 1_024,
+  });
+  await assert.rejects(
+    () =>
+      store.reconcile({
+        cursor: first.continuationCursor,
+        maxItems: 1,
+        maxElapsedMs: 10_000,
+        maxBytes: 1_024,
+      }),
+    /cursor is stale or invalid/u,
+  );
+  database.pragma("ignore_check_constraints = ON");
+  database.prepare("UPDATE artifact_reconciliation_state SET generation = generation + 1").run();
+  await assert.rejects(
+    () =>
+      store.reconcile({
+        cursor: second.continuationCursor,
+        maxItems: 1,
+        maxElapsedMs: 10_000,
+        maxBytes: 1_024,
+      }),
+    /relational mismatch/u,
+  );
+
+  database.prepare("UPDATE artifact_reconciliation_state SET generation = generation - 1").run();
+  const row = database.prepare("SELECT * FROM artifact_reconciliation_state").get() as {
+    generation: bigint;
+    phase: ReconciliationPhase;
+    shard: bigint;
+    after_key: string;
+    cursor_token: string;
+  };
+  const forged = {
+    generation: Number(row.generation) - 1,
+    phase: row.phase,
+    shard: Number(row.shard),
+    afterKey: row.after_key,
+    cursorToken: row.cursor_token,
+  } satisfies PersistedReconciliationState;
+  assert.throws(
+    () =>
+      repository.advanceReconciliationState(
+        forged,
+        { phase: forged.phase, shard: forged.shard, afterKey: forged.afterKey },
+        activeFence(database, clock),
+      ),
+    /generation was lost/u,
+  );
+});
+
+test("failed filesystem handling never advances the durable reconciliation cursor", async (context) => {
+  const { root, database, store } = await harness(context);
+  const toStaging = await store.reconcile({ maxItems: 6, maxElapsedMs: 10_000, maxBytes: 6_144 });
+  assert.ok(toStaging.continuationCursor);
+  writeFileSync(join(root, "artifacts", "staging", "cursor-action-failure.part"), "partial");
+  const quarantine = join(root, "artifacts", "quarantine");
+  const replacement = join(root, "replacement-quarantine");
+  mkdirSync(replacement);
+  rmSync(quarantine, { recursive: true });
+  symlinkSync(replacement, quarantine, process.platform === "win32" ? "junction" : "dir");
+  await assert.rejects(
+    () =>
+      store.reconcile({
+        cursor: toStaging.continuationCursor,
+        maxItems: 1,
+        maxElapsedMs: 10_000,
+        maxBytes: 1_024,
+      }),
+    /trusted same-volume directory/u,
+  );
+  const state = database
+    .prepare("SELECT cursor_token FROM artifact_reconciliation_state")
+    .get() as {
+    cursor_token: string;
+  };
+  assert.equal(state.cursor_token, toStaging.continuationCursor);
+});
+
+test("reconciliation fails closed on directory replacement and fanout overflow without cursor advance", async (context) => {
+  const { root, database, store } = await harness(context);
+  const toStaging = await store.reconcile({ maxItems: 6, maxElapsedMs: 10_000, maxBytes: 6_144 });
+  assert.ok(toStaging.continuationCursor);
+  const staging = join(root, "artifacts", "staging");
+  const replacement = join(root, "replacement-staging");
+  mkdirSync(replacement);
+  rmSync(staging, { recursive: true });
+  symlinkSync(replacement, staging, process.platform === "win32" ? "junction" : "dir");
+  await assert.rejects(
+    () =>
+      store.reconcile({
+        cursor: toStaging.continuationCursor,
+        maxItems: 1,
+        maxElapsedMs: 10_000,
+        maxBytes: 1_024,
+      }),
+    /trusted same-volume directory/u,
+  );
+  const unchanged = database
+    .prepare("SELECT cursor_token FROM artifact_reconciliation_state")
+    .get() as { cursor_token: string };
+  assert.equal(unchanged.cursor_token, toStaging.continuationCursor);
+
+  rmSync(staging);
+  mkdirSync(staging);
+  for (let index = 0; index <= 256; index += 1)
+    writeFileSync(join(staging, `overflow-${index}.part`), "x");
+  await assert.rejects(
+    () =>
+      store.reconcile({
+        cursor: toStaging.continuationCursor,
+        maxItems: 1,
+        maxElapsedMs: 10_000,
+        maxBytes: 1_024,
+      }),
+    /fanout/u,
+  );
+  assert.equal(readdirSync(staging).length, 257);
+  const stillUnchanged = database
+    .prepare("SELECT cursor_token FROM artifact_reconciliation_state")
+    .get() as { cursor_token: string };
+  assert.equal(stillUnchanged.cursor_token, toStaging.continuationCursor);
 });
 
 test("immutable artifact evidence rejects updates and deletes", async (context) => {

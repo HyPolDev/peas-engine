@@ -136,11 +136,17 @@ export type ReconciliationReport = Readonly<{
   missingArtifacts: number;
   incidents: readonly IncidentId[];
   continuationCursor: string | null;
+  rowsVisited: number;
+  directoryEntriesRead: number;
+  bytesHashed: number;
+  elapsedMs: number;
 }>;
 
 export type ReconciliationBudget = Readonly<{
+  cursor: string | null;
   maxItems: number;
   maxElapsedMs: number;
+  maxBytes: number;
 }>;
 
 export type ArtifactVaultConfig = Readonly<{

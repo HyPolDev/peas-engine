@@ -387,7 +387,7 @@ const mutants = [
           {
             from: "await this.#lease.renewAndAssert();",
             to: "",
-            expectedOccurrences: 11,
+            expectedOccurrences: 9,
             occurrence: 4,
           },
         ],
@@ -396,8 +396,10 @@ const mutants = [
         file: "src/adapters/artifacts/sqlite-artifact-repository.ts",
         changes: [
           {
-            from: "this.assertWriter(fence);\n        this.#insertOutcome(outcome);",
-            to: "this.#insertOutcome(outcome);",
+            from: "this.assertWriter(fence);",
+            to: "",
+            expectedOccurrences: 8,
+            occurrence: 5,
           },
         ],
       },
@@ -407,15 +409,28 @@ const mutants = [
   {
     name: "vault-stale-reconciliation-fence",
     category: "vault",
-    file: "src/adapters/artifacts/durable-artifact-store.ts",
-    changes: [
+    edits: [
       {
-        from: "async reconcile(budget: Partial<ReconciliationBudget> = {}): Promise<ReconciliationReport> {\n    await this.#lease.renewAndAssert();",
-        to: "async reconcile(budget: Partial<ReconciliationBudget> = {}): Promise<ReconciliationReport> {",
+        file: "src/adapters/artifacts/durable-artifact-store.ts",
+        changes: [
+          {
+            from: "await this.#lease.renewAndAssert();",
+            to: "",
+            expectedOccurrences: 9,
+            occurrence: 5,
+          },
+        ],
       },
       {
-        from: "if (exhausted()) return continueLater();\n      await this.#lease.renewAndAssert();\n      await rm(safeChild(this.#paths.snapshots, name), { force: true });",
-        to: "if (exhausted()) return continueLater();\n      await rm(safeChild(this.#paths.snapshots, name), { force: true });",
+        file: "src/adapters/artifacts/sqlite-artifact-repository.ts",
+        changes: [
+          {
+            from: "this.assertWriter(fence);",
+            to: "",
+            expectedOccurrences: 8,
+            occurrence: 1,
+          },
+        ],
       },
     ],
     test: "artifact-vault.test.js",
@@ -426,8 +441,8 @@ const mutants = [
     file: "src/adapters/artifacts/sqlite-artifact-repository.ts",
     changes: [
       {
-        from: "return this.#database\n      .transaction(() => {\n        this.assertWriter(fence);\n        const existing = this.stat(artifact.digest);",
-        to: "return (() => {\n        this.assertWriter(fence);\n        const existing = this.stat(artifact.digest);",
+        from: "return this.#database\n      .transaction(() => {\n        this.assertWriter(fence);\n        const attempt = this.getAttempt(observation.attemptId);",
+        to: "return (() => {\n        this.assertWriter(fence);\n        const attempt = this.getAttempt(observation.attemptId);",
       },
       {
         from: "return disposition;\n      })\n      .immediate();",
@@ -444,6 +459,64 @@ const mutants = [
       {
         from: "CREATE TRIGGER artifact_incidents_no_update BEFORE UPDATE ON artifact_integrity_incidents",
         to: "CREATE TRIGGER artifact_incidents_no_update BEFORE UPDATE ON artifact_integrity_incidents WHEN 0",
+      },
+    ],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-reconciliation-sql-limit",
+    category: "vault",
+    file: "src/adapters/artifacts/sqlite-artifact-repository.ts",
+    changes: [
+      {
+        from: "WHERE attempt_id > ? ORDER BY attempt_id LIMIT ?",
+        to: "WHERE attempt_id > ? ORDER BY attempt_id",
+      },
+      {
+        from: ".all(afterKey, limit)",
+        to: ".all(afterKey)",
+        expectedOccurrences: 2,
+        occurrence: 1,
+      },
+    ],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-reconciliation-generation-check",
+    category: "vault",
+    file: "src/adapters/artifacts/sqlite-artifact-repository.ts",
+    changes: [
+      {
+        from: "WHERE singleton = 1 AND generation = ? AND cursor_token = ?",
+        to: "WHERE singleton = 1 AND ? IS NOT NULL AND ? IS NOT NULL",
+        expectedOccurrences: 2,
+        occurrence: 1,
+      },
+    ],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-unbounded-directory-enumeration",
+    category: "vault",
+    file: "src/adapters/artifacts/durable-artifact-store.ts",
+    changes: [
+      {
+        from: "if (names.length > MAX_RECONCILIATION_DIRECTORY_ENTRIES)",
+        to: "if (false && names.length > MAX_RECONCILIATION_DIRECTORY_ENTRIES)",
+      },
+    ],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-cursor-advance-before-action",
+    category: "vault",
+    file: "src/adapters/artifacts/durable-artifact-store.ts",
+    changes: [
+      {
+        from: "await this.#quarantine(path, id);",
+        to: "await advance(state.phase, 0, name);\n            await this.#quarantine(path, id);",
+        expectedOccurrences: 3,
+        occurrence: 1,
       },
     ],
     test: "artifact-vault.test.js",
@@ -496,8 +569,9 @@ function run(command, args, cwd) {
   });
 }
 
-const selectedMutants =
-  process.env["PEAS_MUTATION_CATEGORY"] === "vault"
+const selectedMutants = process.env["PEAS_MUTATION_NAME"]
+  ? mutants.filter(({ name }) => name === process.env["PEAS_MUTATION_NAME"])
+  : process.env["PEAS_MUTATION_CATEGORY"] === "vault"
     ? mutants.filter(({ category }) => category === "vault")
     : mutants;
 for (const mutant of selectedMutants) {

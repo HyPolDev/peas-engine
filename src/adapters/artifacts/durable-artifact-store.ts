@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, link, mkdir, open, readdir, rm, stat } from "node:fs/promises";
+import type { Dir } from "node:fs";
+import { lstat, link, mkdir, open, opendir, rm, stat } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
@@ -35,6 +36,7 @@ import type { Clock } from "../../core/clock.js";
 import { canonicalHash } from "../../core/hash.js";
 import type { JsonValue } from "../../core/json.js";
 import type { SqliteArtifactRepository } from "./sqlite-artifact-repository.js";
+import type { ReconciliationPhase } from "./sqlite-artifact-repository.js";
 import { VaultWriterLease } from "./writer-lease.js";
 
 type Paths = Readonly<{
@@ -46,6 +48,43 @@ type Paths = Readonly<{
   locks: string;
   device: number;
 }>;
+
+const MAX_RECONCILIATION_DIRECTORY_ENTRIES = 256;
+
+async function boundedDirectoryEntries(
+  path: string,
+  expectedDevice: number,
+): Promise<readonly string[]> {
+  const info = await lstat(path);
+  if (!info.isDirectory() || info.isSymbolicLink() || info.dev !== expectedDevice)
+    throw new ArtifactVaultError(
+      "unsafe-filesystem-object",
+      "Reconciliation directory is not a trusted same-volume directory",
+    );
+  let directory: Dir;
+  try {
+    directory = await opendir(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  const names: string[] = [];
+  try {
+    for (;;) {
+      const entry = await directory.read();
+      if (entry === null) break;
+      names.push(entry.name);
+      if (names.length > MAX_RECONCILIATION_DIRECTORY_ENTRIES)
+        throw new ArtifactVaultError(
+          "unsafe-filesystem-object",
+          "Vault directory exceeds the audited reconciliation fanout",
+        );
+    }
+  } finally {
+    await directory.close().catch(() => undefined);
+  }
+  return names.sort();
+}
 
 class Semaphore {
   readonly #limit: number;
@@ -130,7 +169,10 @@ function safeChild(root: string, ...parts: readonly string[]): string {
   return child;
 }
 
-async function hashFile(path: string): Promise<{ digest: string; sizeBytes: number }> {
+async function hashFile(
+  path: string,
+  maxBytes = Number.MAX_SAFE_INTEGER,
+): Promise<{ digest: string; sizeBytes: number }> {
   const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
     const before = await handle.stat();
@@ -144,6 +186,11 @@ async function hashFile(path: string): Promise<{ digest: string; sizeBytes: numb
       if (bytesRead === 0) break;
       hash.update(buffer.subarray(0, bytesRead));
       sizeBytes = assertSafeByteAddition(sizeBytes, bytesRead);
+      if (sizeBytes > maxBytes)
+        throw new ArtifactVaultError(
+          "artifact-too-large",
+          "Artifact exceeds reconciliation byte budget",
+        );
       position += bytesRead;
     }
     const after = await handle.stat();
@@ -510,19 +557,26 @@ export class DurableArtifactStore implements ArtifactStore {
   }
 
   async reconcile(budget: Partial<ReconciliationBudget> = {}): Promise<ReconciliationReport> {
-    await this.#lease.renewAndAssert();
-    this.#repository.verifyAllEvidence();
     const maxItems = budget.maxItems ?? 1_000;
     const maxElapsedMs = budget.maxElapsedMs ?? 1_000;
+    const maxBytes = budget.maxBytes ?? this.#config.maxArtifactBytes * Math.max(1, maxItems);
+    const requestedCursor = budget.cursor ?? null;
     if (
       !Number.isSafeInteger(maxItems) ||
       maxItems < 1 ||
       !Number.isSafeInteger(maxElapsedMs) ||
-      maxElapsedMs < 1
+      maxElapsedMs < 1 ||
+      !Number.isSafeInteger(maxBytes) ||
+      maxBytes < this.#config.maxArtifactBytes
     )
       throw new RangeError("Invalid reconciliation budget");
     const started = Date.now();
     let processed = 0;
+    let bytesHashed = 0;
+    let rowsVisited = 0;
+    let directoryEntriesRead = 0;
+    await this.#lease.renewAndAssert();
+    let state = this.#repository.loadReconciliationState(requestedCursor, this.#lease.fence());
     const report = {
       validArtifacts: 0,
       adoptedOrphans: 0,
@@ -532,133 +586,205 @@ export class DurableArtifactStore implements ArtifactStore {
       missingArtifacts: 0,
       incidents: [] as string[],
       continuationCursor: null as string | null,
+      rowsVisited: 0,
+      directoryEntriesRead: 0,
+      bytesHashed: 0,
+      elapsedMs: 0,
     };
-    const exhausted = (): boolean => processed >= maxItems || Date.now() - started >= maxElapsedMs;
-    const continueLater = (): ReconciliationReport => ({
+    const result = (cursor: string | null): ReconciliationReport => ({
       ...report,
-      continuationCursor: "restart-v1",
+      continuationCursor: cursor,
+      rowsVisited,
+      directoryEntriesRead,
+      bytesHashed,
+      elapsedMs: Date.now() - started,
     });
-    for (const name of await readdir(this.#paths.snapshots)) {
-      if (exhausted()) return continueLater();
+    const exhausted = (): boolean =>
+      processed >= maxItems ||
+      Date.now() - started >= maxElapsedMs ||
+      maxBytes - bytesHashed < this.#config.maxArtifactBytes;
+    const advance = async (
+      phase: ReconciliationPhase,
+      shard: number,
+      afterKey: string,
+    ): Promise<void> => {
       await this.#lease.renewAndAssert();
-      await rm(safeChild(this.#paths.snapshots, name), { force: true });
-      processed += 1;
-    }
-    const openAttempts = new Map(
-      this.#repository.listOpenAttempts().map((attempt) => [attempt.stagingId, attempt]),
-    );
-    for (const name of await readdir(this.#paths.staging)) {
-      if (exhausted()) return continueLater();
-      processed += 1;
-      const stagingId = name.endsWith(".part") ? name.slice(0, -5) : null;
-      const attempt = stagingId === null ? undefined : openAttempts.get(stagingId);
-      const path = safeChild(this.#paths.staging, name);
-      if (attempt === undefined) {
-        const id = await this.#incident("invalid-orphan", stagingId, null, null, null);
-        report.incidents.push(id);
-        await this.#quarantine(path, id);
-        report.quarantinedObjects += 1;
+      state = this.#repository.advanceReconciliationState(
+        state,
+        { phase, shard, afterKey },
+        this.#lease.fence(),
+      );
+    };
+    const evidenceNext: Record<string, ReconciliationPhase> = {
+      attempts: "outcomes",
+      outcomes: "blobs",
+      blobs: "observations",
+      observations: "incidents",
+      incidents: "snapshots",
+    };
+    while (!exhausted()) {
+      if (state.phase in evidenceNext) {
+        const remaining = maxItems - processed;
+        const page = this.#repository.verifyEvidencePage(
+          state.phase as "attempts" | "outcomes" | "blobs" | "observations" | "incidents",
+          state.afterKey,
+          remaining,
+        );
+        rowsVisited += page.visited;
+        processed += Math.max(1, page.visited);
+        await advance(
+          page.done ? (evidenceNext[state.phase] as ReconciliationPhase) : state.phase,
+          0,
+          page.done ? "" : page.lastKey,
+        );
         continue;
       }
-      const age = this.#clock.nowMs() - attempt.recordedAtMs;
-      if (age >= this.#config.stageExpiryMs) {
-        await this.#lease.renewAndAssert();
-        this.#repository.finishAttempt(
-          {
-            attemptId: attempt.attemptId,
-            outcome: "expired",
-            completedAtMs: this.#clock.nowMs(),
-            reasonCode: "stage-expired",
-            detailHash: null,
-          },
-          this.#lease.fence(),
-        );
-        const id = await this.#incident("expired-stage", stagingId, null, null, null);
-        report.incidents.push(id);
-        await this.#quarantine(path, id);
-        report.expiredStages += 1;
-        report.quarantinedObjects += 1;
-        openAttempts.delete(attempt.stagingId);
-      }
-    }
-    for (const attempt of openAttempts.values()) {
-      if (exhausted()) return continueLater();
-      processed += 1;
-      if (this.#clock.nowMs() - attempt.recordedAtMs >= this.#config.stageExpiryMs) {
-        await this.#lease.renewAndAssert();
-        this.#repository.finishAttempt(
-          {
-            attemptId: attempt.attemptId,
-            outcome: "expired",
-            completedAtMs: this.#clock.nowMs(),
-            reasonCode: "stage-missing",
-            detailHash: null,
-          },
-          this.#lease.fence(),
-        );
-        report.expiredStages += 1;
-      }
-    }
-    for (const first of await readdir(this.#paths.content)) {
-      if (exhausted()) return continueLater();
-      processed += 1;
-      const firstPath = safeChild(this.#paths.content, first);
-      if (!(await lstat(firstPath)).isDirectory()) {
-        await this.#quarantine(firstPath, randomUUID());
-        report.quarantinedObjects += 1;
-        continue;
-      }
-      for (const second of await readdir(firstPath)) {
-        if (exhausted()) return continueLater();
-        processed += 1;
-        const secondPath = safeChild(firstPath, second);
-        if (!(await lstat(secondPath)).isDirectory()) {
-          await this.#quarantine(secondPath, randomUUID());
-          report.quarantinedObjects += 1;
+      if (state.phase === "snapshots" || state.phase === "staging") {
+        const root = state.phase === "snapshots" ? this.#paths.snapshots : this.#paths.staging;
+        const names = await boundedDirectoryEntries(root, this.#paths.device);
+        directoryEntriesRead += names.length;
+        const name = names.find((candidate) => candidate > state.afterKey);
+        if (name === undefined) {
+          await advance(state.phase === "snapshots" ? "staging" : "open-attempts", 0, "");
+          processed += 1;
           continue;
         }
-        for (const name of await readdir(secondPath)) {
-          if (exhausted()) return continueLater();
-          processed += 1;
-          const path = safeChild(secondPath, name);
-          try {
-            assertArtifactDigest(name);
-            const verified = await hashFile(path);
-            if (verified.digest !== name) throw new Error("digest mismatch");
-            const existing = this.#repository.stat(name);
-            if (existing === undefined) {
-              await this.#lease.renewAndAssert();
-              this.#repository.adoptArtifact(
-                {
-                  digest: name,
-                  algorithm: "sha256",
-                  sizeBytes: verified.sizeBytes,
-                  committedAtMs: this.#clock.nowMs(),
-                  provenance: "recovered-orphan",
-                },
-                this.#lease.fence(),
-              );
-              report.adoptedOrphans += 1;
-            } else if (existing.sizeBytes !== verified.sizeBytes) throw new Error("size mismatch");
-            else report.validArtifacts += 1;
-          } catch {
-            const id = await this.#incident(
-              "invalid-orphan",
-              null,
-              /^[0-9a-f]{64}$/u.test(name) ? name : null,
-              null,
-              null,
-            );
+        const path = safeChild(root, name);
+        if (state.phase === "snapshots") {
+          await this.#lease.renewAndAssert();
+          await rm(path, { force: true });
+        } else {
+          const stagingId = name.endsWith(".part") ? name.slice(0, -5) : null;
+          const attempt =
+            stagingId === null ? undefined : this.#repository.getAttemptByStagingId(stagingId);
+          if (attempt === undefined) {
+            const id = await this.#incident("invalid-orphan", stagingId, null, null, null);
             report.incidents.push(id);
             await this.#quarantine(path, id);
             report.quarantinedObjects += 1;
+          } else if (this.#clock.nowMs() - attempt.recordedAtMs >= this.#config.stageExpiryMs) {
+            this.#repository.finishAttempt(
+              {
+                attemptId: attempt.attemptId,
+                outcome: "expired",
+                completedAtMs: this.#clock.nowMs(),
+                reasonCode: "stage-expired",
+                detailHash: null,
+              },
+              this.#lease.fence(),
+            );
+            const id = await this.#incident("expired-stage", stagingId, null, null, null);
+            report.incidents.push(id);
+            await this.#quarantine(path, id);
+            report.expiredStages += 1;
+            report.quarantinedObjects += 1;
           }
         }
+        await advance(state.phase, 0, name);
+        processed += 1;
+        continue;
       }
-    }
-    for (const artifact of this.#repository.listArtifacts()) {
-      if (exhausted()) return continueLater();
-      processed += 1;
+      if (state.phase === "open-attempts") {
+        const attempts = this.#repository.readOpenAttemptsPage(state.afterKey, 1);
+        const attempt = attempts[0];
+        rowsVisited += attempts.length;
+        if (attempt === undefined) {
+          await advance("content", 0, "");
+        } else {
+          const stagePath = safeChild(this.#paths.staging, `${attempt.stagingId}.part`);
+          let present = true;
+          try {
+            await lstat(stagePath);
+          } catch {
+            present = false;
+          }
+          if (
+            !present &&
+            this.#clock.nowMs() - attempt.recordedAtMs >= this.#config.stageExpiryMs
+          ) {
+            this.#repository.finishAttempt(
+              {
+                attemptId: attempt.attemptId,
+                outcome: "expired",
+                completedAtMs: this.#clock.nowMs(),
+                reasonCode: "stage-missing",
+                detailHash: null,
+              },
+              this.#lease.fence(),
+            );
+            report.expiredStages += 1;
+          }
+          await advance("open-attempts", 0, attempt.attemptId);
+        }
+        processed += 1;
+        continue;
+      }
+      if (state.phase === "content") {
+        const leaf = await this.#nextContentLeaf(state.shard);
+        directoryEntriesRead += leaf.entriesRead;
+        if (leaf.done) {
+          await advance("missing-content", 0, "");
+          processed += 1;
+          continue;
+        }
+        if (leaf.shard !== state.shard) {
+          await advance("content", leaf.shard, "");
+          processed += 1;
+          continue;
+        }
+        const name = leaf.names.find((candidate) => candidate > state.afterKey);
+        if (name === undefined) {
+          await advance("content", state.shard + 1, "");
+          processed += 1;
+          continue;
+        }
+        const path = safeChild(leaf.path, name);
+        try {
+          assertArtifactDigest(name);
+          const verified = await hashFile(
+            path,
+            Math.min(this.#config.maxArtifactBytes, maxBytes - bytesHashed),
+          );
+          bytesHashed += verified.sizeBytes;
+          if (verified.digest !== name) throw new Error("digest mismatch");
+          const existing = this.#repository.stat(name);
+          if (existing === undefined) {
+            this.#repository.adoptArtifact(
+              {
+                digest: name,
+                algorithm: "sha256",
+                sizeBytes: verified.sizeBytes,
+                committedAtMs: this.#clock.nowMs(),
+                provenance: "recovered-orphan",
+              },
+              this.#lease.fence(),
+            );
+            report.adoptedOrphans += 1;
+          } else if (existing.sizeBytes !== verified.sizeBytes) throw new Error("size mismatch");
+          else report.validArtifacts += 1;
+        } catch {
+          const id = await this.#incident(
+            "invalid-orphan",
+            null,
+            /^[0-9a-f]{64}$/u.test(name) ? name : null,
+            null,
+            null,
+          );
+          report.incidents.push(id);
+          await this.#quarantine(path, id);
+          report.quarantinedObjects += 1;
+        }
+        await advance("content", state.shard, name);
+        processed += 1;
+        continue;
+      }
+      const artifacts = this.#repository.readArtifactsPage(state.afterKey, 1);
+      const artifact = artifacts[0];
+      rowsVisited += artifacts.length;
+      if (artifact === undefined) {
+        this.#repository.completeReconciliation(state, this.#lease.fence());
+        return result(null);
+      }
       const path = await this.#contentPath(artifact.digest, false, false);
       try {
         await stat(path);
@@ -673,8 +799,67 @@ export class DurableArtifactStore implements ArtifactStore {
         report.incidents.push(id);
         report.missingArtifacts += 1;
       }
+      await advance("missing-content", 0, artifact.digest);
+      processed += 1;
     }
-    return report;
+    return result(state.cursorToken);
+  }
+
+  async #nextContentLeaf(startShard: number): Promise<
+    Readonly<{
+      done: boolean;
+      shard: number;
+      path: string;
+      names: readonly string[];
+      entriesRead: number;
+    }>
+  > {
+    const firstNames = await boundedDirectoryEntries(this.#paths.content, this.#paths.device);
+    for (const name of firstNames)
+      if (!/^[0-9a-f]{2}$/u.test(name))
+        throw new ArtifactVaultError(
+          "unsafe-filesystem-object",
+          "Artifact content root contains an invalid shard",
+        );
+    const minimumFirst = Math.floor(startShard / 256);
+    const first = firstNames.find((name) => Number.parseInt(name, 16) >= minimumFirst);
+    if (first === undefined)
+      return {
+        done: true,
+        shard: 65536,
+        path: this.#paths.content,
+        names: [],
+        entriesRead: firstNames.length,
+      };
+    const firstValue = Number.parseInt(first, 16);
+    const firstPath = safeChild(this.#paths.content, first);
+    const secondNames = await boundedDirectoryEntries(firstPath, this.#paths.device);
+    for (const name of secondNames)
+      if (!/^[0-9a-f]{2}$/u.test(name))
+        throw new ArtifactVaultError(
+          "unsafe-filesystem-object",
+          "Artifact content shard contains an invalid shard",
+        );
+    const minimumSecond = firstValue === minimumFirst ? startShard % 256 : 0;
+    const second = secondNames.find((name) => Number.parseInt(name, 16) >= minimumSecond);
+    if (second === undefined)
+      return {
+        done: false,
+        shard: (firstValue + 1) * 256,
+        path: firstPath,
+        names: [],
+        entriesRead: firstNames.length + secondNames.length,
+      };
+    const shard = firstValue * 256 + Number.parseInt(second, 16);
+    const path = safeChild(firstPath, second);
+    const names = await boundedDirectoryEntries(path, this.#paths.device);
+    return {
+      done: false,
+      shard,
+      path,
+      names,
+      entriesRead: firstNames.length + secondNames.length + names.length,
+    };
   }
 
   #committedBytes(): number {
