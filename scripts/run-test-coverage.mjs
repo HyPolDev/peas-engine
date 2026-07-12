@@ -3,7 +3,12 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const testFiles = readdirSync(join(process.cwd(), "dist", "test"))
-  .filter((name) => name.endsWith(".test.js") && name !== "evidence-reconciliation.test.js")
+  .filter(
+    (name) =>
+      name.endsWith(".test.js") &&
+      name !== "evidence-reconciliation.test.js" &&
+      !(process.env["PEAS_SKIP_1K_SCALE"] === "1" && name === "persistence-scale.test.js"),
+  )
   .sort()
   .map((name) => join("dist", "test", name));
 

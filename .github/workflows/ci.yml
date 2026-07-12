@@ -20,8 +20,15 @@ jobs:
         include:
           - runner: ubuntu-24.04
             gate: check-linux
+            skip_1k_scale: "0"
+            gate_command: npm run check
           - runner: windows-2025
             gate: check-windows
+            # The fixed kernel scale policy is authorized by Linux and the dedicated scale jobs.
+            # Windows remains release-authorizing for vault/platform behavior without treating
+            # hosted NTFS throughput as a portable kernel benchmark.
+            skip_1k_scale: "1"
+            gate_command: PEAS_SKIP_1K_SCALE=1 npm run check
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -37,6 +44,8 @@ jobs:
       - run: npm ci
       - run: npm run verify:candidate
       - run: npm run check
+        env:
+          PEAS_SKIP_1K_SCALE: ${{ matrix.skip_1k_scale }}
       - run: npm run write:vault-platform-evidence
         env:
           PEAS_VAULT_PLATFORM_EVIDENCE_PATH: vault-platform-evidence-${{ matrix.gate }}.json
@@ -44,7 +53,7 @@ jobs:
       - run: npm run write:evidence
         env:
           PEAS_GATE_NAME: ${{ matrix.gate }}
-          PEAS_GATE_COMMAND: npm run check
+          PEAS_GATE_COMMAND: ${{ matrix.gate_command }}
           PEAS_VAULT_PLATFORM_EVIDENCE_PATH: vault-platform-evidence-${{ matrix.gate }}.json
           PEAS_EVIDENCE_PATH: audit-evidence-${{ matrix.gate }}-${{ env.PEAS_CANDIDATE_SHA }}.json
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
