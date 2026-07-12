@@ -343,6 +343,7 @@ const mutants = [
       },
     ],
     test: "artifact-vault.test.js",
+    testPattern: "grammar-valid external identifiers",
   },
   {
     name: "vault-raw-repository-identity-acceptance",
@@ -350,6 +351,7 @@ const mutants = [
     file: "src/adapters/artifacts/sqlite-artifact-repository.ts",
     changes: [{ from: "assertPersistedRetrievalAttempt(attempt);", to: "" }],
     test: "artifact-vault.test.js",
+    testPattern: "direct repository writes",
   },
   {
     name: "vault-domain-prefix-sql-validation",
@@ -604,7 +606,10 @@ for (const mutant of selectedMutants) {
       );
     }
     const testFile = join(resolvedTemporary, "dist", "test", mutant.test);
-    const tested = run(process.execPath, ["--test", testFile], resolvedTemporary);
+    const testArguments = mutant.testPattern
+      ? ["--test", `--test-name-pattern=${mutant.testPattern}`, testFile]
+      : ["--test", testFile];
+    const tested = run(process.execPath, testArguments, resolvedTemporary);
     if (tested.status === 0) {
       throw new Error(`${mutant.name}: mutation survived ${relative(workspace, testFile)}`);
     }
