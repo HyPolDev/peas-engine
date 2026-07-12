@@ -1,0 +1,35 @@
+{
+  "inventoryVersion": 1,
+  "requiredByPlatform": {
+    "win32": [
+      "windows-fixed-ntfs-filesystem",
+      "ancestor-junction-existing-root",
+      "ancestor-junction-missing-root",
+      "runtime-root-junction",
+      "vault-component-directory-link",
+      "mount-point-reparse-tag",
+      "directory-symlink-reparse-tag",
+      "unknown-reparse-tag-fails-closed",
+      "hard-link-count-rejection",
+      "file-identity-before-and-after-hash",
+      "cross-device-layout-rejection",
+      "hard-kill-install-intent-recovery",
+      "hard-kill-cursor-takeover"
+    ],
+    "linux": [
+      "configured-local-filesystem",
+      "ancestor-symlink-existing-root",
+      "ancestor-symlink-missing-root",
+      "runtime-root-symlink",
+      "vault-component-directory-symlink",
+      "file-symlink-rejection",
+      "hard-link-count-rejection",
+      "realpath-component-verification",
+      "cross-device-layout-rejection",
+      "hard-kill-install-intent-recovery",
+      "hard-kill-cursor-takeover"
+    ]
+  },
+  "releaseAuthorizingPlatforms": ["win32", "linux"],
+  "unsupportedRequiredCapabilityBehavior": "fail"
+}

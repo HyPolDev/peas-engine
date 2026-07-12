@@ -43,12 +43,28 @@ const goldenPath = "fixtures/earnings-cluster.v2.golden.json";
 const capturePath = "fixtures/earnings-cluster.v2.captured.ndjson";
 const packageLockPath = "package-lock.json";
 const scalePolicyPath = "config/scale-policy.v1.json";
+const artifactVaultPolicyPath = "config/artifact-vault-deployment-policy.v1.json";
+const artifactPlatformCapabilitiesPath = "config/artifact-platform-capabilities.v1.json";
+const artifactFaultBoundariesPath = "config/artifact-fault-boundaries.json";
 const goldenBytes = readFileSync(goldenPath);
 const captureBytes = readFileSync(capturePath);
 const packageLockBytes = readFileSync(packageLockPath);
 const scalePolicyBytes = readFileSync(scalePolicyPath);
+const artifactVaultPolicyBytes = readFileSync(artifactVaultPolicyPath);
+const artifactPlatformCapabilitiesBytes = readFileSync(artifactPlatformCapabilitiesPath);
+const artifactFaultBoundariesBytes = readFileSync(artifactFaultBoundariesPath);
 const scalePolicy = JSON.parse(scalePolicyBytes.toString("utf8"));
+const artifactVaultPolicy = JSON.parse(artifactVaultPolicyBytes.toString("utf8"));
+const artifactPlatformCapabilities = JSON.parse(artifactPlatformCapabilitiesBytes.toString("utf8"));
+const artifactFaultBoundaries = JSON.parse(artifactFaultBoundariesBytes.toString("utf8"));
 if (scalePolicy.policyVersion !== 1) throw new Error("Unsupported scale policy version");
+if (
+  artifactVaultPolicy.policyVersion !== 1 ||
+  artifactPlatformCapabilities.inventoryVersion !== 1 ||
+  artifactFaultBoundaries.schemaVersion !== 1
+) {
+  throw new Error("Unsupported artifact-vault policy or capability inventory");
+}
 const golden = JSON.parse(goldenBytes.toString("utf8"));
 const npmVersion = npmUserAgent.match(/^npm\/([^\s]+)/u)?.[1] ?? "unknown";
 if (process.env.CI === "true" && npmVersion === "unknown") {
@@ -110,6 +126,11 @@ const checkResults = requiresCheckResults
   ? {
       tests: readJsonEvidence("audit-test-results.json", "test and coverage results"),
       mutations: readJsonEvidence("audit-mutation-results.json", "mutation results"),
+      hardKill: readJsonEvidence("audit-hard-kill-results.json", "hard-kill results"),
+      platform: readJsonEvidence(
+        `vault-platform-evidence-${gateName}.json`,
+        "vault platform results",
+      ),
     }
   : null;
 if (checkResults !== null) {
@@ -140,6 +161,28 @@ if (checkResults !== null) {
     mutationResult.killed !== mutationResult.total
   ) {
     throw new Error("Mutation result is not a complete passing audit gate");
+  }
+  const hardKillResult = checkResults.hardKill.value;
+  if (
+    hardKillResult.resultVersion !== 1 ||
+    hardKillResult.status !== "passed" ||
+    hardKillResult.candidateCommitSha !== candidateCommitSha ||
+    !Array.isArray(hardKillResult.boundaries) ||
+    hardKillResult.boundaries.length === 0 ||
+    hardKillResult.boundaries.some((boundary) => boundary.converged !== true)
+  ) {
+    throw new Error("Hard-kill result is not complete passing candidate evidence");
+  }
+  const platformResult = checkResults.platform.value;
+  if (
+    platformResult.schemaVersion !== 2 ||
+    platformResult.candidateCommitSha !== candidateCommitSha ||
+    platformResult.worktreeClean !== true ||
+    platformResult.completeForGo !== true ||
+    !Array.isArray(platformResult.unsupportedRequiredCapabilities) ||
+    platformResult.unsupportedRequiredCapabilities.length !== 0
+  ) {
+    throw new Error("Platform result is not complete passing candidate evidence");
   }
 }
 const evidence = {
@@ -189,6 +232,15 @@ const evidence = {
     scalePolicyPath,
     scalePolicySha256: sha256(scalePolicyBytes),
     scalePolicyVersion: scalePolicy.policyVersion,
+    artifactVaultPolicyPath,
+    artifactVaultPolicySha256: sha256(artifactVaultPolicyBytes),
+    artifactVaultPolicyVersion: artifactVaultPolicy.policyVersion,
+    artifactPlatformCapabilitiesPath,
+    artifactPlatformCapabilitiesSha256: sha256(artifactPlatformCapabilitiesBytes),
+    artifactPlatformCapabilitiesVersion: artifactPlatformCapabilities.inventoryVersion,
+    artifactFaultBoundariesPath,
+    artifactFaultBoundariesSha256: sha256(artifactFaultBoundariesBytes),
+    artifactFaultBoundariesVersion: artifactFaultBoundaries.schemaVersion,
   },
   checkResults,
   scaleMetrics,

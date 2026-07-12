@@ -34,6 +34,9 @@ const goldenPath = "fixtures/earnings-cluster.v2.golden.json";
 const capturePath = "fixtures/earnings-cluster.v2.captured.ndjson";
 const packageLockPath = "package-lock.json";
 const scalePolicyPath = "config/scale-policy.v1.json";
+const artifactVaultPolicyPath = "config/artifact-vault-deployment-policy.v1.json";
+const artifactPlatformCapabilitiesPath = "config/artifact-platform-capabilities.v1.json";
+const artifactFaultBoundariesPath = "config/artifact-fault-boundaries.json";
 const goldenBytes = readFileSync(goldenPath);
 const goldenValue = JSON.parse(goldenBytes.toString("utf8")) as {
   eventHead: string;
@@ -43,6 +46,19 @@ const goldenValue = JSON.parse(goldenBytes.toString("utf8")) as {
 const captureBytes = readFileSync(capturePath);
 const captureText = captureBytes.toString("utf8").trim();
 const scalePolicyBytes = readFileSync(scalePolicyPath);
+const artifactVaultPolicyBytes = readFileSync(artifactVaultPolicyPath);
+const artifactPlatformCapabilitiesBytes = readFileSync(artifactPlatformCapabilitiesPath);
+const artifactFaultBoundariesBytes = readFileSync(artifactFaultBoundariesPath);
+const artifactVaultPolicy = JSON.parse(artifactVaultPolicyBytes.toString("utf8")) as {
+  policyVersion: 1;
+};
+const artifactPlatformCapabilities = JSON.parse(
+  artifactPlatformCapabilitiesBytes.toString("utf8"),
+) as { inventoryVersion: 1; requiredByPlatform: Record<"win32" | "linux", string[]> };
+const artifactFaultBoundaries = JSON.parse(artifactFaultBoundariesBytes.toString("utf8")) as {
+  schemaVersion: 1;
+  boundaries: Array<{ name: string; medium: string }>;
+};
 const scalePolicy = JSON.parse(scalePolicyBytes.toString("utf8")) as {
   policyVersion: 1;
   metricsVersion: 2;
@@ -77,6 +93,15 @@ const expectedSourceInputs = {
   scalePolicyPath,
   scalePolicySha256: sha256(scalePolicyBytes),
   scalePolicyVersion: scalePolicy.policyVersion,
+  artifactVaultPolicyPath,
+  artifactVaultPolicySha256: sha256(artifactVaultPolicyBytes),
+  artifactVaultPolicyVersion: artifactVaultPolicy.policyVersion,
+  artifactPlatformCapabilitiesPath,
+  artifactPlatformCapabilitiesSha256: sha256(artifactPlatformCapabilitiesBytes),
+  artifactPlatformCapabilitiesVersion: artifactPlatformCapabilities.inventoryVersion,
+  artifactFaultBoundariesPath,
+  artifactFaultBoundariesSha256: sha256(artifactFaultBoundariesBytes),
+  artifactFaultBoundariesVersion: artifactFaultBoundaries.schemaVersion,
 };
 
 function serializedJson(value: unknown): string {
@@ -94,18 +119,79 @@ const passingTestValue = {
   },
 };
 const passingMutationValue = { resultVersion: 1, status: "passed", killed: 5, total: 5 };
-const passingCheckResults = {
-  tests: {
-    path: "audit-test-results.json",
-    fileSha256: sha256(serializedJson(passingTestValue)),
-    value: passingTestValue,
+const passingHardKillValue = {
+  resultVersion: 1,
+  status: "passed",
+  candidateCommitSha: candidateSha,
+  childExitMode: "SIGKILL",
+  faultBoundaryInventory: {
+    path: artifactFaultBoundariesPath,
+    sha256: sha256(artifactFaultBoundariesBytes),
   },
-  mutations: {
-    path: "audit-mutation-results.json",
-    fileSha256: sha256(serializedJson(passingMutationValue)),
-    value: passingMutationValue,
-  },
+  boundaries: artifactFaultBoundaries.boundaries.map(({ name, medium }) => ({
+    name,
+    medium,
+    restartCount: 2,
+    converged: true,
+  })),
 };
+
+function passingPlatformValue(gateName: string) {
+  const platform = gateName === "check-windows" ? "win32" : "linux";
+  const requiredCapabilities = artifactPlatformCapabilities.requiredByPlatform[platform];
+  return {
+    schemaVersion: 2,
+    candidateCommitSha: candidateSha,
+    worktreeClean: true,
+    platform,
+    arch: "x64",
+    mode: "ci-temporary",
+    policy: { path: artifactVaultPolicyPath, fileSha256: sha256(artifactVaultPolicyBytes) },
+    capabilityInventory: {
+      path: artifactPlatformCapabilitiesPath,
+      fileSha256: sha256(artifactPlatformCapabilitiesBytes),
+    },
+    faultBoundaryInventory: {
+      path: artifactFaultBoundariesPath,
+      fileSha256: sha256(artifactFaultBoundariesBytes),
+    },
+    hardKill: {
+      path: "audit-hard-kill-results.json",
+      fileSha256: sha256(serializedJson(passingHardKillValue)),
+    },
+    configuredRuntimeRoot: null,
+    requiredCapabilities,
+    demonstratedCapabilities: requiredCapabilities,
+    unsupportedRequiredCapabilities: [],
+    completeForGo: true,
+  };
+}
+
+function passingCheckResults(gateName: string) {
+  const platformValue = passingPlatformValue(gateName);
+  return {
+    tests: {
+      path: "audit-test-results.json",
+      fileSha256: sha256(serializedJson(passingTestValue)),
+      value: passingTestValue,
+    },
+    mutations: {
+      path: "audit-mutation-results.json",
+      fileSha256: sha256(serializedJson(passingMutationValue)),
+      value: passingMutationValue,
+    },
+    hardKill: {
+      path: "audit-hard-kill-results.json",
+      fileSha256: sha256(serializedJson(passingHardKillValue)),
+      value: passingHardKillValue,
+    },
+    platform: {
+      path: `vault-platform-evidence-${gateName}.json`,
+      fileSha256: sha256(serializedJson(platformValue)),
+      value: platformValue,
+    },
+  };
+}
 
 function scaleMetric(clusterCount: number) {
   const budget = present(scalePolicy.budgets[String(clusterCount)], `budget ${clusterCount}`);
@@ -207,7 +293,7 @@ function evidence(
     golden: { ...expectedGolden },
     capturedStream: { ...expectedCapturedStream },
     sourceInputs: { ...expectedSourceInputs },
-    checkResults: gateName.startsWith("check-") || is100k ? passingCheckResults : null,
+    checkResults: gateName.startsWith("check-") || is100k ? passingCheckResults(gateName) : null,
     scaleMetrics: isScale ? [scaleMetric(clusterCount)] : [],
   };
 }
@@ -266,7 +352,14 @@ function canonicalRawFiles(): Map<string, string> {
   const files = new Map<string, string>([
     ["audit-test-results.json", serializedJson(passingTestValue)],
     ["audit-mutation-results.json", serializedJson(passingMutationValue)],
+    ["audit-hard-kill-results.json", serializedJson(passingHardKillValue)],
   ]);
+  for (const gateName of ["check-linux", "check-windows", "scale-100k-linux"]) {
+    files.set(
+      `vault-platform-evidence-${gateName}.json`,
+      serializedJson(passingPlatformValue(gateName)),
+    );
+  }
   for (const count of [10_000, 100_000]) {
     const metric = scaleMetric(count);
     const { path, fileSha256: _digest, ...value } = metric;
@@ -354,7 +447,7 @@ test("release reconciliation accepts label and dispatch evidence bound to the ca
     const result = runReconciliation(records(trigger));
     assert.equal(result.status, 0, result.output);
     assert.equal(result.manifest?.candidateCommitSha, candidateSha);
-    assert.equal(result.manifest?.manifestVersion, 2);
+    assert.equal(result.manifest?.manifestVersion, 3);
     assert.equal(result.manifest?.repository, repository);
     assert.equal(result.manifest?.reconciliationStatus, "passed");
     assert.deepEqual(Object.keys(result.manifest?.gates ?? {}).sort(), [

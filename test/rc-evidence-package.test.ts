@@ -74,6 +74,9 @@ function checkoutIdentity(repositoryRoot: string) {
   const capturePath = "fixtures/earnings-cluster.v2.captured.ndjson";
   const packageLockPath = "package-lock.json";
   const scalePolicyPath = "config/scale-policy.v1.json";
+  const artifactVaultPolicyPath = "config/artifact-vault-deployment-policy.v1.json";
+  const artifactPlatformCapabilitiesPath = "config/artifact-platform-capabilities.v1.json";
+  const artifactFaultBoundariesPath = "config/artifact-fault-boundaries.json";
   const goldenBytes = readFileSync(join(repositoryRoot, goldenPath));
   const golden = JSON.parse(goldenBytes.toString("utf8")) as {
     eventHead: string;
@@ -83,6 +86,23 @@ function checkoutIdentity(repositoryRoot: string) {
   const captureBytes = readFileSync(join(repositoryRoot, capturePath));
   const scalePolicyBytes = readFileSync(join(repositoryRoot, scalePolicyPath));
   const scalePolicy = JSON.parse(scalePolicyBytes.toString("utf8")) as ScalePolicy;
+  const artifactVaultPolicyBytes = readFileSync(join(repositoryRoot, artifactVaultPolicyPath));
+  const artifactPlatformCapabilitiesBytes = readFileSync(
+    join(repositoryRoot, artifactPlatformCapabilitiesPath),
+  );
+  const artifactFaultBoundariesBytes = readFileSync(
+    join(repositoryRoot, artifactFaultBoundariesPath),
+  );
+  const artifactVaultPolicy = JSON.parse(artifactVaultPolicyBytes.toString("utf8")) as {
+    policyVersion: 1;
+  };
+  const artifactPlatformCapabilities = JSON.parse(
+    artifactPlatformCapabilitiesBytes.toString("utf8"),
+  ) as { inventoryVersion: 1; requiredByPlatform: Record<"win32" | "linux", string[]> };
+  const artifactFaultBoundaries = JSON.parse(artifactFaultBoundariesBytes.toString("utf8")) as {
+    schemaVersion: 1;
+    boundaries: Array<{ name: string; medium: string }>;
+  };
   return {
     runtime: {
       node: packageJson.engines.node,
@@ -107,6 +127,15 @@ function checkoutIdentity(repositoryRoot: string) {
       scalePolicyPath,
       scalePolicySha256: sha256(scalePolicyBytes),
       scalePolicyVersion: scalePolicy.policyVersion,
+      artifactVaultPolicyPath,
+      artifactVaultPolicySha256: sha256(artifactVaultPolicyBytes),
+      artifactVaultPolicyVersion: artifactVaultPolicy.policyVersion,
+      artifactPlatformCapabilitiesPath,
+      artifactPlatformCapabilitiesSha256: sha256(artifactPlatformCapabilitiesBytes),
+      artifactPlatformCapabilitiesVersion: artifactPlatformCapabilities.inventoryVersion,
+      artifactFaultBoundariesPath,
+      artifactFaultBoundariesSha256: sha256(artifactFaultBoundariesBytes),
+      artifactFaultBoundariesVersion: artifactFaultBoundaries.schemaVersion,
     },
     scalePolicy,
     scalePolicyReference: {
@@ -114,6 +143,9 @@ function checkoutIdentity(repositoryRoot: string) {
       path: scalePolicyPath,
       fileSha256: sha256(scalePolicyBytes),
     },
+    artifactVaultPolicy,
+    artifactPlatformCapabilities,
+    artifactFaultBoundaries,
   };
 }
 
@@ -176,14 +208,71 @@ function writeEvidenceArtifact(options: {
   const is100k = options.gateName === "scale-100k-linux";
   const checkResults =
     isCheck || is100k
-      ? {
-          tests: descriptor("audit-test-results.json", testResult),
-          mutations: descriptor("audit-mutation-results.json", mutationResult),
-        }
+      ? (() => {
+          const hardKill = {
+            resultVersion: 1,
+            status: "passed",
+            candidateCommitSha: options.candidateSha,
+            childExitMode: "SIGKILL",
+            faultBoundaryInventory: {
+              path: "config/artifact-fault-boundaries.json",
+              sha256: options.identity.sourceInputs.artifactFaultBoundariesSha256,
+            },
+            boundaries: options.identity.artifactFaultBoundaries.boundaries.map(
+              ({ name, medium }) => ({ name, medium, restartCount: 2, converged: true }),
+            ),
+          };
+          const platform = options.gateName === "check-windows" ? "win32" : "linux";
+          const platformValue = {
+            schemaVersion: 2,
+            candidateCommitSha: options.candidateSha,
+            worktreeClean: true,
+            platform,
+            arch: "x64",
+            mode: "ci-temporary",
+            policy: {
+              path: "config/artifact-vault-deployment-policy.v1.json",
+              fileSha256: options.identity.sourceInputs.artifactVaultPolicySha256,
+            },
+            capabilityInventory: {
+              path: "config/artifact-platform-capabilities.v1.json",
+              fileSha256: options.identity.sourceInputs.artifactPlatformCapabilitiesSha256,
+            },
+            faultBoundaryInventory: {
+              path: "config/artifact-fault-boundaries.json",
+              fileSha256: options.identity.sourceInputs.artifactFaultBoundariesSha256,
+            },
+            hardKill: {
+              path: "audit-hard-kill-results.json",
+              fileSha256: sha256(jsonBytes(hardKill)),
+            },
+            configuredRuntimeRoot: null,
+            requiredCapabilities:
+              options.identity.artifactPlatformCapabilities.requiredByPlatform[platform],
+            demonstratedCapabilities:
+              options.identity.artifactPlatformCapabilities.requiredByPlatform[platform],
+            unsupportedRequiredCapabilities: [],
+            completeForGo: true,
+          };
+          return {
+            tests: descriptor("audit-test-results.json", testResult),
+            mutations: descriptor("audit-mutation-results.json", mutationResult),
+            hardKill: descriptor("audit-hard-kill-results.json", hardKill),
+            platform: descriptor(`vault-platform-evidence-${options.gateName}.json`, platformValue),
+          };
+        })()
       : null;
   if (checkResults !== null) {
     writeFileSync(join(options.directory, checkResults.tests.path), jsonBytes(testResult));
     writeFileSync(join(options.directory, checkResults.mutations.path), jsonBytes(mutationResult));
+    writeFileSync(
+      join(options.directory, checkResults.hardKill.path),
+      jsonBytes(checkResults.hardKill.value),
+    );
+    writeFileSync(
+      join(options.directory, checkResults.platform.path),
+      jsonBytes(checkResults.platform.value),
+    );
   }
   const embeddedMetrics = options.metrics.map((clusterCount) => {
     const value = scaleMetric(clusterCount, options.candidateSha, options.identity);
@@ -268,6 +357,9 @@ function createFixture(context: test.TestContext): RepositoryFixture {
     "package.json",
     "package-lock.json",
     "config/scale-policy.v1.json",
+    "config/artifact-vault-deployment-policy.v1.json",
+    "config/artifact-platform-capabilities.v1.json",
+    "config/artifact-fault-boundaries.json",
     "fixtures/earnings-cluster.v2.golden.json",
     "fixtures/earnings-cluster.v2.captured.ndjson",
     "scripts/reconcile-audit-evidence.mjs",

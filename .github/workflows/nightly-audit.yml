@@ -43,6 +43,10 @@ jobs:
       - run: npm ci
       - run: npm run verify:candidate
       - run: npm run check
+      - run: npm run write:vault-platform-evidence
+        env:
+          PEAS_VAULT_PLATFORM_EVIDENCE_PATH: vault-platform-evidence-scale-100k-linux.json
+          PEAS_REQUIRE_COMPLETE_PLATFORM_EVIDENCE: "1"
       - run: npm run test:scale
         env:
           PEAS_SCALE_100K: "1"
@@ -54,6 +58,7 @@ jobs:
           PEAS_TRIGGER_KIND: ${{ github.event_name }}
           PEAS_TRIGGER_VALUE: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha || github.event.schedule }}
           PEAS_TRIGGER_ACTOR: ${{ github.actor }}
+          PEAS_VAULT_PLATFORM_EVIDENCE_PATH: vault-platform-evidence-scale-100k-linux.json
           PEAS_EVIDENCE_PATH: audit-evidence-scale-100k-${{ env.PEAS_CANDIDATE_SHA }}.json
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
@@ -63,5 +68,7 @@ jobs:
             audit-evidence-scale-100k-${{ env.PEAS_CANDIDATE_SHA }}.json
             audit-test-results.json
             audit-mutation-results.json
+            audit-hard-kill-results.json
+            vault-platform-evidence-scale-100k-linux.json
           if-no-files-found: error
           retention-days: 90

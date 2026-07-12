@@ -1,0 +1,39 @@
+{
+  "policyVersion": 1,
+  "runtimeRootEnvironmentVariable": "PEAS_RUNTIME_ROOT",
+  "layout": {
+    "database": "sqlite/peas.sqlite",
+    "artifacts": "artifacts",
+    "content": "artifacts/sha256",
+    "staging": "artifacts/staging",
+    "snapshots": "artifacts/snapshots",
+    "quarantine": "artifacts/quarantine",
+    "locks": "artifacts/locks"
+  },
+  "configuredLocalRoot": {
+    "absolute": true,
+    "networkAllowed": false,
+    "removableAllowed": false,
+    "reparseMountedAllowed": false,
+    "crossDeviceChildrenAllowed": false,
+    "windows": {
+      "fileSystems": ["NTFS"],
+      "driveTypes": ["Fixed"],
+      "busTypes": ["NVMe", "SATA", "SCSI", "RAID"]
+    },
+    "linux": {
+      "fileSystems": ["ext4", "xfs", "btrfs"]
+    }
+  },
+  "ciTemporaryRoot": {
+    "isolatedTemporaryDirectoryRequired": true,
+    "deploymentApproval": false,
+    "sameDeviceLayoutRequired": true,
+    "cleanupRequired": true
+  },
+  "threatModelExclusions": [
+    "administrator-or-kernel replacement after verified handles are opened",
+    "physical storage compromise below the filesystem durability boundary",
+    "remote, synchronized, removable, or reparse-mounted deployment volumes"
+  ]
+}
