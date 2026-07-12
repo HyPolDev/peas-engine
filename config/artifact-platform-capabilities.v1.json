@@ -2,7 +2,7 @@
   "inventoryVersion": 1,
   "requiredByPlatform": {
     "win32": [
-      "configured-fixed-ntfs-volume",
+      "windows-fixed-ntfs-filesystem",
       "ancestor-junction-existing-root",
       "ancestor-junction-missing-root",
       "runtime-root-junction",

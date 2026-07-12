@@ -116,18 +116,21 @@ if (runtimeValidationPath !== undefined) {
   }
   configuredRuntimeRoot = { path: runtimeValidationPath, fileSha256: sha256(bytes), value };
   demonstrated.push(
-    process.platform === "win32" ? "configured-fixed-ntfs-volume" : "configured-local-filesystem",
+    process.platform === "win32" ? "windows-fixed-ntfs-filesystem" : "configured-local-filesystem",
   );
   capabilityEvidence[demonstrated.at(-1)] = { kind: "configured-volume-attestation" };
 } else if (process.platform === "win32") {
   const facts = windowsVolumeFacts(process.env.RUNNER_TEMP ?? tmpdir());
   if (
     policy.configuredLocalRoot.windows.fileSystems.includes(facts.fileSystem) &&
-    policy.configuredLocalRoot.windows.driveTypes.includes(facts.driveType) &&
-    policy.configuredLocalRoot.windows.busTypes.includes(facts.busType)
+    policy.configuredLocalRoot.windows.driveTypes.includes(facts.driveType)
   ) {
-    demonstrated.push("configured-fixed-ntfs-volume");
-    capabilityEvidence["configured-fixed-ntfs-volume"] = { kind: "runner-volume-probe", facts };
+    demonstrated.push("windows-fixed-ntfs-filesystem");
+    capabilityEvidence["windows-fixed-ntfs-filesystem"] = {
+      kind: "ci-temporary-runner-volume-probe",
+      deploymentApproval: false,
+      facts,
+    };
   }
 } else {
   const fileSystem = linuxFileSystem(process.env.RUNNER_TEMP ?? tmpdir());

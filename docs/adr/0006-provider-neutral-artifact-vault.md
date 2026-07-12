@@ -80,7 +80,9 @@ from CI temporary roots. A configured Windows root requires a fixed local NTFS v
 allowlisted non-removable bus, a direct volume path, and no reparse ancestor. Network, synchronized,
 removable, directory-mounted, and cross-device layouts are rejected. Linux configured roots are
 restricted to the policy's local filesystem allowlist. CI uses isolated temporary directories,
-must retain the same-device and redirect checks, and never constitutes deployment approval.
+must retain fixed-NTFS/filesystem, same-device, and redirect checks, and never constitutes
+deployment approval. Hosted-runner bus types are recorded but are not compared with the production
+bus allowlist; only an explicit configured-root attestation can satisfy that deployment check.
 
 Every existing ancestor and vault component is required to be a plain same-volume directory. The
 trusted-filesystem adapter creates components individually, rejects redirects before descendant
