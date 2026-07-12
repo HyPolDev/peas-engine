@@ -28,6 +28,7 @@ import type {
 } from "../src/adapters/artifacts/sqlite-artifact-repository.js";
 import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
 import { deriveObservationId, sanitizeRequestIdentity } from "../src/artifacts/identity.js";
+import { ArtifactVaultError } from "../src/artifacts/errors.js";
 import {
   assertSafeByteAddition,
   createPersistedRetrievalAttempt,
@@ -1856,5 +1857,11 @@ test("Linux file symlinks cannot replace committed content", {
   writeFileSync(outside, "outside");
   rmSync(content);
   symlinkSync(outside, content, "file");
-  await assert.rejects(() => store.read(result.artifact.digest), /unsafe|symbolic|trusted/u);
+  await assert.rejects(
+    () => store.read(result.artifact.digest),
+    (error: unknown) =>
+      error instanceof ArtifactVaultError &&
+      error.code === "artifact-integrity-failure" &&
+      error.message === "Committed artifact content is missing",
+  );
 });
