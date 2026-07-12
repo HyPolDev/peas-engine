@@ -7,7 +7,7 @@ import { loadMigrations, openSqliteDatabase } from "../../dist/src/adapters/sqli
 import { sanitizeRequestIdentity } from "../../dist/src/artifacts/identity.js";
 import { ManualClock } from "../../dist/src/core/clock.js";
 
-const [databasePath, runtimeRoot, initialNow] = process.argv.slice(2);
+const [databasePath, runtimeRoot, initialNow, targetCheckpoint] = process.argv.slice(2);
 if (!databasePath || !runtimeRoot || !initialNow)
   throw new Error("Missing artifact worker arguments");
 
@@ -21,6 +21,7 @@ const store = await DurableArtifactStore.open({
   repository,
   clock,
   config: {
+    runtimeRootMode: "ci-temporary",
     runtimeRoot,
     maxArtifactBytes: 1_024,
     maxVaultBytes: 4_096,
@@ -31,6 +32,13 @@ const store = await DurableArtifactStore.open({
     writerLeaseWaitMs: 0,
     writerLeaseDurationMs: 30_000,
     writerLeaseRenewalMs: 10_000,
+  },
+  faultBoundary: async (checkpoint) => {
+    if (targetCheckpoint === "failure-abort-transaction" && checkpoint === "install-intent-commit")
+      throw new Error("Injected post-intent failure");
+    if (checkpoint !== targetCheckpoint) return;
+    process.send?.({ type: "checkpoint", checkpoint });
+    await new Promise(() => undefined);
   },
 });
 

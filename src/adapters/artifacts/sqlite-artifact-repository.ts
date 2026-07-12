@@ -1,14 +1,29 @@
+import { randomUUID } from "node:crypto";
+
 import type { SqliteDatabase } from "../sqlite/database.js";
 import type {
   ArtifactMetadata,
   ArtifactObservation,
   ArtifactPage,
   IntegrityIncident,
+  ReconciliationReport,
   RetrievalAttempt,
   RetrievalAttemptOutcome,
   SafeHttpResponseMetadata,
   StoreArtifactResult,
 } from "../../artifacts/artifact-store.js";
+import { ArtifactVaultError } from "../../artifacts/errors.js";
+import {
+  deriveReconciliationCallKey,
+  deriveReconciliationCursor,
+  deriveReconciliationRunId,
+  deriveInstallIntentId,
+  deriveInstallTransitionId,
+  deriveIncidentId,
+  deriveQuarantineName,
+  deriveReconciliationActionKey,
+  deriveReconciliationWorkKey,
+} from "../../artifacts/identity.js";
 import { canonicalHash } from "../../core/hash.js";
 import { canonicalJson, type JsonValue } from "../../core/json.js";
 import { assertPersistedRetrievalAttempt } from "../../artifacts/validation.js";
@@ -63,6 +78,47 @@ type ObservationRow = {
   transport_decoded: bigint;
 };
 
+export type InstallIntent = Readonly<{
+  intentId: string;
+  attemptId: string;
+  stagingId: string;
+  digest: string;
+  sizeBytes: number;
+  disposition: "new-content" | "preexisting-verified";
+  createdWriterGeneration: number;
+  createdAtMs: number;
+  artifact: ArtifactMetadata;
+  response: SafeHttpResponseMetadata;
+  observation: ArtifactObservation;
+}>;
+
+export type ReconciliationActionKind =
+  | "quarantine"
+  | "remove-snapshot"
+  | "expire-attempt"
+  | "adopt-orphan"
+  | "record-missing-content"
+  | "clean-stage"
+  | "abort-install";
+
+export type ReconciliationActionPlan = Readonly<{
+  actionKey: string;
+  runId: string;
+  workKey: string;
+  actionKind: ReconciliationActionKind;
+  sourceRelativePath: string | null;
+  sourceIdentity: JsonValue | null;
+  expectedDigest: string | null;
+  expectedSizeBytes: number | null;
+  incident: IntegrityIncident | null;
+  quarantineName: string | null;
+  plannedPhase: ReconciliationPhase;
+  plannedShard: number;
+  plannedAfterKey: string;
+  recordedAtMs: number;
+  payload: JsonValue | null;
+}>;
+
 function relationalMismatch(label: string, pairs: readonly (readonly [unknown, unknown])[]): void {
   if (pairs.some(([canonical, relational]) => canonical !== relational))
     throw new Error(`${label} relational mismatch`);
@@ -94,6 +150,7 @@ export type ReconciliationPhase =
   | "blobs"
   | "observations"
   | "incidents"
+  | "install-intents"
   | "snapshots"
   | "staging"
   | "open-attempts"
@@ -108,21 +165,56 @@ export type PersistedReconciliationState = Readonly<{
   cursorToken: string;
 }>;
 
+export type DurableReconciliationState = PersistedReconciliationState &
+  Readonly<{
+    runId: string;
+    writerGeneration: number;
+    runNonce: string;
+    status: "active" | "terminal";
+    pendingActionKey: string | null;
+    activeCallKey: string | null;
+    activeCallAcceptedToken: string | null;
+    rowsVisited: number;
+    itemsProcessed: number;
+    bytesHashed: number;
+    directoryEntriesRead: number;
+  }>;
+
 type ReconciliationStateRow = {
+  run_id: string;
+  writer_generation: bigint;
   generation: bigint;
+  cursor_epoch: bigint;
   phase: ReconciliationPhase;
   shard: bigint;
   after_key: string;
   cursor_token: string;
+  run_nonce: string;
+  status: "active" | "terminal";
+  pending_action_key: string | null;
+  active_call_key: string | null;
+  active_call_accepted_token: string | null;
+  rows_visited: bigint;
+  items_processed: bigint;
+  bytes_hashed: bigint;
+  directory_entries_read: bigint;
   state_json: string;
   state_hash: string;
 };
+
+export type ReconciliationOpenResult =
+  | Readonly<{ kind: "state"; state: DurableReconciliationState }>
+  | Readonly<{ kind: "receipt"; report: ReconciliationReport }>;
 
 export class SqliteArtifactRepository {
   readonly #database: SqliteDatabase;
 
   constructor(database: SqliteDatabase) {
     this.#database = database;
+  }
+
+  databasePath(): string {
+    return this.#database.name;
   }
 
   claimWriter(ownerToken: string, nowMs: number, durationMs: number): number {
@@ -170,7 +262,22 @@ export class SqliteArtifactRepository {
   loadReconciliationState(
     expectedCursor: string | null,
     fence: WriterFence,
-  ): PersistedReconciliationState {
+  ): DurableReconciliationState {
+    const opened = this.openReconciliationCall(expectedCursor, false, null, fence);
+    if (opened.kind === "receipt")
+      throw new ArtifactVaultError(
+        "reconciliation-cursor-invalid",
+        "Reconciliation cursor has already produced a receipt",
+      );
+    return opened.state;
+  }
+
+  openReconciliationCall(
+    expectedCursor: string | null,
+    startNew: boolean,
+    completedRunId: string | null,
+    fence: WriterFence,
+  ): ReconciliationOpenResult {
     return this.#database
       .transaction(() => {
         this.assertWriter(fence);
@@ -178,56 +285,498 @@ export class SqliteArtifactRepository {
           .prepare("SELECT * FROM artifact_reconciliation_state WHERE singleton = 1")
           .get() as ReconciliationStateRow | undefined;
         if (row === undefined) {
-          if (expectedCursor !== null) throw new Error("Reconciliation cursor is stale");
-          return this.#insertReconciliationState({
+          if (expectedCursor !== null || startNew)
+            throw new ArtifactVaultError(
+              "reconciliation-cursor-invalid",
+              "Reconciliation cursor is stale",
+            );
+          const runNonce = randomUUID();
+          const runId = deriveReconciliationRunId({ runNonce });
+          const state = this.#insertReconciliationState({
+            runId,
+            writerGeneration: fence.generation,
             generation: 1,
             phase: "attempts",
             shard: 0,
             afterKey: "",
+            runNonce,
+            status: "active",
+            pendingActionKey: null,
+            activeCallKey: null,
+            activeCallAcceptedToken: null,
+            rowsVisited: 0,
+            itemsProcessed: 0,
+            bytesHashed: 0,
+            directoryEntriesRead: 0,
           });
+          return { kind: "state", state: this.#beginCall(state, null) } as const;
         }
-        const state = this.#parseReconciliationState(row);
-        if (expectedCursor === null || expectedCursor !== state.cursorToken)
-          throw new Error("Reconciliation cursor is stale or invalid");
-        return state;
+        let state = this.#parseReconciliationState(row);
+
+        if (startNew) {
+          if (
+            state.status !== "terminal" ||
+            completedRunId === null ||
+            completedRunId !== state.runId ||
+            expectedCursor !== null
+          )
+            throw new ArtifactVaultError(
+              "reconciliation-recovery-required",
+              "A new reconciliation run must reference the completed run",
+            );
+          this.#database
+            .prepare("DELETE FROM artifact_reconciliation_state WHERE singleton = 1")
+            .run();
+          const runNonce = randomUUID();
+          state = this.#insertReconciliationState({
+            runId: deriveReconciliationRunId({ runNonce }),
+            writerGeneration: fence.generation,
+            generation: 1,
+            phase: "attempts",
+            shard: 0,
+            afterKey: "",
+            runNonce,
+            status: "active",
+            pendingActionKey: null,
+            activeCallKey: null,
+            activeCallAcceptedToken: null,
+            rowsVisited: 0,
+            itemsProcessed: 0,
+            bytesHashed: 0,
+            directoryEntriesRead: 0,
+          });
+          return { kind: "state", state: this.#beginCall(state, null) } as const;
+        }
+
+        if (expectedCursor !== null) {
+          const receipt = this.#readReceiptByAcceptedToken(expectedCursor);
+          if (receipt !== undefined) {
+            if (receipt.writerGeneration !== fence.generation)
+              throw new ArtifactVaultError(
+                "reconciliation-cursor-invalid",
+                "Reconciliation cursor belongs to a stale writer generation",
+              );
+            return { kind: "receipt", report: receipt.report } as const;
+          }
+        }
+
+        if (state.status === "terminal") {
+          if (expectedCursor !== null)
+            throw new ArtifactVaultError(
+              "reconciliation-cursor-invalid",
+              "Reconciliation cursor is stale or invalid",
+            );
+          const terminal = this.#readTerminalReceipt(state.runId);
+          if (terminal === undefined) throw new Error("Terminal reconciliation receipt is missing");
+          return { kind: "receipt", report: terminal.report } as const;
+        }
+
+        if (state.writerGeneration !== fence.generation) {
+          if (expectedCursor !== null)
+            throw new ArtifactVaultError(
+              "reconciliation-cursor-invalid",
+              "Reconciliation cursor belongs to a stale writer generation",
+            );
+          state = this.#rotateReconciliationWriter(state, fence.generation);
+          return { kind: "state", state: this.#beginCall(state, null) } as const;
+        }
+
+        if (expectedCursor === null)
+          throw new ArtifactVaultError(
+            "reconciliation-cursor-required",
+            "The active reconciliation run requires its continuation cursor",
+          );
+        if (expectedCursor === state.activeCallAcceptedToken && state.activeCallKey !== null)
+          return { kind: "state", state } as const;
+        if (expectedCursor !== state.cursorToken)
+          throw new ArtifactVaultError(
+            "reconciliation-cursor-invalid",
+            "Reconciliation cursor is stale or invalid",
+          );
+        return { kind: "state", state: this.#beginCall(state, expectedCursor) } as const;
       })
       .immediate();
   }
 
   advanceReconciliationState(
     current: PersistedReconciliationState,
-    next: Readonly<{ phase: ReconciliationPhase; shard: number; afterKey: string }>,
+    next: Readonly<{
+      phase: ReconciliationPhase;
+      shard: number;
+      afterKey: string;
+      rowsVisited?: number;
+      itemsProcessed?: number;
+      bytesHashed?: number;
+      directoryEntriesRead?: number;
+    }>,
     fence: WriterFence,
-  ): PersistedReconciliationState {
+  ): DurableReconciliationState {
     return this.#database
       .transaction(() => {
         this.assertWriter(fence);
-        const result = this.#database
-          .prepare(`DELETE FROM artifact_reconciliation_state
-            WHERE singleton = 1 AND generation = ? AND cursor_token = ?`)
-          .run(current.generation, current.cursorToken);
-        if (result.changes !== 1) throw new Error("Reconciliation cursor generation was lost");
-        return this.#insertReconciliationState({
-          generation: current.generation + 1,
+        const durable = current as DurableReconciliationState;
+        if (durable.runId === undefined)
+          throw new Error("Reconciliation cursor generation was lost");
+        return this.#replaceReconciliationState(durable, {
+          ...durable,
+          generation: durable.generation + 1,
           phase: next.phase,
           shard: next.shard,
           afterKey: next.afterKey,
+          rowsVisited: durable.rowsVisited + (next.rowsVisited ?? 0),
+          itemsProcessed: durable.itemsProcessed + (next.itemsProcessed ?? 0),
+          bytesHashed: durable.bytesHashed + (next.bytesHashed ?? 0),
+          directoryEntriesRead: durable.directoryEntriesRead + (next.directoryEntriesRead ?? 0),
         });
       })
       .immediate();
   }
 
-  completeReconciliation(current: PersistedReconciliationState, fence: WriterFence): void {
+  completeReconciliation(current: DurableReconciliationState, fence: WriterFence): void {
     this.#database
       .transaction(() => {
         this.assertWriter(fence);
-        const result = this.#database
-          .prepare(`DELETE FROM artifact_reconciliation_state
-            WHERE singleton = 1 AND generation = ? AND cursor_token = ?`)
-          .run(current.generation, current.cursorToken);
-        if (result.changes !== 1) throw new Error("Reconciliation cursor generation was lost");
+        this.#replaceReconciliationState(current, { ...current, status: "terminal" });
       })
       .immediate();
+  }
+
+  commitReconciliationReceipt(
+    current: DurableReconciliationState,
+    report: ReconciliationReport,
+    terminal: boolean,
+    fence: WriterFence,
+  ): void {
+    this.#database
+      .transaction(() => {
+        this.assertWriter(fence);
+        if (current.activeCallKey === null) throw new Error("Reconciliation call is not active");
+        const json = canonicalJson(report as unknown as JsonValue);
+        const hash = canonicalHash(
+          "peas/artifact-reconciliation-report/v1",
+          report as unknown as JsonValue,
+        );
+        this.#database
+          .prepare(`INSERT INTO artifact_reconciliation_receipts (
+            call_key, run_id, accepted_token, response_token, terminal, writer_generation,
+            report_json, report_hash
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(
+            current.activeCallKey,
+            current.runId,
+            current.activeCallAcceptedToken,
+            terminal ? null : current.cursorToken,
+            terminal ? 1 : 0,
+            fence.generation,
+            json,
+            hash,
+          );
+        this.#replaceReconciliationState(current, {
+          ...current,
+          status: terminal ? "terminal" : "active",
+          activeCallKey: null,
+          activeCallAcceptedToken: null,
+        });
+      })
+      .immediate();
+  }
+
+  planReconciliationAction(
+    current: DurableReconciliationState,
+    input: Readonly<{
+      actionKind: ReconciliationActionKind;
+      sourceRelativePath: string | null;
+      sourceIdentity: JsonValue | null;
+      expectedDigest: string | null;
+      expectedSizeBytes: number | null;
+      incident: Readonly<{
+        kind: IntegrityIncident["kind"];
+        stagingId: string | null;
+        claimedDigest: string | null;
+        expectedSizeBytes: number | null;
+        actualSizeBytes: number | null;
+        detailHash: string | null;
+        facts: JsonValue;
+      }> | null;
+      identity: JsonValue;
+      payload: JsonValue | null;
+      recordedAtMs: number;
+    }>,
+    fence: WriterFence,
+  ): Readonly<{ state: DurableReconciliationState; plan: ReconciliationActionPlan }> {
+    return this.#database
+      .transaction(() => {
+        this.assertWriter(fence);
+        const workKey = deriveReconciliationWorkKey({
+          runId: current.runId,
+          phase: current.phase,
+          shard: current.shard,
+          afterKey: current.afterKey,
+          actionKind: input.actionKind,
+          sourceRelativePath: input.sourceRelativePath,
+        });
+        const actionKey = deriveReconciliationActionKey({
+          workKey,
+          actionKind: input.actionKind,
+          identity: input.identity,
+        });
+        if (current.pendingActionKey !== null && current.pendingActionKey !== actionKey)
+          throw new Error("Reconciliation head has a conflicting pending action");
+        const existing = this.#readReconciliationActionPlan(actionKey);
+        if (existing !== undefined) {
+          relationalMismatch("Reconciliation action plan replay", [
+            [existing.runId, current.runId],
+            [existing.workKey, workKey],
+            [existing.actionKind, input.actionKind],
+            [existing.sourceRelativePath, input.sourceRelativePath],
+            [existing.expectedDigest, input.expectedDigest],
+            [existing.expectedSizeBytes, input.expectedSizeBytes],
+          ]);
+          return { state: current, plan: existing };
+        }
+        const incidentId =
+          input.incident === null
+            ? null
+            : deriveIncidentId({
+                actionKey,
+                kind: input.incident.kind,
+                facts: input.incident.facts,
+              });
+        const incident: IntegrityIncident | null =
+          input.incident === null
+            ? null
+            : {
+                incidentId: incidentId as string,
+                actionKey,
+                kind: input.incident.kind,
+                recordedAtMs: input.recordedAtMs,
+                stagingId: input.incident.stagingId,
+                claimedDigest: input.incident.claimedDigest,
+                expectedSizeBytes: input.incident.expectedSizeBytes,
+                actualSizeBytes: input.incident.actualSizeBytes,
+                detailHash: input.incident.detailHash,
+              };
+        const quarantineName =
+          input.actionKind === "quarantine" && incidentId !== null
+            ? deriveQuarantineName(actionKey, incidentId)
+            : null;
+        const plan: ReconciliationActionPlan = {
+          actionKey,
+          runId: current.runId,
+          workKey,
+          actionKind: input.actionKind,
+          sourceRelativePath: input.sourceRelativePath,
+          sourceIdentity: input.sourceIdentity,
+          expectedDigest: input.expectedDigest,
+          expectedSizeBytes: input.expectedSizeBytes,
+          incident,
+          quarantineName,
+          plannedPhase: current.phase,
+          plannedShard: current.shard,
+          plannedAfterKey: current.afterKey,
+          recordedAtMs: input.recordedAtMs,
+          payload: input.payload,
+        };
+        const json = canonicalJson(plan as unknown as JsonValue);
+        this.#database
+          .prepare(`INSERT INTO artifact_reconciliation_action_plans (
+            action_key, run_id, work_key, action_kind, source_relative_path,
+            source_identity_json, expected_digest, expected_size_bytes, incident_id,
+            quarantine_name, planned_phase, planned_shard, planned_after_key,
+            recorded_at_ms, plan_json, plan_hash
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(
+            plan.actionKey,
+            plan.runId,
+            plan.workKey,
+            plan.actionKind,
+            plan.sourceRelativePath,
+            plan.sourceIdentity === null ? null : canonicalJson(plan.sourceIdentity),
+            plan.expectedDigest,
+            plan.expectedSizeBytes,
+            plan.incident?.incidentId ?? null,
+            plan.quarantineName,
+            plan.plannedPhase,
+            plan.plannedShard,
+            plan.plannedAfterKey,
+            plan.recordedAtMs,
+            json,
+            canonicalHash(
+              "peas/artifact-reconciliation-action-plan/v1",
+              plan as unknown as JsonValue,
+            ),
+          );
+        if (incident !== null) this.#insertIncident(incident);
+        const state = this.#replaceReconciliationState(current, {
+          ...current,
+          generation: current.generation + 1,
+          pendingActionKey: actionKey,
+        });
+        return { state, plan };
+      })
+      .immediate();
+  }
+
+  applyReconciliationAction(
+    current: DurableReconciliationState,
+    actionKey: string,
+    next: Readonly<{
+      phase: ReconciliationPhase;
+      shard: number;
+      afterKey: string;
+      rowsVisited?: number;
+      itemsProcessed?: number;
+      bytesHashed?: number;
+      directoryEntriesRead?: number;
+    }>,
+    result: Readonly<{
+      resultingIdentity: JsonValue | null;
+      resultingDigest: string | null;
+      resultingSizeBytes: number | null;
+    }>,
+    fence: WriterFence,
+  ): DurableReconciliationState {
+    return this.#database
+      .transaction(() => {
+        this.assertWriter(fence);
+        if (current.pendingActionKey !== actionKey)
+          throw new Error("Reconciliation action is not pending at the durable head");
+        const plan = this.#readReconciliationActionPlan(actionKey);
+        if (plan === undefined) throw new Error("Reconciliation action plan is missing");
+        if (plan.actionKind === "adopt-orphan") {
+          const payload = plan.payload as unknown as Record<string, unknown>;
+          const artifact = (
+            "artifact" in payload ? payload["artifact"] : payload
+          ) as ArtifactMetadata;
+          const existing = this.stat(artifact.digest);
+          if (existing === undefined) {
+            this.#database
+              .prepare(`INSERT INTO artifact_blobs (
+                digest, algorithm, size_bytes, committed_at_ms, provenance, blob_json, blob_hash
+              ) VALUES (?, 'sha256', ?, ?, 'recovered-orphan', ?, ?)`)
+              .run(
+                artifact.digest,
+                artifact.sizeBytes,
+                artifact.committedAtMs,
+                canonicalJson(artifact as unknown as JsonValue),
+                canonicalHash("peas/artifact-blob/v1", artifact as unknown as JsonValue),
+              );
+          } else
+            relationalMismatch("Recovered orphan replay", [
+              [existing.digest, artifact.digest],
+              [existing.sizeBytes, artifact.sizeBytes],
+              [existing.provenance, artifact.provenance],
+            ]);
+        } else if (plan.actionKind === "expire-attempt") {
+          const payload = plan.payload as unknown as Record<string, unknown>;
+          const outcome = (
+            "outcome" in payload ? payload["outcome"] : payload
+          ) as RetrievalAttemptOutcome;
+          const existing = this.#getOutcome(outcome.attemptId);
+          if (existing === undefined) this.#insertOutcome(outcome);
+          else
+            relationalMismatch("Expired attempt replay", [
+              [existing.outcome, outcome.outcome],
+              [existing.reasonCode, outcome.reasonCode],
+              [existing.detailHash, outcome.detailHash],
+            ]);
+        }
+        if (
+          plan.actionKind === "quarantine" &&
+          plan.payload !== null &&
+          typeof plan.payload === "object" &&
+          !Array.isArray(plan.payload) &&
+          "outcome" in plan.payload
+        ) {
+          const outcome = plan.payload["outcome"] as unknown as RetrievalAttemptOutcome;
+          const existing = this.#getOutcome(outcome.attemptId);
+          if (existing === undefined) this.#insertOutcome(outcome);
+          else
+            relationalMismatch("Quarantine outcome replay", [
+              [existing.outcome, outcome.outcome],
+              [existing.reasonCode, outcome.reasonCode],
+              [existing.detailHash, outcome.detailHash],
+            ]);
+        }
+        const application = {
+          actionKey,
+          writerGeneration: fence.generation,
+          appliedAtMs: fence.nowMs(),
+          resultingIdentity: result.resultingIdentity,
+          resultingDigest: result.resultingDigest,
+          resultingSizeBytes: result.resultingSizeBytes,
+        };
+        const applicationJson = canonicalJson(application as unknown as JsonValue);
+        this.#database
+          .prepare(`INSERT INTO artifact_reconciliation_action_applications (
+            action_key, writer_generation, applied_at_ms, resulting_identity_json,
+            resulting_digest, resulting_size_bytes, application_json, application_hash
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(
+            actionKey,
+            fence.generation,
+            application.appliedAtMs,
+            result.resultingIdentity === null ? null : canonicalJson(result.resultingIdentity),
+            result.resultingDigest,
+            result.resultingSizeBytes,
+            applicationJson,
+            canonicalHash(
+              "peas/artifact-reconciliation-action-application/v1",
+              application as unknown as JsonValue,
+            ),
+          );
+        if (plan.actionKind === "quarantine") {
+          if (
+            plan.quarantineName === null ||
+            result.resultingIdentity === null ||
+            result.resultingDigest === null ||
+            result.resultingSizeBytes === null
+          )
+            throw new Error("Quarantine action receipt is incomplete");
+          const receipt = {
+            actionKey,
+            targetName: plan.quarantineName,
+            targetIdentity: result.resultingIdentity,
+            digest: result.resultingDigest,
+            sizeBytes: result.resultingSizeBytes,
+          };
+          this.#database
+            .prepare(`INSERT INTO artifact_quarantine_receipts (
+              action_key, target_name, target_identity_json, digest, size_bytes,
+              receipt_json, receipt_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+            .run(
+              actionKey,
+              plan.quarantineName,
+              canonicalJson(result.resultingIdentity),
+              result.resultingDigest,
+              result.resultingSizeBytes,
+              canonicalJson(receipt as unknown as JsonValue),
+              canonicalHash("peas/artifact-quarantine-receipt/v1", receipt as unknown as JsonValue),
+            );
+        }
+        return this.#replaceReconciliationState(current, {
+          ...current,
+          generation: current.generation + 1,
+          phase: next.phase,
+          shard: next.shard,
+          afterKey: next.afterKey,
+          pendingActionKey: null,
+          rowsVisited: current.rowsVisited + (next.rowsVisited ?? 0),
+          itemsProcessed: current.itemsProcessed + (next.itemsProcessed ?? 0),
+          bytesHashed: current.bytesHashed + (next.bytesHashed ?? 0),
+          directoryEntriesRead: current.directoryEntriesRead + (next.directoryEntriesRead ?? 0),
+        });
+      })
+      .immediate();
+  }
+
+  readPendingReconciliationAction(
+    state: DurableReconciliationState,
+  ): ReconciliationActionPlan | undefined {
+    return state.pendingActionKey === null
+      ? undefined
+      : this.#readReconciliationActionPlan(state.pendingActionKey);
   }
 
   verifyEvidencePage(
@@ -393,6 +942,208 @@ export class SqliteArtifactRepository {
     const artifact = this.stat(observation.artifactDigest);
     if (artifact === undefined) throw new Error("Completed artifact metadata is missing");
     return { artifact, observation, disposition: "deduplicated" };
+  }
+
+  getOutcome(attemptId: string): RetrievalAttemptOutcome | undefined {
+    return this.#getOutcome(attemptId);
+  }
+
+  prepareInstallIntent(
+    input: Readonly<{
+      attempt: RetrievalAttempt;
+      artifact: ArtifactMetadata;
+      observation: ArtifactObservation;
+      response: SafeHttpResponseMetadata;
+      disposition: "new-content" | "preexisting-verified";
+      createdAtMs: number;
+    }>,
+    fence: WriterFence,
+  ): InstallIntent {
+    return this.#database
+      .transaction(() => {
+        this.assertWriter(fence);
+        const persistedAttempt = this.getAttempt(input.attempt.attemptId);
+        if (persistedAttempt === undefined) throw new Error("Install intent attempt is missing");
+        relationalMismatch("Install intent attempt", [
+          [input.attempt.stagingId, persistedAttempt.stagingId],
+          [input.observation.attemptId, persistedAttempt.attemptId],
+          [input.observation.artifactDigest, input.artifact.digest],
+          [input.artifact.sizeBytes, input.artifact.sizeBytes],
+        ]);
+        const identity = {
+          attemptId: input.attempt.attemptId,
+          stagingId: input.attempt.stagingId,
+          digest: input.artifact.digest,
+          sizeBytes: input.artifact.sizeBytes,
+          disposition: input.disposition,
+          observationId: input.observation.observationId,
+          responseHash: canonicalHash(
+            "peas/artifact-install-response/v1",
+            input.response as unknown as JsonValue,
+          ),
+        };
+        const intent: InstallIntent = {
+          intentId: deriveInstallIntentId(identity),
+          attemptId: input.attempt.attemptId,
+          stagingId: input.attempt.stagingId,
+          digest: input.artifact.digest,
+          sizeBytes: input.artifact.sizeBytes,
+          disposition: input.disposition,
+          createdWriterGeneration: fence.generation,
+          createdAtMs: input.createdAtMs,
+          artifact: input.artifact,
+          response: input.response,
+          observation: input.observation,
+        };
+        const existing = this.#readInstallIntent(intent.intentId);
+        if (existing !== undefined) {
+          relationalMismatch("Artifact install intent replay", [
+            [
+              canonicalJson(identity as unknown as JsonValue),
+              canonicalJson({
+                attemptId: existing.attemptId,
+                stagingId: existing.stagingId,
+                digest: existing.digest,
+                sizeBytes: existing.sizeBytes,
+                disposition: existing.disposition,
+                observationId: existing.observation.observationId,
+                responseHash: canonicalHash(
+                  "peas/artifact-install-response/v1",
+                  existing.response as unknown as JsonValue,
+                ),
+              } as unknown as JsonValue),
+            ],
+          ]);
+          return existing;
+        }
+        const observationValue = { ...intent.observation } as Record<string, unknown>;
+        delete observationValue["observationHash"];
+        const intentJson = canonicalJson(intent as unknown as JsonValue);
+        this.#database
+          .prepare(`INSERT INTO artifact_install_intents (
+            intent_id, attempt_id, staging_id, digest, size_bytes, disposition,
+            created_writer_generation, created_at_ms, artifact_json, artifact_hash,
+            response_json, response_hash, observation_json, observation_hash,
+            intent_json, intent_hash
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(
+            intent.intentId,
+            intent.attemptId,
+            intent.stagingId,
+            intent.digest,
+            intent.sizeBytes,
+            intent.disposition,
+            intent.createdWriterGeneration,
+            intent.createdAtMs,
+            canonicalJson(intent.artifact as unknown as JsonValue),
+            canonicalHash("peas/artifact-blob/v1", intent.artifact as unknown as JsonValue),
+            canonicalJson(intent.response as unknown as JsonValue),
+            canonicalHash(
+              "peas/artifact-install-response/v1",
+              intent.response as unknown as JsonValue,
+            ),
+            canonicalJson(observationValue as unknown as JsonValue),
+            intent.observation.observationHash,
+            intentJson,
+            canonicalHash("peas/artifact-install-intent-record/v1", intent as unknown as JsonValue),
+          );
+        return intent;
+      })
+      .immediate();
+  }
+
+  markIntentContentInstalled(intentId: string, fence: WriterFence): void {
+    this.#database
+      .transaction(() => {
+        this.assertWriter(fence);
+        if (this.#readInstallIntent(intentId) === undefined)
+          throw new Error("Artifact install intent is missing");
+        this.#insertInstallTransition(intentId, "content-installed", fence);
+      })
+      .immediate();
+  }
+
+  markIntentStageCleaned(intentId: string, fence: WriterFence): void {
+    this.#database
+      .transaction(() => {
+        this.assertWriter(fence);
+        if (this.#readInstallIntent(intentId) === undefined)
+          throw new Error("Artifact install intent is missing");
+        this.#insertInstallTransition(intentId, "stage-cleaned", fence);
+      })
+      .immediate();
+  }
+
+  commitIntentSuccess(intentId: string, fence: WriterFence): StoreArtifactResult {
+    return this.#database
+      .transaction(() => {
+        this.assertWriter(fence);
+        const intent = this.#readInstallIntent(intentId);
+        if (intent === undefined) throw new Error("Artifact install intent is missing");
+        if (this.#hasInstallTransition(intentId, "aborted"))
+          throw new Error("Artifact install intent was aborted");
+        const completed = this.getCompletedResult(intent.attemptId);
+        if (completed !== undefined) {
+          relationalMismatch("Artifact install intent committed result", [
+            [completed.artifact.digest, intent.digest],
+            [completed.artifact.sizeBytes, intent.sizeBytes],
+            [completed.observation.observationId, intent.observation.observationId],
+          ]);
+          this.#insertInstallTransition(intentId, "evidence-committed", fence);
+          return completed;
+        }
+        const disposition = this.#insertSuccessEvidence(
+          intent.artifact,
+          intent.observation,
+          intent.response,
+        );
+        this.#insertInstallTransition(intentId, "evidence-committed", fence);
+        return {
+          artifact: this.stat(intent.digest) as ArtifactMetadata,
+          observation: intent.observation,
+          disposition,
+        };
+      })
+      .immediate();
+  }
+
+  abortIntent(intentId: string, outcome: RetrievalAttemptOutcome, fence: WriterFence): void {
+    this.#database
+      .transaction(() => {
+        this.assertWriter(fence);
+        const intent = this.#readInstallIntent(intentId);
+        if (intent === undefined) throw new Error("Artifact install intent is missing");
+        if (this.#hasInstallTransition(intentId, "evidence-committed"))
+          throw new Error("Committed artifact install intent cannot be aborted");
+        relationalMismatch("Artifact install abort", [[outcome.attemptId, intent.attemptId]]);
+        const existing = this.#getOutcome(outcome.attemptId);
+        if (existing === undefined) this.#insertOutcome(outcome);
+        else
+          relationalMismatch("Artifact install abort outcome", [
+            [outcome.outcome, existing.outcome],
+            [outcome.reasonCode, existing.reasonCode],
+            [outcome.detailHash, existing.detailHash],
+          ]);
+        this.#insertInstallTransition(intentId, "aborted", fence);
+      })
+      .immediate();
+  }
+
+  readPendingIntentPage(afterIntentId: string, limit: number): readonly InstallIntent[] {
+    const rows = this.#database
+      .prepare(`SELECT i.intent_id FROM artifact_install_intents i
+        LEFT JOIN artifact_install_transitions cleaned
+          ON cleaned.intent_id = i.intent_id AND cleaned.state = 'stage-cleaned'
+        LEFT JOIN artifact_install_transitions aborted
+          ON aborted.intent_id = i.intent_id AND aborted.state = 'aborted'
+        WHERE cleaned.intent_id IS NULL AND aborted.intent_id IS NULL AND i.intent_id > ?
+        ORDER BY i.intent_id LIMIT ?`)
+      .all(afterIntentId, limit) as Array<{ intent_id: string }>;
+    return rows.map((row) => this.#readInstallIntent(row.intent_id) as InstallIntent);
+  }
+
+  hasInstallTransition(intentId: string, state: string): boolean {
+    return this.#hasInstallTransition(intentId, state);
   }
 
   finishAttempt(outcome: RetrievalAttemptOutcome, fence: WriterFence): void {
@@ -605,15 +1356,32 @@ export class SqliteArtifactRepository {
   }
 
   #insertIncident(incident: IntegrityIncident): void {
+    const existingRow = this.#database
+      .prepare("SELECT * FROM artifact_integrity_incidents WHERE incident_id = ?")
+      .get(incident.incidentId) as Record<string, unknown> | undefined;
+    if (existingRow !== undefined) {
+      const existing = this.#parseIncident(existingRow);
+      relationalMismatch("Artifact incident replay", [
+        [incident.actionKey ?? null, existing.actionKey ?? null],
+        [incident.kind, existing.kind],
+        [incident.stagingId, existing.stagingId],
+        [incident.claimedDigest, existing.claimedDigest],
+        [incident.expectedSizeBytes, existing.expectedSizeBytes],
+        [incident.actualSizeBytes, existing.actualSizeBytes],
+        [incident.detailHash, existing.detailHash],
+      ]);
+      return;
+    }
     const json = canonicalJson(incident as unknown as JsonValue);
-    const hash = canonicalHash("peas/artifact-incident/v1", incident as unknown as JsonValue);
+    const hash = canonicalHash("peas/artifact-incident/v2", incident as unknown as JsonValue);
     this.#database
-      .prepare(`INSERT OR IGNORE INTO artifact_integrity_incidents (
-      incident_id, kind, recorded_at_ms, staging_id, claimed_digest, expected_size_bytes,
+      .prepare(`INSERT INTO artifact_integrity_incidents (
+      incident_id, action_key, kind, recorded_at_ms, staging_id, claimed_digest, expected_size_bytes,
       actual_size_bytes, detail_hash, incident_json, incident_hash
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(
         incident.incidentId,
+        incident.actionKey ?? null,
         incident.kind,
         incident.recordedAtMs,
         incident.stagingId,
@@ -664,19 +1432,10 @@ export class SqliteArtifactRepository {
   }
 
   #insertReconciliationState(
-    state: Readonly<{
-      generation: number;
-      phase: ReconciliationPhase;
-      shard: number;
-      afterKey: string;
-    }>,
-  ): PersistedReconciliationState {
-    const value = {
-      generation: state.generation,
-      phase: state.phase,
-      shard: state.shard,
-      afterKey: state.afterKey,
-    };
+    state: Omit<DurableReconciliationState, "cursorToken">,
+  ): DurableReconciliationState {
+    const cursorToken = this.#cursorFor(state);
+    const value = { ...state, cursorToken };
     const json = canonicalJson(value as unknown as JsonValue);
     const hash = canonicalHash(
       "peas/artifact-reconciliation-state/v1",
@@ -684,27 +1443,203 @@ export class SqliteArtifactRepository {
     );
     this.#database
       .prepare(`INSERT INTO artifact_reconciliation_state (
-      singleton, generation, phase, shard, after_key, cursor_token, state_json, state_hash
-    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(state.generation, state.phase, state.shard, state.afterKey, hash, json, hash);
-    return { ...state, cursorToken: hash };
+      singleton, run_id, writer_generation, generation, cursor_epoch, phase, shard, after_key,
+      pending_action_key, active_call_key, active_call_accepted_token, cursor_token, run_nonce,
+      status, rows_visited, items_processed, bytes_hashed, directory_entries_read,
+      state_json, state_hash
+    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(
+        state.runId,
+        state.writerGeneration,
+        state.generation,
+        state.generation,
+        state.phase,
+        state.shard,
+        state.afterKey,
+        state.pendingActionKey,
+        state.activeCallKey,
+        state.activeCallAcceptedToken,
+        cursorToken,
+        state.runNonce,
+        state.status,
+        state.rowsVisited,
+        state.itemsProcessed,
+        state.bytesHashed,
+        state.directoryEntriesRead,
+        json,
+        hash,
+      );
+    return value;
   }
 
-  #parseReconciliationState(row: ReconciliationStateRow): PersistedReconciliationState {
-    const value = parseCanonical<{
-      generation: number;
-      phase: ReconciliationPhase;
-      shard: number;
-      afterKey: string;
-    }>(row.state_json, row.state_hash, "peas/artifact-reconciliation-state/v1");
+  #replaceReconciliationState(
+    current: DurableReconciliationState,
+    next: Omit<DurableReconciliationState, "cursorToken"> | DurableReconciliationState,
+  ): DurableReconciliationState {
+    const withoutCursor = { ...next } as DurableReconciliationState;
+    const cursorToken = this.#cursorFor(withoutCursor);
+    const value = { ...withoutCursor, cursorToken };
+    const json = canonicalJson(value as unknown as JsonValue);
+    const hash = canonicalHash(
+      "peas/artifact-reconciliation-state/v1",
+      value as unknown as JsonValue,
+    );
+    const result = this.#database
+      .prepare(`UPDATE artifact_reconciliation_state SET
+        run_id = ?, writer_generation = ?, generation = ?, cursor_epoch = ?, phase = ?,
+        shard = ?, after_key = ?, pending_action_key = ?, active_call_key = ?,
+        active_call_accepted_token = ?, cursor_token = ?, run_nonce = ?, status = ?,
+        rows_visited = ?, items_processed = ?, bytes_hashed = ?, directory_entries_read = ?,
+        state_json = ?, state_hash = ?
+        WHERE singleton = 1 AND run_id = ? AND generation = ? AND writer_generation = ?
+          AND cursor_token = ?`)
+      .run(
+        value.runId,
+        value.writerGeneration,
+        value.generation,
+        value.generation,
+        value.phase,
+        value.shard,
+        value.afterKey,
+        value.pendingActionKey,
+        value.activeCallKey,
+        value.activeCallAcceptedToken,
+        value.cursorToken,
+        value.runNonce,
+        value.status,
+        value.rowsVisited,
+        value.itemsProcessed,
+        value.bytesHashed,
+        value.directoryEntriesRead,
+        json,
+        hash,
+        current.runId,
+        current.generation,
+        current.writerGeneration,
+        current.cursorToken,
+      );
+    if (result.changes !== 1) throw new Error("Reconciliation cursor generation was lost");
+    return value;
+  }
+
+  #cursorFor(state: Omit<DurableReconciliationState, "cursorToken">): string {
+    return deriveReconciliationCursor({
+      runId: state.runId,
+      cursorEpoch: state.generation,
+      writerGeneration: state.writerGeneration,
+      phase: state.phase,
+      shard: state.shard,
+      afterKey: state.afterKey,
+      pendingActionKey: state.pendingActionKey,
+      runNonce: state.runNonce,
+    });
+  }
+
+  #beginCall(
+    state: DurableReconciliationState,
+    acceptedToken: string | null,
+  ): DurableReconciliationState {
+    const activeCallKey = deriveReconciliationCallKey({
+      runId: state.runId,
+      acceptedToken,
+      cursorEpoch: state.generation,
+      writerGeneration: state.writerGeneration,
+    });
+    return this.#replaceReconciliationState(state, {
+      ...state,
+      activeCallKey,
+      activeCallAcceptedToken: acceptedToken,
+    });
+  }
+
+  #rotateReconciliationWriter(
+    state: DurableReconciliationState,
+    writerGeneration: number,
+  ): DurableReconciliationState {
+    return this.#replaceReconciliationState(state, {
+      ...state,
+      writerGeneration,
+      generation: state.generation + 1,
+      activeCallKey: null,
+      activeCallAcceptedToken: null,
+    });
+  }
+
+  #readReceiptByAcceptedToken(
+    token: string,
+  ): Readonly<{ report: ReconciliationReport; writerGeneration: number }> | undefined {
+    const row = this.#database
+      .prepare(`SELECT report_json, report_hash, writer_generation
+        FROM artifact_reconciliation_receipts WHERE accepted_token = ?`)
+      .get(token) as
+      | { report_json: string; report_hash: string; writer_generation: bigint }
+      | undefined;
+    if (row === undefined) return undefined;
+    return {
+      report: parseCanonical<ReconciliationReport>(
+        row.report_json,
+        row.report_hash,
+        "peas/artifact-reconciliation-report/v1",
+      ),
+      writerGeneration: safeNumber(row.writer_generation, "receipt writer generation"),
+    };
+  }
+
+  #readTerminalReceipt(
+    runId: string,
+  ): Readonly<{ report: ReconciliationReport; writerGeneration: number }> | undefined {
+    const row = this.#database
+      .prepare(`SELECT report_json, report_hash, writer_generation
+        FROM artifact_reconciliation_receipts WHERE run_id = ? AND terminal = 1
+        ORDER BY rowid DESC LIMIT 1`)
+      .get(runId) as
+      | { report_json: string; report_hash: string; writer_generation: bigint }
+      | undefined;
+    if (row === undefined) return undefined;
+    return {
+      report: parseCanonical<ReconciliationReport>(
+        row.report_json,
+        row.report_hash,
+        "peas/artifact-reconciliation-report/v1",
+      ),
+      writerGeneration: safeNumber(row.writer_generation, "receipt writer generation"),
+    };
+  }
+
+  #parseReconciliationState(row: ReconciliationStateRow): DurableReconciliationState {
+    const value = parseCanonical<DurableReconciliationState>(
+      row.state_json,
+      row.state_hash,
+      "peas/artifact-reconciliation-state/v1",
+    );
     relationalMismatch("Artifact reconciliation state", [
+      [value.runId, row.run_id],
+      [
+        value.writerGeneration,
+        safeNumber(row.writer_generation, "reconciliation writer generation"),
+      ],
       [value.generation, safeNumber(row.generation, "reconciliation generation")],
+      [value.generation, safeNumber(row.cursor_epoch, "reconciliation cursor epoch")],
       [value.phase, row.phase],
       [value.shard, safeNumber(row.shard, "reconciliation shard")],
       [value.afterKey, row.after_key],
-      [row.state_hash, row.cursor_token],
+      [value.cursorToken, row.cursor_token],
+      [value.runNonce, row.run_nonce],
+      [value.status, row.status],
+      [value.pendingActionKey, row.pending_action_key],
+      [value.activeCallKey, row.active_call_key],
+      [value.activeCallAcceptedToken, row.active_call_accepted_token],
+      [value.rowsVisited, safeNumber(row.rows_visited, "reconciliation rows visited")],
+      [value.itemsProcessed, safeNumber(row.items_processed, "reconciliation items processed")],
+      [value.bytesHashed, safeNumber(row.bytes_hashed, "reconciliation bytes hashed")],
+      [
+        value.directoryEntriesRead,
+        safeNumber(row.directory_entries_read, "reconciliation directory entries"),
+      ],
     ]);
-    return { ...value, cursorToken: row.cursor_token };
+    if (this.#cursorFor(value) !== row.cursor_token)
+      throw new Error("Artifact reconciliation cursor relationship mismatch");
+    return value;
   }
 
   #pageResult(
@@ -728,12 +1663,13 @@ export class SqliteArtifactRepository {
     const incident = parseCanonical<IntegrityIncident>(
       row["incident_json"] as string,
       row["incident_hash"] as string,
-      "peas/artifact-incident/v1",
+      "peas/artifact-incident/v2",
     );
     const numberOrNull = (value: unknown, label: string): number | null =>
       value === null ? null : safeNumber(value as bigint, label);
     relationalMismatch("Artifact incident", [
       [incident.incidentId, row["incident_id"]],
+      [incident.actionKey ?? null, row["action_key"]],
       [incident.kind, row["kind"]],
       [incident.recordedAtMs, safeNumber(row["recorded_at_ms"] as bigint, "incident time")],
       [incident.stagingId, row["staging_id"]],
@@ -746,6 +1682,238 @@ export class SqliteArtifactRepository {
       [incident.detailHash, row["detail_hash"]],
     ]);
     return incident;
+  }
+
+  #readInstallIntent(intentId: string): InstallIntent | undefined {
+    const row = this.#database
+      .prepare("SELECT * FROM artifact_install_intents WHERE intent_id = ?")
+      .get(intentId) as Record<string, unknown> | undefined;
+    if (row === undefined) return undefined;
+    const intent = parseCanonical<InstallIntent>(
+      row["intent_json"] as string,
+      row["intent_hash"] as string,
+      "peas/artifact-install-intent-record/v1",
+    );
+    const artifact = parseCanonical<ArtifactMetadata>(
+      row["artifact_json"] as string,
+      row["artifact_hash"] as string,
+      "peas/artifact-blob/v1",
+    );
+    const response = parseCanonical<SafeHttpResponseMetadata>(
+      row["response_json"] as string,
+      row["response_hash"] as string,
+      "peas/artifact-install-response/v1",
+    );
+    const observationRaw = parseCanonical<Omit<ArtifactObservation, "observationHash">>(
+      row["observation_json"] as string,
+      row["observation_hash"] as string,
+      "peas/artifact-observation/v1",
+    );
+    const observation = {
+      ...observationRaw,
+      observationHash: row["observation_hash"] as string,
+    };
+    relationalMismatch("Artifact install intent", [
+      [intent.intentId, row["intent_id"]],
+      [intent.attemptId, row["attempt_id"]],
+      [intent.stagingId, row["staging_id"]],
+      [intent.digest, row["digest"]],
+      [intent.sizeBytes, safeNumber(row["size_bytes"] as bigint, "install intent size")],
+      [intent.disposition, row["disposition"]],
+      [
+        intent.createdWriterGeneration,
+        safeNumber(row["created_writer_generation"] as bigint, "install intent generation"),
+      ],
+      [intent.createdAtMs, safeNumber(row["created_at_ms"] as bigint, "install intent time")],
+      [
+        canonicalJson(intent.artifact as unknown as JsonValue),
+        canonicalJson(artifact as unknown as JsonValue),
+      ],
+      [
+        canonicalJson(intent.response as unknown as JsonValue),
+        canonicalJson(response as unknown as JsonValue),
+      ],
+      [
+        canonicalJson(intent.observation as unknown as JsonValue),
+        canonicalJson(observation as unknown as JsonValue),
+      ],
+      [intent.digest, artifact.digest],
+      [intent.digest, observation.artifactDigest],
+      [intent.attemptId, observation.attemptId],
+    ]);
+    return intent;
+  }
+
+  #readReconciliationActionPlan(actionKey: string): ReconciliationActionPlan | undefined {
+    const row = this.#database
+      .prepare("SELECT * FROM artifact_reconciliation_action_plans WHERE action_key = ?")
+      .get(actionKey) as Record<string, unknown> | undefined;
+    if (row === undefined) return undefined;
+    const plan = parseCanonical<ReconciliationActionPlan>(
+      row["plan_json"] as string,
+      row["plan_hash"] as string,
+      "peas/artifact-reconciliation-action-plan/v1",
+    );
+    relationalMismatch("Artifact reconciliation action plan", [
+      [plan.actionKey, row["action_key"]],
+      [plan.runId, row["run_id"]],
+      [plan.workKey, row["work_key"]],
+      [plan.actionKind, row["action_kind"]],
+      [plan.sourceRelativePath, row["source_relative_path"]],
+      [plan.expectedDigest, row["expected_digest"]],
+      [
+        plan.expectedSizeBytes,
+        row["expected_size_bytes"] === null
+          ? null
+          : safeNumber(row["expected_size_bytes"] as bigint, "action expected size"),
+      ],
+      [plan.incident?.incidentId ?? null, row["incident_id"]],
+      [plan.quarantineName, row["quarantine_name"]],
+      [plan.plannedPhase, row["planned_phase"]],
+      [plan.plannedShard, safeNumber(row["planned_shard"] as bigint, "action shard")],
+      [plan.plannedAfterKey, row["planned_after_key"]],
+      [plan.recordedAtMs, safeNumber(row["recorded_at_ms"] as bigint, "action record time")],
+      [
+        plan.sourceIdentity === null ? null : canonicalJson(plan.sourceIdentity),
+        row["source_identity_json"],
+      ],
+    ]);
+    return plan;
+  }
+
+  #hasInstallTransition(intentId: string, state: string): boolean {
+    return (
+      this.#database
+        .prepare(
+          "SELECT 1 present FROM artifact_install_transitions WHERE intent_id = ? AND state = ?",
+        )
+        .get(intentId, state) !== undefined
+    );
+  }
+
+  #insertInstallTransition(
+    intentId: string,
+    state: "content-installed" | "evidence-committed" | "stage-cleaned" | "aborted",
+    fence: WriterFence,
+  ): void {
+    const transitionId = deriveInstallTransitionId(intentId, state);
+    const existing = this.#database
+      .prepare(
+        "SELECT transition_json, transition_hash FROM artifact_install_transitions WHERE intent_id = ? AND state = ?",
+      )
+      .get(intentId, state) as { transition_json: string; transition_hash: string } | undefined;
+    if (existing !== undefined) {
+      const parsed = parseCanonical<{ transitionId: string; intentId: string; state: string }>(
+        existing.transition_json,
+        existing.transition_hash,
+        "peas/artifact-install-transition-record/v1",
+      );
+      relationalMismatch("Artifact install transition replay", [
+        [parsed.transitionId, transitionId],
+        [parsed.intentId, intentId],
+        [parsed.state, state],
+      ]);
+      return;
+    }
+    const value = {
+      transitionId,
+      intentId,
+      state,
+      writerGeneration: fence.generation,
+      transitionedAtMs: fence.nowMs(),
+    };
+    this.#database
+      .prepare(`INSERT INTO artifact_install_transitions (
+        transition_id, intent_id, state, writer_generation, transitioned_at_ms,
+        transition_json, transition_hash
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(
+        transitionId,
+        intentId,
+        state,
+        fence.generation,
+        value.transitionedAtMs,
+        canonicalJson(value as unknown as JsonValue),
+        canonicalHash("peas/artifact-install-transition-record/v1", value as unknown as JsonValue),
+      );
+  }
+
+  #insertSuccessEvidence(
+    artifact: ArtifactMetadata,
+    observation: ArtifactObservation,
+    response: SafeHttpResponseMetadata,
+  ): "created" | "deduplicated" {
+    const attempt = this.getAttempt(observation.attemptId);
+    if (attempt === undefined) throw new Error("Artifact observation attempt is missing");
+    relationalMismatch("Artifact observation attempt", [
+      [observation.provider, attempt.provider],
+      [observation.recordId, attempt.recordId],
+      [observation.revisionId, attempt.revisionId],
+      [observation.request.method, attempt.request.method],
+      [observation.request.origin, attempt.request.origin],
+      [observation.request.pathHash, attempt.request.pathHash],
+      [observation.request.routeLabel, attempt.request.routeLabel],
+      [observation.request.identityHash, attempt.request.identityHash],
+    ]);
+    const existing = this.stat(artifact.digest);
+    let disposition: "created" | "deduplicated" = "deduplicated";
+    if (existing === undefined) {
+      this.#database
+        .prepare(`INSERT INTO artifact_blobs (
+          digest, algorithm, size_bytes, committed_at_ms, provenance, blob_json, blob_hash
+        ) VALUES (?, 'sha256', ?, ?, ?, ?, ?)`)
+        .run(
+          artifact.digest,
+          artifact.sizeBytes,
+          artifact.committedAtMs,
+          artifact.provenance,
+          canonicalJson(artifact as unknown as JsonValue),
+          canonicalHash("peas/artifact-blob/v1", artifact as unknown as JsonValue),
+        );
+      disposition = "created";
+    } else if (existing.sizeBytes !== artifact.sizeBytes) {
+      throw new Error("Artifact metadata size conflict");
+    }
+    this.#insertOutcome({
+      attemptId: observation.attemptId,
+      outcome: "succeeded",
+      completedAtMs: artifact.committedAtMs,
+      reasonCode: null,
+      detailHash: null,
+    });
+    const jsonValue = { ...observation } as unknown as Record<string, JsonValue>;
+    delete jsonValue["observationHash"];
+    this.#database
+      .prepare(`INSERT INTO artifact_observations (
+        observation_id, attempt_id, artifact_digest, provider, provider_record_id,
+        provider_revision_id, retrieved_at_ms, request_method, request_origin,
+        request_path_hash, request_route_label, request_identity_hash, status_code,
+        etag, last_modified, media_type, content_encoding, declared_content_length,
+        transport_decoded, observation_json, observation_hash
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`)
+      .run(
+        observation.observationId,
+        observation.attemptId,
+        observation.artifactDigest,
+        observation.provider,
+        observation.recordId,
+        observation.revisionId,
+        observation.retrievedAtMs,
+        observation.request.method,
+        observation.request.origin,
+        observation.request.pathHash,
+        observation.request.routeLabel,
+        observation.request.identityHash,
+        response.statusCode,
+        response.etag,
+        response.lastModified,
+        response.mediaType,
+        response.contentEncoding,
+        response.declaredContentLength,
+        canonicalJson(jsonValue),
+        observation.observationHash,
+      );
+    return disposition;
   }
 
   #getOutcome(attemptId: string): RetrievalAttemptOutcome | undefined {

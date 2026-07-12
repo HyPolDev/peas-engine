@@ -15,11 +15,15 @@ const GIT_SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const CHECK_RESULT_PATHS = {
   tests: "audit-test-results.json",
   mutations: "audit-mutation-results.json",
+  hardKill: "audit-hard-kill-results.json",
 };
 const GOLDEN_PATH = "fixtures/earnings-cluster.v2.golden.json";
 const CAPTURE_PATH = "fixtures/earnings-cluster.v2.captured.ndjson";
 const PACKAGE_LOCK_PATH = "package-lock.json";
 const SCALE_POLICY_PATH = "config/scale-policy.v1.json";
+const ARTIFACT_VAULT_POLICY_PATH = "config/artifact-vault-deployment-policy.v1.json";
+const ARTIFACT_PLATFORM_CAPABILITIES_PATH = "config/artifact-platform-capabilities.v1.json";
+const ARTIFACT_FAULT_BOUNDARIES_PATH = "config/artifact-fault-boundaries.json";
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
@@ -150,12 +154,27 @@ function candidateIdentity() {
   const captureLines = captureBytes.toString("utf8").trim();
   const scalePolicyBytes = readFileSync(SCALE_POLICY_PATH);
   const scalePolicy = JSON.parse(scalePolicyBytes.toString("utf8"));
+  const artifactVaultPolicyBytes = readFileSync(ARTIFACT_VAULT_POLICY_PATH);
+  const artifactPlatformCapabilitiesBytes = readFileSync(ARTIFACT_PLATFORM_CAPABILITIES_PATH);
+  const artifactFaultBoundariesBytes = readFileSync(ARTIFACT_FAULT_BOUNDARIES_PATH);
+  const artifactVaultPolicy = JSON.parse(artifactVaultPolicyBytes.toString("utf8"));
+  const artifactPlatformCapabilities = JSON.parse(
+    artifactPlatformCapabilitiesBytes.toString("utf8"),
+  );
+  const artifactFaultBoundaries = JSON.parse(artifactFaultBoundariesBytes.toString("utf8"));
   if (
     scalePolicy.policyVersion !== 1 ||
     scalePolicy.metricsVersion !== 2 ||
     scalePolicy.measurementModel !== "event-processing-then-streaming-audit-scan"
   ) {
     throw new Error("Checked-out scale policy has unsupported identity");
+  }
+  if (
+    artifactVaultPolicy.policyVersion !== 1 ||
+    artifactPlatformCapabilities.inventoryVersion !== 1 ||
+    artifactFaultBoundaries.schemaVersion !== 1
+  ) {
+    throw new Error("Checked-out artifact-vault policy has unsupported identity");
   }
   const scalePolicyReference = {
     policyVersion: scalePolicy.policyVersion,
@@ -186,6 +205,15 @@ function candidateIdentity() {
       scalePolicyPath: SCALE_POLICY_PATH,
       scalePolicySha256: scalePolicyReference.fileSha256,
       scalePolicyVersion: scalePolicy.policyVersion,
+      artifactVaultPolicyPath: ARTIFACT_VAULT_POLICY_PATH,
+      artifactVaultPolicySha256: sha256(artifactVaultPolicyBytes),
+      artifactVaultPolicyVersion: artifactVaultPolicy.policyVersion,
+      artifactPlatformCapabilitiesPath: ARTIFACT_PLATFORM_CAPABILITIES_PATH,
+      artifactPlatformCapabilitiesSha256: sha256(artifactPlatformCapabilitiesBytes),
+      artifactPlatformCapabilitiesVersion: artifactPlatformCapabilities.inventoryVersion,
+      artifactFaultBoundariesPath: ARTIFACT_FAULT_BOUNDARIES_PATH,
+      artifactFaultBoundariesSha256: sha256(artifactFaultBoundariesBytes),
+      artifactFaultBoundariesVersion: artifactFaultBoundaries.schemaVersion,
     },
     scalePolicy,
     scalePolicyReference,
@@ -281,12 +309,20 @@ function assertRemoteEvidenceShape(path, evidence) {
   }
   const sourceInputs = requireObject(evidence.sourceInputs, `${path} sourceInputs`);
   requireSha256(sourceInputs.packageLockSha256, `${path} sourceInputs.packageLockSha256`);
+  for (const field of [
+    "scalePolicySha256",
+    "artifactVaultPolicySha256",
+    "artifactPlatformCapabilitiesSha256",
+    "artifactFaultBoundariesSha256",
+  ]) {
+    requireSha256(sourceInputs[field], `${path} sourceInputs.${field}`);
+  }
   if (!Array.isArray(evidence.scaleMetrics)) {
     throw new Error(`${path} scaleMetrics must be an array`);
   }
 }
 
-function assertPassingCheckResults(path, checkResults) {
+function assertPassingCheckResults(path, checkResults, gateName, expectedSha) {
   requireObject(checkResults, `${path} checkResults`);
   for (const [kind, expectedPath] of Object.entries(CHECK_RESULT_PATHS)) {
     const result = requireObject(checkResults[kind], `${path} checkResults.${kind}`);
@@ -296,8 +332,16 @@ function assertPassingCheckResults(path, checkResults) {
     requireSha256(result.fileSha256, `${path} checkResults.${kind}.fileSha256`);
     requireObject(result.value, `${path} checkResults.${kind}.value`);
   }
+  const platform = requireObject(checkResults.platform, `${path} checkResults.platform`);
+  const expectedPlatformPath = `vault-platform-evidence-${gateName}.json`;
+  if (platform.path !== expectedPlatformPath) {
+    throw new Error(`${path} checkResults.platform.path is not ${expectedPlatformPath}`);
+  }
+  requireSha256(platform.fileSha256, `${path} checkResults.platform.fileSha256`);
   const tests = checkResults?.tests?.value;
   const mutations = checkResults?.mutations?.value;
+  const hardKill = checkResults?.hardKill?.value;
+  const platformValue = checkResults?.platform?.value;
   if (
     tests?.resultVersion !== 1 ||
     tests.status !== "passed" ||
@@ -324,8 +368,30 @@ function assertPassingCheckResults(path, checkResults) {
   ) {
     throw new Error(`${path} lacks complete mutation evidence`);
   }
-  readBoundJsonFile(path, checkResults.tests, `${path} checkResults.tests`);
-  readBoundJsonFile(path, checkResults.mutations, `${path} checkResults.mutations`);
+  if (
+    hardKill?.resultVersion !== 1 ||
+    hardKill.status !== "passed" ||
+    hardKill.candidateCommitSha !== expectedSha ||
+    !Array.isArray(hardKill.boundaries) ||
+    hardKill.boundaries.length === 0 ||
+    hardKill.boundaries.some((boundary) => boundary.converged !== true)
+  ) {
+    throw new Error(`${path} lacks complete hard-kill evidence`);
+  }
+  if (
+    platformValue?.schemaVersion !== 2 ||
+    platformValue.candidateCommitSha !== expectedSha ||
+    platformValue.platform !== (gateName === "check-windows" ? "win32" : "linux") ||
+    platformValue.completeForGo !== true ||
+    platformValue.worktreeClean !== true ||
+    !Array.isArray(platformValue.unsupportedRequiredCapabilities) ||
+    platformValue.unsupportedRequiredCapabilities.length !== 0
+  ) {
+    throw new Error(`${path} lacks complete platform evidence`);
+  }
+  for (const kind of ["tests", "mutations", "hardKill", "platform"]) {
+    readBoundJsonFile(path, checkResults[kind], `${path} checkResults.${kind}`);
+  }
 }
 
 const inputPaths = process.argv.slice(2);
@@ -432,7 +498,7 @@ for (const path of evidencePaths.sort()) {
     throw new Error(`${path} has unexpected manual-trigger provenance`);
   }
   if (gateName.startsWith("check-") || gateName === "scale-100k-linux") {
-    assertPassingCheckResults(path, evidence.checkResults);
+    assertPassingCheckResults(path, evidence.checkResults, gateName, expectedSha);
   } else if (evidence.checkResults !== null) {
     throw new Error(`${path} has unexpected check results`);
   }
@@ -535,6 +601,22 @@ for (const path of evidencePaths.sort()) {
     evidence.sourceInputs,
     expectedIdentity.sourceInputs,
   );
+  if (evidence.checkResults !== null) {
+    const platform = evidence.checkResults.platform.value;
+    const hardKill = evidence.checkResults.hardKill;
+    if (
+      platform.policy?.fileSha256 !== expectedIdentity.sourceInputs.artifactVaultPolicySha256 ||
+      platform.capabilityInventory?.fileSha256 !==
+        expectedIdentity.sourceInputs.artifactPlatformCapabilitiesSha256 ||
+      platform.faultBoundaryInventory?.fileSha256 !==
+        expectedIdentity.sourceInputs.artifactFaultBoundariesSha256 ||
+      platform.hardKill?.fileSha256 !== hardKill.fileSha256
+    ) {
+      throw new Error(
+        `${path} platform evidence is not bound to checked-out policy and hard-kill evidence`,
+      );
+    }
+  }
 
   evidenceByGate.set(gateName, {
     evidence,
@@ -603,7 +685,7 @@ if (
 }
 
 const manifest = {
-  manifestVersion: 2,
+  manifestVersion: 3,
   candidateCommitSha: expectedSha,
   reconciliationStatus: "passed",
   repository: firstCiRun.repository,
@@ -611,6 +693,28 @@ const manifest = {
   golden: firstEvidence.golden,
   capturedStream: firstEvidence.capturedStream,
   sourceInputs: firstEvidence.sourceInputs,
+  vaultEvidence: {
+    deploymentPolicy: {
+      path: expectedIdentity.sourceInputs.artifactVaultPolicyPath,
+      fileSha256: expectedIdentity.sourceInputs.artifactVaultPolicySha256,
+      version: expectedIdentity.sourceInputs.artifactVaultPolicyVersion,
+    },
+    capabilityInventory: {
+      path: expectedIdentity.sourceInputs.artifactPlatformCapabilitiesPath,
+      fileSha256: expectedIdentity.sourceInputs.artifactPlatformCapabilitiesSha256,
+      version: expectedIdentity.sourceInputs.artifactPlatformCapabilitiesVersion,
+    },
+    faultBoundaryInventory: {
+      path: expectedIdentity.sourceInputs.artifactFaultBoundariesPath,
+      fileSha256: expectedIdentity.sourceInputs.artifactFaultBoundariesSha256,
+      version: expectedIdentity.sourceInputs.artifactFaultBoundariesVersion,
+    },
+    platforms: {
+      linux: evidenceByGate.get("check-linux").evidence.checkResults.platform,
+      windows: evidenceByGate.get("check-windows").evidence.checkResults.platform,
+    },
+    hardKill: evidenceByGate.get("check-linux").evidence.checkResults.hardKill,
+  },
   gates: Object.fromEntries(
     records.map(([gateName, record]) => [
       gateName,

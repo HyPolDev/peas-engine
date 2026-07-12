@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import type { Dir } from "node:fs";
-import { lstat, link, mkdir, open, opendir, rm, stat } from "node:fs/promises";
+import { lstat, link, open, opendir, rm, stat } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 
 import type {
   ArtifactDigest,
@@ -17,12 +17,17 @@ import type {
   ReconciliationReport,
   ReconciliationBudget,
   RetrievalAttempt,
+  RetrievalAttemptOutcome,
   StoreArtifactRequest,
   StoreArtifactResult,
   VerifiedArtifactRead,
 } from "../../artifacts/artifact-store.js";
 import { ArtifactVaultError } from "../../artifacts/errors.js";
-import { deriveIncidentId, deriveObservationId } from "../../artifacts/identity.js";
+import {
+  deriveIncidentId,
+  deriveObservationId,
+  deriveReconciliationActionKey,
+} from "../../artifacts/identity.js";
 import {
   assertArtifactDigest,
   assertSafeByteAddition,
@@ -37,7 +42,17 @@ import { canonicalHash } from "../../core/hash.js";
 import type { JsonValue } from "../../core/json.js";
 import type { SqliteArtifactRepository } from "./sqlite-artifact-repository.js";
 import type { ReconciliationPhase } from "./sqlite-artifact-repository.js";
+import type { ReconciliationActionPlan } from "./sqlite-artifact-repository.js";
 import { VaultWriterLease } from "./writer-lease.js";
+import { artifactRuntimePaths, configuredPeasRuntimeRoot } from "./runtime-root.js";
+import {
+  assertTrustedPath,
+  ensurePlainDirectory,
+  filesystemIdentity,
+  hashTrustedFile as hashFile,
+  safeChild,
+  syncDirectory,
+} from "./trusted-filesystem.js";
 
 type Paths = Readonly<{
   root: string;
@@ -48,6 +63,9 @@ type Paths = Readonly<{
   locks: string;
   device: number;
 }>;
+
+export type ArtifactFaultBoundary = (checkpoint: string) => void | Promise<void>;
+const NOOP_FAULT_BOUNDARY: ArtifactFaultBoundary = () => undefined;
 
 const MAX_RECONCILIATION_DIRECTORY_ENTRIES = 256;
 
@@ -81,7 +99,11 @@ async function boundedDirectoryEntries(
         );
     }
   } finally {
-    await directory.close().catch(() => undefined);
+    try {
+      await directory.close();
+    } catch {
+      // The primary enumeration error remains authoritative.
+    }
   }
   return names.sort();
 }
@@ -106,102 +128,6 @@ class Semaphore {
   }
 }
 
-async function ensurePlainDirectory(path: string): Promise<void> {
-  const resolved = resolve(path);
-  const ancestors: string[] = [];
-  let cursor = resolved;
-  for (;;) {
-    ancestors.push(cursor);
-    const parent = dirname(cursor);
-    if (parent === cursor) break;
-    cursor = parent;
-  }
-  for (const ancestor of ancestors.reverse()) {
-    try {
-      const info = await lstat(ancestor);
-      if (!info.isDirectory() || info.isSymbolicLink())
-        throw new ArtifactVaultError(
-          "unsafe-filesystem-object",
-          "Vault path contains an unsafe filesystem object",
-        );
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-  }
-  await mkdir(resolved, { recursive: true, mode: 0o700 });
-  const info = await lstat(resolved);
-  if (!info.isDirectory() || info.isSymbolicLink()) {
-    throw new ArtifactVaultError(
-      "unsafe-filesystem-object",
-      "Vault path contains an unsafe filesystem object",
-    );
-  }
-}
-
-async function assertTrustedPath(root: string, path: string, device: number): Promise<void> {
-  const rel = relative(root, path);
-  if (rel === ".." || rel.startsWith(`..${sep}`))
-    throw new ArtifactVaultError(
-      "unsafe-filesystem-object",
-      "Vault path escaped its configured root",
-    );
-  let cursor = root;
-  for (const part of rel.split(sep).filter(Boolean).slice(0, -1)) {
-    cursor = join(cursor, part);
-    const info = await lstat(cursor);
-    if (!info.isDirectory() || info.isSymbolicLink() || info.dev !== device)
-      throw new ArtifactVaultError(
-        "unsafe-filesystem-object",
-        "Vault ancestor is not a trusted same-volume directory",
-      );
-  }
-}
-
-function safeChild(root: string, ...parts: readonly string[]): string {
-  const child = resolve(root, ...parts);
-  const rel = relative(resolve(root), child);
-  if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`)) {
-    throw new ArtifactVaultError(
-      "unsafe-filesystem-object",
-      "Vault path escaped its configured root",
-    );
-  }
-  return child;
-}
-
-async function hashFile(
-  path: string,
-  maxBytes = Number.MAX_SAFE_INTEGER,
-): Promise<{ digest: string; sizeBytes: number }> {
-  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-  try {
-    const before = await handle.stat();
-    if (!before.isFile()) throw new Error("Artifact content is not a regular file");
-    const hash = createHash("sha256");
-    let sizeBytes = 0;
-    const buffer = Buffer.allocUnsafe(64 * 1_024);
-    let position = 0;
-    for (;;) {
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
-      if (bytesRead === 0) break;
-      hash.update(buffer.subarray(0, bytesRead));
-      sizeBytes = assertSafeByteAddition(sizeBytes, bytesRead);
-      if (sizeBytes > maxBytes)
-        throw new ArtifactVaultError(
-          "artifact-too-large",
-          "Artifact exceeds reconciliation byte budget",
-        );
-      position += bytesRead;
-    }
-    const after = await handle.stat();
-    if (before.size !== after.size || before.mtimeMs !== after.mtimeMs)
-      throw new Error("Artifact changed during verification");
-    return { digest: hash.digest("hex"), sizeBytes };
-  } finally {
-    await handle.close();
-  }
-}
-
 export class DurableArtifactStore implements ArtifactStore {
   readonly #repository: SqliteArtifactRepository;
   readonly #clock: Clock;
@@ -209,6 +135,7 @@ export class DurableArtifactStore implements ArtifactStore {
   readonly #paths: Paths;
   readonly #semaphore: Semaphore;
   readonly #lease: VaultWriterLease;
+  readonly #faultBoundary: ArtifactFaultBoundary;
   #reservedBytes = 0;
 
   private constructor(
@@ -217,6 +144,7 @@ export class DurableArtifactStore implements ArtifactStore {
     config: ArtifactVaultConfig,
     paths: Paths,
     lease: VaultWriterLease,
+    faultBoundary: ArtifactFaultBoundary,
   ) {
     this.#repository = repository;
     this.#clock = clock;
@@ -224,26 +152,57 @@ export class DurableArtifactStore implements ArtifactStore {
     this.#paths = paths;
     this.#semaphore = new Semaphore(config.maxConcurrentWrites);
     this.#lease = lease;
+    this.#faultBoundary = faultBoundary;
   }
 
   static async open(dependencies: {
     repository: SqliteArtifactRepository;
     clock: Clock;
     config: ArtifactVaultConfig;
+    faultBoundary?: ArtifactFaultBoundary;
   }): Promise<DurableArtifactStore> {
     const config = validateVaultConfig(dependencies.config);
-    await ensurePlainDirectory(resolve(config.runtimeRoot));
-    const root = resolve(config.runtimeRoot, "artifacts");
+    if (
+      config.runtimeRootMode === "configured" &&
+      resolve(config.runtimeRoot) !== configuredPeasRuntimeRoot()
+    ) {
+      throw new ArtifactVaultError(
+        "unsafe-filesystem-object",
+        "Configured vault root must equal PEAS_RUNTIME_ROOT",
+      );
+    }
+    const runtimePaths = artifactRuntimePaths(config.runtimeRoot);
+    await ensurePlainDirectory(runtimePaths.runtimeRoot);
+    await ensurePlainDirectory(runtimePaths.databaseDirectory);
+    const repositoryPath = resolve(dependencies.repository.databasePath());
+    if (repositoryPath !== resolve(runtimePaths.databasePath)) {
+      throw new ArtifactVaultError(
+        "unsafe-filesystem-object",
+        "SQLite database, WAL, and artifact vault must share PEAS_RUNTIME_ROOT",
+      );
+    }
+    const root = runtimePaths.artifactsRoot;
     const paths: Omit<Paths, "device"> = {
       root,
-      content: join(root, "sha256"),
-      staging: join(root, "staging"),
-      snapshots: join(root, "snapshots"),
-      quarantine: join(root, "quarantine"),
-      locks: join(root, "locks"),
+      content: runtimePaths.content,
+      staging: runtimePaths.staging,
+      snapshots: runtimePaths.snapshots,
+      quarantine: runtimePaths.quarantine,
+      locks: runtimePaths.locks,
     };
-    for (const path of Object.values(paths)) await ensurePlainDirectory(path);
+    for (const [name, path] of Object.entries(paths)) {
+      await ensurePlainDirectory(path);
+      await dependencies.faultBoundary?.(`vault-directory-created:${name}`);
+    }
+    const runtimeDevice = (await lstat(runtimePaths.runtimeRoot)).dev;
+    const databaseDevice = (await lstat(runtimePaths.databaseDirectory)).dev;
     const device = (await lstat(root)).dev;
+    if (runtimeDevice !== databaseDevice || runtimeDevice !== device) {
+      throw new ArtifactVaultError(
+        "unsafe-filesystem-object",
+        "SQLite and artifact paths must remain on the configured runtime volume",
+      );
+    }
     const trustedPaths = { ...paths, device };
     const lease = await VaultWriterLease.acquire({
       path: join(paths.locks, "writer.lock"),
@@ -253,6 +212,9 @@ export class DurableArtifactStore implements ArtifactStore {
       renewalMs: config.writerLeaseRenewalMs,
       repository: dependencies.repository,
       clock: dependencies.clock,
+      ...(dependencies.faultBoundary === undefined
+        ? {}
+        : { faultBoundary: dependencies.faultBoundary }),
     });
     return new DurableArtifactStore(
       dependencies.repository,
@@ -260,6 +222,7 @@ export class DurableArtifactStore implements ArtifactStore {
       config,
       trustedPaths,
       lease,
+      dependencies.faultBoundary ?? NOOP_FAULT_BOUNDARY,
     );
   }
 
@@ -338,10 +301,13 @@ export class DurableArtifactStore implements ArtifactStore {
       this.#clock.nowMs(),
     );
     let reserved = 0;
+    let installIntentId: string | null = null;
     try {
       await this.#lease.renewAndAssert();
       this.#repository.recordAttempt(attempt, this.#lease.fence());
+      await this.#checkpoint("attempt-commit");
       const handle = await open(stagePath, "wx", 0o600);
+      await this.#checkpoint("stage-create");
       const hash = createHash("sha256");
       let sizeBytes = 0;
       try {
@@ -369,41 +335,10 @@ export class DurableArtifactStore implements ArtifactStore {
       } finally {
         await handle.close();
       }
+      await this.#checkpoint("stage-sync-close");
 
       const digest = hash.digest("hex");
       const finalPath = await this.#contentPath(digest, true);
-      await this.#lease.renewAndAssert();
-      let converged = false;
-      try {
-        await link(stagePath, finalPath);
-        await rm(stagePath);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        const winner = await hashFile(finalPath);
-        if (winner.digest !== digest || winner.sizeBytes !== sizeBytes) {
-          await this.#incident(
-            "conflicting-destination",
-            stagingId,
-            digest,
-            sizeBytes,
-            winner.sizeBytes,
-          );
-          throw new ArtifactVaultError(
-            "artifact-integrity-failure",
-            "Existing artifact destination failed verification",
-          );
-        }
-        converged = true;
-        await rm(stagePath, { force: true });
-      }
-      const installed = await hashFile(finalPath);
-      if (installed.digest !== digest || installed.sizeBytes !== sizeBytes) {
-        await this.#incident("digest-mismatch", stagingId, digest, sizeBytes, installed.sizeBytes);
-        throw new ArtifactVaultError(
-          "artifact-integrity-failure",
-          "Installed artifact failed verification",
-        );
-      }
       const committedAtMs = this.#clock.nowMs();
       const artifact: ArtifactMetadata = {
         digest,
@@ -430,30 +365,109 @@ export class DurableArtifactStore implements ArtifactStore {
           observationWithoutHash as unknown as JsonValue,
         ),
       };
+      let disposition: "new-content" | "preexisting-verified" = "new-content";
+      try {
+        const existing = await hashFile(finalPath);
+        if (existing.digest !== digest || existing.sizeBytes !== sizeBytes) {
+          throw new ArtifactVaultError(
+            "artifact-integrity-failure",
+            "Existing artifact destination failed verification",
+          );
+        }
+        disposition = "preexisting-verified";
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
       await this.#lease.renewAndAssert();
-      const disposition = this.#repository.commitSuccess(
-        artifact,
-        observation,
-        response,
+      const intent = this.#repository.prepareInstallIntent(
+        {
+          attempt,
+          artifact,
+          observation,
+          response,
+          disposition,
+          createdAtMs: committedAtMs,
+        },
         this.#lease.fence(),
       );
-      return { artifact, observation, disposition: converged ? "deduplicated" : disposition };
+      installIntentId = intent.intentId;
+      await this.#checkpoint("install-intent-commit");
+      try {
+        if (disposition === "new-content") {
+          await link(stagePath, finalPath);
+          await this.#checkpoint("content-link");
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        const winner = await hashFile(finalPath, Number.MAX_SAFE_INTEGER, 2);
+        if (winner.digest !== digest || winner.sizeBytes !== sizeBytes) {
+          await this.#incident(
+            "conflicting-destination",
+            stagingId,
+            digest,
+            sizeBytes,
+            winner.sizeBytes,
+          );
+          throw new ArtifactVaultError(
+            "artifact-integrity-failure",
+            "Existing artifact destination failed verification",
+          );
+        }
+      }
+      const installed = await hashFile(finalPath, Number.MAX_SAFE_INTEGER, 2);
+      if (installed.digest !== digest || installed.sizeBytes !== sizeBytes) {
+        await this.#incident("digest-mismatch", stagingId, digest, sizeBytes, installed.sizeBytes);
+        throw new ArtifactVaultError(
+          "artifact-integrity-failure",
+          "Installed artifact failed verification",
+        );
+      }
+      const contentHandle = await open(finalPath, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+      try {
+        await contentHandle.sync();
+      } finally {
+        await contentHandle.close();
+      }
+      await syncDirectory(dirname(finalPath));
+      await this.#checkpoint("content-sync");
+      await this.#lease.renewAndAssert();
+      this.#repository.markIntentContentInstalled(intent.intentId, this.#lease.fence());
+      await this.#checkpoint("content-installed-transition");
+      const committed = this.#repository.commitIntentSuccess(intent.intentId, this.#lease.fence());
+      await this.#checkpoint("success-intent-transaction");
+      try {
+        await this.#lease.renewAndAssert();
+        await rm(stagePath, { force: true });
+        await this.#checkpoint("stage-removal");
+        this.#repository.markIntentStageCleaned(intent.intentId, this.#lease.fence());
+        await this.#checkpoint("stage-cleaned-transition");
+      } catch {
+        // Committed evidence is authoritative; reconciliation will replay stage cleanup.
+      }
+      return committed;
     } catch (error) {
       try {
         await this.#lease.renewAndAssert();
-        await rm(stagePath, { force: true }).catch(() => undefined);
-        this.#repository.finishAttempt(
-          {
-            attemptId: attemptDraft.attemptId,
-            outcome: error instanceof Error && error.name === "AbortError" ? "abandoned" : "failed",
-            completedAtMs: this.#clock.nowMs(),
-            reasonCode: error instanceof ArtifactVaultError ? error.code : "write-failed",
-            detailHash: canonicalHash("peas/artifact-error/v1", {
-              name: error instanceof Error ? error.name : "unknown",
-            }),
-          },
-          this.#lease.fence(),
-        );
+        const outcome = {
+          attemptId: attemptDraft.attemptId,
+          outcome: error instanceof Error && error.name === "AbortError" ? "abandoned" : "failed",
+          completedAtMs: this.#clock.nowMs(),
+          reasonCode: error instanceof ArtifactVaultError ? error.code : "write-failed",
+          detailHash: canonicalHash("peas/artifact-error/v1", {
+            name: error instanceof Error ? error.name : "unknown",
+          }),
+        } as const;
+        if (installIntentId === null) {
+          try {
+            await rm(stagePath, { force: true });
+          } catch {
+            // The terminal outcome remains authoritative.
+          }
+          this.#repository.finishAttempt(outcome, this.#lease.fence());
+        } else {
+          this.#repository.abortIntent(installIntentId, outcome, this.#lease.fence());
+          await this.#checkpoint("failure-abort-transaction");
+        }
       } catch {
         // A committed success is terminal, and a stale writer must not mutate evidence or staging.
       }
@@ -490,9 +504,11 @@ export class DurableArtifactStore implements ArtifactStore {
       );
     }
     const snapshotHandle = await open(snapshotPath, "wx+", 0o600);
+    await this.#checkpoint("snapshot-create");
     try {
       const sourceInfo = await sourceHandle.stat();
-      if (!sourceInfo.isFile()) throw new Error("Artifact content is not a regular file");
+      if (!sourceInfo.isFile() || sourceInfo.nlink !== 1)
+        throw new Error("Artifact content is not a trusted single-owner regular file");
       const hash = createHash("sha256");
       const buffer = Buffer.allocUnsafe(this.#config.streamHighWaterMarkBytes);
       let sizeBytes = 0;
@@ -513,6 +529,7 @@ export class DurableArtifactStore implements ArtifactStore {
         position += bytesRead;
       }
       await snapshotHandle.sync();
+      await this.#checkpoint("snapshot-sync");
       const digestRead = hash.digest("hex");
       if (digestRead !== artifact.digest || sizeBytes !== artifact.sizeBytes) {
         throw new ArtifactVaultError(
@@ -520,6 +537,7 @@ export class DurableArtifactStore implements ArtifactStore {
           "Artifact failed snapshot verification",
         );
       }
+      await this.#checkpoint("snapshot-verification-complete");
       await sourceHandle.close();
       const stream = snapshotHandle.createReadStream({ start: 0, autoClose: true });
       const cleanup = (): void => {
@@ -530,9 +548,22 @@ export class DurableArtifactStore implements ArtifactStore {
       stream.once("error", cleanup);
       return { artifact, stream };
     } catch (error) {
-      await sourceHandle.close().catch(() => undefined);
-      await snapshotHandle.close().catch(() => undefined);
-      await rm(snapshotPath, { force: true }).catch(() => undefined);
+      try {
+        await sourceHandle.close();
+      } catch {
+        // Preserve the verification failure.
+      }
+      try {
+        await snapshotHandle.close();
+      } catch {
+        // Preserve the verification failure.
+      }
+      try {
+        await rm(snapshotPath, { force: true });
+      } catch {
+        // Preserve the verification failure.
+      }
+      await this.#checkpoint("snapshot-removal");
       await this.#incident("snapshot-verification-failure", null, digest, artifact.sizeBytes, null);
       await this.#quarantine(source, digest);
       throw error;
@@ -561,6 +592,8 @@ export class DurableArtifactStore implements ArtifactStore {
     const maxElapsedMs = budget.maxElapsedMs ?? 1_000;
     const maxBytes = budget.maxBytes ?? this.#config.maxArtifactBytes * Math.max(1, maxItems);
     const requestedCursor = budget.cursor ?? null;
+    const startNew = budget.startNew ?? false;
+    const completedRunId = budget.completedRunId ?? null;
     if (
       !Number.isSafeInteger(maxItems) ||
       maxItems < 1 ||
@@ -575,9 +608,22 @@ export class DurableArtifactStore implements ArtifactStore {
     let bytesHashed = 0;
     let rowsVisited = 0;
     let directoryEntriesRead = 0;
+    let persistedRowsVisited = 0;
+    let persistedItems = 0;
+    let persistedBytesHashed = 0;
+    let persistedDirectoryEntries = 0;
     await this.#lease.renewAndAssert();
-    let state = this.#repository.loadReconciliationState(requestedCursor, this.#lease.fence());
+    const opened = this.#repository.openReconciliationCall(
+      requestedCursor,
+      startNew,
+      completedRunId,
+      this.#lease.fence(),
+    );
+    await this.#checkpoint("reconciliation-call-opened");
+    if (opened.kind === "receipt") return opened.report;
+    let state = opened.state;
     const report = {
+      runId: state.runId,
       validArtifacts: 0,
       adoptedOrphans: 0,
       abandonedStages: 0,
@@ -611,16 +657,66 @@ export class DurableArtifactStore implements ArtifactStore {
       await this.#lease.renewAndAssert();
       state = this.#repository.advanceReconciliationState(
         state,
-        { phase, shard, afterKey },
+        {
+          phase,
+          shard,
+          afterKey,
+          rowsVisited: rowsVisited - persistedRowsVisited,
+          itemsProcessed: processed - persistedItems,
+          bytesHashed: bytesHashed - persistedBytesHashed,
+          directoryEntriesRead: directoryEntriesRead - persistedDirectoryEntries,
+        },
         this.#lease.fence(),
       );
+      persistedRowsVisited = rowsVisited;
+      persistedItems = processed;
+      persistedBytesHashed = bytesHashed;
+      persistedDirectoryEntries = directoryEntriesRead;
+    };
+    const planAction = async (
+      input: Parameters<SqliteArtifactRepository["planReconciliationAction"]>[1],
+    ): Promise<ReconciliationActionPlan> => {
+      await this.#lease.renewAndAssert();
+      const planned = this.#repository.planReconciliationAction(state, input, this.#lease.fence());
+      state = planned.state;
+      await this.#checkpoint("reconciliation-action-plan-commit");
+      return planned.plan;
+    };
+    const applyAction = async (
+      plan: ReconciliationActionPlan,
+      phase: ReconciliationPhase,
+      shard: number,
+      afterKey: string,
+      application: Parameters<SqliteArtifactRepository["applyReconciliationAction"]>[3],
+    ): Promise<void> => {
+      await this.#lease.renewAndAssert();
+      state = this.#repository.applyReconciliationAction(
+        state,
+        plan.actionKey,
+        {
+          phase,
+          shard,
+          afterKey,
+          rowsVisited: rowsVisited - persistedRowsVisited,
+          itemsProcessed: processed - persistedItems,
+          bytesHashed: bytesHashed - persistedBytesHashed,
+          directoryEntriesRead: directoryEntriesRead - persistedDirectoryEntries,
+        },
+        application,
+        this.#lease.fence(),
+      );
+      await this.#checkpoint("reconciliation-action-application-commit");
+      persistedRowsVisited = rowsVisited;
+      persistedItems = processed;
+      persistedBytesHashed = bytesHashed;
+      persistedDirectoryEntries = directoryEntriesRead;
     };
     const evidenceNext: Record<string, ReconciliationPhase> = {
       attempts: "outcomes",
       outcomes: "blobs",
       blobs: "observations",
       observations: "incidents",
-      incidents: "snapshots",
+      incidents: "install-intents",
     };
     while (!exhausted()) {
       if (state.phase in evidenceNext) {
@@ -639,6 +735,124 @@ export class DurableArtifactStore implements ArtifactStore {
         );
         continue;
       }
+      const pending = this.#repository.readPendingReconciliationAction(state);
+      if (pending !== undefined) {
+        const payload = pending.payload as unknown as {
+          next: { phase: ReconciliationPhase; shard: number; afterKey: string };
+        };
+        let application: Parameters<SqliteArtifactRepository["applyReconciliationAction"]>[3] = {
+          resultingIdentity: null,
+          resultingDigest: null,
+          resultingSizeBytes: null,
+        };
+        if (pending.actionKind === "quarantine") {
+          if (pending.sourceRelativePath === null)
+            throw new Error("Pending quarantine source is missing");
+          const source = safeChild(this.#paths.root, pending.sourceRelativePath);
+          const replayed = await this.#replayQuarantine(pending, source);
+          application = {
+            resultingIdentity: replayed.identity,
+            resultingDigest: replayed.digest,
+            resultingSizeBytes: replayed.sizeBytes,
+          };
+          report.quarantinedObjects += 1;
+        } else if (pending.actionKind === "remove-snapshot") {
+          if (pending.sourceRelativePath === null)
+            throw new Error("Pending snapshot source is missing");
+          const source = safeChild(this.#paths.root, pending.sourceRelativePath);
+          await this.#lease.renewAndAssert();
+          await rm(source, { force: true });
+          await syncDirectory(dirname(source));
+        } else if (pending.actionKind === "adopt-orphan") {
+          if (pending.sourceRelativePath === null)
+            throw new Error("Pending orphan source is missing");
+          const source = safeChild(this.#paths.root, pending.sourceRelativePath);
+          const verified = await hashFile(source);
+          if (
+            verified.digest !== pending.expectedDigest ||
+            verified.sizeBytes !== pending.expectedSizeBytes
+          )
+            throw new ArtifactVaultError(
+              "artifact-integrity-failure",
+              "Orphan bytes changed after reconciliation planning",
+            );
+          bytesHashed += verified.sizeBytes;
+          application = {
+            resultingIdentity: await filesystemIdentity(source),
+            resultingDigest: verified.digest,
+            resultingSizeBytes: verified.sizeBytes,
+          };
+          report.adoptedOrphans += 1;
+        }
+        if (pending.incident !== null) {
+          report.incidents.push(pending.incident.incidentId);
+          if (pending.incident.kind === "missing-content") report.missingArtifacts += 1;
+          if (pending.incident.kind === "expired-stage") report.expiredStages += 1;
+          if (pending.incident.kind === "abandoned-stage") report.abandonedStages += 1;
+        }
+        processed += 1;
+        await applyAction(
+          pending,
+          payload.next.phase,
+          payload.next.shard,
+          payload.next.afterKey,
+          application,
+        );
+        continue;
+      }
+      if (state.phase === "install-intents") {
+        const intents = this.#repository.readPendingIntentPage(state.afterKey, 1);
+        const intent = intents[0];
+        rowsVisited += intents.length;
+        if (intent === undefined) {
+          await advance("snapshots", 0, "");
+          processed += 1;
+          continue;
+        }
+        const stagePath = safeChild(this.#paths.staging, `${intent.stagingId}.part`);
+        const contentPath = await this.#contentPath(intent.digest, true, false);
+        const verify = async (path: string): Promise<boolean> => {
+          try {
+            const value = await hashFile(path, Number.MAX_SAFE_INTEGER, 2);
+            bytesHashed += value.sizeBytes;
+            return value.digest === intent.digest && value.sizeBytes === intent.sizeBytes;
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+            throw error;
+          }
+        };
+        const contentPresent = await verify(contentPath);
+        const stagePresent = await verify(stagePath);
+        if (!contentPresent && !stagePresent) {
+          await this.#lease.renewAndAssert();
+          this.#repository.abortIntent(
+            intent.intentId,
+            {
+              attemptId: intent.attemptId,
+              outcome: "expired",
+              completedAtMs: this.#clock.nowMs(),
+              reasonCode: "install-content-missing",
+              detailHash: null,
+            } as RetrievalAttemptOutcome,
+            this.#lease.fence(),
+          );
+        } else {
+          if (!contentPresent) {
+            await this.#lease.renewAndAssert();
+            await assertTrustedPath(this.#paths.root, contentPath, this.#paths.device);
+            await link(stagePath, contentPath);
+          }
+          await this.#lease.renewAndAssert();
+          this.#repository.markIntentContentInstalled(intent.intentId, this.#lease.fence());
+          this.#repository.commitIntentSuccess(intent.intentId, this.#lease.fence());
+          await this.#lease.renewAndAssert();
+          await rm(stagePath, { force: true });
+          this.#repository.markIntentStageCleaned(intent.intentId, this.#lease.fence());
+        }
+        await advance("install-intents", 0, intent.intentId);
+        processed += 1;
+        continue;
+      }
       if (state.phase === "snapshots" || state.phase === "staging") {
         const root = state.phase === "snapshots" ? this.#paths.snapshots : this.#paths.staging;
         const names = await boundedDirectoryEntries(root, this.#paths.device);
@@ -651,33 +865,119 @@ export class DurableArtifactStore implements ArtifactStore {
         }
         const path = safeChild(root, name);
         if (state.phase === "snapshots") {
-          await this.#lease.renewAndAssert();
-          await rm(path, { force: true });
+          await planAction({
+            actionKind: "remove-snapshot",
+            sourceRelativePath: relative(this.#paths.root, path),
+            sourceIdentity: await filesystemIdentity(path),
+            expectedDigest: null,
+            expectedSizeBytes: null,
+            incident: null,
+            identity: { name },
+            payload: {
+              next: { phase: "snapshots", shard: 0, afterKey: name },
+            },
+            recordedAtMs: this.#clock.nowMs(),
+          });
+          continue;
         } else {
           const stagingId = name.endsWith(".part") ? name.slice(0, -5) : null;
           const attempt =
             stagingId === null ? undefined : this.#repository.getAttemptByStagingId(stagingId);
           if (attempt === undefined) {
-            const id = await this.#incident("invalid-orphan", stagingId, null, null, null);
-            report.incidents.push(id);
-            await this.#quarantine(path, id);
-            report.quarantinedObjects += 1;
-          } else if (this.#clock.nowMs() - attempt.recordedAtMs >= this.#config.stageExpiryMs) {
-            this.#repository.finishAttempt(
-              {
-                attemptId: attempt.attemptId,
-                outcome: "expired",
-                completedAtMs: this.#clock.nowMs(),
-                reasonCode: "stage-expired",
+            const verified = await hashFile(path);
+            bytesHashed += verified.sizeBytes;
+            await planAction({
+              actionKind: "quarantine",
+              sourceRelativePath: relative(this.#paths.root, path),
+              sourceIdentity: await filesystemIdentity(path),
+              expectedDigest: verified.digest,
+              expectedSizeBytes: verified.sizeBytes,
+              incident: {
+                kind: "invalid-orphan",
+                stagingId,
+                claimedDigest: null,
+                expectedSizeBytes: null,
+                actualSizeBytes: verified.sizeBytes,
                 detailHash: null,
+                facts: { name, stagingId, digest: verified.digest, sizeBytes: verified.sizeBytes },
               },
-              this.#lease.fence(),
-            );
-            const id = await this.#incident("expired-stage", stagingId, null, null, null);
-            report.incidents.push(id);
-            await this.#quarantine(path, id);
-            report.expiredStages += 1;
-            report.quarantinedObjects += 1;
+              identity: { name, stagingId, digest: verified.digest, sizeBytes: verified.sizeBytes },
+              payload: {
+                next: { phase: "staging", shard: 0, afterKey: name },
+              },
+              recordedAtMs: this.#clock.nowMs(),
+            });
+            continue;
+          } else if (this.#repository.getOutcome(attempt.attemptId) !== undefined) {
+            const verified = await hashFile(path);
+            bytesHashed += verified.sizeBytes;
+            const outcome = this.#repository.getOutcome(attempt.attemptId);
+            await planAction({
+              actionKind: "quarantine",
+              sourceRelativePath: relative(this.#paths.root, path),
+              sourceIdentity: await filesystemIdentity(path),
+              expectedDigest: verified.digest,
+              expectedSizeBytes: verified.sizeBytes,
+              incident: {
+                kind: "abandoned-stage",
+                stagingId,
+                claimedDigest: null,
+                expectedSizeBytes: null,
+                actualSizeBytes: verified.sizeBytes,
+                detailHash: outcome?.detailHash ?? null,
+                facts: {
+                  stagingId,
+                  attemptId: attempt.attemptId,
+                  outcome: outcome?.outcome ?? "unknown",
+                  digest: verified.digest,
+                  sizeBytes: verified.sizeBytes,
+                },
+              },
+              identity: {
+                stagingId,
+                attemptId: attempt.attemptId,
+                outcome: outcome?.outcome ?? "unknown",
+                digest: verified.digest,
+              },
+              payload: {
+                next: { phase: "staging", shard: 0, afterKey: name },
+              },
+              recordedAtMs: this.#clock.nowMs(),
+            });
+            continue;
+          } else if (this.#clock.nowMs() - attempt.recordedAtMs >= this.#config.stageExpiryMs) {
+            const verified = await hashFile(path);
+            bytesHashed += verified.sizeBytes;
+            const outcome: RetrievalAttemptOutcome = {
+              attemptId: attempt.attemptId,
+              outcome: "expired",
+              completedAtMs: this.#clock.nowMs(),
+              reasonCode: "stage-expired",
+              detailHash: null,
+            };
+            await planAction({
+              actionKind: "quarantine",
+              sourceRelativePath: relative(this.#paths.root, path),
+              sourceIdentity: await filesystemIdentity(path),
+              expectedDigest: verified.digest,
+              expectedSizeBytes: verified.sizeBytes,
+              incident: {
+                kind: "expired-stage",
+                stagingId,
+                claimedDigest: null,
+                expectedSizeBytes: null,
+                actualSizeBytes: verified.sizeBytes,
+                detailHash: null,
+                facts: { stagingId, digest: verified.digest, sizeBytes: verified.sizeBytes },
+              },
+              identity: { stagingId, attemptId: attempt.attemptId, digest: verified.digest },
+              payload: {
+                outcome: outcome as unknown as JsonValue,
+                next: { phase: "staging", shard: 0, afterKey: name },
+              },
+              recordedAtMs: outcome.completedAtMs,
+            });
+            continue;
           }
         }
         await advance(state.phase, 0, name);
@@ -702,17 +1002,38 @@ export class DurableArtifactStore implements ArtifactStore {
             !present &&
             this.#clock.nowMs() - attempt.recordedAtMs >= this.#config.stageExpiryMs
           ) {
-            this.#repository.finishAttempt(
-              {
-                attemptId: attempt.attemptId,
-                outcome: "expired",
-                completedAtMs: this.#clock.nowMs(),
-                reasonCode: "stage-missing",
-                detailHash: null,
+            const outcome: RetrievalAttemptOutcome = {
+              attemptId: attempt.attemptId,
+              outcome: "expired",
+              completedAtMs: this.#clock.nowMs(),
+              reasonCode: "stage-missing",
+              detailHash: null,
+            };
+            await planAction({
+              actionKind: "expire-attempt",
+              sourceRelativePath: relative(this.#paths.root, stagePath),
+              sourceIdentity: null,
+              expectedDigest: null,
+              expectedSizeBytes: null,
+              incident: null,
+              identity: { attemptId: attempt.attemptId, reasonCode: outcome.reasonCode },
+              payload: {
+                outcome: outcome as unknown as JsonValue,
+                next: { phase: "open-attempts", shard: 0, afterKey: attempt.attemptId },
               },
-              this.#lease.fence(),
-            );
+              recordedAtMs: outcome.completedAtMs,
+            });
+            const pendingPlan = this.#repository.readPendingReconciliationAction(state);
+            if (pendingPlan === undefined)
+              throw new Error("Expired-attempt plan was not persisted");
+            processed += 1;
+            await applyAction(pendingPlan, "open-attempts", 0, attempt.attemptId, {
+              resultingIdentity: null,
+              resultingDigest: null,
+              resultingSizeBytes: null,
+            });
             report.expiredStages += 1;
+            continue;
           }
           await advance("open-attempts", 0, attempt.attemptId);
         }
@@ -749,30 +1070,62 @@ export class DurableArtifactStore implements ArtifactStore {
           if (verified.digest !== name) throw new Error("digest mismatch");
           const existing = this.#repository.stat(name);
           if (existing === undefined) {
-            this.#repository.adoptArtifact(
-              {
-                digest: name,
-                algorithm: "sha256",
-                sizeBytes: verified.sizeBytes,
-                committedAtMs: this.#clock.nowMs(),
-                provenance: "recovered-orphan",
+            const artifact: ArtifactMetadata = {
+              digest: name,
+              algorithm: "sha256",
+              sizeBytes: verified.sizeBytes,
+              committedAtMs: this.#clock.nowMs(),
+              provenance: "recovered-orphan",
+            };
+            await planAction({
+              actionKind: "adopt-orphan",
+              sourceRelativePath: relative(this.#paths.root, path),
+              sourceIdentity: await filesystemIdentity(path),
+              expectedDigest: verified.digest,
+              expectedSizeBytes: verified.sizeBytes,
+              incident: null,
+              identity: { digest: verified.digest, sizeBytes: verified.sizeBytes },
+              payload: {
+                artifact: artifact as unknown as JsonValue,
+                next: { phase: "content", shard: state.shard, afterKey: name },
               },
-              this.#lease.fence(),
-            );
-            report.adoptedOrphans += 1;
+              recordedAtMs: artifact.committedAtMs,
+            });
+            continue;
           } else if (existing.sizeBytes !== verified.sizeBytes) throw new Error("size mismatch");
           else report.validArtifacts += 1;
-        } catch {
-          const id = await this.#incident(
-            "invalid-orphan",
-            null,
-            /^[0-9a-f]{64}$/u.test(name) ? name : null,
-            null,
-            null,
-          );
-          report.incidents.push(id);
-          await this.#quarantine(path, id);
-          report.quarantinedObjects += 1;
+        } catch (error) {
+          if (state.pendingActionKey !== null) throw error;
+          const verified = await hashFile(path);
+          bytesHashed += verified.sizeBytes;
+          const claimedDigest = /^[0-9a-f]{64}$/u.test(name) ? name : null;
+          await planAction({
+            actionKind: "quarantine",
+            sourceRelativePath: relative(this.#paths.root, path),
+            sourceIdentity: await filesystemIdentity(path),
+            expectedDigest: verified.digest,
+            expectedSizeBytes: verified.sizeBytes,
+            incident: {
+              kind: "invalid-orphan",
+              stagingId: null,
+              claimedDigest,
+              expectedSizeBytes: null,
+              actualSizeBytes: verified.sizeBytes,
+              detailHash: null,
+              facts: {
+                name,
+                claimedDigest,
+                actualDigest: verified.digest,
+                sizeBytes: verified.sizeBytes,
+              },
+            },
+            identity: { name, digest: verified.digest, sizeBytes: verified.sizeBytes },
+            payload: {
+              next: { phase: "content", shard: state.shard, afterKey: name },
+            },
+            recordedAtMs: this.#clock.nowMs(),
+          });
+          continue;
         }
         await advance("content", state.shard, name);
         processed += 1;
@@ -782,27 +1135,45 @@ export class DurableArtifactStore implements ArtifactStore {
       const artifact = artifacts[0];
       rowsVisited += artifacts.length;
       if (artifact === undefined) {
-        this.#repository.completeReconciliation(state, this.#lease.fence());
-        return result(null);
+        const terminal = result(null);
+        this.#repository.commitReconciliationReceipt(state, terminal, true, this.#lease.fence());
+        await this.#checkpoint("reconciliation-terminal-receipt-commit");
+        return terminal;
       }
       const path = await this.#contentPath(artifact.digest, false, false);
       try {
         await stat(path);
       } catch {
-        const id = await this.#incident(
-          "missing-content",
-          null,
-          artifact.digest,
-          artifact.sizeBytes,
-          null,
-        );
-        report.incidents.push(id);
-        report.missingArtifacts += 1;
+        await planAction({
+          actionKind: "record-missing-content",
+          sourceRelativePath: relative(this.#paths.root, path),
+          sourceIdentity: null,
+          expectedDigest: artifact.digest,
+          expectedSizeBytes: artifact.sizeBytes,
+          incident: {
+            kind: "missing-content",
+            stagingId: null,
+            claimedDigest: artifact.digest,
+            expectedSizeBytes: artifact.sizeBytes,
+            actualSizeBytes: null,
+            detailHash: null,
+            facts: { digest: artifact.digest, expectedSizeBytes: artifact.sizeBytes },
+          },
+          identity: { digest: artifact.digest, expectedSizeBytes: artifact.sizeBytes },
+          payload: {
+            next: { phase: "missing-content", shard: 0, afterKey: artifact.digest },
+          },
+          recordedAtMs: this.#clock.nowMs(),
+        });
+        continue;
       }
       await advance("missing-content", 0, artifact.digest);
       processed += 1;
     }
-    return result(state.cursorToken);
+    const partial = result(state.cursorToken);
+    this.#repository.commitReconciliationReceipt(state, partial, false, this.#lease.fence());
+    await this.#checkpoint("reconciliation-call-receipt-commit");
+    return partial;
   }
 
   async #nextContentLeaf(startShard: number): Promise<
@@ -891,16 +1262,18 @@ export class DurableArtifactStore implements ArtifactStore {
   ): Promise<string> {
     await this.#lease.renewAndAssert();
     const recordedAtMs = this.#clock.nowMs();
-    const seed = {
+    const facts = {
       kind,
-      recordedAtMs,
       stagingId,
       claimedDigest,
+      expectedSizeBytes: expected,
+      actualSizeBytes: actual,
       detailHash: null,
-      nonce: randomUUID(),
     };
+    const actionKey = deriveReconciliationActionKey(facts);
     const incident: IntegrityIncident = {
-      incidentId: deriveIncidentId(seed),
+      incidentId: deriveIncidentId({ actionKey, kind, facts }),
+      actionKey: null,
       kind,
       recordedAtMs,
       stagingId,
@@ -913,14 +1286,105 @@ export class DurableArtifactStore implements ArtifactStore {
     return incident.incidentId;
   }
 
+  async #checkpoint(name: string): Promise<void> {
+    await this.#faultBoundary(name);
+  }
+
+  async #replayQuarantine(
+    plan: ReconciliationActionPlan,
+    sourcePath: string,
+  ): Promise<Readonly<{ identity: JsonValue; digest: string; sizeBytes: number }>> {
+    if (plan.quarantineName === null || plan.sourceIdentity === null)
+      throw new Error("Quarantine plan is incomplete");
+    const target = safeChild(this.#paths.quarantine, plan.quarantineName);
+    await assertTrustedPath(this.#paths.root, sourcePath, this.#paths.device);
+    await assertTrustedPath(this.#paths.root, target, this.#paths.device);
+    const readIdentity = async (path: string): Promise<JsonValue | null> => {
+      try {
+        return await filesystemIdentity(path);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw error;
+      }
+    };
+    let sourceIdentity = await readIdentity(sourcePath);
+    let targetIdentity = await readIdentity(target);
+    const planned = plan.sourceIdentity as Record<string, JsonValue>;
+    const matchesPlan = (candidate: JsonValue): boolean => {
+      if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate))
+        return false;
+      const record = candidate as Record<string, JsonValue>;
+      return (
+        record["device"] === planned["device"] &&
+        record["inode"] === planned["inode"] &&
+        record["mode"] === planned["mode"] &&
+        record["sizeBytes"] === planned["sizeBytes"] &&
+        record["modifiedAtMs"] === planned["modifiedAtMs"] &&
+        record["isFile"] === true &&
+        record["isSymbolicLink"] === false
+      );
+    };
+    if (sourceIdentity !== null && !matchesPlan(sourceIdentity))
+      throw new ArtifactVaultError(
+        "unsafe-filesystem-object",
+        "Quarantine source identity changed after planning",
+      );
+    if (targetIdentity !== null && !matchesPlan(targetIdentity))
+      throw new ArtifactVaultError(
+        "artifact-integrity-failure",
+        "Deterministic quarantine destination conflicts with its plan",
+      );
+    if (sourceIdentity === null && targetIdentity === null)
+      throw new ArtifactVaultError(
+        "artifact-integrity-failure",
+        "Planned quarantine source and destination are both missing",
+      );
+    if (targetIdentity === null) {
+      await this.#lease.renewAndAssert();
+      await link(sourcePath, target);
+      await this.#checkpoint("quarantine-link");
+      targetIdentity = await filesystemIdentity(target);
+    }
+    const targetHandle = await open(target, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+    try {
+      await targetHandle.sync();
+    } finally {
+      await targetHandle.close();
+    }
+    await syncDirectory(this.#paths.quarantine);
+    await this.#checkpoint("quarantine-sync");
+    if (sourceIdentity !== null) {
+      await this.#lease.renewAndAssert();
+      await rm(sourcePath);
+      await syncDirectory(dirname(sourcePath));
+      await this.#checkpoint("quarantine-source-removal");
+      sourceIdentity = null;
+    }
+    const verified = await hashFile(target);
+    if (
+      (plan.expectedDigest !== null && verified.digest !== plan.expectedDigest) ||
+      (plan.expectedSizeBytes !== null && verified.sizeBytes !== plan.expectedSizeBytes)
+    )
+      throw new ArtifactVaultError(
+        "artifact-integrity-failure",
+        "Quarantine target bytes differ from the durable plan",
+      );
+    return {
+      identity: await filesystemIdentity(target),
+      digest: verified.digest,
+      sizeBytes: verified.sizeBytes,
+    };
+  }
+
   async #quarantine(path: string, token: string): Promise<void> {
     await this.#lease.renewAndAssert();
     const target = safeChild(this.#paths.quarantine, `${token}.quarantined`);
     await assertTrustedPath(this.#paths.root, target, this.#paths.device);
-    await link(path, target)
-      .then(async () => rm(path))
-      .catch(async (error: NodeJS.ErrnoException) => {
-        if (error.code !== "ENOENT") throw error;
-      });
+    try {
+      await link(path, target);
+      await rm(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
   }
 }

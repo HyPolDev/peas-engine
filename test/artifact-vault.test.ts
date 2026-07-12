@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { type ChildProcess, fork } from "node:child_process";
+import { type ChildProcess, execFileSync, fork } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -16,7 +16,10 @@ import { Readable } from "node:stream";
 import test from "node:test";
 
 import { DurableArtifactStore } from "../src/adapters/artifacts/durable-artifact-store.js";
-import { defaultPeasRuntimeRoot } from "../src/adapters/artifacts/runtime-root.js";
+import {
+  artifactRuntimePaths,
+  configuredPeasRuntimeRoot,
+} from "../src/adapters/artifacts/runtime-root.js";
 import { SqliteArtifactRepository } from "../src/adapters/artifacts/sqlite-artifact-repository.js";
 import type { WriterFence } from "../src/adapters/artifacts/sqlite-artifact-repository.js";
 import type {
@@ -49,6 +52,7 @@ const reconciliationWorkerPath = join(
   "fixtures",
   "artifact-reconciliation-worker.mjs",
 );
+const artifactReadWorkerPath = join(process.cwd(), "test", "fixtures", "artifact-read-worker.mjs");
 
 type Harness = Readonly<{
   root: string;
@@ -63,6 +67,7 @@ function vaultConfig(
   overrides: Partial<ArtifactVaultConfig> = {},
 ): ArtifactVaultConfig {
   return {
+    runtimeRootMode: "ci-temporary",
     runtimeRoot,
     maxArtifactBytes: 1_024,
     maxVaultBytes: 4_096,
@@ -82,7 +87,9 @@ async function harness(
   overrides: Partial<ArtifactVaultConfig> = {},
 ): Promise<Harness> {
   const root = mkdtempSync(join(tmpdir(), "peas-artifact-vault-"));
-  const database = openSqliteDatabase(join(root, "vault.sqlite"), migrations);
+  const paths = artifactRuntimePaths(root);
+  mkdirSync(paths.databaseDirectory);
+  const database = openSqliteDatabase(paths.databasePath, migrations);
   const repository = new SqliteArtifactRepository(database);
   const clock = new ManualClock(1_800_000_000_000);
   const store = await DurableArtifactStore.open({
@@ -150,7 +157,7 @@ function activeFence(
 
 function waitForWorkerMessage(
   child: ChildProcess,
-  expectedType: "ready" | "staged" | "result",
+  expectedType: "ready" | "staged" | "checkpoint" | "result",
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -209,7 +216,9 @@ function processFixture(
     if (!root.startsWith(prefix)) throw new Error("Unsafe process fixture cleanup path");
     rmSync(root, { recursive: true, force: true });
   });
-  const databasePath = join(root, "vault.sqlite");
+  const paths = artifactRuntimePaths(root);
+  mkdirSync(paths.databaseDirectory);
+  const databasePath = paths.databasePath;
   const database = openSqliteDatabase(databasePath, migrations);
   database.close();
   return { root, databasePath };
@@ -250,6 +259,23 @@ test("stores entity bytes, separates evidence, deduplicates, and reads verified 
     ).count,
     2n,
   );
+  assert.equal(
+    (
+      database.prepare("SELECT count(*) count FROM artifact_install_intents").get() as {
+        count: bigint;
+      }
+    ).count,
+    2n,
+  );
+  for (const state of ["content-installed", "evidence-committed", "stage-cleaned"])
+    assert.equal(
+      (
+        database
+          .prepare("SELECT count(*) count FROM artifact_install_transitions WHERE state = ?")
+          .get(state) as { count: bigint }
+      ).count,
+      2n,
+    );
   assert.equal(
     (
       database.prepare("SELECT count(*) count FROM artifact_observations").get() as {
@@ -499,6 +525,7 @@ test("a second writer process boundary is explicit", async (context) => {
         repository,
         clock,
         config: {
+          runtimeRootMode: "ci-temporary",
           runtimeRoot: root,
           maxArtifactBytes: 1,
           maxVaultBytes: 1,
@@ -581,6 +608,7 @@ test("expired takeover fences a still-live stale writer before install and SQLit
     repository,
     clock,
     config: {
+      runtimeRootMode: "ci-temporary",
       runtimeRoot: root,
       maxArtifactBytes: 1_024,
       maxVaultBytes: 4_096,
@@ -783,6 +811,323 @@ test("hard-killed staged writer leaves only recoverable evidence for fenced reco
   }
 });
 
+test("hard kill after install intent converges from durable intent without fabricated evidence", async (context) => {
+  const { root, databasePath } = processFixture(context, "install-intent-kill");
+  const child = fork(
+    artifactWorkerPath,
+    [databasePath, root, "1800000000000", "install-intent-commit"],
+    { stdio: ["ignore", "ignore", "pipe", "ipc"] },
+  );
+  await waitForWorkerMessage(child, "staged");
+  child.send({ type: "resume" });
+  const checkpoint = await waitForWorkerMessage(child, "checkpoint");
+  assert.equal(checkpoint["checkpoint"], "install-intent-commit");
+  child.kill("SIGKILL");
+  await waitForWorkerExit(child);
+
+  const database = openSqliteDatabase(databasePath, migrations);
+  const recovered = await DurableArtifactStore.open({
+    repository: new SqliteArtifactRepository(database),
+    clock: new ManualClock(1_800_000_030_001),
+    config: vaultConfig(root),
+  });
+  try {
+    const report = await recovered.reconcile();
+    assert.equal(report.continuationCursor, null);
+    for (const table of [
+      "artifact_install_intents",
+      "artifact_blobs",
+      "artifact_retrieval_outcomes",
+      "artifact_observations",
+    ])
+      assert.equal(
+        (database.prepare(`SELECT count(*) count FROM ${table}`).get() as { count: bigint }).count,
+        1n,
+      );
+    assert.equal(
+      (
+        database
+          .prepare(
+            "SELECT count(*) count FROM artifact_install_transitions WHERE state = 'evidence-committed'",
+          )
+          .get() as { count: bigint }
+      ).count,
+      1n,
+    );
+  } finally {
+    await recovered.close();
+    database.close();
+  }
+});
+
+test("store and lease hard-kill boundary matrix converges with exact evidence", {
+  skip:
+    process.env["PEAS_SKIP_HARD_KILL_MATRIX"] === "1"
+      ? "runs as a separate non-instrumented process-kill gate"
+      : false,
+}, async (context) => {
+  const boundaries = [
+    "lease-file-installation",
+    "lease-sqlite-claim",
+    "lease-record-sync",
+    "vault-directory-created:root",
+    "vault-directory-created:content",
+    "vault-directory-created:staging",
+    "vault-directory-created:snapshots",
+    "vault-directory-created:quarantine",
+    "vault-directory-created:locks",
+    "lease-sqlite-renewal",
+    "lease-file-renewal",
+    "attempt-commit",
+    "stage-create",
+    "stage-sync-close",
+    "install-intent-commit",
+    "content-link",
+    "content-sync",
+    "content-installed-transition",
+    "success-intent-transaction",
+    "stage-removal",
+    "stage-cleaned-transition",
+    "failure-abort-transaction",
+  ].filter(
+    (boundary) =>
+      process.env["PEAS_TEST_BOUNDARY"] === undefined ||
+      process.env["PEAS_TEST_BOUNDARY"] === boundary,
+  );
+  const afterStageSync = new Set<string>([
+    "stage-sync-close",
+    "install-intent-commit",
+    "content-link",
+    "content-sync",
+    "content-installed-transition",
+    "success-intent-transaction",
+    "stage-removal",
+    "stage-cleaned-transition",
+    "failure-abort-transaction",
+  ]);
+  const successful = new Set<string>([
+    "install-intent-commit",
+    "content-link",
+    "content-sync",
+    "content-installed-transition",
+    "success-intent-transaction",
+    "stage-removal",
+    "stage-cleaned-transition",
+  ]);
+  const intentPrepared = new Set<string>([...successful, "failure-abort-transaction"]);
+
+  for (const boundary of boundaries) {
+    const fixture = processFixture(context, `store-boundary-${boundary.replaceAll(":", "-")}`);
+    const child = fork(
+      artifactWorkerPath,
+      [fixture.databasePath, fixture.root, "1800000000000", boundary],
+      { stdio: ["ignore", "ignore", "pipe", "ipc"] },
+    );
+    if (afterStageSync.has(boundary)) {
+      await waitForWorkerMessage(child, "staged");
+      child.send({ type: "resume" });
+    }
+    const checkpoint = await waitForWorkerMessage(child, "checkpoint");
+    assert.equal(checkpoint["checkpoint"], boundary);
+    child.kill("SIGKILL");
+    await waitForWorkerExit(child);
+
+    const database = openSqliteDatabase(fixture.databasePath, migrations);
+    const recovered = await DurableArtifactStore.open({
+      repository: new SqliteArtifactRepository(database),
+      clock: new ManualClock(1_800_000_030_001),
+      config: vaultConfig(fixture.root),
+    });
+    try {
+      await recovered.reconcile();
+      const count = (table: string): bigint =>
+        (database.prepare(`SELECT count(*) count FROM ${table}`).get() as { count: bigint }).count;
+      assert.equal(count("artifact_observations"), successful.has(boundary) ? 1n : 0n, boundary);
+      assert.equal(count("artifact_blobs"), successful.has(boundary) ? 1n : 0n, boundary);
+      assert.equal(
+        count("artifact_install_intents"),
+        intentPrepared.has(boundary) ? 1n : 0n,
+        boundary,
+      );
+      await recovered.close();
+      const secondRestart = await DurableArtifactStore.open({
+        repository: new SqliteArtifactRepository(database),
+        clock: new ManualClock(1_800_000_060_002),
+        config: vaultConfig(fixture.root),
+      });
+      try {
+        assert.equal((await secondRestart.reconcile()).continuationCursor, null);
+      } finally {
+        await secondRestart.close();
+      }
+    } finally {
+      await recovered.close();
+      database.close();
+    }
+  }
+});
+
+test("reconciliation hard-kill boundary matrix replays one deterministic action", {
+  skip:
+    process.env["PEAS_SKIP_HARD_KILL_MATRIX"] === "1"
+      ? "runs as a separate non-instrumented process-kill gate"
+      : false,
+}, async (context) => {
+  const boundaries = [
+    "reconciliation-call-opened",
+    "reconciliation-action-plan-commit",
+    "quarantine-link",
+    "quarantine-sync",
+    "quarantine-source-removal",
+    "reconciliation-action-application-commit",
+    "reconciliation-call-receipt-commit",
+    "reconciliation-terminal-receipt-commit",
+  ].filter(
+    (boundary) =>
+      process.env["PEAS_TEST_BOUNDARY"] === undefined ||
+      process.env["PEAS_TEST_BOUNDARY"] === boundary,
+  );
+  for (const boundary of boundaries) {
+    const fixture = processFixture(context, `reconcile-boundary-${boundary}`);
+    const seedDatabase = openSqliteDatabase(fixture.databasePath, migrations);
+    const seedStore = await DurableArtifactStore.open({
+      repository: new SqliteArtifactRepository(seedDatabase),
+      clock: new ManualClock(1_800_000_000_000),
+      config: vaultConfig(fixture.root),
+    });
+    await seedStore.close();
+    seedDatabase.close();
+    writeFileSync(join(fixture.root, "artifacts", "staging", "hard-kill-orphan.part"), "orphan");
+
+    const child = fork(
+      reconciliationWorkerPath,
+      [fixture.databasePath, fixture.root, "1800000030001", boundary],
+      { stdio: ["ignore", "ignore", "pipe", "ipc"] },
+    );
+    await waitForWorkerMessage(child, "ready");
+    child.send({
+      type: "reconcile",
+      cursor: null,
+      maxItems: boundary === "reconciliation-call-receipt-commit" ? 1 : 1_000,
+      maxBytes: 1_048_576,
+    });
+    const checkpoint = await waitForWorkerMessage(child, "checkpoint");
+    assert.equal(checkpoint["checkpoint"], boundary);
+    child.kill("SIGKILL");
+    await waitForWorkerExit(child);
+
+    const database = openSqliteDatabase(fixture.databasePath, migrations);
+    const recovered = await DurableArtifactStore.open({
+      repository: new SqliteArtifactRepository(database),
+      clock: new ManualClock(1_800_000_060_002),
+      config: vaultConfig(fixture.root),
+    });
+    try {
+      await recovered.reconcile();
+      for (const table of [
+        "artifact_reconciliation_action_plans",
+        "artifact_reconciliation_action_applications",
+        "artifact_integrity_incidents",
+        "artifact_quarantine_receipts",
+      ])
+        assert.equal(
+          (database.prepare(`SELECT count(*) count FROM ${table}`).get() as { count: bigint })
+            .count,
+          1n,
+          `${boundary}:${table}`,
+        );
+      assert.equal(readdirSync(join(fixture.root, "artifacts", "quarantine")).length, 1);
+      assert.equal(readdirSync(join(fixture.root, "artifacts", "staging")).length, 0);
+      await recovered.close();
+      const secondRestart = await DurableArtifactStore.open({
+        repository: new SqliteArtifactRepository(database),
+        clock: new ManualClock(1_800_000_090_003),
+        config: vaultConfig(fixture.root),
+      });
+      try {
+        assert.equal((await secondRestart.reconcile()).continuationCursor, null);
+      } finally {
+        await secondRestart.close();
+      }
+    } finally {
+      await recovered.close();
+      database.close();
+    }
+  }
+});
+
+test("verified-read hard-kill boundaries leave only recoverable snapshots", {
+  skip:
+    process.env["PEAS_SKIP_HARD_KILL_MATRIX"] === "1"
+      ? "runs as a separate non-instrumented process-kill gate"
+      : false,
+}, async (context) => {
+  for (const boundary of [
+    "snapshot-create",
+    "snapshot-sync",
+    "snapshot-verification-complete",
+    "snapshot-removal",
+  ]) {
+    const fixture = processFixture(context, `read-boundary-${boundary}`);
+    const database = openSqliteDatabase(fixture.databasePath, migrations);
+    const seed = await DurableArtifactStore.open({
+      repository: new SqliteArtifactRepository(database),
+      clock: new ManualClock(1_800_000_000_000),
+      config: vaultConfig(fixture.root),
+    });
+    const stored = await seed.store(request(`read-${boundary}`, Buffer.from("verified read")));
+    await seed.close();
+    database.close();
+    if (boundary === "snapshot-removal") {
+      const content = join(
+        fixture.root,
+        "artifacts",
+        "sha256",
+        stored.artifact.digest.slice(0, 2),
+        stored.artifact.digest.slice(2, 4),
+        stored.artifact.digest,
+      );
+      writeFileSync(content, "corrupt read");
+    }
+
+    const child = fork(
+      artifactReadWorkerPath,
+      [fixture.databasePath, fixture.root, "1800000030001", stored.artifact.digest, boundary],
+      { stdio: ["ignore", "ignore", "pipe", "ipc"] },
+    );
+    await waitForWorkerMessage(child, "ready");
+    const checkpoint = await waitForWorkerMessage(child, "checkpoint");
+    assert.equal(checkpoint["checkpoint"], boundary);
+    child.kill("SIGKILL");
+    await waitForWorkerExit(child);
+
+    const recoveredDatabase = openSqliteDatabase(fixture.databasePath, migrations);
+    const recovered = await DurableArtifactStore.open({
+      repository: new SqliteArtifactRepository(recoveredDatabase),
+      clock: new ManualClock(1_800_000_060_002),
+      config: vaultConfig(fixture.root),
+    });
+    try {
+      await recovered.reconcile();
+      assert.deepEqual(readdirSync(join(fixture.root, "artifacts", "snapshots")), []);
+      await recovered.close();
+      const secondRestart = await DurableArtifactStore.open({
+        repository: new SqliteArtifactRepository(recoveredDatabase),
+        clock: new ManualClock(1_800_000_090_003),
+        config: vaultConfig(fixture.root),
+      });
+      try {
+        assert.equal((await secondRestart.reconcile()).continuationCursor, null);
+      } finally {
+        await secondRestart.close();
+      }
+    } finally {
+      await recovered.close();
+      recoveredDatabase.close();
+    }
+  }
+});
+
 test("hard kill after cursor advancement resumes from the durable generation", async (context) => {
   const { root, databasePath } = processFixture(context, "cursor-kill");
   const child = fork(reconciliationWorkerPath, [databasePath, root, "1800000000000"], {
@@ -792,7 +1137,7 @@ test("hard kill after cursor advancement resumes from the durable generation", a
   child.send({ type: "reconcile", cursor: null });
   const result = await waitForWorkerMessage(child, "result");
   const cursor = String(result["cursor"]);
-  assert.match(cursor, /^[0-9a-f]{64}$/u);
+  assert.match(cursor, /^rc1_[0-9a-f]{64}$/u);
   child.kill("SIGKILL");
   await waitForWorkerExit(child);
 
@@ -808,7 +1153,7 @@ test("hard kill after cursor advancement resumes from the durable generation", a
   });
   try {
     const resumed = await recovered.reconcile({
-      cursor,
+      cursor: null,
       maxItems: 1,
       maxElapsedMs: 10_000,
       maxBytes: 1_024,
@@ -819,7 +1164,7 @@ test("hard kill after cursor advancement resumes from the durable generation", a
       .get() as {
       generation: bigint;
     };
-    assert.equal(after.generation, before.generation + 1n);
+    assert.ok(after.generation > before.generation);
   } finally {
     await recovered.close();
     database.close();
@@ -873,6 +1218,41 @@ test("invalid orphans are quarantined without false artifact metadata", async (c
     1n,
   );
   assert.equal(existsSync(join(directory, claimed)), false);
+  for (const table of [
+    "artifact_reconciliation_action_plans",
+    "artifact_reconciliation_action_applications",
+    "artifact_quarantine_receipts",
+  ])
+    assert.equal(
+      (database.prepare(`SELECT count(*) count FROM ${table}`).get() as { count: bigint }).count,
+      1n,
+    );
+  assert.match(
+    readdirSync(join(root, "artifacts", "quarantine"))[0] ?? "",
+    /^q1_[0-9a-f]{64}\.quarantined$/u,
+  );
+});
+
+test("terminal reconciliation is recoverable and a new run is explicit", async (context) => {
+  const { store } = await harness(context);
+  const terminal = await store.reconcile();
+  assert.equal(terminal.continuationCursor, null);
+  assert.match(terminal.runId, /^rr1_[0-9a-f]{64}$/u);
+  assert.deepEqual(await store.reconcile(), terminal);
+
+  const next = await store.reconcile({
+    startNew: true,
+    completedRunId: terminal.runId,
+    maxItems: 1,
+    maxElapsedMs: 10_000,
+    maxBytes: 1_024,
+  });
+  assert.notEqual(next.runId, terminal.runId);
+  assert.match(next.continuationCursor ?? "", /^rc1_[0-9a-f]{64}$/u);
+  await assert.rejects(
+    () => store.reconcile({ maxItems: 1, maxElapsedMs: 10_000, maxBytes: 1_024 }),
+    /requires its continuation cursor/u,
+  );
 });
 
 test("same-clock incidents and quarantine objects remain distinct", async (context) => {
@@ -1072,6 +1452,14 @@ test("one-item reconciliation bounds database rows, bytes, elapsed time, and mem
   assert.equal(first.directoryEntriesRead, 0);
   assert.equal(first.bytesHashed, 0);
   assert.equal(first.continuationCursor === null, false);
+  assert.equal(
+    (
+      database
+        .prepare("SELECT items_processed FROM artifact_reconciliation_state WHERE singleton = 1")
+        .get() as { items_processed: bigint }
+    ).items_processed,
+    1n,
+  );
   assert.equal(first.elapsedMs < 1_000, true);
   assert.equal(heapDelta < 16 * 1_024 * 1_024, true);
   const timed = await store.reconcile({
@@ -1086,7 +1474,7 @@ test("one-item reconciliation bounds database rows, bytes, elapsed time, and mem
 
 test("one-item directory reconciliation has a fixed enumeration bound", async (context) => {
   const { root, store } = await harness(context);
-  const toStaging = await store.reconcile({ maxItems: 6, maxElapsedMs: 10_000, maxBytes: 6_144 });
+  const toStaging = await store.reconcile({ maxItems: 7, maxElapsedMs: 10_000, maxBytes: 7_168 });
   assert.ok(toStaging.continuationCursor);
   for (let index = 0; index < 50; index += 1)
     writeFileSync(join(root, "artifacts", "staging", `bounded-dir-${index}.part`), "x");
@@ -1097,7 +1485,14 @@ test("one-item directory reconciliation has a fixed enumeration bound", async (c
     maxBytes: 1_024,
   });
   assert.equal(directoryPage.directoryEntriesRead, 50);
-  assert.equal(directoryPage.quarantinedObjects, 1);
+  assert.equal(directoryPage.quarantinedObjects, 0);
+  const applied = await store.reconcile({
+    cursor: directoryPage.continuationCursor,
+    maxItems: 1,
+    maxElapsedMs: 10_000,
+    maxBytes: 1_024,
+  });
+  assert.equal(applied.quarantinedObjects, 1);
 });
 
 test("reconciliation rejects stale, tampered, and generation-mismatched cursors", async (context) => {
@@ -1115,16 +1510,13 @@ test("reconciliation rejects stale, tampered, and generation-mismatched cursors"
     maxElapsedMs: 10_000,
     maxBytes: 1_024,
   });
-  await assert.rejects(
-    () =>
-      store.reconcile({
-        cursor: first.continuationCursor,
-        maxItems: 1,
-        maxElapsedMs: 10_000,
-        maxBytes: 1_024,
-      }),
-    /cursor is stale or invalid/u,
-  );
+  const retried = await store.reconcile({
+    cursor: first.continuationCursor,
+    maxItems: 1,
+    maxElapsedMs: 10_000,
+    maxBytes: 1_024,
+  });
+  assert.deepEqual(retried, second);
   database.pragma("ignore_check_constraints = ON");
   database.prepare("UPDATE artifact_reconciliation_state SET generation = generation + 1").run();
   await assert.rejects(
@@ -1166,7 +1558,7 @@ test("reconciliation rejects stale, tampered, and generation-mismatched cursors"
 
 test("failed filesystem handling never advances the durable reconciliation cursor", async (context) => {
   const { root, database, store } = await harness(context);
-  const toStaging = await store.reconcile({ maxItems: 6, maxElapsedMs: 10_000, maxBytes: 6_144 });
+  const toStaging = await store.reconcile({ maxItems: 7, maxElapsedMs: 10_000, maxBytes: 7_168 });
   assert.ok(toStaging.continuationCursor);
   writeFileSync(join(root, "artifacts", "staging", "cursor-action-failure.part"), "partial");
   const quarantine = join(root, "artifacts", "quarantine");
@@ -1174,10 +1566,16 @@ test("failed filesystem handling never advances the durable reconciliation curso
   mkdirSync(replacement);
   rmSync(quarantine, { recursive: true });
   symlinkSync(replacement, quarantine, process.platform === "win32" ? "junction" : "dir");
+  const planned = await store.reconcile({
+    cursor: toStaging.continuationCursor,
+    maxItems: 1,
+    maxElapsedMs: 10_000,
+    maxBytes: 1_024,
+  });
   await assert.rejects(
     () =>
       store.reconcile({
-        cursor: toStaging.continuationCursor,
+        cursor: planned.continuationCursor,
         maxItems: 1,
         maxElapsedMs: 10_000,
         maxBytes: 1_024,
@@ -1185,16 +1583,22 @@ test("failed filesystem handling never advances the durable reconciliation curso
     /trusted same-volume directory/u,
   );
   const state = database
-    .prepare("SELECT cursor_token FROM artifact_reconciliation_state")
+    .prepare(
+      "SELECT cursor_token, after_key, pending_action_key FROM artifact_reconciliation_state",
+    )
     .get() as {
     cursor_token: string;
+    after_key: string;
+    pending_action_key: string | null;
   };
-  assert.equal(state.cursor_token, toStaging.continuationCursor);
+  assert.equal(state.cursor_token, planned.continuationCursor);
+  assert.equal(state.after_key, "");
+  assert.match(state.pending_action_key ?? "", /^act1_[0-9a-f]{64}$/u);
 });
 
 test("reconciliation fails closed on directory replacement and fanout overflow without cursor advance", async (context) => {
   const { root, database, store } = await harness(context);
-  const toStaging = await store.reconcile({ maxItems: 6, maxElapsedMs: 10_000, maxBytes: 6_144 });
+  const toStaging = await store.reconcile({ maxItems: 7, maxElapsedMs: 10_000, maxBytes: 7_168 });
   assert.ok(toStaging.continuationCursor);
   const staging = join(root, "artifacts", "staging");
   const replacement = join(root, "replacement-staging");
@@ -1254,17 +1658,44 @@ test("immutable artifact evidence rejects updates and deletes", async (context) 
   }
 });
 
-test("runtime roots follow the binding Windows and Linux policy", () => {
+test("runtime roots require explicit local absolute configuration", () => {
   assert.equal(
-    defaultPeasRuntimeRoot("win32", { LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local" }),
-    "C:\\Users\\test\\AppData\\Local\\peas-engine",
+    configuredPeasRuntimeRoot("win32", { PEAS_RUNTIME_ROOT: "G:\\PEAS_RUNTIME\\peas-engine" }),
+    "G:\\PEAS_RUNTIME\\peas-engine",
   );
   assert.equal(
-    defaultPeasRuntimeRoot("linux", { XDG_DATA_HOME: "/srv/data" }),
-    process.platform === "win32" ? "C:\\srv\\data\\peas-engine" : "/srv/data/peas-engine",
+    configuredPeasRuntimeRoot("linux", { PEAS_RUNTIME_ROOT: "/srv/peas-engine" }),
+    "/srv/peas-engine",
   );
-  assert.throws(() => defaultPeasRuntimeRoot("win32", {}), /LOCALAPPDATA/u);
-  assert.throws(() => defaultPeasRuntimeRoot("darwin", {}), /configure/u);
+  assert.throws(() => configuredPeasRuntimeRoot("win32", {}), /PEAS_RUNTIME_ROOT/u);
+  assert.throws(
+    () => configuredPeasRuntimeRoot("win32", { PEAS_RUNTIME_ROOT: "\\\\server\\share" }),
+    /local drive path/u,
+  );
+  assert.throws(
+    () => configuredPeasRuntimeRoot("linux", { PEAS_RUNTIME_ROOT: "relative/path" }),
+    /absolute/u,
+  );
+  assert.throws(
+    () => configuredPeasRuntimeRoot("darwin", { PEAS_RUNTIME_ROOT: "/srv/peas-engine" }),
+    /unsupported/u,
+  );
+  const layout = artifactRuntimePaths(rootForCurrentPlatform());
+  assert.equal(layout.databasePath, join(layout.runtimeRoot, "sqlite", "peas.sqlite"));
+  for (const path of [
+    layout.databasePath,
+    layout.artifactsRoot,
+    layout.content,
+    layout.staging,
+    layout.snapshots,
+    layout.quarantine,
+    layout.locks,
+  ]) {
+    assert.equal(
+      path.startsWith(`${layout.runtimeRoot}${process.platform === "win32" ? "\\" : "/"}`),
+      true,
+    );
+  }
   assert.throws(
     () =>
       sanitizeRequestIdentity({
@@ -1276,6 +1707,30 @@ test("runtime roots follow the binding Windows and Linux policy", () => {
     /origin/u,
   );
   assert.throws(() => assertSafeByteAddition(Number.MAX_SAFE_INTEGER, 1), /overflow/u);
+});
+
+function rootForCurrentPlatform(): string {
+  return process.platform === "win32"
+    ? "C:\\synthetic-peas-runtime"
+    : "/tmp/synthetic-peas-runtime";
+}
+
+test("vault refuses a SQLite database outside its configured runtime root", async (context) => {
+  const root = mkdtempSync(join(tmpdir(), "peas-artifact-layout-"));
+  const database = openSqliteDatabase(join(root, "outside.sqlite"), migrations);
+  context.after(() => {
+    database.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+  await assert.rejects(
+    () =>
+      DurableArtifactStore.open({
+        repository: new SqliteArtifactRepository(database),
+        clock: new ManualClock(1_800_000_000_000),
+        config: vaultConfig(join(root, "runtime")),
+      }),
+    /SQLite database, WAL, and artifact vault must share/u,
+  );
 });
 
 test("real platform ancestor links cannot redirect staging outside the vault", async (context) => {
@@ -1296,6 +1751,24 @@ test("real platform ancestor links cannot redirect staging outside the vault", a
     /unsafe|trusted/u,
   );
   assert.deepEqual(readdirSync(escapeTarget), []);
+});
+
+test("hard links from outside the trusted tree never become readable artifact content", async (context) => {
+  const { root, store } = await harness(context);
+  const result = await store.store(request("hard-link-content", Buffer.from("owned bytes")));
+  const content = join(
+    root,
+    "artifacts",
+    "sha256",
+    result.artifact.digest.slice(0, 2),
+    result.artifact.digest.slice(2, 4),
+    result.artifact.digest,
+  );
+  const outside = join(root, "outside-hard-link");
+  const { linkSync } = await import("node:fs");
+  linkSync(content, outside);
+  await assert.rejects(() => store.read(result.artifact.digest), /single-owner regular file/u);
+  assert.equal(existsSync(outside), true);
 });
 
 test("junctions or symlinks above existing and missing runtime roots fail before target mutation", async (context) => {
@@ -1334,4 +1807,54 @@ test("junctions or symlinks above existing and missing runtime roots fail before
       }
     }
   }
+});
+
+test("a runtime-root junction or symlink is rejected as a redirected root", async (context) => {
+  const fixture = mkdtempSync(join(tmpdir(), "peas-artifact-root-link-"));
+  const target = join(fixture, "target");
+  const linkedRoot = join(fixture, "linked-root");
+  mkdirSync(target);
+  symlinkSync(target, linkedRoot, process.platform === "win32" ? "junction" : "dir");
+  if (process.platform === "win32") {
+    const details = execFileSync("fsutil", ["reparsepoint", "query", linkedRoot], {
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    assert.match(details, /0xa0000003/iu);
+  }
+  const database = openSqliteDatabase(join(fixture, "outside.sqlite"), migrations);
+  context.after(() => {
+    database.close();
+    rmSync(fixture, { recursive: true, force: true });
+  });
+  await assert.rejects(
+    () =>
+      DurableArtifactStore.open({
+        repository: new SqliteArtifactRepository(database),
+        clock: new ManualClock(1_800_000_000_000),
+        config: vaultConfig(linkedRoot),
+      }),
+    /unsafe filesystem object/u,
+  );
+  assert.equal(existsSync(join(target, "artifacts")), false);
+});
+
+test("Linux file symlinks cannot replace committed content", {
+  skip: process.platform !== "linux" ? "Linux platform evidence" : false,
+}, async (context) => {
+  const { root, store } = await harness(context);
+  const result = await store.store(request("linux-file-symlink", Buffer.from("trusted")));
+  const content = join(
+    root,
+    "artifacts",
+    "sha256",
+    result.artifact.digest.slice(0, 2),
+    result.artifact.digest.slice(2, 4),
+    result.artifact.digest,
+  );
+  const outside = join(root, "synthetic-outside-file");
+  writeFileSync(outside, "outside");
+  rmSync(content);
+  symlinkSync(outside, content, "file");
+  await assert.rejects(() => store.read(result.artifact.digest), /unsafe|symbolic|trusted/u);
 });

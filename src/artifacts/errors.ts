@@ -6,7 +6,10 @@ export type ArtifactErrorCode =
   | "artifact-not-found"
   | "artifact-integrity-failure"
   | "unsafe-filesystem-object"
-  | "attempt-already-terminal";
+  | "attempt-already-terminal"
+  | "reconciliation-cursor-required"
+  | "reconciliation-cursor-invalid"
+  | "reconciliation-recovery-required";
 
 export class ArtifactVaultError extends Error {
   readonly code: ArtifactErrorCode;

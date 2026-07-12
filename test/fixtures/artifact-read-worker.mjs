@@ -5,9 +5,9 @@ import { SqliteArtifactRepository } from "../../dist/src/adapters/artifacts/sqli
 import { loadMigrations, openSqliteDatabase } from "../../dist/src/adapters/sqlite/database.js";
 import { ManualClock } from "../../dist/src/core/clock.js";
 
-const [databasePath, runtimeRoot, initialNow, targetCheckpoint] = process.argv.slice(2);
-if (!databasePath || !runtimeRoot || !initialNow)
-  throw new Error("Missing reconciliation worker arguments");
+const [databasePath, runtimeRoot, initialNow, digest, targetCheckpoint] = process.argv.slice(2);
+if (!databasePath || !runtimeRoot || !initialNow || !digest || !targetCheckpoint)
+  throw new Error("Missing artifact read-worker arguments");
 const database = openSqliteDatabase(
   databasePath,
   loadMigrations(join(process.cwd(), "migrations")),
@@ -35,18 +35,16 @@ const store = await DurableArtifactStore.open({
   },
 });
 process.send?.({ type: "ready" });
-
-process.on("message", (message) => {
-  if (message?.type !== "reconcile") return;
-  void store
-    .reconcile({
-      cursor: message.cursor ?? null,
-      maxItems: message.maxItems ?? 1,
-      maxElapsedMs: 10_000,
-      maxBytes: message.maxBytes ?? 1_024,
-    })
-    .then((report) => process.send?.({ type: "result", cursor: report.continuationCursor }))
-    .catch((error) =>
-      process.send?.({ type: "result", error: error instanceof Error ? error.message : "unknown" }),
-    );
-});
+try {
+  const verified = await store.read(digest);
+  for await (const _chunk of verified.stream) {
+    // Consume the verified snapshot so normal cleanup can complete.
+  }
+  process.send?.({ type: "result", status: "read" });
+} catch (error) {
+  process.send?.({
+    type: "result",
+    status: "rejected",
+    message: error instanceof Error ? error.message : "unknown",
+  });
+}

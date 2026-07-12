@@ -48,12 +48,41 @@ export function deriveObservationId(
 }
 
 export function deriveIncidentId(parts: {
+  actionKey: string;
   kind: string;
-  recordedAtMs: number;
-  stagingId: string | null;
-  claimedDigest: string | null;
-  detailHash: string | null;
-  nonce: string;
+  facts: unknown;
 }): string {
-  return canonicalHash("peas/artifact-incident-id/v1", parts);
+  return `inc1_${canonicalHash("peas/artifact-incident/v2", parts as never)}`;
+}
+
+export function deriveReconciliationRunId(runSeed: unknown): string {
+  return `rr1_${canonicalHash("peas/artifact-reconciliation-run/v1", runSeed as never)}`;
+}
+
+export function deriveReconciliationCursor(cursorState: unknown): string {
+  return `rc1_${canonicalHash("peas/artifact-reconciliation-cursor/v1", cursorState as never)}`;
+}
+
+export function deriveReconciliationCallKey(callInput: unknown): string {
+  return `rcl1_${canonicalHash("peas/artifact-reconciliation-call/v1", callInput as never)}`;
+}
+
+export function deriveReconciliationWorkKey(workIdentity: unknown): string {
+  return `wrk1_${canonicalHash("peas/artifact-reconciliation-work/v1", workIdentity as never)}`;
+}
+
+export function deriveReconciliationActionKey(actionPlan: unknown): string {
+  return `act1_${canonicalHash("peas/artifact-reconciliation-action/v1", actionPlan as never)}`;
+}
+
+export function deriveQuarantineName(actionKey: string, incidentId: string): string {
+  return `q1_${canonicalHash("peas/artifact-quarantine/v1", { actionKey, incidentId })}.quarantined`;
+}
+
+export function deriveInstallIntentId(immutableIntent: unknown): string {
+  return `ins1_${canonicalHash("peas/artifact-install-intent/v1", immutableIntent as never)}`;
+}
+
+export function deriveInstallTransitionId(intentId: string, state: string): string {
+  return `ist1_${canonicalHash("peas/artifact-install-transition/v1", { intentId, state })}`;
 }

@@ -11,6 +11,7 @@ type LeaseRecord = Readonly<{
   generation: number;
   expiresAtMs: number;
 }>;
+const NOOP_FAULT_BOUNDARY = (): void => undefined;
 
 export class VaultWriterLease {
   readonly #path: string;
@@ -19,6 +20,7 @@ export class VaultWriterLease {
   readonly #durationMs: number;
   readonly #ownerToken: string;
   readonly #generation: number;
+  readonly #faultBoundary: (checkpoint: string) => void | Promise<void>;
   readonly #heartbeat: NodeJS.Timeout;
   #held = true;
 
@@ -30,6 +32,7 @@ export class VaultWriterLease {
     ownerToken: string;
     generation: number;
     renewalMs: number;
+    faultBoundary: (checkpoint: string) => void | Promise<void>;
   }) {
     this.#path = options.path;
     this.#repository = options.repository;
@@ -37,6 +40,7 @@ export class VaultWriterLease {
     this.#durationMs = options.durationMs;
     this.#ownerToken = options.ownerToken;
     this.#generation = options.generation;
+    this.#faultBoundary = options.faultBoundary;
     this.#heartbeat = setInterval(() => {
       void this.renewAndAssert().catch(() => undefined);
     }, options.renewalMs);
@@ -51,6 +55,7 @@ export class VaultWriterLease {
     renewalMs: number;
     repository: SqliteArtifactRepository;
     clock: Clock;
+    faultBoundary?: (checkpoint: string) => void | Promise<void>;
   }): Promise<VaultWriterLease> {
     const deadline = Date.now() + options.waitMs;
     for (;;) {
@@ -58,16 +63,36 @@ export class VaultWriterLease {
       const nowMs = options.clock.nowMs();
       try {
         const handle = await open(options.path, "wx", 0o600);
-        await handle.close();
+        try {
+          await handle.writeFile(
+            JSON.stringify({
+              pid: process.pid,
+              ownerToken,
+              generation: 0,
+              expiresAtMs: nowMs + options.durationMs,
+            } satisfies LeaseRecord),
+          );
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
+        await options.faultBoundary?.("lease-file-installation");
         let generation: number;
         try {
           generation = options.repository.claimWriter(ownerToken, nowMs, options.durationMs);
+          await options.faultBoundary?.("lease-sqlite-claim");
         } catch (error) {
           await rm(options.path, { force: true });
           throw error;
         }
-        const lease = new VaultWriterLease({ ...options, ownerToken, generation });
+        const lease = new VaultWriterLease({
+          ...options,
+          ownerToken,
+          generation,
+          faultBoundary: options.faultBoundary ?? NOOP_FAULT_BOUNDARY,
+        });
         await lease.#writeRecord(nowMs + options.durationMs);
+        await options.faultBoundary?.("lease-record-sync");
         return lease;
       } catch (error) {
         if (
@@ -117,7 +142,9 @@ export class VaultWriterLease {
     const nowMs = this.#clock.nowMs();
     try {
       this.#repository.renewWriter(this.#ownerToken, this.#generation, nowMs, this.#durationMs);
+      await this.#faultBoundary("lease-sqlite-renewal");
       await this.#writeRecord(nowMs + this.#durationMs);
+      await this.#faultBoundary("lease-file-renewal");
     } catch (error) {
       this.#held = false;
       clearInterval(this.#heartbeat);
@@ -131,7 +158,10 @@ export class VaultWriterLease {
     const existing = await readFile(this.#path, "utf8");
     if (existing !== "") {
       const record = JSON.parse(existing) as LeaseRecord;
-      if (record.ownerToken !== this.#ownerToken || record.generation !== this.#generation)
+      if (
+        record.ownerToken !== this.#ownerToken ||
+        (record.generation !== 0 && record.generation !== this.#generation)
+      )
         throw new Error("Vault writer lease file was replaced");
     }
     const handle = await open(this.#path, "r+", 0o600);

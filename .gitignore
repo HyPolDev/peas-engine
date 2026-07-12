@@ -7,6 +7,10 @@ scale-metrics-*.json
 audit-evidence-*.json
 audit-test-results.json
 audit-mutation-results.json
+audit-hard-kill-results.json
+vault-platform-evidence-*.json
+vault-runtime-validation-*.json
+vault-cross-device-*.json
 .commit-validation/
 release-manifest-*.json
 kernel-v2-go-no-go-*.md

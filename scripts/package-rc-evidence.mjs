@@ -11,6 +11,9 @@ const GOLDEN_PATH = "fixtures/earnings-cluster.v2.golden.json";
 const CAPTURE_PATH = "fixtures/earnings-cluster.v2.captured.ndjson";
 const PACKAGE_LOCK_PATH = "package-lock.json";
 const SCALE_POLICY_PATH = "config/scale-policy.v1.json";
+const ARTIFACT_VAULT_POLICY_PATH = "config/artifact-vault-deployment-policy.v1.json";
+const ARTIFACT_PLATFORM_CAPABILITIES_PATH = "config/artifact-platform-capabilities.v1.json";
+const ARTIFACT_FAULT_BOUNDARIES_PATH = "config/artifact-fault-boundaries.json";
 const REQUIRED_GATES = ["check-windows", "check-linux", "scale-10k-linux", "scale-100k-linux"];
 const CHECK_GATES = ["check-windows", "check-linux", "scale-100k-linux"];
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
@@ -21,7 +24,7 @@ const DECISIONS = new Map([
   ["NO_GO", "NO-GO"],
 ]);
 const SCOPE_BOUNDARIES = [
-  "This release candidate covers the deterministic Kernel V2 contracts only. The artifact vault, provider normalization, and live provider clients remain outside its scope.",
+  "This candidate covers deterministic Kernel V2 contracts and the provider-neutral artifact vault. Provider normalization and live provider clients remain outside its scope.",
   "Brokerage connectivity, orders, portfolio mutation, credentials, and automated trading effects are structurally excluded.",
   "The audited SQLite topology is a single-writer design; this evidence does not claim horizontally scalable or multi-writer processing.",
   "Scheduled 100k runs are regression evidence only. Release evidence requires the explicit audit-100k label or a manual workflow dispatch.",
@@ -209,6 +212,14 @@ function checkoutIdentity() {
   const captureText = captureBytes.toString("utf8").trim();
   const scalePolicyBytes = readFileSync(SCALE_POLICY_PATH);
   const scalePolicy = JSON.parse(scalePolicyBytes.toString("utf8"));
+  const artifactVaultPolicyBytes = readFileSync(ARTIFACT_VAULT_POLICY_PATH);
+  const artifactPlatformCapabilitiesBytes = readFileSync(ARTIFACT_PLATFORM_CAPABILITIES_PATH);
+  const artifactFaultBoundariesBytes = readFileSync(ARTIFACT_FAULT_BOUNDARIES_PATH);
+  const artifactVaultPolicy = JSON.parse(artifactVaultPolicyBytes.toString("utf8"));
+  const artifactPlatformCapabilities = JSON.parse(
+    artifactPlatformCapabilitiesBytes.toString("utf8"),
+  );
+  const artifactFaultBoundaries = JSON.parse(artifactFaultBoundariesBytes.toString("utf8"));
   if (
     scalePolicy.policyVersion !== 1 ||
     scalePolicy.metricsVersion !== 2 ||
@@ -217,6 +228,13 @@ function checkoutIdentity() {
     throw new Error("Checked-out scale policy has unsupported identity");
   }
   const scalePolicySha256 = sha256(scalePolicyBytes);
+  if (
+    artifactVaultPolicy.policyVersion !== 1 ||
+    artifactPlatformCapabilities.inventoryVersion !== 1 ||
+    artifactFaultBoundaries.schemaVersion !== 1
+  ) {
+    throw new Error("Checked-out artifact-vault policy has unsupported identity");
+  }
   return {
     runtime: {
       node: packageJson.engines?.node,
@@ -241,6 +259,15 @@ function checkoutIdentity() {
       scalePolicyPath: SCALE_POLICY_PATH,
       scalePolicySha256,
       scalePolicyVersion: scalePolicy.policyVersion,
+      artifactVaultPolicyPath: ARTIFACT_VAULT_POLICY_PATH,
+      artifactVaultPolicySha256: sha256(artifactVaultPolicyBytes),
+      artifactVaultPolicyVersion: artifactVaultPolicy.policyVersion,
+      artifactPlatformCapabilitiesPath: ARTIFACT_PLATFORM_CAPABILITIES_PATH,
+      artifactPlatformCapabilitiesSha256: sha256(artifactPlatformCapabilitiesBytes),
+      artifactPlatformCapabilitiesVersion: artifactPlatformCapabilities.inventoryVersion,
+      artifactFaultBoundariesPath: ARTIFACT_FAULT_BOUNDARIES_PATH,
+      artifactFaultBoundariesSha256: sha256(artifactFaultBoundariesBytes),
+      artifactFaultBoundariesVersion: artifactFaultBoundaries.schemaVersion,
     },
     scalePolicy,
     scalePolicyReference: {
@@ -291,16 +318,24 @@ function requireRunUrl(value, runId, repository, label) {
   return url;
 }
 
-function validateCheckResults(checkResults, label) {
+function validateCheckResults(checkResults, label, expectedSha, gateName) {
   const results = requireObject(checkResults, label);
   const testsWrapper = requireObject(results.tests, `${label}.tests`);
   const mutationWrapper = requireObject(results.mutations, `${label}.mutations`);
+  const hardKillWrapper = requireObject(results.hardKill, `${label}.hardKill`);
+  const platformWrapper = requireObject(results.platform, `${label}.platform`);
   requireString(testsWrapper.path, `${label}.tests.path`);
   requireString(mutationWrapper.path, `${label}.mutations.path`);
+  requireString(hardKillWrapper.path, `${label}.hardKill.path`);
+  requireString(platformWrapper.path, `${label}.platform.path`);
   requireSha256(testsWrapper.fileSha256, `${label}.tests.fileSha256`);
   requireSha256(mutationWrapper.fileSha256, `${label}.mutations.fileSha256`);
+  requireSha256(hardKillWrapper.fileSha256, `${label}.hardKill.fileSha256`);
+  requireSha256(platformWrapper.fileSha256, `${label}.platform.fileSha256`);
   const tests = requireObject(testsWrapper.value, `${label}.tests.value`);
   const mutations = requireObject(mutationWrapper.value, `${label}.mutations.value`);
+  const hardKill = requireObject(hardKillWrapper.value, `${label}.hardKill.value`);
+  const platform = requireObject(platformWrapper.value, `${label}.platform.value`);
   if (tests.resultVersion !== 1 || tests.status !== "passed") {
     throw new Error(`${label} does not contain passing version-1 test results`);
   }
@@ -328,6 +363,27 @@ function validateCheckResults(checkResults, label) {
   }
   if (mutations.resultVersion !== 1 || mutations.status !== "passed") {
     throw new Error(`${label} does not contain passing version-1 mutation results`);
+  }
+  if (
+    hardKill.resultVersion !== 1 ||
+    hardKill.status !== "passed" ||
+    hardKill.candidateCommitSha !== expectedSha ||
+    !Array.isArray(hardKill.boundaries) ||
+    hardKill.boundaries.length === 0 ||
+    hardKill.boundaries.some((boundary) => boundary.converged !== true)
+  ) {
+    throw new Error(`${label} does not contain complete hard-kill evidence`);
+  }
+  if (
+    platform.schemaVersion !== 2 ||
+    platform.candidateCommitSha !== expectedSha ||
+    platform.platform !== (gateName === "check-windows" ? "win32" : "linux") ||
+    platform.completeForGo !== true ||
+    platform.worktreeClean !== true ||
+    !Array.isArray(platform.unsupportedRequiredCapabilities) ||
+    platform.unsupportedRequiredCapabilities.length !== 0
+  ) {
+    throw new Error(`${label} does not contain complete platform evidence`);
   }
   const mutationTotal = requireSafeInteger(mutations.total, `${label}.mutations.total`, 1);
   const killed = requireSafeInteger(mutations.killed, `${label}.mutations.killed`);
@@ -452,7 +508,7 @@ function validateScaleMetric(metricValue, candidateSha, expectedIdentity, label)
 
 function validateManifest(value, expectedSha, expectedIdentity) {
   const manifest = requireObject(value, "release manifest");
-  if (manifest.manifestVersion !== 2) throw new Error("Unsupported release manifest version");
+  if (manifest.manifestVersion !== 3) throw new Error("Unsupported release manifest version");
   if (manifest.reconciliationStatus !== "passed") {
     throw new Error("Release manifest reconciliationStatus is not passed");
   }
@@ -491,6 +547,12 @@ function validateManifest(value, expectedSha, expectedIdentity) {
   const sourceInputs = requireObject(manifest.sourceInputs, "manifest sourceInputs");
   requireString(sourceInputs.packageLockPath, "manifest sourceInputs.packageLockPath");
   requireSha256(sourceInputs.packageLockSha256, "manifest sourceInputs.packageLockSha256");
+  const vaultEvidence = requireObject(manifest.vaultEvidence, "manifest vaultEvidence");
+  for (const field of ["deploymentPolicy", "capabilityInventory", "faultBoundaryInventory"]) {
+    const descriptor = requireObject(vaultEvidence[field], `manifest vaultEvidence.${field}`);
+    requireString(descriptor.path, `manifest vaultEvidence.${field}.path`);
+    requireSha256(descriptor.fileSha256, `manifest vaultEvidence.${field}.fileSha256`);
+  }
 
   const gates = requireObject(manifest.gates, "manifest gates");
   const gateNames = Object.keys(gates).sort();
@@ -538,7 +600,12 @@ function validateManifest(value, expectedSha, expectedIdentity) {
       throw new Error(`Manifest gate ${gateName} has unexpected trigger provenance`);
     }
     if (CHECK_GATES.includes(gateName)) {
-      validateCheckResults(gate.checkResults, `manifest gate ${gateName}.checkResults`);
+      validateCheckResults(
+        gate.checkResults,
+        `manifest gate ${gateName}.checkResults`,
+        expectedSha,
+        gateName,
+      );
     } else if (gate.checkResults !== null) {
       throw new Error(`Manifest gate ${gateName} has unexpected check results`);
     }

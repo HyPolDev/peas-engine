@@ -158,6 +158,7 @@ export function validateHttpResponseMetadata(value: unknown): SafeHttpResponseMe
 export function validateVaultConfig(value: ArtifactVaultConfig): ArtifactVaultConfig {
   const parsed = z
     .object({
+      runtimeRootMode: z.enum(["configured", "ci-temporary"]),
       runtimeRoot: z.string().min(1),
       maxArtifactBytes: safeSize,
       maxVaultBytes: safeSize,

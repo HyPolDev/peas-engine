@@ -216,16 +216,19 @@ const mutants = [
     test: "json-inert-boundary.test.js",
   },
   {
-    name: "vault-lease-preinstall-fence",
+    name: "vault-content-installed-transition",
     category: "vault",
     file: "src/adapters/artifacts/durable-artifact-store.ts",
     changes: [
       {
-        from: "await this.#lease.renewAndAssert();\n      let converged = false;",
-        to: "let converged = false;",
+        from: "this.#repository.markIntentContentInstalled(intent.intentId, this.#lease.fence());",
+        to: "void intent.intentId;",
+        expectedOccurrences: 2,
+        occurrence: 1,
       },
     ],
     test: "artifact-vault.test.js",
+    testPattern: "stores entity bytes",
   },
   {
     name: "vault-exact-redelivery-content",
@@ -238,6 +241,7 @@ const mutants = [
       },
     ],
     test: "artifact-vault.test.js",
+    testPattern: "attempt identity rejects metadata",
   },
   {
     name: "vault-corrupt-read-byte-cap",
@@ -250,6 +254,7 @@ const mutants = [
       },
     ],
     test: "artifact-vault.test.js",
+    testPattern: "oversized corrupt reads",
   },
   {
     name: "vault-verified-before-delivery",
@@ -262,6 +267,7 @@ const mutants = [
       },
     ],
     test: "artifact-vault.test.js",
+    testPattern: "tampered and missing committed content",
   },
   {
     name: "vault-relational-reconciliation",
@@ -274,6 +280,7 @@ const mutants = [
       },
     ],
     test: "artifact-vault.test.js",
+    testPattern: "canonical evidence reads",
   },
   {
     name: "vault-orphan-digest-classification",
@@ -286,11 +293,12 @@ const mutants = [
       },
     ],
     test: "artifact-vault.test.js",
+    testPattern: "invalid orphans are quarantined",
   },
   {
     name: "vault-filesystem-ancestor-rejection",
     category: "vault",
-    file: "src/adapters/artifacts/durable-artifact-store.ts",
+    file: "src/adapters/artifacts/trusted-filesystem.ts",
     changes: [
       {
         from: "if (!info.isDirectory() || info.isSymbolicLink() || info.dev !== device)",
@@ -298,6 +306,7 @@ const mutants = [
       },
     ],
     test: "artifact-vault.test.js",
+    testPattern: "real platform ancestor links",
   },
   {
     name: "vault-reconciliation-item-budget",
@@ -305,11 +314,12 @@ const mutants = [
     file: "src/adapters/artifacts/durable-artifact-store.ts",
     changes: [{ from: "processed >= maxItems ||", to: "processed > maxItems ||" }],
     test: "artifact-vault.test.js",
+    testPattern: "one-item reconciliation bounds",
   },
   {
     name: "vault-nested-runtime-ancestor-rejection",
     category: "vault",
-    file: "src/adapters/artifacts/durable-artifact-store.ts",
+    file: "src/adapters/artifacts/trusted-filesystem.ts",
     changes: [
       {
         from: "for (const ancestor of ancestors.reverse()) {",
@@ -317,6 +327,7 @@ const mutants = [
       },
     ],
     test: "artifact-vault.test.js",
+    testPattern: "junctions or symlinks above",
   },
   {
     name: "vault-transaction-fresh-expiry",
@@ -324,6 +335,7 @@ const mutants = [
     file: "src/adapters/artifacts/sqlite-artifact-repository.ts",
     changes: [{ from: "const nowMs = fence.nowMs();", to: "const nowMs = 0;" }],
     test: "artifact-vault.test.js",
+    testPattern: "transaction mutations evaluate lease expiry",
   },
   {
     name: "vault-opaque-identifier-persistence",
@@ -366,6 +378,7 @@ const mutants = [
       },
     ],
     test: "artifact-vault.test.js",
+    testPattern: "direct repository writes",
   },
   {
     name: "vault-redelivery-outcome-reconciliation",
@@ -378,6 +391,7 @@ const mutants = [
       },
     ],
     test: "artifact-vault.test.js",
+    testPattern: "exact redelivery verifies",
   },
   {
     name: "vault-stale-failure-outcome-fence",
@@ -389,8 +403,8 @@ const mutants = [
           {
             from: "await this.#lease.renewAndAssert();",
             to: "",
-            expectedOccurrences: 9,
-            occurrence: 4,
+            expectedOccurrences: 18,
+            occurrence: 5,
           },
         ],
       },
@@ -400,58 +414,42 @@ const mutants = [
           {
             from: "this.assertWriter(fence);",
             to: "",
-            expectedOccurrences: 8,
-            occurrence: 5,
+            expectedOccurrences: 16,
+            occurrence: 11,
           },
         ],
       },
     ],
     test: "artifact-vault.test.js",
+    testPattern: "expired takeover fences",
   },
   {
     name: "vault-stale-reconciliation-fence",
     category: "vault",
-    edits: [
+    file: "src/adapters/artifacts/sqlite-artifact-repository.ts",
+    changes: [
       {
-        file: "src/adapters/artifacts/durable-artifact-store.ts",
-        changes: [
-          {
-            from: "await this.#lease.renewAndAssert();",
-            to: "",
-            expectedOccurrences: 9,
-            occurrence: 5,
-          },
-        ],
-      },
-      {
-        file: "src/adapters/artifacts/sqlite-artifact-repository.ts",
-        changes: [
-          {
-            from: "this.assertWriter(fence);",
-            to: "",
-            expectedOccurrences: 8,
-            occurrence: 1,
-          },
-        ],
+        from: "if (state.writerGeneration !== fence.generation) {",
+        to: "if (false) {",
       },
     ],
     test: "artifact-vault.test.js",
+    testPattern: "hard kill after cursor advancement",
   },
   {
-    name: "vault-success-transaction-atomicity",
+    name: "vault-success-intent-commit-transition",
     category: "vault",
     file: "src/adapters/artifacts/sqlite-artifact-repository.ts",
     changes: [
       {
-        from: "return this.#database\n      .transaction(() => {\n        this.assertWriter(fence);\n        const attempt = this.getAttempt(observation.attemptId);",
-        to: "return (() => {\n        this.assertWriter(fence);\n        const attempt = this.getAttempt(observation.attemptId);",
-      },
-      {
-        from: "return disposition;\n      })\n      .immediate();",
-        to: "return disposition;\n      })();",
+        from: 'this.#insertInstallTransition(intentId, "evidence-committed", fence);',
+        to: "void intentId;",
+        expectedOccurrences: 2,
+        occurrence: 2,
       },
     ],
     test: "artifact-vault.test.js",
+    testPattern: "stores entity bytes",
   },
   {
     name: "vault-incident-update-immutability",
@@ -464,6 +462,7 @@ const mutants = [
       },
     ],
     test: "artifact-vault.test.js",
+    testPattern: "immutable artifact evidence",
   },
   {
     name: "vault-reconciliation-sql-limit",
@@ -482,20 +481,20 @@ const mutants = [
       },
     ],
     test: "artifact-vault.test.js",
+    testPattern: "one-item reconciliation bounds",
   },
   {
-    name: "vault-reconciliation-generation-check",
+    name: "vault-same-generation-null-cursor",
     category: "vault",
     file: "src/adapters/artifacts/sqlite-artifact-repository.ts",
     changes: [
       {
-        from: "WHERE singleton = 1 AND generation = ? AND cursor_token = ?",
-        to: "WHERE singleton = 1 AND ? IS NOT NULL AND ? IS NOT NULL",
-        expectedOccurrences: 2,
-        occurrence: 1,
+        from: "if (expectedCursor === null)\n          throw new ArtifactVaultError(",
+        to: "if (false)\n          throw new ArtifactVaultError(",
       },
     ],
     test: "artifact-vault.test.js",
+    testPattern: "terminal reconciliation is recoverable",
   },
   {
     name: "vault-unbounded-directory-enumeration",
@@ -508,20 +507,59 @@ const mutants = [
       },
     ],
     test: "artifact-vault.test.js",
+    testPattern: "fanout overflow",
   },
   {
     name: "vault-cursor-advance-before-action",
     category: "vault",
-    file: "src/adapters/artifacts/durable-artifact-store.ts",
+    file: "src/adapters/artifacts/sqlite-artifact-repository.ts",
     changes: [
       {
-        from: "await this.#quarantine(path, id);",
-        to: "await advance(state.phase, 0, name);\n            await this.#quarantine(path, id);",
-        expectedOccurrences: 3,
-        occurrence: 1,
+        from: "pendingActionKey: null,\n          rowsVisited: current.rowsVisited",
+        to: "pendingActionKey: actionKey,\n          rowsVisited: current.rowsVisited",
       },
     ],
     test: "artifact-vault.test.js",
+    testPattern: "invalid orphans are quarantined",
+  },
+  {
+    name: "vault-runtime-database-root-binding",
+    category: "vault",
+    file: "src/adapters/artifacts/durable-artifact-store.ts",
+    changes: [
+      {
+        from: "if (repositoryPath !== resolve(runtimePaths.databasePath)) {",
+        to: "if (false) {",
+      },
+    ],
+    test: "artifact-vault.test.js",
+    testPattern: "vault refuses a SQLite database outside",
+  },
+  {
+    name: "vault-explicit-runtime-root",
+    category: "vault",
+    file: "src/adapters/artifacts/runtime-root.ts",
+    changes: [
+      {
+        from: "const configured = environment[PEAS_RUNTIME_ROOT_ENV];",
+        to: 'const configured = environment[PEAS_RUNTIME_ROOT_ENV] ?? (platform === "win32" ? "C:\\\\unsafe-default" : "/unsafe-default");',
+      },
+    ],
+    test: "artifact-vault.test.js",
+    testPattern: "runtime roots require explicit",
+  },
+  {
+    name: "vault-windows-unc-runtime-root",
+    category: "vault",
+    file: "src/adapters/artifacts/runtime-root.ts",
+    changes: [
+      {
+        from: "if (/^(?:\\\\\\\\|\\\\\\\\[?.]\\\\)/u.test(path)) {",
+        to: "if (false) {",
+      },
+    ],
+    test: "artifact-vault.test.js",
+    testPattern: "runtime roots require explicit",
   },
 ];
 

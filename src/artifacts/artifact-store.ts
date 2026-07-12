@@ -10,6 +10,9 @@ export type PersistedRevisionId = string & { readonly __persistedRevisionId: uni
 export type ObservationId = string;
 export type StagingId = string;
 export type IncidentId = string;
+export type ReconciliationRunId = string;
+export type ReconciliationActionKey = string;
+export type InstallIntentId = string;
 
 export type RetrievalOutcome = "succeeded" | "failed" | "abandoned" | "expired";
 
@@ -95,6 +98,7 @@ export type ArtifactObservation = Readonly<{
 
 export type IntegrityIncident = Readonly<{
   incidentId: IncidentId;
+  actionKey?: ReconciliationActionKey | null;
   kind: IncidentKind;
   recordedAtMs: number;
   stagingId: StagingId | null;
@@ -128,6 +132,7 @@ export type ArtifactPage<T> = Readonly<{
 }>;
 
 export type ReconciliationReport = Readonly<{
+  runId: ReconciliationRunId;
   validArtifacts: number;
   adoptedOrphans: number;
   abandonedStages: number;
@@ -144,12 +149,15 @@ export type ReconciliationReport = Readonly<{
 
 export type ReconciliationBudget = Readonly<{
   cursor: string | null;
+  startNew: boolean;
+  completedRunId: ReconciliationRunId | null;
   maxItems: number;
   maxElapsedMs: number;
   maxBytes: number;
 }>;
 
 export type ArtifactVaultConfig = Readonly<{
+  runtimeRootMode: "configured" | "ci-temporary";
   runtimeRoot: string;
   maxArtifactBytes: number;
   maxVaultBytes: number;
