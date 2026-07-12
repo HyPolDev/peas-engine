@@ -2,7 +2,12 @@ import { z } from "zod";
 
 import type {
   ArtifactVaultConfig,
-  RetrievalAttemptDraft,
+  PersistedAttemptId,
+  PersistedProviderId,
+  PersistedRecordId,
+  PersistedRetrievalAttemptDraft,
+  PersistedRevisionId,
+  RetrievalAttempt,
   SafeHttpResponseMetadata,
 } from "./artifact-store.js";
 import { canonicalHash } from "../core/hash.js";
@@ -92,30 +97,58 @@ const response = z
   })
   .strict();
 
+const persistedDrafts = new WeakSet<object>();
+const persistedAttempts = new WeakSet<object>();
+const persistedIdentity = /^(?:att1|prv1|rec1|rev1)_[0-9a-f]{64}$/u;
+
 export function assertArtifactDigest(value: string): void {
   digest.parse(value);
 }
 
-export function validateRetrievalAttempt(value: unknown): RetrievalAttemptDraft {
+export function validateRetrievalAttempt(value: unknown): PersistedRetrievalAttemptDraft {
   const parsed = attempt.parse(value);
-  return {
+  const persisted = {
     ...parsed,
-    attemptId: persistedIdentifier("attempt", parsed.attemptId),
-    provider: persistedIdentifier("provider", parsed.provider),
-    recordId: persistedIdentifier("record", parsed.recordId),
-    revisionId: persistedIdentifier("revision", parsed.revisionId),
-  } as RetrievalAttemptDraft;
+    attemptId: persistedIdentifier("attempt", parsed.attemptId) as PersistedAttemptId,
+    provider: persistedIdentifier("provider", parsed.provider) as PersistedProviderId,
+    recordId: persistedIdentifier("record", parsed.recordId) as PersistedRecordId,
+    revisionId: persistedIdentifier("revision", parsed.revisionId) as PersistedRevisionId,
+  } satisfies PersistedRetrievalAttemptDraft;
+  persistedDrafts.add(persisted);
+  return persisted;
 }
 
-export function persistedRetrievalAttemptId(value: string): string {
-  return persistedIdentifier("attempt", identifier.parse(value));
+export function persistedRetrievalAttemptId(value: string): PersistedAttemptId {
+  return persistedIdentifier("attempt", identifier.parse(value)) as PersistedAttemptId;
+}
+
+export function createPersistedRetrievalAttempt(
+  draft: PersistedRetrievalAttemptDraft,
+  stagingId: string,
+  recordedAtMs: number,
+): RetrievalAttempt {
+  if (!persistedDrafts.has(draft))
+    throw new TypeError("Retrieval attempt was not derived at the vault boundary");
+  const persisted = { ...draft, stagingId, recordedAtMs } satisfies RetrievalAttempt;
+  persistedAttempts.add(persisted);
+  return persisted;
+}
+
+export function assertPersistedRetrievalAttempt(value: RetrievalAttempt): void {
+  if (!persistedAttempts.has(value))
+    throw new TypeError("Retrieval attempt was not derived at the vault boundary");
+  for (const identity of [value.attemptId, value.provider, value.recordId, value.revisionId]) {
+    if (!persistedIdentity.test(identity))
+      throw new TypeError("Persisted retrieval identity is invalid");
+  }
 }
 
 function persistedIdentifier(
   kind: "attempt" | "provider" | "record" | "revision",
   value: string,
 ): string {
-  return canonicalHash(`peas/artifact-${kind}-identifier/v1`, { value });
+  const prefix = { attempt: "att1", provider: "prv1", record: "rec1", revision: "rev1" }[kind];
+  return `${prefix}_${canonicalHash(`peas/artifact-${kind}-identifier/v1`, { value })}`;
 }
 
 export function validateHttpResponseMetadata(value: unknown): SafeHttpResponseMetadata {

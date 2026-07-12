@@ -25,6 +25,7 @@ import { deriveIncidentId, deriveObservationId } from "../../artifacts/identity.
 import {
   assertArtifactDigest,
   assertSafeByteAddition,
+  createPersistedRetrievalAttempt,
   validateHttpResponseMetadata,
   persistedRetrievalAttemptId,
   validateRetrievalAttempt,
@@ -284,11 +285,11 @@ export class DurableArtifactStore implements ArtifactStore {
     const stagingId = randomUUID();
     const stagePath = safeChild(this.#paths.staging, `${stagingId}.part`);
     await assertTrustedPath(this.#paths.root, stagePath, this.#paths.device);
-    const attempt: RetrievalAttempt = {
-      ...attemptDraft,
+    const attempt: RetrievalAttempt = createPersistedRetrievalAttempt(
+      attemptDraft,
       stagingId,
-      recordedAtMs: this.#clock.nowMs(),
-    };
+      this.#clock.nowMs(),
+    );
     let reserved = 0;
     try {
       await this.#lease.renewAndAssert();

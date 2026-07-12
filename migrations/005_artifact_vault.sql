@@ -1,9 +1,22 @@
 CREATE TABLE artifact_retrieval_attempts (
-  attempt_id TEXT PRIMARY KEY,
+  attempt_id TEXT PRIMARY KEY CHECK (
+    length(attempt_id) = 69 AND substr(attempt_id, 1, 5) = 'att1_' AND
+    substr(attempt_id, 6) = lower(substr(attempt_id, 6)) AND
+    substr(attempt_id, 6) NOT GLOB '*[^0-9a-f]*'
+  ),
   staging_id TEXT NOT NULL UNIQUE,
-  provider TEXT NOT NULL,
-  provider_record_id TEXT NOT NULL,
-  provider_revision_id TEXT NOT NULL,
+  provider TEXT NOT NULL CHECK (
+    length(provider) = 69 AND substr(provider, 1, 5) = 'prv1_' AND
+    substr(provider, 6) NOT GLOB '*[^0-9a-f]*'
+  ),
+  provider_record_id TEXT NOT NULL CHECK (
+    length(provider_record_id) = 69 AND substr(provider_record_id, 1, 5) = 'rec1_' AND
+    substr(provider_record_id, 6) NOT GLOB '*[^0-9a-f]*'
+  ),
+  provider_revision_id TEXT NOT NULL CHECK (
+    length(provider_revision_id) = 69 AND substr(provider_revision_id, 1, 5) = 'rev1_' AND
+    substr(provider_revision_id, 6) NOT GLOB '*[^0-9a-f]*'
+  ),
   started_at_ms INTEGER NOT NULL CHECK (started_at_ms >= 0),
   recorded_at_ms INTEGER NOT NULL CHECK (recorded_at_ms >= 0),
   request_method TEXT NOT NULL,
@@ -20,7 +33,10 @@ CREATE INDEX artifact_attempts_request_identity
 
 CREATE TABLE artifact_retrieval_outcomes (
   sequence INTEGER PRIMARY KEY,
-  attempt_id TEXT NOT NULL UNIQUE,
+  attempt_id TEXT NOT NULL UNIQUE CHECK (
+    length(attempt_id) = 69 AND substr(attempt_id, 1, 5) = 'att1_' AND
+    substr(attempt_id, 6) NOT GLOB '*[^0-9a-f]*'
+  ),
   outcome TEXT NOT NULL CHECK (outcome IN ('succeeded', 'failed', 'abandoned', 'expired')),
   completed_at_ms INTEGER NOT NULL CHECK (completed_at_ms >= 0),
   reason_code TEXT,
@@ -52,11 +68,23 @@ CREATE TABLE artifact_writer_fence (
 CREATE TABLE artifact_observations (
   sequence INTEGER PRIMARY KEY,
   observation_id TEXT NOT NULL UNIQUE,
-  attempt_id TEXT NOT NULL UNIQUE,
+  attempt_id TEXT NOT NULL UNIQUE CHECK (
+    length(attempt_id) = 69 AND substr(attempt_id, 1, 5) = 'att1_' AND
+    substr(attempt_id, 6) NOT GLOB '*[^0-9a-f]*'
+  ),
   artifact_digest TEXT NOT NULL,
-  provider TEXT NOT NULL,
-  provider_record_id TEXT NOT NULL,
-  provider_revision_id TEXT NOT NULL,
+  provider TEXT NOT NULL CHECK (
+    length(provider) = 69 AND substr(provider, 1, 5) = 'prv1_' AND
+    substr(provider, 6) NOT GLOB '*[^0-9a-f]*'
+  ),
+  provider_record_id TEXT NOT NULL CHECK (
+    length(provider_record_id) = 69 AND substr(provider_record_id, 1, 5) = 'rec1_' AND
+    substr(provider_record_id, 6) NOT GLOB '*[^0-9a-f]*'
+  ),
+  provider_revision_id TEXT NOT NULL CHECK (
+    length(provider_revision_id) = 69 AND substr(provider_revision_id, 1, 5) = 'rev1_' AND
+    substr(provider_revision_id, 6) NOT GLOB '*[^0-9a-f]*'
+  ),
   retrieved_at_ms INTEGER NOT NULL CHECK (retrieved_at_ms >= 0),
   request_method TEXT NOT NULL,
   request_origin TEXT NOT NULL,

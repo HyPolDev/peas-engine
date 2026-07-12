@@ -331,8 +331,36 @@ const mutants = [
     file: "src/artifacts/validation.ts",
     changes: [
       {
-        from: "return canonicalHash(`peas/artifact-" + "$" + "{kind}-identifier/v1`, { value });",
-        to: "return value;",
+        from:
+          "return `" +
+          "$" +
+          "{prefix}_" +
+          "$" +
+          "{canonicalHash(`peas/artifact-" +
+          "$" +
+          "{kind}-identifier/v1`, { value })}`;",
+        to: "return `" + "$" + "{prefix}_" + "$" + "{value}`;",
+      },
+    ],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-raw-repository-identity-acceptance",
+    category: "vault",
+    file: "src/adapters/artifacts/sqlite-artifact-repository.ts",
+    changes: [{ from: "assertPersistedRetrievalAttempt(attempt);", to: "" }],
+    test: "artifact-vault.test.js",
+  },
+  {
+    name: "vault-domain-prefix-sql-validation",
+    category: "vault",
+    file: "migrations/005_artifact_vault.sql",
+    changes: [
+      {
+        from: "substr(provider_revision_id, 1, 5) = 'rev1_' AND",
+        to: "1 AND",
+        expectedOccurrences: 2,
+        occurrence: 1,
       },
     ],
     test: "artifact-vault.test.js",
@@ -357,8 +385,10 @@ const mutants = [
         file: "src/adapters/artifacts/durable-artifact-store.ts",
         changes: [
           {
-            from: "await this.#lease.renewAndAssert();\n        await rm(stagePath",
-            to: "await rm(stagePath",
+            from: "await this.#lease.renewAndAssert();",
+            to: "",
+            expectedOccurrences: 11,
+            occurrence: 4,
           },
         ],
       },

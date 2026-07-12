@@ -11,6 +11,7 @@ import type {
 } from "../../artifacts/artifact-store.js";
 import { canonicalHash } from "../../core/hash.js";
 import { canonicalJson, type JsonValue } from "../../core/json.js";
+import { assertPersistedRetrievalAttempt } from "../../artifacts/validation.js";
 
 type AttemptRow = {
   attempt_id: string;
@@ -137,6 +138,7 @@ export class SqliteArtifactRepository {
   }
 
   recordAttempt(attempt: RetrievalAttempt, fence: WriterFence): void {
+    assertPersistedRetrievalAttempt(attempt);
     this.#database
       .transaction(() => {
         this.assertWriter(fence);
@@ -216,6 +218,7 @@ export class SqliteArtifactRepository {
     this.#database
       .transaction(() => {
         this.assertWriter(fence);
+        this.#assertPersistedOutcome(outcome);
         this.#insertOutcome(outcome);
       })
       .immediate();
@@ -239,6 +242,13 @@ export class SqliteArtifactRepository {
       );
   }
 
+  #assertPersistedOutcome(outcome: RetrievalAttemptOutcome): void {
+    if (!/^att1_[0-9a-f]{64}$/u.test(outcome.attemptId))
+      throw new TypeError("Persisted attempt identity is invalid");
+    if (this.getAttempt(outcome.attemptId) === undefined)
+      throw new Error("Artifact outcome attempt is missing");
+  }
+
   commitSuccess(
     artifact: ArtifactMetadata,
     observation: ArtifactObservation,
@@ -248,6 +258,18 @@ export class SqliteArtifactRepository {
     return this.#database
       .transaction(() => {
         this.assertWriter(fence);
+        const attempt = this.getAttempt(observation.attemptId);
+        if (attempt === undefined) throw new Error("Artifact observation attempt is missing");
+        relationalMismatch("Artifact observation attempt", [
+          [observation.provider, attempt.provider],
+          [observation.recordId, attempt.recordId],
+          [observation.revisionId, attempt.revisionId],
+          [observation.request.method, attempt.request.method],
+          [observation.request.origin, attempt.request.origin],
+          [observation.request.pathHash, attempt.request.pathHash],
+          [observation.request.routeLabel, attempt.request.routeLabel],
+          [observation.request.identityHash, attempt.request.identityHash],
+        ]);
         const existing = this.stat(artifact.digest);
         let disposition: "created" | "deduplicated" = "deduplicated";
         if (existing === undefined) {

@@ -23,12 +23,14 @@ import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/datab
 import { deriveObservationId, sanitizeRequestIdentity } from "../src/artifacts/identity.js";
 import {
   assertSafeByteAddition,
+  createPersistedRetrievalAttempt,
   persistedRetrievalAttemptId,
   validateRetrievalAttempt,
 } from "../src/artifacts/validation.js";
 import type {
   ArtifactVaultConfig,
   ReconciliationReport,
+  RetrievalAttempt,
   StoreArtifactRequest,
 } from "../src/artifacts/artifact-store.js";
 import { ManualClock } from "../src/core/clock.js";
@@ -310,6 +312,56 @@ test("grammar-valid external identifiers are irreversibly hashed before persiste
   );
 });
 
+test("direct repository writes reject raw or prefix-forged external identities without leakage", async (context) => {
+  const { database, repository, clock } = await harness(context);
+  const sentinel = "RepositoryBypassSecret_91ab.Valid";
+  const rawAttempt = {
+    attemptId: sentinel,
+    provider: sentinel,
+    recordId: sentinel,
+    revisionId: sentinel,
+    stagingId: "raw-repository-stage",
+    startedAtMs: clock.nowMs(),
+    recordedAtMs: clock.nowMs(),
+    request: sanitizeRequestIdentity({
+      method: "GET",
+      origin: "https://example.test",
+      path: "/repository-boundary",
+      routeLabel: "fixture.repository-boundary",
+    }),
+  } as unknown as RetrievalAttempt;
+  let message = "";
+  assert.throws(
+    () => repository.recordAttempt(rawAttempt, activeFence(database, clock)),
+    (error: unknown) => {
+      message = error instanceof Error ? error.message : String(error);
+      return /not derived at the vault boundary/u.test(message);
+    },
+  );
+  assert.equal(message.includes(sentinel), false);
+  assert.equal(database.serialize().includes(sentinel), false);
+  assert.throws(
+    () =>
+      database
+        .prepare(`INSERT INTO artifact_retrieval_attempts (
+          attempt_id, staging_id, provider, provider_record_id, provider_revision_id,
+          started_at_ms, recorded_at_ms, request_method, request_origin, request_path_hash,
+          request_route_label, request_identity_hash, attempt_json, attempt_hash
+        ) VALUES (?, ?, ?, ?, ?, 0, 0, 'GET', 'https://example.test', ?, 'fixture', ?, '{}', ?)`)
+        .run(
+          `att1_${"a".repeat(64)}`,
+          "forged-prefix-stage",
+          `prv1_${"b".repeat(64)}`,
+          `rec1_${"c".repeat(64)}`,
+          `bad1_${"f".repeat(64)}`,
+          "d".repeat(64),
+          "e".repeat(64),
+          "f".repeat(64),
+        ),
+    /constraint/u,
+  );
+});
+
 test("exact redelivery returns the committed result without fabricating evidence", async (context) => {
   const { database, store } = await harness(context);
   const bytes = Buffer.from("redelivered entity");
@@ -370,11 +422,11 @@ test("attempt identity rejects metadata, content, and incomplete replay conflict
     /conflicts/u,
   );
   repository.recordAttempt(
-    {
-      ...validateRetrievalAttempt(request("incomplete-attempt", Buffer.alloc(0)).attempt),
-      stagingId: "incomplete-stage",
-      recordedAtMs: clock.nowMs(),
-    },
+    createPersistedRetrievalAttempt(
+      validateRetrievalAttempt(request("incomplete-attempt", Buffer.alloc(0)).attempt),
+      "incomplete-stage",
+      clock.nowMs(),
+    ),
     activeFence(database, clock),
   );
   await assert.rejects(
@@ -554,7 +606,7 @@ test("transaction mutations evaluate lease expiry from a fresh clock reading", a
   const draft = { ...raw, attempt: validateRetrievalAttempt(raw.attempt) };
   const fence = activeFence(database, clock);
   repository.recordAttempt(
-    { ...draft.attempt, stagingId: "expired-before-commit-stage", recordedAtMs: clock.nowMs() },
+    createPersistedRetrievalAttempt(draft.attempt, "expired-before-commit-stage", clock.nowMs()),
     fence,
   );
   const digest = createHash("sha256").update(bytes).digest("hex");
@@ -867,16 +919,18 @@ test("reconciliation expires attempts and quarantines unowned stages", async (co
     routeLabel: "fixture.stage",
   });
   repository.recordAttempt(
-    {
-      attemptId: "expired-attempt",
-      stagingId: "expired-stage",
-      provider: "fixture",
-      recordId: "record",
-      revisionId: "1",
-      startedAtMs: clock.nowMs(),
-      recordedAtMs: clock.nowMs(),
-      request: requestIdentity,
-    },
+    createPersistedRetrievalAttempt(
+      validateRetrievalAttempt({
+        attemptId: "expired-attempt",
+        provider: "fixture",
+        recordId: "record",
+        revisionId: "1",
+        startedAtMs: clock.nowMs(),
+        request: requestIdentity,
+      }),
+      "expired-stage",
+      clock.nowMs(),
+    ),
     activeFence(database, clock),
   );
   writeFileSync(join(root, "artifacts", "staging", "expired-stage.part"), "partial");
@@ -891,7 +945,7 @@ test("reconciliation expires attempts and quarantines unowned stages", async (co
     (
       database
         .prepare("SELECT outcome FROM artifact_retrieval_outcomes WHERE attempt_id = ?")
-        .get("expired-attempt") as { outcome: string }
+        .get(persistedRetrievalAttemptId("expired-attempt")) as { outcome: string }
     ).outcome,
     "expired",
   );

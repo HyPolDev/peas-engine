@@ -3,6 +3,10 @@ import type { Readable } from "node:stream";
 export type ArtifactDigest = string;
 export type ArtifactSize = number;
 export type RetrievalAttemptId = string;
+export type PersistedAttemptId = string & { readonly __persistedAttemptId: unique symbol };
+export type PersistedProviderId = string & { readonly __persistedProviderId: unique symbol };
+export type PersistedRecordId = string & { readonly __persistedRecordId: unique symbol };
+export type PersistedRevisionId = string & { readonly __persistedRevisionId: unique symbol };
 export type ObservationId = string;
 export type StagingId = string;
 export type IncidentId = string;
@@ -48,11 +52,20 @@ export type RetrievalAttemptDraft = Readonly<{
   request: SanitizedRequestIdentity;
 }>;
 
-export type RetrievalAttempt = RetrievalAttemptDraft &
+export type PersistedRetrievalAttemptDraft = Readonly<{
+  attemptId: PersistedAttemptId;
+  provider: PersistedProviderId;
+  recordId: PersistedRecordId;
+  revisionId: PersistedRevisionId;
+  startedAtMs: number;
+  request: SanitizedRequestIdentity;
+}>;
+
+export type RetrievalAttempt = PersistedRetrievalAttemptDraft &
   Readonly<{ stagingId: StagingId; recordedAtMs: number }>;
 
 export type RetrievalAttemptOutcome = Readonly<{
-  attemptId: RetrievalAttemptId;
+  attemptId: PersistedAttemptId;
   outcome: RetrievalOutcome;
   completedAtMs: number;
   reasonCode: string | null;
@@ -69,11 +82,11 @@ export type ArtifactMetadata = Readonly<{
 
 export type ArtifactObservation = Readonly<{
   observationId: ObservationId;
-  attemptId: RetrievalAttemptId;
+  attemptId: PersistedAttemptId;
   artifactDigest: ArtifactDigest;
-  provider: string;
-  recordId: string;
-  revisionId: string;
+  provider: PersistedProviderId;
+  recordId: PersistedRecordId;
+  revisionId: PersistedRevisionId;
   retrievedAtMs: number;
   request: SanitizedRequestIdentity;
   response: SafeHttpResponseMetadata;
