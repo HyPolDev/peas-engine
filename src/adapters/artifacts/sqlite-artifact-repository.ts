@@ -400,7 +400,14 @@ export class SqliteArtifactRepository {
       .transaction(() => {
         this.assertWriter(fence);
         this.#assertPersistedOutcome(outcome);
-        this.#insertOutcome(outcome);
+        const existing = this.#getOutcome(outcome.attemptId);
+        if (existing === undefined) this.#insertOutcome(outcome);
+        else
+          relationalMismatch("Artifact terminal outcome", [
+            [outcome.outcome, existing.outcome],
+            [outcome.reasonCode, existing.reasonCode],
+            [outcome.detailHash, existing.detailHash],
+          ]);
       })
       .immediate();
   }

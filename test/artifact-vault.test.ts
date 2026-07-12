@@ -1004,6 +1004,16 @@ test("reconciliation expires attempts and quarantines unowned stages", async (co
   clock.advanceBy(1_000);
 
   const report = await store.reconcile();
+  repository.finishAttempt(
+    {
+      attemptId: persistedRetrievalAttemptId("expired-attempt"),
+      outcome: "expired",
+      completedAtMs: clock.nowMs() + 1,
+      reasonCode: "stage-expired",
+      detailHash: null,
+    },
+    activeFence(database, clock),
+  );
   assert.equal(report.expiredStages, 1);
   assert.equal(report.quarantinedObjects, 2);
   assert.equal(
@@ -1013,6 +1023,14 @@ test("reconciliation expires attempts and quarantines unowned stages", async (co
         .get(persistedRetrievalAttemptId("expired-attempt")) as { outcome: string }
     ).outcome,
     "expired",
+  );
+  assert.equal(
+    (
+      database
+        .prepare("SELECT count(*) count FROM artifact_retrieval_outcomes WHERE attempt_id = ?")
+        .get(persistedRetrievalAttemptId("expired-attempt")) as { count: bigint }
+    ).count,
+    1n,
   );
   assert.deepEqual(readdirSync(join(root, "artifacts", "snapshots")), []);
 });
