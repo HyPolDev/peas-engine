@@ -1,13 +1,21 @@
 # Read-only earnings vertical-slice plan
 
-- Status: PR 2A design review may continue, but implementation and all provider normalization are
-  blocked until an exact Kernel V2 RC.2 candidate SHA passes Windows, Linux, 10k, and 100k remote
-  gates, publishes durable attested evidence, and receives a `GO` decision
+- Status: Kernel V2 RC.2 has effective `GO`; PR 2A is complete and merged; PR 2B recorded SEC is
+  the current implementation gate
+- RC.2 evidence: immutable prerelease `v0.2.0-kernel-rc.2` at
+  `fe04e32f9b218b41b1c56bffd2a131fb32192f82`; Windows, Linux, 10k, 100k, release, asset, and
+  checksum verification passed
+- PR 2A merge: pull request #2, merged to `main` at
+  `e350210a3c8d8f0bd3ae512dde9461fcfb58d0b4`
 - RC.1 disposition: `CONDITIONAL GO` for offline audit comparison and design only; it is immutable
   historical evidence, not the frozen kernel
 - Explicitly excluded: brokerage connectivity, orders, portfolio mutation, and automated trading
 
-## PR 2A: artifact-vault foundation
+## PR 2A: artifact-vault foundation (complete)
+
+PR 2A is merged. The implementation, recovery state machine, platform policy, hard-kill matrix,
+runtime-root checks, and evidence integration are now part of `main`. The remaining work begins at
+the provider boundary; PR 2A intentionally contains no SEC, FMP, or issuer-IR semantics.
 
 This PR is provider-neutral. It introduces `ArtifactDigest`, `ArtifactMetadata`,
 `RetrievalObservation`, `StoredArtifact`, and `ArtifactStore` without SEC, FMP, or IR parsing.
@@ -50,11 +58,17 @@ and quarantine. Windows and Linux both exercise concurrent rename races and runt
 
 ## PR 2B: recorded SEC end-to-end
 
+The proposed contract and implementation sequence are in
+[`ADR 0007`](adr/0007-recorded-sec-normalization.md). Copy-ready bounded agent assignments are in
+[`docs/agent-prompts/pr-2b-recorded-sec.md`](agent-prompts/pr-2b-recorded-sec.md). Both remain
+proposed until the architecture decisions are accepted or amended.
+
 ### Binding EventDraft resource boundary
 
-PR 2B cannot merge, and no recorded or live provider normalizer may submit an `EventDraft`, until
-untrusted drafts have deterministic resource limits. The implementation may land in Kernel RC.2,
-but it remains a binding PR 2B precondition regardless of which PR owns the code.
+This precondition is complete in Kernel RC.2. `EVENT_PAYLOAD_LIMITS`, iterative JSON validation,
+bounded serialized parsing, and atomic memory/SQLite rejection cover total UTF-8 bytes, structural
+depth, total nodes, array length, object-key count, and individual string/key bytes. The boundary
+remains a frozen PR 2B contract and must not regress.
 
 The boundary must reject an oversized or structurally excessive draft before recursive canonical
 JSON processing can exhaust memory or the call stack. Versioned limits must cover at least total
@@ -116,15 +130,12 @@ The existing terminal `ambiguous` state is necessary but insufficient because a 
 after the external submission and before recording ambiguity. Authorization remains blocked until
 the pre-call durable state and post-crash reconciliation protocol are implemented and proven.
 
-## Go/no-go boundary
+## Go/no-go boundary (satisfied)
 
-No artifact or provider implementation starts until the exact same RC.2 candidate commit SHA is
-present in both OS checks, 10k and 100k metrics, golden evidence, and the RC tag. Repository release
-immutability must be enabled before publication; the completed go/no-go report, reconciled
-manifest, and `SHA256SUMS` must be attached to the draft; and the draft must then be published as an
-immutable prerelease. The release must report `isImmutable: true`, `gh release verify` must verify
-the tag and candidate commit, and `gh release verify-asset` must pass for every downloaded asset as
-defined by ADR 0005. RC.1 evidence cannot satisfy this boundary.
+The RC.2 foundation gate is satisfied. The exact candidate SHA is bound to both OS checks, 10k and
+100k metrics, golden evidence, and the annotated RC tag. The prerelease is immutable; `gh release
+verify`, all three `gh release verify-asset` checks, and local `SHA256SUMS` comparison succeeded.
+No additional kernel release ceremony blocks PR 2B.
 
 Success of this read-only sequence does not authorize brokerage work; that requires the separate
 architecture, safety review, durable submission protocol, broker reconciliation, idempotency, and

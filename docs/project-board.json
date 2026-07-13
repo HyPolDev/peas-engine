@@ -1,0 +1,304 @@
+{
+  "schemaVersion": 1,
+  "project": "PEAS Engine",
+  "lastReviewed": "2026-07-13",
+  "operatingModel": {
+    "execution": "GitHub Issues/Projects",
+    "specification": "Repository docs, ADRs, fixtures, and evidence",
+    "orientation": "Interactive blueprint",
+    "readOnlyBeforeLive": true
+  },
+  "current": {
+    "stage": "P1",
+    "status": "ready",
+    "branch": "main",
+    "mainCommit": "e350210a3c8d8f0bd3ae512dde9461fcfb58d0b4",
+    "release": "v0.2.0-kernel-rc.2",
+    "focus": "PR 2B recorded SEC end-to-end",
+    "nextGate": "Recorded SEC artifacts normalize into bounded EventDrafts and produce replay-identical audited clusters"
+  },
+  "stages": [
+    {
+      "id": "P0",
+      "name": "Foundation & evidence",
+      "status": "done",
+      "goal": "Make capture, replay, artifacts, and release evidence trustworthy before provider work.",
+      "tasks": [
+        {
+          "id": "P0-01",
+          "title": "Deterministic replay kernel",
+          "status": "done",
+          "owner": "agent/deterministic-replay-kernel",
+          "dependsOn": [],
+          "acceptance": "Captured stream produces identical audited state and decision hashes in live-style processing and replay.",
+          "evidence": [
+            "fixtures/earnings-cluster.v2.captured.ndjson",
+            "fixtures/earnings-cluster.v2.golden.json"
+          ]
+        },
+        {
+          "id": "P0-02",
+          "title": "Artifact vault and recovery boundaries",
+          "status": "done",
+          "owner": "codex/pr-2a-artifact-vault",
+          "dependsOn": ["P0-01"],
+          "acceptance": "Raw bytes are content-addressed, verified, reconciled, and quarantined on corruption or path escape.",
+          "evidence": [
+            "docs/adr/0006-provider-neutral-artifact-vault.md",
+            "migrations/005_artifact_vault.sql",
+            "https://github.com/HyPolDev/peas-engine/pull/2",
+            "main@e350210a3c8d8f0bd3ae512dde9461fcfb58d0b4"
+          ]
+        },
+        {
+          "id": "P0-03",
+          "title": "RC.2 release and platform evidence",
+          "status": "done",
+          "owner": "integration-owner",
+          "dependsOn": ["P0-01"],
+          "acceptance": "One exact candidate SHA is present in all evidence, passes platform gates, and is published immutably.",
+          "evidence": [
+            "https://github.com/HyPolDev/peas-engine/releases/tag/v0.2.0-kernel-rc.2",
+            "release@fe04e32f9b218b41b1c56bffd2a131fb32192f82"
+          ]
+        },
+        {
+          "id": "P0-04",
+          "title": "EventDraft resource boundary",
+          "status": "done",
+          "owner": "integration-owner",
+          "dependsOn": ["P0-01"],
+          "acceptance": "Oversized or structurally excessive drafts are rejected deterministically before canonicalization.",
+          "evidence": [
+            "src/core/event.ts",
+            "src/core/json.ts",
+            "test/event-bounds.test.ts",
+            "test/json-inert-boundary.test.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "P1",
+      "name": "Forward read-only vertical slice",
+      "status": "ready",
+      "goal": "Capture and normalize SEC, FMP, and one issuer IR source without LLMs or trades.",
+      "tasks": [
+        {
+          "id": "P1-01",
+          "title": "Recorded SEC end-to-end",
+          "status": "ready",
+          "owner": "agent",
+          "dependsOn": ["P0-04"],
+          "acceptance": "Recorded SEC response becomes a verified artifact, normalized EventDraft, and audited earnings cluster.",
+          "evidence": [
+            "docs/read-only-vertical-slice-plan.md",
+            "docs/adr/0007-recorded-sec-normalization.md",
+            "docs/agent-prompts/pr-2b-recorded-sec.md"
+          ]
+        },
+        {
+          "id": "P1-02",
+          "title": "Recorded FMP and issuer-IR mirrors",
+          "status": "blocked",
+          "owner": "agent",
+          "dependsOn": ["P1-01"],
+          "acceptance": "Arrival permutations, mirrors, corrections, inferred times, and redelivery are replay-tested.",
+          "evidence": ["docs/read-only-vertical-slice-plan.md"]
+        },
+        {
+          "id": "P1-03",
+          "title": "Live read-only capture",
+          "status": "planned",
+          "owner": "agent",
+          "dependsOn": ["P1-02"],
+          "acceptance": "SEC, FMP, and a small issuer-IR allowlist fetch, retain raw artifacts, normalize, and capture with provenance.",
+          "evidence": []
+        },
+        {
+          "id": "P1-04",
+          "title": "Calendar prewarming",
+          "status": "planned",
+          "owner": "agent",
+          "dependsOn": ["P1-03"],
+          "acceptance": "Known issuer calendars prewarm the capture window without creating financial effects.",
+          "evidence": []
+        },
+        {
+          "id": "P1-05",
+          "title": "Observation telemetry and clock contract",
+          "status": "planned",
+          "owner": "integration-owner",
+          "dependsOn": ["P1-01"],
+          "acceptance": "Publication, request, retrieval, normalization, and capture times plus clock basis, issuer/symbol mapping, duplicate identity, and revision identity are joinable and replay-auditable.",
+          "evidence": []
+        },
+        {
+          "id": "P1-06",
+          "title": "Forward-run readiness drill",
+          "status": "planned",
+          "owner": "integration-owner",
+          "dependsOn": ["P1-03", "P1-04", "P1-05"],
+          "acceptance": "A sustained read-only dry run survives restart and reconciliation, exports complete telemetry, respects quotas, and creates zero dispatchable financial effects.",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "Forward observation run",
+      "status": "planned",
+      "goal": "Collect 100-200 forward clusters and quantify source quality and first-observation latency.",
+      "tasks": [
+        {
+          "id": "P2-01",
+          "title": "100-200 cluster collection",
+          "status": "planned",
+          "owner": "agent",
+          "dependsOn": ["P1-06"],
+          "acceptance": "Every cluster has source timestamps, raw artifact identities, duplicates, revisions, and missing-event accounting.",
+          "evidence": []
+        },
+        {
+          "id": "P2-02",
+          "title": "Latency and movement report",
+          "status": "planned",
+          "owner": "research-owner",
+          "dependsOn": ["P2-01"],
+          "acceptance": "Report measures source latency, missing events, duplicates, revisions, and price movement already observed at first source arrival using a reproducible timestamped market reference.",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "Expectation & market snapshots",
+      "status": "planned",
+      "goal": "Freeze the context required to interpret an earnings event at the time it was knowable.",
+      "tasks": [
+        {
+          "id": "P3-01",
+          "title": "Prospective expectation snapshots",
+          "status": "planned",
+          "owner": "agent",
+          "dependsOn": ["P2-01"],
+          "acceptance": "FMP estimates are snapshotted prospectively with regular and aftermarket separation.",
+          "evidence": []
+        },
+        {
+          "id": "P3-02",
+          "title": "Market-state snapshots",
+          "status": "planned",
+          "owner": "agent",
+          "dependsOn": ["P2-01"],
+          "acceptance": "Sector/SPY abnormal movement, session, halts, and first-tradable-quote state are replayable.",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "name": "Extraction & decision packets",
+      "status": "planned",
+      "goal": "Separate deterministic facts from evidence-backed language and explicit no-trade decisions.",
+      "tasks": [
+        {
+          "id": "P4-01",
+          "title": "Deterministic numerical extraction",
+          "status": "planned",
+          "owner": "agent",
+          "dependsOn": ["P3-01", "P3-02"],
+          "acceptance": "Numbers, deltas, units, periods, and revisions are normalized without LLM dependence.",
+          "evidence": []
+        },
+        {
+          "id": "P4-02",
+          "title": "Evidence-backed language extraction",
+          "status": "planned",
+          "owner": "agent",
+          "dependsOn": ["P4-01"],
+          "acceptance": "LLM language and guidance extraction is source-linked, model/prompt-versioned, and replay-auditable.",
+          "evidence": []
+        },
+        {
+          "id": "P4-03",
+          "title": "Setup or no-trade classification",
+          "status": "planned",
+          "owner": "research-owner",
+          "dependsOn": ["P4-01", "P4-02"],
+          "acceptance": "Decision packets state setup/no-trade explicitly with deterministic inputs and evidence references.",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "name": "Historical replay & research",
+      "status": "planned",
+      "goal": "Evaluate the system with realistic latency, fills, benchmarks, and costs.",
+      "tasks": [
+        {
+          "id": "P5-01",
+          "title": "Parquet research datasets",
+          "status": "planned",
+          "owner": "research-owner",
+          "dependsOn": ["P2-01", "P3-01", "P3-02"],
+          "acceptance": "Datasets are versioned, provenance-linked, and reproducible from captured artifacts.",
+          "evidence": []
+        },
+        {
+          "id": "P5-02",
+          "title": "Cost-aware walk-forward validation",
+          "status": "planned",
+          "owner": "research-owner",
+          "dependsOn": ["P5-01", "P4-03"],
+          "acceptance": "Latency assumptions, executable fills, benchmark-adjusted outcomes, MFE/MAE, and costs are reported without leakage.",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "id": "P6",
+      "name": "Shadow & paper operation",
+      "status": "planned",
+      "goal": "Exercise hypothetical intents, broker state, fills, and reconciliation without capital.",
+      "tasks": [
+        {
+          "id": "P6-01",
+          "title": "Shadow intents and broker simulation",
+          "status": "planned",
+          "owner": "agent",
+          "dependsOn": ["P5-02"],
+          "acceptance": "Shadow and paper runs retain complete intent transcripts and create zero dispatchable financial effects.",
+          "evidence": []
+        },
+        {
+          "id": "P6-02",
+          "title": "Restart and reconciliation drills",
+          "status": "planned",
+          "owner": "integration-owner",
+          "dependsOn": ["P6-01"],
+          "acceptance": "Duplicate delivery, stale leases, restarts, fills, and ambiguous outcomes reconcile deterministically.",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "id": "P7",
+      "name": "Tiny live deployment",
+      "status": "gated",
+      "goal": "Only after separate authorization, introduce a minimal live effect path.",
+      "tasks": [
+        {
+          "id": "P7-01",
+          "title": "Live-effect safety ADR and deployment",
+          "status": "gated",
+          "owner": "human-owner",
+          "dependsOn": ["P6-02"],
+          "acceptance": "Effect allowlist, broker idempotency, submission-started intent, timeout reconciliation, and no auto-resubmit are proven.",
+          "evidence": []
+        }
+      ]
+    }
+  ]
+}

@@ -10,10 +10,16 @@ slices built on these contracts.
 
 ## Release status
 
-`v0.2.0-kernel-rc.1` is immutable historical audit evidence. Its post-audit decision is
-`CONDITIONAL GO`, not a frozen-kernel release: two persistence/manifest trust-boundary fixes and a
-fresh same-SHA RC.2 evidence set are required before merge. See the
-[RC.1 post-audit disposition](docs/audit/kernel-v2-rc1-disposition.md).
+[`v0.2.0-kernel-rc.2`](https://github.com/HyPolDev/peas-engine/releases/tag/v0.2.0-kernel-rc.2)
+at `fe04e32f9b218b41b1c56bffd2a131fb32192f82` is the immutable Kernel V2 prerelease. Its
+Windows, Linux, 10k, and 100k gates passed on the same candidate SHA; the release and all three
+evidence assets verify successfully, so the effective decision is `GO` for read-only adapter and
+vertical-slice work.
+
+The provider-neutral artifact vault was subsequently merged in
+[#2](https://github.com/HyPolDev/peas-engine/pull/2) at main commit
+`e350210a3c8d8f0bd3ae512dde9461fcfb58d0b4`. Provider normalizers and live clients are not yet
+implemented. The next reviewable unit is PR 2B: the recorded SEC end-to-end slice.
 
 ## Requirements
 
