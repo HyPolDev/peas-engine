@@ -10,12 +10,12 @@
   },
   "current": {
     "stage": "P1",
-    "status": "ready",
-    "branch": "main",
-    "mainCommit": "e350210a3c8d8f0bd3ae512dde9461fcfb58d0b4",
+    "status": "in-progress",
+    "branch": "dev/pr-2b-recorded-sec-ete",
+    "mainCommit": "22d3ca3d639ef8feffe62f81afabf2fa6fa9fd94",
     "release": "v0.2.0-kernel-rc.2",
-    "focus": "PR 2B recorded SEC end-to-end",
-    "nextGate": "Recorded SEC artifacts normalize into bounded EventDrafts and produce replay-identical audited clusters"
+    "focus": "PR 2B fixture and evidence-bundle gates",
+    "nextGate": "Reviewed synthetic SEC fixtures and canonical bundle contracts satisfy accepted ADR 0007"
   },
   "stages": [
     {
@@ -81,14 +81,14 @@
     {
       "id": "P1",
       "name": "Forward read-only vertical slice",
-      "status": "ready",
+      "status": "in-progress",
       "goal": "Capture and normalize SEC, FMP, and one issuer IR source without LLMs or trades.",
       "tasks": [
         {
           "id": "P1-01",
           "title": "Recorded SEC end-to-end",
-          "status": "ready",
-          "owner": "agent",
+          "status": "in-progress",
+          "owner": "dev/pr-2b-recorded-sec-ete",
           "dependsOn": ["P0-04"],
           "acceptance": "Recorded SEC response becomes a verified artifact, normalized EventDraft, and audited earnings cluster.",
           "evidence": [

@@ -58,10 +58,11 @@ and quarantine. Windows and Linux both exercise concurrent rename races and runt
 
 ## PR 2B: recorded SEC end-to-end
 
-The proposed contract and implementation sequence are in
+The accepted contract and implementation sequence are in
 [`ADR 0007`](adr/0007-recorded-sec-normalization.md). Copy-ready bounded agent assignments are in
-[`docs/agent-prompts/pr-2b-recorded-sec.md`](agent-prompts/pr-2b-recorded-sec.md). Both remain
-proposed until the architecture decisions are accepted or amended.
+[`docs/agent-prompts/pr-2b-recorded-sec.md`](agent-prompts/pr-2b-recorded-sec.md). Independent review
+closed the contract gate on 2026-07-13. The fixture and evidence-bundle gates are next and may run
+in parallel from the same accepted-contract SHA.
 
 ### Binding EventDraft resource boundary
 

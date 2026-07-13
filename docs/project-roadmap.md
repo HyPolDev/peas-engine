@@ -30,8 +30,11 @@ Do not maintain task state independently in Linear, Notion, and GitHub.
   `e350210a3c8d8f0bd3ae512dde9461fcfb58d0b4` after successful CI.
 - The deterministic `EventDraft` resource boundary is also complete in RC.2 and covered by
   adversarial memory/SQLite tests.
+- ADR 0007 is accepted after independent review. It freezes PR 2B evidence membership, selected
+  observation loading, SEC semantics, parser/decoder policy, compatibility, limits, reason codes,
+  and non-live effect isolation without changing frozen ports.
 - No SEC, FMP, issuer-IR, HTTP, calendar, or live-provider implementation exists yet. The immediate
-  task is PR 2B: recorded SEC end-to-end.
+  task is the PR 2B fixture and evidence-bundle gates.
 - The next product slice is explicitly read-only: no LLM dependency, no orders, no brokerage, and
   no portfolio mutation.
 
@@ -80,8 +83,9 @@ invariant.
 
 ## Immediate sequence
 
-1. Build PR 2B fixture-first: recorded SEC bytes -> verified artifact bundle -> deterministic SEC
-   normalizer -> bounded `EventDraft` -> trusted capture -> reducer -> audited cluster.
+1. Run the PR 2B fixture and evidence-bundle agents from the accepted ADR 0007 contract SHA, then
+   build the deterministic SEC normalizer, bounded `EventDraft`, trusted capture, reducer, and
+   audited-cluster integration in dependency order.
 2. Add PR 2C recorded FMP/issuer-IR mirrors and arrival-permutation tests.
 3. Define observation telemetry before live reads: source publication time, request start/end,
    artifact retrieval, normalization, trusted capture, clock basis, issuer/symbol mapping, and
