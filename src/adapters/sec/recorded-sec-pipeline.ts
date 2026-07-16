@@ -1,14 +1,17 @@
+import { types as utilityTypes } from "node:util";
 import type {
   ArtifactObservation,
   ArtifactStore,
   VerifiedArtifactRead,
 } from "../../artifacts/artifact-store.js";
-import { validateEventDraft, type AppendResult, type EventLog } from "../../core/event.js";
+import { type AppendResult, type EventLog, validateEventDraft } from "../../core/event.js";
 import { canonicalHash } from "../../core/hash.js";
 import {
+  assertJsonWithinLimits,
   canonicalJson,
   deepFreezeJson,
   inertJsonSnapshot,
+  type JsonObject,
   type JsonValue,
 } from "../../core/json.js";
 import {
@@ -34,9 +37,37 @@ import {
 export const SEC_RECORDED_LOADER_IDENTITY = "sec-recorded-loader-v1";
 export const SEC_LOADER_SELECTION_HASH_DOMAIN = "peas/sec-loader-selection/v1";
 export const SEC_LOADER_TRANSCRIPT_HASH_DOMAIN = "peas/sec-loader-transcript/v1";
+export const SEC_RECORDED_MANIFEST_JSON_LIMITS = Object.freeze({
+  maxDepth: 4,
+  maxNodes: 96,
+  maxArrayLength: 16,
+  maxObjectKeys: 12,
+  maxStringBytes: 512,
+  maxCanonicalBytes: 131_072,
+});
 const SEC_PERSISTED_PROVIDER_ID = `prv1_${canonicalHash("peas/artifact-provider-identifier/v1", {
   value: SEC_PROVIDER,
 })}`;
+const MANIFEST_FIELDS = Object.freeze([
+  "asOfMs",
+  "provider",
+  "source",
+  "recordId",
+  "revisionId",
+  "sourceKind",
+  "accession",
+  "subjectCik",
+  "fiscalPeriod",
+  "primaryArtifactHash",
+  "evidenceBundleHash",
+  "members",
+]);
+const MANIFEST_MEMBER_FIELDS = Object.freeze([
+  "role",
+  "memberKey",
+  "artifactHash",
+  "selectedObservationId",
+]);
 
 export type RecordedSecManifestMember = Readonly<{
   role: string;
@@ -117,11 +148,6 @@ export type RecordedSecPipelineResult =
       capture: null;
     }>;
 
-export type SecNormalizer = (
-  bundle: VerifiedSecBundle,
-  policy?: SecNormalizerPolicy,
-) => SecNormalizationResult;
-
 class LoaderFailure extends Error {
   constructor(readonly reasonCode: SecReasonCode) {
     super(reasonCode);
@@ -183,13 +209,43 @@ function requiredHash(value: unknown): string {
   return hash;
 }
 
+function exactFields(value: JsonObject, expected: readonly string[]): void {
+  const keys = Object.keys(value).sort();
+  const fields = [...expected].sort();
+  if (keys.length !== fields.length || keys.some((key, index) => key !== fields[index])) {
+    throw new LoaderFailure("sec.bundle-invalid");
+  }
+}
+
+function assertManifestMemberLimit(value: unknown): void {
+  if (value === null || typeof value !== "object" || utilityTypes.isProxy(value)) return;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return;
+  const descriptor = Object.getOwnPropertyDescriptor(value, "members");
+  if (descriptor === undefined || descriptor.enumerable !== true || !("value" in descriptor))
+    return;
+  const members = descriptor.value;
+  if (members === null || typeof members !== "object" || utilityTypes.isProxy(members)) return;
+  if (!Array.isArray(members)) return;
+  const length = Object.getOwnPropertyDescriptor(members, "length")?.value;
+  if (typeof length === "number" && length > 16) {
+    throw new LoaderFailure("sec.member-limit-exceeded");
+  }
+}
+
 function detachManifest(value: RecordedSecBundleManifest): RecordedSecBundleManifest {
   let detached: RecordedSecBundleManifest;
+  assertManifestMemberLimit(value);
   try {
+    assertJsonWithinLimits(value, SEC_RECORDED_MANIFEST_JSON_LIMITS, "$.recordedSecManifest");
     detached = inertJsonSnapshot(value as unknown as JsonValue) as RecordedSecBundleManifest;
   } catch {
     throw new LoaderFailure("sec.bundle-invalid");
   }
+  if (detached === null || typeof detached !== "object" || Array.isArray(detached)) {
+    throw new LoaderFailure("sec.bundle-invalid");
+  }
+  exactFields(detached as unknown as JsonObject, MANIFEST_FIELDS);
   if (!Number.isSafeInteger(detached.asOfMs) || detached.asOfMs < 0) {
     throw new LoaderFailure("sec.bundle-invalid");
   }
@@ -214,12 +270,19 @@ function detachManifest(value: RecordedSecBundleManifest): RecordedSecBundleMani
     throw new LoaderFailure("sec.member-limit-exceeded");
   }
   const memberKeys = new Set<string>();
+  const artifactHashes = new Set<string>();
   for (const member of detached.members) {
+    if (member === null || typeof member !== "object" || Array.isArray(member)) {
+      throw new LoaderFailure("sec.bundle-invalid");
+    }
+    exactFields(member as unknown as JsonObject, MANIFEST_MEMBER_FIELDS);
     requiredString(member.role);
     const memberKey = requiredString(member.memberKey);
     if (memberKeys.has(memberKey)) throw new LoaderFailure("sec.bundle-invalid");
     memberKeys.add(memberKey);
-    requiredHash(member.artifactHash);
+    const artifactHash = requiredHash(member.artifactHash);
+    if (artifactHashes.has(artifactHash)) throw new LoaderFailure("sec.bundle-invalid");
+    artifactHashes.add(artifactHash);
     requiredHash(member.selectedObservationId);
   }
   return freezeJson({
@@ -421,30 +484,25 @@ export async function loadRecordedSecBundle(
   }
   const selection = selectionFor(manifest, observations);
   const selectedIds = new Set<string>();
-  if (
-    manifest.members.some(
-      (member, index) =>
-        !validObservation(observations[index], member, manifest.asOfMs, selectedIds),
-    )
-  ) {
-    return quarantine(manifest, selection, "sec.observation-invalid");
-  }
+  const observationsValid = manifest.members.every((member, index) =>
+    validObservation(observations[index], member, manifest.asOfMs, selectedIds),
+  );
 
   const members: VerifiedSecMember[] = [];
   let total = 0;
-  try {
-    for (const member of manifest.members) {
+  let readFailure: LoaderFailure | null = null;
+  for (const member of manifest.members) {
+    try {
       const consumed = await consumeVerifiedMember(store, member, total);
       members.push(consumed.member);
       total = consumed.total;
+    } catch (error) {
+      readFailure ??=
+        error instanceof LoaderFailure ? error : new LoaderFailure("sec.artifact-read-failed");
     }
-  } catch (error) {
-    return quarantine(
-      manifest,
-      selection,
-      error instanceof LoaderFailure ? error.reasonCode : "sec.artifact-read-failed",
-    );
   }
+  if (!observationsValid) return quarantine(manifest, selection, "sec.observation-invalid");
+  if (readFailure !== null) return quarantine(manifest, selection, readFailure.reasonCode);
 
   const bundle = freezeVerifiedBundle({
     provider: manifest.provider,
@@ -472,7 +530,6 @@ export async function runRecordedSecPipeline(options: {
   artifactStore: ArtifactStore;
   eventLog: EventLog;
   manifest: RecordedSecBundleManifest;
-  normalizer?: SecNormalizer;
   policy?: SecNormalizerPolicy;
 }): Promise<RecordedSecPipelineResult> {
   const loader = await loadRecordedSecBundle(options.artifactStore, options.manifest);
@@ -484,10 +541,7 @@ export async function runRecordedSecPipeline(options: {
       capture: null,
     });
   }
-  const normalization = (options.normalizer ?? normalizeSecBundle)(
-    loader.bundle,
-    options.policy ?? SEC_NORMALIZER_POLICY,
-  );
+  const normalization = normalizeSecBundle(loader.bundle, options.policy ?? SEC_NORMALIZER_POLICY);
   if (normalization.status !== "emitted") {
     return Object.freeze({
       status: normalization.status,

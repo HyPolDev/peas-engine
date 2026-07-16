@@ -16,21 +16,20 @@ import { InMemoryEventLog } from "../src/adapters/memory/event-log.js";
 import { InMemoryProcessingStore } from "../src/adapters/memory/processing-store.js";
 import {
   loadRecordedSecBundle,
-  runRecordedSecPipeline,
   type RecordedSecBundleManifest,
-  type SecNormalizer,
+  runRecordedSecPipeline,
 } from "../src/adapters/sec/recorded-sec-pipeline.js";
 import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
 import { SqliteEventLog } from "../src/adapters/sqlite/event-log.js";
 import { SqliteProcessingStore } from "../src/adapters/sqlite/processing-store.js";
-import { sanitizeRequestIdentity } from "../src/artifacts/identity.js";
 import type {
   ArtifactStore,
   ArtifactVaultConfig,
   StoreArtifactResult,
   VerifiedArtifactRead,
 } from "../src/artifacts/artifact-store.js";
-import { ManualClock, type Clock } from "../src/core/clock.js";
+import { sanitizeRequestIdentity } from "../src/artifacts/identity.js";
+import { type Clock, ManualClock } from "../src/core/clock.js";
 import type { EventDraft, EventLog, StoredEvent } from "../src/core/event.js";
 import { canonicalJson, type JsonValue } from "../src/core/json.js";
 import { DeterministicProcessor, type RunKind } from "../src/core/processor.js";
@@ -38,10 +37,7 @@ import {
   EarningsClusterReducer,
   type EarningsClusterState,
 } from "../src/domain/earnings-cluster/reducer.js";
-import {
-  computeSecNormalizationTranscriptHash,
-  normalizeSecBundle,
-} from "../src/providers/sec/normalizer.js";
+import { computeSecNormalizationTranscriptHash } from "../src/providers/sec/normalizer.js";
 import { makeManifest } from "./scenario.js";
 
 const FIXTURE_ROOT = join(process.cwd(), "fixtures", "sec", "v1");
@@ -242,14 +238,21 @@ function sha256(bytes: Uint8Array): string {
 function countingStore(
   delegate: ArtifactStore,
   failReadAt: number | null = null,
-): Readonly<{ store: ArtifactStore; counts: () => { reads: number; consumed: number } }> {
+): Readonly<{
+  store: ArtifactStore;
+  counts: () => { gets: number; reads: number; consumed: number };
+}> {
+  let gets = 0;
   let reads = 0;
   let consumed = 0;
   const store: ArtifactStore = {
     store: (request) => delegate.store(request),
     stat: (digest) => delegate.stat(digest),
     getAttempt: (id) => delegate.getAttempt(id),
-    getObservation: (id) => delegate.getObservation(id),
+    getObservation: (id) => {
+      gets += 1;
+      return delegate.getObservation(id);
+    },
     readObservations: (digest, after, limit) => delegate.readObservations(digest, after, limit),
     reconcile: (budget) => delegate.reconcile(budget),
     async read(digest): Promise<VerifiedArtifactRead> {
@@ -262,7 +265,7 @@ function countingStore(
       return verified;
     },
   };
-  return { store, counts: () => ({ reads, consumed }) };
+  return { store, counts: () => ({ gets, reads, consumed }) };
 }
 
 test("recorded loader consumes every verified member before normalizing and fails atomically", async (context) => {
@@ -272,7 +275,7 @@ test("recorded loader consumes every verified member before normalizing and fail
   let vault = await openVault(root, clock);
   context.after(async () => {
     await closeVault(vault);
-    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
   });
   const validSelections = await storeFixtureCase(vault, valid);
   await closeVault(vault);
@@ -280,43 +283,36 @@ test("recorded loader consumes every verified member before normalizing and fail
   vault = await openVault(root, clock);
 
   const complete = countingStore(vault.store);
-  let normalizerCalls = 0;
-  const normalizer: SecNormalizer = (bundle, policy) => {
-    normalizerCalls += 1;
-    assert.deepEqual(complete.counts(), {
-      reads: valid.members.length,
-      consumed: valid.members.length,
-    });
-    return normalizeSecBundle(bundle, policy);
-  };
   const eventLog = new InMemoryEventLog({ clock: new ManualClock(CAPTURE_TIME_MS) });
   const emitted = await runRecordedSecPipeline({
     artifactStore: complete.store,
     eventLog,
     manifest: manifest(valid, validSelections),
-    normalizer,
   });
   assert.equal(emitted.status, "emitted");
-  assert.equal(normalizerCalls, 1);
+  assert.deepEqual(complete.counts(), {
+    gets: valid.members.length,
+    reads: valid.members.length,
+    consumed: valid.members.length,
+  });
   assert.equal((await readEvents(eventLog, 1)).length, 1);
 
   const failed = countingStore(vault.store, valid.members.length);
   const emptyLog = new InMemoryEventLog({ clock: new ManualClock(CAPTURE_TIME_MS) });
-  normalizerCalls = 0;
   const quarantined = await runRecordedSecPipeline({
     artifactStore: failed.store,
     eventLog: emptyLog,
     manifest: manifest(valid, validSelections),
-    normalizer: (bundle, policy) => {
-      normalizerCalls += 1;
-      return normalizeSecBundle(bundle, policy);
-    },
   });
   assert.equal(quarantined.status, "quarantined");
   assert.equal(quarantined.loader.status, "quarantined");
   if (quarantined.loader.status !== "quarantined") assert.fail("expected loader quarantine");
   assert.equal(quarantined.loader.transcript.reasonCode, "sec.artifact-read-failed");
-  assert.equal(normalizerCalls, 0);
+  assert.deepEqual(failed.counts(), {
+    gets: valid.members.length,
+    reads: valid.members.length,
+    consumed: valid.members.length - 1,
+  });
   assert.equal((await readEvents(emptyLog, 1)).length, 0);
 
   const validManifest = manifest(valid, validSelections);
@@ -326,24 +322,128 @@ test("recorded loader consumes every verified member before normalizing and fail
       index === 0 ? { ...member, selectedObservationId: "0".repeat(64) } : member,
     ),
   };
+  const missingStore = countingStore(vault.store);
   const missingResult = await runRecordedSecPipeline({
-    artifactStore: vault.store,
+    artifactStore: missingStore.store,
     eventLog: emptyLog,
     manifest: missing,
-    normalizer: () => {
-      normalizerCalls += 1;
-      return normalizeSecBundle({} as never);
-    },
   });
   assert.equal(missingResult.status, "quarantined");
   assert.equal(missingResult.loader.status, "quarantined");
   if (missingResult.loader.status !== "quarantined") assert.fail("expected loader quarantine");
   assert.equal(missingResult.loader.transcript.reasonCode, "sec.observation-invalid");
-  assert.equal(normalizerCalls, 0);
+  assert.deepEqual(missingStore.counts(), {
+    gets: valid.members.length,
+    reads: valid.members.length,
+    consumed: valid.members.length,
+  });
   assert.equal((await readEvents(emptyLog, 1)).length, 0);
+
+  const duplicateSelectionStore = countingStore(vault.store);
+  const duplicateSelection = await loadRecordedSecBundle(duplicateSelectionStore.store, {
+    ...validManifest,
+    members: validManifest.members.map((member, index) =>
+      index === 1
+        ? {
+            ...member,
+            selectedObservationId: validManifest.members[0]?.selectedObservationId ?? "",
+          }
+        : member,
+    ),
+  });
+  assert.equal(duplicateSelection.status, "quarantined");
+  assert.equal(duplicateSelection.reasonCode, "sec.observation-invalid");
+  assert.deepEqual(duplicateSelectionStore.counts(), {
+    gets: valid.members.length,
+    reads: valid.members.length,
+    consumed: valid.members.length,
+  });
 
   const firstManifestMember = validManifest.members[0];
   assert.ok(firstManifestMember);
+  let duplicateObservationReads = 0;
+  let duplicateArtifactReads = 0;
+  const rejectBeforeReadStore = new Proxy(vault.store, {
+    get(target, property, receiver) {
+      if (property === "getObservation") {
+        return () => {
+          duplicateObservationReads += 1;
+          throw new Error("duplicate digest reached observation lookup");
+        };
+      }
+      if (property === "read") {
+        return () => {
+          duplicateArtifactReads += 1;
+          throw new Error("duplicate digest reached artifact read");
+        };
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  }) as ArtifactStore;
+  const duplicateMember = {
+    ...firstManifestMember,
+    memberKey: `${firstManifestMember.memberKey}-duplicate`,
+    selectedObservationId: "f".repeat(64),
+  };
+  for (const members of [
+    [firstManifestMember, duplicateMember, ...validManifest.members.slice(1)],
+    [duplicateMember, firstManifestMember, ...validManifest.members.slice(1)],
+  ]) {
+    const duplicateDigest = await loadRecordedSecBundle(rejectBeforeReadStore, {
+      ...validManifest,
+      members,
+    });
+    assert.equal(duplicateDigest.status, "quarantined");
+    assert.equal(duplicateDigest.reasonCode, "sec.bundle-invalid");
+  }
+  assert.deepEqual(
+    { observationReads: duplicateObservationReads, artifactReads: duplicateArtifactReads },
+    { observationReads: 0, artifactReads: 0 },
+  );
+
+  const sparseMembers = [...validManifest.members];
+  delete sparseMembers[0];
+  const cyclicRecord: Record<string, unknown> = {};
+  cyclicRecord["self"] = cyclicRecord;
+  const symbolManifest = { ...validManifest } as RecordedSecBundleManifest &
+    Record<symbol, unknown>;
+  Object.defineProperty(symbolManifest, Symbol("unexpected"), {
+    enumerable: true,
+    value: "unexpected",
+  });
+  const invalidManifestShapes: unknown[] = [
+    { ...validManifest, unexpected: "field" },
+    {
+      ...validManifest,
+      members: validManifest.members.map((member, index) =>
+        index === 0 ? { ...member, unexpected: "field" } : member,
+      ),
+    },
+    { ...validManifest, recordId: { nested: { too: { deeply: "value" } } } },
+    { ...validManifest, recordId: cyclicRecord },
+    { ...validManifest, recordId: "a".repeat(513) },
+    { ...validManifest, members: sparseMembers },
+    new Proxy(validManifest, {}),
+    symbolManifest,
+  ];
+  for (const invalidManifest of invalidManifestShapes) {
+    const rejected = await loadRecordedSecBundle(
+      rejectBeforeReadStore,
+      invalidManifest as RecordedSecBundleManifest,
+    );
+    assert.equal(rejected.status, "quarantined");
+    assert.equal(rejected.reasonCode, "sec.bundle-invalid");
+  }
+  assert.deepEqual(
+    { observationReads: duplicateObservationReads, artifactReads: duplicateArtifactReads },
+    { observationReads: 0, artifactReads: 0 },
+  );
+  const exactStringBoundary = await loadRecordedSecBundle(vault.store, {
+    ...validManifest,
+    recordId: "a".repeat(512),
+  });
+  assert.equal(exactStringBoundary.status, "verified");
+
   const selectedObservation = await vault.store.getObservation(
     firstManifestMember.selectedObservationId,
   );
@@ -353,21 +453,21 @@ test("recorded loader consumes every verified member before normalizing and fail
     asOfMs: selectedObservation.retrievedAtMs,
   });
   assert.equal(exactAsOf.status, "verified");
-  normalizerCalls = 0;
+  const futureStore = countingStore(vault.store);
   const futureResult = await runRecordedSecPipeline({
-    artifactStore: vault.store,
+    artifactStore: futureStore.store,
     eventLog: emptyLog,
     manifest: { ...validManifest, asOfMs: selectedObservation.retrievedAtMs - 1 },
-    normalizer: (bundle, policy) => {
-      normalizerCalls += 1;
-      return normalizeSecBundle(bundle, policy);
-    },
   });
   assert.equal(futureResult.status, "quarantined");
   assert.equal(futureResult.loader.status, "quarantined");
   if (futureResult.loader.status !== "quarantined") assert.fail("expected loader quarantine");
   assert.equal(futureResult.loader.reasonCode, "sec.observation-invalid");
-  assert.equal(normalizerCalls, 0);
+  assert.deepEqual(futureStore.counts(), {
+    gets: valid.members.length,
+    reads: valid.members.length,
+    consumed: valid.members.length,
+  });
   assert.equal((await readEvents(emptyLog, 1)).length, 0);
 
   let accessorCalls = 0;
@@ -408,21 +508,15 @@ test("recorded loader consumes every verified member before normalizing and fail
     ),
     "corrupt",
   );
-  normalizerCalls = 0;
   const corruptResult = await runRecordedSecPipeline({
     artifactStore: vault.store,
     eventLog: emptyLog,
     manifest: validManifest,
-    normalizer: (bundle, policy) => {
-      normalizerCalls += 1;
-      return normalizeSecBundle(bundle, policy);
-    },
   });
   assert.equal(corruptResult.status, "quarantined");
   assert.equal(corruptResult.loader.status, "quarantined");
   if (corruptResult.loader.status !== "quarantined") assert.fail("expected loader quarantine");
   assert.equal(corruptResult.loader.reasonCode, "sec.artifact-read-failed");
-  assert.equal(normalizerCalls, 0);
   assert.equal((await readEvents(emptyLog, 1)).length, 0);
 });
 
@@ -434,7 +528,7 @@ test("ignored and quarantined normalization append no partial event", async (con
   const vault = await openVault(root, clock);
   context.after(async () => {
     await closeVault(vault);
-    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
   });
   const ignoredSelections = await storeFixtureCase(vault, ignoredFixture);
   const quarantinedSelections = await storeFixtureCase(vault, quarantinedFixture);
@@ -464,7 +558,7 @@ test("durable recorded capture, replay paging, reopen, vectors, and dry-run effe
   let vault = await openVault(root, clock);
   context.after(async () => {
     await closeVault(vault);
-    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
   });
   const selections = new Map<string, StoredSelections>();
   for (const fixtureCase of fixtureCases) {
@@ -475,6 +569,13 @@ test("durable recorded capture, replay paging, reopen, vectors, and dry-run effe
   vault = await openVault(root, clock);
 
   const memoryLog = new InMemoryEventLog({ clock: new ManualClock(CAPTURE_TIME_MS) });
+  const memoryLiveStore = new InMemoryProcessingStore<EarningsClusterState>(memoryLog);
+  const memoryLiveProcessor = new DeterministicProcessor({
+    reducer: new EarningsClusterReducer(),
+    store: memoryLiveStore,
+    eventLog: memoryLog,
+    manifest: makeManifest("recorded-sec-pr2b-replay"),
+  });
   const memoryResults = [];
   const firstFixtureCase = fixtureCases[0];
   assert.ok(firstFixtureCase);
@@ -486,6 +587,7 @@ test("durable recorded capture, replay paging, reopen, vectors, and dry-run effe
         manifest: manifest(fixtureCase, requiredSelections(selections, fixtureCase.caseId)),
       }),
     );
+    await memoryLiveProcessor.processAvailable(1);
   }
   assert.ok(memoryResults.every((result) => result.status === "emitted"));
   const redelivery = await runRecordedSecPipeline({
@@ -499,6 +601,12 @@ test("durable recorded capture, replay paging, reopen, vectors, and dry-run effe
   const sqliteLog = new SqliteEventLog(vault.database, {
     clock: new ManualClock(CAPTURE_TIME_MS),
   });
+  const sqliteLiveProcessor = new DeterministicProcessor({
+    reducer: new EarningsClusterReducer(),
+    store: new SqliteProcessingStore<EarningsClusterState>(vault.database),
+    eventLog: sqliteLog,
+    manifest: makeManifest("recorded-sec-pr2b-replay"),
+  });
   for (const fixtureCase of fixtureCases) {
     const result = await runRecordedSecPipeline({
       artifactStore: vault.store,
@@ -506,40 +614,28 @@ test("durable recorded capture, replay paging, reopen, vectors, and dry-run effe
       manifest: manifest(fixtureCase, requiredSelections(selections, fixtureCase.caseId)),
     });
     assert.equal(result.status, "emitted");
+    await sqliteLiveProcessor.processAvailable(1);
   }
   const memoryEvents = await readEvents(memoryLog, 10_000);
   const sqliteEvents = await readEvents(sqliteLog, 10_000);
   assert.equal(canonical(sqliteEvents), canonical(memoryEvents));
+  const liveMemorySnapshot = await memoryLiveProcessor.snapshot(1);
+  assert.equal(canonical(await sqliteLiveProcessor.snapshot(1)), canonical(liveMemorySnapshot));
 
   const first = memoryResults[0];
-  assert.equal(first?.status, "emitted");
-  const conflictingNormalizer: SecNormalizer = (bundle, policy) => {
-    const normalized = normalizeSecBundle(bundle, policy);
-    assert.equal(normalized.status, "emitted");
-    return {
-      ...normalized,
-      draft: {
-        ...normalized.draft,
-        payload: { ...normalized.draft.payload, publishedAtMs: null },
-      },
-    };
+  if (first?.status !== "emitted") assert.fail("expected first emitted result");
+  const conflictingDraft: EventDraft = {
+    ...first.normalization.draft,
+    payload: { ...first.normalization.draft.payload, publishedAtMs: null },
   };
-  await assert.rejects(
-    runRecordedSecPipeline({
-      artifactStore: vault.store,
-      eventLog: memoryLog,
-      manifest: manifest(firstFixtureCase, requiredSelections(selections, firstFixtureCase.caseId)),
-      normalizer: conflictingNormalizer,
-    }),
-    /redelivery metadata conflicts/u,
-  );
+  await assert.rejects(memoryLog.append(conflictingDraft), /redelivery metadata conflicts/u);
   assert.equal((await readEvents(memoryLog, 10_000)).length, fixtureCases.length);
 
   const captureBytes = Buffer.from(
     `${memoryEvents.map((event) => canonical(event)).join("\n")}\n`,
     "utf8",
   );
-  let expectedSnapshot: unknown;
+  let expectedSnapshot: unknown = liveMemorySnapshot;
   for (const pageSize of PAGE_SIZES) {
     const replayLog = new CapturedEventLog(memoryEvents);
     const replayStore = new InMemoryProcessingStore<EarningsClusterState>(replayLog);
