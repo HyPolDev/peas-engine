@@ -153,4 +153,3 @@ Do not mark the goal complete until all of the following are verified:
 
 A draft PR, passing focused tests alone, or an implementation claim without independent review is
 not completion.
-
