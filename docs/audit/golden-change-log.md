@@ -15,3 +15,17 @@ Reason: reducer 2.2.0 makes the intended 32-source and 32-analysis-branch bounds
 contracts across configuration, persisted state, frozen branch inputs, and submitted provenance.
 The captured input bytes are unchanged. State and decision heads change because the reducer version
 is part of the immutable run behavior identity and therefore the genesis hash chains.
+
+## Earnings evidence V2: reducer 3.0.0 / aggregate schema 4
+
+- Existing RC.2 captured stream and `fixtures/earnings-cluster.v2.golden.json`: unchanged.
+- Shared scenario helper: advanced to reducer 3.0.0/schema 4 so non-golden kernel contract tests exercise
+  the current reducer; it is not used to rewrite the historical RC.2 files.
+- New PR 2B domain golden files: none in the Agent 4 scope.
+
+Reason: reducer 3.0.0 intentionally refuses reducer-2.2/schema-3 checkpoints and starts new runs from
+schema-4 genesis. Schema-V1 source events remain replayable from position zero and map to one
+`legacy.primary` evidence member; schema-V2 events independently verify and retain their complete
+SEC evidence membership. Updating the immutable RC.2 scenario or heads would misrepresent historical
+2.2.0 release evidence. PR 2B integration must publish separate captured vectors and heads after the
+recorded pipeline is assembled.

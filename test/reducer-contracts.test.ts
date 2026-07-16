@@ -198,8 +198,8 @@ function successEvent(
   provenanceOverrides: Partial<Record<keyof AnalysisBranch["analysisContract"], string | null>> &
     Readonly<{ analysisContractHash?: string }> = {},
   inputOverrides: Readonly<{
-    inputEventIds?: readonly string[];
-    inputArtifactHashes?: readonly string[];
+    inputSources?: AnalysisBranch["inputSources"];
+    artifactCatalog?: readonly string[];
   }> = {},
 ): StoredEvent {
   const contract = { ...branch.analysisContract, ...provenanceOverrides };
@@ -220,11 +220,8 @@ function successEvent(
       provenance: {
         ...contract,
         analysisContractHash,
-        inputEventIds:
-          inputOverrides.inputEventIds ?? branch.inputSources.map((input) => input.eventId),
-        inputArtifactHashes:
-          inputOverrides.inputArtifactHashes ??
-          branch.inputSources.map((input) => input.artifactHash),
+        inputSources: inputOverrides.inputSources ?? branch.inputSources,
+        artifactCatalog: inputOverrides.artifactCatalog ?? branch.artifactCatalog,
       },
       result,
     },
@@ -245,15 +242,15 @@ test("a leased branch accepts its frozen inputs after another source arrives", (
   assert.equal(requireCluster(state).sources.length, 2);
   assert.equal(originalBranch.inputSources.length, 1);
 
-  const currentSources = requireCluster(state).sources;
+  const currentBranch = requireBranch(state, 1);
   const mutableClusterResult = successEvent(
     state,
     originalBranch,
     { verdict: "wrong-current-cluster-inputs" },
     {},
     {
-      inputEventIds: currentSources.map((source) => source.eventId),
-      inputArtifactHashes: currentSources.map((source) => source.artifactHash),
+      inputSources: currentBranch.inputSources,
+      artifactCatalog: currentBranch.artifactCatalog,
     },
   );
   const rejected = reducer.apply(
@@ -604,7 +601,8 @@ test("mirror arrivals retain provider provenance and produce one debounced analy
   const batch = reducer.apply(state, fired, context(fired.logicalAtMs));
   assert.equal(batch.jobs.length, 1);
   assert.equal(requireCluster(batch.state).analysisBranches.length, 2);
-  assert.equal(requireBranch(batch.state, 1).inputSources.length, 2);
+  assert.equal(requireBranch(batch.state, 1).inputSources.length, 3);
+  assert.equal(requireBranch(batch.state, 1).artifactCatalog.length, 2);
   assert.deepEqual(
     requireCluster(batch.state).sources.map((source) => source.provider),
     ["issuer-ir", "fmp", "sec"],

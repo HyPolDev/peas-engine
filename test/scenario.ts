@@ -37,8 +37,8 @@ export const CONFIG: EarningsClusterConfig = {
 const BUILD_DIGEST = canonicalHash("peas/test-build/v2", { commit: "kernel-contracts-v2" });
 const SCHEMA_DIGEST = canonicalHash("peas/test-schema-registry/v2", {
   eventEnvelope: 2,
-  earningsSource: 1,
-  earningsState: 3,
+  earningsSource: 2,
+  earningsState: 4,
 });
 
 export function makeManifest(
@@ -54,7 +54,7 @@ export function makeManifest(
     canonicalizationVersion: "peas-json-v1",
     behavior: {
       reducerName: "earnings-cluster",
-      reducerVersion: "2.2.0",
+      reducerVersion: "3.0.0",
       buildDigest: BUILD_DIGEST,
       schemaRegistryDigest: SCHEMA_DIGEST,
       configuration: CONFIG,
@@ -307,8 +307,8 @@ export async function captureScenario(): Promise<
     provenance: {
       ...firstAnalysisContract,
       analysisContractHash: stringField(firstAnalysisPayload, "analysisContractHash"),
-      inputEventIds: arrayField(firstAnalysisPayload, "inputEventIds"),
-      inputArtifactHashes: arrayField(firstAnalysisPayload, "artifactHashes"),
+      inputSources: arrayField(firstAnalysisPayload, "inputSources"),
+      artifactCatalog: arrayField(firstAnalysisPayload, "artifactCatalog"),
     },
     result: { score: "0.87", signal: "positive" },
   };
@@ -412,8 +412,8 @@ export async function captureScenario(): Promise<
     provenance: {
       ...callAnalysisContract,
       analysisContractHash: stringField(callPayload, "analysisContractHash"),
-      inputEventIds: arrayField(callPayload, "inputEventIds"),
-      inputArtifactHashes: arrayField(callPayload, "artifactHashes"),
+      inputSources: arrayField(callPayload, "inputSources"),
+      artifactCatalog: arrayField(callPayload, "artifactCatalog"),
     },
     result: { score: "0.11", signal: "stale-wrong-result" },
   };

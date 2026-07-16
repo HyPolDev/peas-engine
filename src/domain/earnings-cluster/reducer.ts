@@ -2,7 +2,15 @@ import { z } from "zod";
 
 import type { StoredEvent } from "../../core/event.js";
 import { canonicalHash } from "../../core/hash.js";
-import { assertJson, canonicalJson, cloneJson, type JsonObject } from "../../core/json.js";
+import {
+  assertJson,
+  assertJsonWithinLimits,
+  canonicalJson,
+  cloneJson,
+  inertJsonSnapshot,
+  type JsonObject,
+  type JsonValue,
+} from "../../core/json.js";
 import {
   deriveJobId,
   deriveMessageId,
@@ -12,6 +20,12 @@ import {
   type ReducerContext,
   type Transition,
 } from "../../core/processor.js";
+import {
+  computeProviderEvidenceBundleHash,
+  type EvidenceReference,
+  ProviderEvidenceBundleError,
+} from "../../providers/evidence-bundle.js";
+import { SecContractError, validateSecEvidenceBundle } from "../../providers/sec/contracts.js";
 
 export type EarningsClusterConfig = {
   mirrorDebounceMs: number;
@@ -25,6 +39,11 @@ export type EarningsClusterConfig = {
 // sources x branches. These are audit boundaries, not configurable defaults.
 export const MAX_EARNINGS_CLUSTER_SOURCES = 32;
 export const MAX_EARNINGS_ANALYSIS_BRANCHES = 32;
+export const MAX_EARNINGS_SOURCE_EVIDENCE_REFERENCES = 16;
+export const MAX_EARNINGS_ANALYSIS_MEMBERSHIPS = 512;
+export const MAX_EARNINGS_ANALYSIS_ARTIFACTS = 512;
+export const MAX_EARNINGS_RETAINED_BRANCH_MEMBERSHIPS = 16_384;
+export const MAX_EARNINGS_AGGREGATE_STATE_BYTES = 8 * 1024 * 1024;
 
 export type SourceKind =
   | "issuer_release"
@@ -35,11 +54,14 @@ export type SourceKind =
   | "filing";
 
 export type SourceObservation = {
+  eventSchemaVersion: 1 | 2;
   eventId: string;
   eventHash: string;
   position: string;
   sourceKind: SourceKind;
-  artifactHash: string;
+  primaryArtifactHash: string;
+  evidenceBundleHash: string | null;
+  evidence: EvidenceReference[];
   provider: string;
   providerRecordId: string;
   providerRevisionId: string;
@@ -57,11 +79,17 @@ export type TimerExpectation = {
 };
 
 export type AnalysisInput = {
+  eventSchemaVersion: 1 | 2;
   eventId: string;
   eventHash: string;
   position: string;
   sourceKind: SourceKind;
-  artifactHash: string;
+  primaryArtifactHash: string;
+  evidenceBundleHash: string | null;
+  evidence: EvidenceReference[];
+  provider: string;
+  providerRecordId: string;
+  providerRevisionId: string;
 };
 
 export type AnalysisContract = {
@@ -78,6 +106,7 @@ export type AnalysisBranch = {
   jobId: string;
   inputBundleHash: string;
   inputSources: AnalysisInput[];
+  artifactCatalog: string[];
   analysisContract: AnalysisContract;
   analysisContractHash: string;
   status: "pending" | "succeeded" | "failed";
@@ -103,10 +132,27 @@ export type EarningsCluster = {
 };
 
 export type EarningsClusterState = {
-  schemaVersion: 3;
+  schemaVersion: 4;
   aggregateId: string;
   cluster: EarningsCluster | null;
   rejectionCount: number;
+};
+
+export type EarningsAnalysisJobPayload = {
+  clusterId: string;
+  branchId: string;
+  phase: AnalysisBranch["phase"];
+  inputBundleHash: string;
+  inputSources: AnalysisInput[];
+  artifactCatalog: string[];
+  analysisContract: AnalysisContract;
+  analysisContractHash: string;
+};
+
+export type EarningsAnalysisResultProvenance = AnalysisContract & {
+  analysisContractHash: string;
+  inputSources: AnalysisInput[];
+  artifactCatalog: string[];
 };
 
 const hash = z.string().regex(/^[0-9a-f]{64}$/u);
@@ -129,17 +175,45 @@ const sourceKindSchema = z.enum([
   "transcript",
   "filing",
 ]);
-const sourceObservedSchema = z
+const timestampFields = {
+  publishedAtMs: nonnegativeSafeInteger.nullable(),
+  timestampConfidence: z.enum(["exact", "provider", "inferred", "unknown"]),
+  originalTimestamp: z.string().max(512).nullable(),
+} as const;
+const sourceObservedV1Schema = z
   .object({
     issuerCik: z.string().regex(/^\d{1,10}$/u),
     fiscalPeriod: z.string().regex(/^\d{4}-(?:Q[1-4]|FY)$/u),
     sourceKind: sourceKindSchema,
     artifactHash: hash,
-    publishedAtMs: nonnegativeSafeInteger.nullable(),
-    timestampConfidence: z.enum(["exact", "provider", "inferred", "unknown"]),
-    originalTimestamp: z.string().max(512).nullable(),
+    ...timestampFields,
   })
   .strict();
+const evidenceReferenceSchema = z
+  .object({
+    role: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/u),
+    artifactHash: hash,
+  })
+  .strict();
+const sourceObservedV2Schema = z
+  .object({
+    issuerCik: z.string().regex(/^\d{10}$/u),
+    fiscalPeriod: z.string().regex(/^\d{4}-(?:Q[1-4]|FY)$/u),
+    sourceKind: z.enum(["sec_8k", "filing"]),
+    primaryArtifactHash: hash,
+    evidenceBundleHash: hash,
+    evidence: z.array(evidenceReferenceSchema).min(1).max(MAX_EARNINGS_SOURCE_EVIDENCE_REFERENCES),
+    ...timestampFields,
+  })
+  .strict();
+const sourceRouteSchema = z.object({
+  issuerCik: z.string().regex(/^\d{1,10}$/u),
+  fiscalPeriod: z.string().regex(/^\d{4}-(?:Q[1-4]|FY)$/u),
+});
 const timerFiredSchema = z
   .object({
     timerType: z.enum(["earnings.mirror-debounce", "earnings.lifecycle-finalize"]),
@@ -156,26 +230,6 @@ const analysisContractSchema = z
     promptId: z.string().min(1).max(256).nullable(),
     modelId: z.string().min(1).max(256).nullable(),
     datasetId: z.string().min(1).max(256).nullable(),
-  })
-  .strict();
-const analysisProvenanceSchema = analysisContractSchema
-  .extend({
-    analysisContractHash: hash,
-    inputEventIds: z.array(hash).max(MAX_EARNINGS_CLUSTER_SOURCES),
-    inputArtifactHashes: z.array(hash).max(MAX_EARNINGS_CLUSTER_SOURCES),
-  })
-  .strict();
-const jobSucceededSchema = z
-  .object({
-    jobType: z.literal("earnings.cluster.analyze"),
-    clusterId: hash,
-    branchId: hash,
-    jobId: hash,
-    inputBundleHash: hash,
-    attempt: positiveSafeInteger,
-    fencingToken: positiveSafeInteger,
-    provenance: analysisProvenanceSchema,
-    result: z.record(z.string(), z.unknown()),
   })
   .strict();
 const jobLeasedSchema = z
@@ -201,22 +255,42 @@ const jobFailedSchema = z
     errorCode: z.string().min(1).max(256),
   })
   .strict();
-const sourceObservationSchema = z
+const sourceProvenanceFields = {
+  eventId: hash,
+  eventHash: hash,
+  position: z.string().regex(/^\d+$/u),
+  sourceKind: sourceKindSchema,
+  primaryArtifactHash: hash,
+  evidence: z.array(evidenceReferenceSchema).min(1).max(MAX_EARNINGS_SOURCE_EVIDENCE_REFERENCES),
+  provider: z.string().min(1).max(512),
+  providerRecordId: z.string().min(1).max(512),
+  providerRevisionId: z.string().min(1).max(512),
+} as const;
+const sourceObservationV1Schema = z
   .object({
-    eventId: hash,
-    eventHash: hash,
-    position: z.string().regex(/^\d+$/u),
-    sourceKind: sourceKindSchema,
-    artifactHash: hash,
-    provider: z.string().min(1).max(512),
-    providerRecordId: z.string().min(1).max(512),
-    providerRevisionId: z.string().min(1).max(512),
+    eventSchemaVersion: z.literal(1),
+    ...sourceProvenanceFields,
+    evidenceBundleHash: z.null(),
     publishedAtMs: nonnegativeSafeInteger.nullable(),
     receivedAtMs: nonnegativeSafeInteger,
     timestampConfidence: z.enum(["exact", "provider", "inferred", "unknown"]),
     originalTimestamp: z.string().max(512).nullable(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => validateLegacyEvidence(value, context));
+const sourceObservationV2Schema = z
+  .object({
+    eventSchemaVersion: z.literal(2),
+    ...sourceProvenanceFields,
+    evidenceBundleHash: hash,
+    publishedAtMs: nonnegativeSafeInteger.nullable(),
+    receivedAtMs: nonnegativeSafeInteger,
+    timestampConfidence: z.enum(["exact", "provider", "inferred", "unknown"]),
+    originalTimestamp: z.string().max(512).nullable(),
+  })
+  .strict()
+  .superRefine((value, context) => validateV2Evidence(value, context));
+const sourceObservationSchema = z.union([sourceObservationV1Schema, sourceObservationV2Schema]);
 const timerExpectationSchema = z
   .object({
     timerType: z.enum(["earnings.mirror-debounce", "earnings.lifecycle-finalize"]),
@@ -225,13 +299,61 @@ const timerExpectationSchema = z
     status: z.enum(["pending", "fired"]),
   })
   .strict();
-const analysisInputSchema = z
+const analysisInputV1Schema = z
   .object({
-    eventId: hash,
-    eventHash: hash,
-    position: z.string().regex(/^\d+$/u),
-    sourceKind: sourceKindSchema,
-    artifactHash: hash,
+    eventSchemaVersion: z.literal(1),
+    ...sourceProvenanceFields,
+    evidenceBundleHash: z.null(),
+  })
+  .strict()
+  .superRefine((value, context) => validateLegacyEvidence(value, context));
+const analysisInputV2Schema = z
+  .object({
+    eventSchemaVersion: z.literal(2),
+    ...sourceProvenanceFields,
+    evidenceBundleHash: hash,
+  })
+  .strict()
+  .superRefine((value, context) => validateV2Evidence(value, context));
+const analysisInputSchema = z.union([analysisInputV1Schema, analysisInputV2Schema]);
+const artifactCatalogSchema = z.array(hash).max(MAX_EARNINGS_ANALYSIS_ARTIFACTS);
+const analysisProvenanceSchema = analysisContractSchema
+  .extend({
+    analysisContractHash: hash,
+    inputSources: z.array(analysisInputSchema).min(1).max(MAX_EARNINGS_CLUSTER_SOURCES),
+    artifactCatalog: artifactCatalogSchema,
+  })
+  .strict()
+  .superRefine((value, context) => validateInputCollection(value, context, false));
+const analysisJobPayloadSchema = z
+  .object({
+    clusterId: hash,
+    branchId: hash,
+    phase: z.enum([
+      "first_source",
+      "source_confirmation",
+      "call_second_wave",
+      "incremental_filing",
+    ]),
+    inputBundleHash: hash,
+    inputSources: z.array(analysisInputSchema).min(1).max(MAX_EARNINGS_CLUSTER_SOURCES),
+    artifactCatalog: artifactCatalogSchema,
+    analysisContract: analysisContractSchema,
+    analysisContractHash: hash,
+  })
+  .strict()
+  .superRefine((value, context) => validateInputCollection(value, context, true));
+const jobSucceededSchema = z
+  .object({
+    jobType: z.literal("earnings.cluster.analyze"),
+    clusterId: hash,
+    branchId: hash,
+    jobId: hash,
+    inputBundleHash: hash,
+    attempt: positiveSafeInteger,
+    fencingToken: positiveSafeInteger,
+    provenance: analysisProvenanceSchema,
+    result: z.record(z.string(), z.unknown()),
   })
   .strict();
 const analysisBranchSchema = z
@@ -246,6 +368,7 @@ const analysisBranchSchema = z
     jobId: hash,
     inputBundleHash: hash,
     inputSources: z.array(analysisInputSchema).min(1).max(MAX_EARNINGS_CLUSTER_SOURCES),
+    artifactCatalog: artifactCatalogSchema,
     analysisContract: analysisContractSchema,
     analysisContractHash: hash,
     status: z.enum(["pending", "succeeded", "failed"]),
@@ -256,7 +379,8 @@ const analysisBranchSchema = z
     resultHash: hash.nullable(),
     errorCode: z.string().min(1).max(256).nullable(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => validateInputCollection(value, context, true));
 const clusterSchema = z
   .object({
     clusterId: hash,
@@ -270,15 +394,213 @@ const clusterSchema = z
     timers: z.array(timerExpectationSchema).max(16),
     analysisBranches: z.array(analysisBranchSchema).max(MAX_EARNINGS_ANALYSIS_BRANCHES),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    const sourceIds = new Set<string>();
+    for (const source of value.sources) {
+      if (sourceIds.has(source.eventId)) {
+        context.addIssue({ code: "custom", message: "Source event IDs must be unique" });
+      }
+      sourceIds.add(source.eventId);
+      if (canonicalJson(source.evidence) !== canonicalJson(canonicalEvidence(source.evidence))) {
+        context.addIssue({ code: "custom", message: "Persisted source evidence is not canonical" });
+      }
+      if (source.eventSchemaVersion === 2) {
+        try {
+          validateSecEvidenceBundle({
+            provider: source.provider,
+            source: "sec:normalizer-v1",
+            recordId: source.providerRecordId,
+            revisionId: source.providerRevisionId,
+            subject: `earnings:${value.issuerCik}:${value.fiscalPeriod}`,
+            issuerCik: value.issuerCik,
+            fiscalPeriod: value.fiscalPeriod,
+            sourceKind: source.sourceKind,
+            primaryArtifactHash: source.primaryArtifactHash,
+            evidence: source.evidence,
+            evidenceBundleHash: source.evidenceBundleHash,
+          });
+        } catch {
+          context.addIssue({
+            code: "custom",
+            message: "Persisted V2 evidence identity is invalid",
+          });
+        }
+      }
+    }
+    let retainedMemberships = 0;
+    const branchIds = new Set<string>();
+    const branchJobIds = new Set<string>();
+    for (const branch of value.analysisBranches) {
+      if (branchIds.has(branch.branchId) || branchJobIds.has(branch.jobId)) {
+        context.addIssue({ code: "custom", message: "Analysis branch and job IDs must be unique" });
+      }
+      branchIds.add(branch.branchId);
+      branchJobIds.add(branch.jobId);
+      retainedMemberships += membershipCount(branch.inputSources);
+      for (const input of branch.inputSources) {
+        const source = value.sources.find((candidate) => candidate.eventId === input.eventId);
+        if (source === undefined || canonicalJson(analysisInput(source)) !== canonicalJson(input)) {
+          context.addIssue({
+            code: "custom",
+            message: "Branch input is not frozen source provenance",
+          });
+        }
+      }
+    }
+    if (retainedMemberships > MAX_EARNINGS_RETAINED_BRANCH_MEMBERSHIPS) {
+      context.addIssue({ code: "custom", message: "Retained branch memberships exceed capacity" });
+    }
+  });
 const stateSchema = z
   .object({
-    schemaVersion: z.literal(3),
+    schemaVersion: z.literal(4),
     aggregateId: z.string().min(1).max(512),
     cluster: clusterSchema.nullable(),
     rejectionCount: nonnegativeSafeInteger,
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.cluster !== null && value.aggregateId !== value.cluster.clusterId) {
+      context.addIssue({ code: "custom", message: "Aggregate and cluster identity must match" });
+    }
+  });
+
+const SEC_EVIDENCE_ROLES = new Set([
+  "sec.submissions",
+  "sec.filing-index",
+  "sec.primary-document",
+  "sec.exhibit-99.1",
+  "sec.periodic-report",
+  "sec.xbrl-instance",
+]);
+
+function compareEvidence(left: EvidenceReference, right: EvidenceReference): number {
+  const leftValue = left.role === right.role ? left.artifactHash : left.role;
+  const rightValue = left.role === right.role ? right.artifactHash : right.role;
+  return leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0;
+}
+
+function canonicalEvidence(evidence: readonly EvidenceReference[]): EvidenceReference[] {
+  return evidence.map((member) => ({ ...member })).sort(compareEvidence);
+}
+
+function validateEvidenceUniqueness(
+  value: { evidence: readonly EvidenceReference[] },
+  context: z.RefinementCtx,
+): void {
+  const digests = new Set<string>();
+  for (const member of value.evidence) {
+    if (digests.has(member.artifactHash)) {
+      context.addIssue({ code: "custom", message: "Evidence artifact digests must be unique" });
+    }
+    digests.add(member.artifactHash);
+  }
+}
+
+function validateLegacyEvidence(
+  value: { primaryArtifactHash: string; evidence: readonly EvidenceReference[] },
+  context: z.RefinementCtx,
+): void {
+  validateEvidenceUniqueness(value, context);
+  if (
+    value.evidence.length !== 1 ||
+    value.evidence[0]?.role !== "legacy.primary" ||
+    value.evidence[0]?.artifactHash !== value.primaryArtifactHash
+  ) {
+    context.addIssue({ code: "custom", message: "V1 evidence must be one legacy.primary member" });
+  }
+}
+
+function validateV2Evidence(
+  value: {
+    sourceKind: SourceKind;
+    primaryArtifactHash: string;
+    evidence: readonly EvidenceReference[];
+  },
+  context: z.RefinementCtx,
+): void {
+  validateEvidenceUniqueness(value, context);
+  if (value.sourceKind !== "sec_8k" && value.sourceKind !== "filing") {
+    context.addIssue({ code: "custom", message: "V2 source kind must be SEC-backed" });
+    return;
+  }
+  for (const member of value.evidence) {
+    if (!SEC_EVIDENCE_ROLES.has(member.role)) {
+      context.addIssue({ code: "custom", message: "V2 evidence contains an unknown SEC role" });
+    }
+  }
+  const expectedPrimaryRole =
+    value.sourceKind === "sec_8k" ? "sec.exhibit-99.1" : "sec.primary-document";
+  const primary = value.evidence.filter(
+    (member) => member.artifactHash === value.primaryArtifactHash,
+  );
+  if (primary.length !== 1 || primary[0]?.role !== expectedPrimaryRole) {
+    context.addIssue({ code: "custom", message: "V2 primary evidence membership is invalid" });
+  }
+}
+
+function compareDecimal(left: string, right: string): number {
+  if (left.length !== right.length) return left.length - right.length;
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function compareAnalysisInputs(left: AnalysisInput, right: AnalysisInput): number {
+  const position = compareDecimal(left.position, right.position);
+  if (position !== 0) return position;
+  return left.eventId < right.eventId ? -1 : left.eventId > right.eventId ? 1 : 0;
+}
+
+function canonicalAnalysisInputs(inputs: readonly AnalysisInput[]): AnalysisInput[] {
+  return inputs
+    .map((input) => ({ ...input, evidence: canonicalEvidence(input.evidence) }))
+    .sort(compareAnalysisInputs);
+}
+
+function membershipCount(inputs: readonly AnalysisInput[]): number {
+  return inputs.reduce((total, input) => total + input.evidence.length, 0);
+}
+
+function artifactCatalog(inputs: readonly AnalysisInput[]): string[] {
+  return [
+    ...new Set(inputs.flatMap((input) => input.evidence.map((member) => member.artifactHash))),
+  ].sort();
+}
+
+function validateInputCollection(
+  value: { inputSources: readonly AnalysisInput[]; artifactCatalog: readonly string[] },
+  context: z.RefinementCtx,
+  canonicalRequired: boolean,
+): void {
+  if (membershipCount(value.inputSources) > MAX_EARNINGS_ANALYSIS_MEMBERSHIPS) {
+    context.addIssue({ code: "custom", message: "Analysis memberships exceed capacity" });
+  }
+  const eventIds = new Set<string>();
+  for (const input of value.inputSources) {
+    if (eventIds.has(input.eventId)) {
+      context.addIssue({ code: "custom", message: "Analysis source event IDs must be unique" });
+    }
+    eventIds.add(input.eventId);
+  }
+  const expectedCatalog = artifactCatalog(value.inputSources);
+  if (
+    new Set(value.artifactCatalog).size !== value.artifactCatalog.length ||
+    canonicalJson([...value.artifactCatalog].sort()) !== canonicalJson(expectedCatalog)
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "Analysis artifact catalog is not the exact union",
+    });
+  }
+  if (
+    canonicalRequired &&
+    (canonicalJson(value.inputSources) !==
+      canonicalJson(canonicalAnalysisInputs(value.inputSources)) ||
+      canonicalJson(value.artifactCatalog) !== canonicalJson(expectedCatalog))
+  ) {
+    context.addIssue({ code: "custom", message: "Persisted analysis provenance is not canonical" });
+  }
+}
 
 function decision(type: string, payload: JsonObject): DecisionDraft {
   return { type, payload };
@@ -352,23 +674,22 @@ function isReleaseMirrorKind(kind: SourceKind): boolean {
 
 function analysisInput(source: SourceObservation): AnalysisInput {
   return {
+    eventSchemaVersion: source.eventSchemaVersion,
     eventId: source.eventId,
     eventHash: source.eventHash,
     position: source.position,
     sourceKind: source.sourceKind,
-    artifactHash: source.artifactHash,
+    primaryArtifactHash: source.primaryArtifactHash,
+    evidenceBundleHash: source.evidenceBundleHash,
+    evidence: canonicalEvidence(source.evidence),
+    provider: source.provider,
+    providerRecordId: source.providerRecordId,
+    providerRevisionId: source.providerRevisionId,
   };
 }
 
-function uniqueAnalysisInputs(sources: readonly SourceObservation[]): AnalysisInput[] {
-  const seenArtifacts = new Set<string>();
-  const inputs: AnalysisInput[] = [];
-  for (const source of sources) {
-    if (seenArtifacts.has(source.artifactHash)) continue;
-    seenArtifacts.add(source.artifactHash);
-    inputs.push(analysisInput(source));
-  }
-  return inputs;
+function analysisInputs(sources: readonly SourceObservation[]): AnalysisInput[] {
+  return canonicalAnalysisInputs(sources.map(analysisInput));
 }
 
 function expectedAnalysisContract(
@@ -391,16 +712,26 @@ function inputBundleHash(
   cluster: EarningsCluster,
   phase: AnalysisBranch["phase"],
   inputs: readonly AnalysisInput[],
+  artifacts: readonly string[],
   contractHash: string,
 ): string {
-  return canonicalHash("peas/earnings-analysis-input-bundle/v2", {
+  return canonicalHash("peas/earnings-analysis-input-bundle/v3", {
     clusterId: cluster.clusterId,
     issuerCik: cluster.issuerCik,
     fiscalPeriod: cluster.fiscalPeriod,
     phase,
     analysisContractHash: contractHash,
     sources: inputs,
+    artifactCatalog: artifacts,
   });
+}
+
+class AnalysisCapacityError extends Error {
+  constructor(
+    readonly reason: "analysis-membership-limit-exceeded" | "analysis-artifact-limit-exceeded",
+  ) {
+    super(reason);
+  }
 }
 
 function timerDraft(
@@ -437,25 +768,32 @@ function analysisDraft(
   nowMs: number,
   contract: AnalysisContract,
 ): Readonly<{ branch: AnalysisBranch; job: JobDraft }> {
-  const inputs = uniqueAnalysisInputs(cluster.sources);
+  const inputs = analysisInputs(cluster.sources);
+  const artifacts = artifactCatalog(inputs);
+  if (membershipCount(inputs) > MAX_EARNINGS_ANALYSIS_MEMBERSHIPS) {
+    throw new AnalysisCapacityError("analysis-membership-limit-exceeded");
+  }
+  if (artifacts.length > MAX_EARNINGS_ANALYSIS_ARTIFACTS) {
+    throw new AnalysisCapacityError("analysis-artifact-limit-exceeded");
+  }
   const contractHash = analysisContractHash(contract);
-  const bundleHash = inputBundleHash(cluster, phase, inputs, contractHash);
-  const branchId = canonicalHash("peas/analysis-branch-id/v2", {
+  const bundleHash = inputBundleHash(cluster, phase, inputs, artifacts, contractHash);
+  const branchId = canonicalHash("peas/analysis-branch-id/v3", {
     clusterId: cluster.clusterId,
     phase,
     inputBundleHash: bundleHash,
   });
-  const payload = {
+  const payload: EarningsAnalysisJobPayload = {
     clusterId: cluster.clusterId,
     branchId,
     phase,
     inputBundleHash: bundleHash,
     inputSources: inputs,
-    inputEventIds: inputs.map((input) => input.eventId),
-    artifactHashes: inputs.map((input) => input.artifactHash),
+    artifactCatalog: artifacts,
     analysisContract: contract,
     analysisContractHash: contractHash,
   };
+  analysisJobPayloadSchema.parse(payload);
   const dedupeKey = `analysis:${branchId}`;
   const jobId = deriveJobId(runId, dedupeKey, payload);
   return {
@@ -465,6 +803,7 @@ function analysisDraft(
       jobId,
       inputBundleHash: bundleHash,
       inputSources: inputs,
+      artifactCatalog: artifacts,
       analysisContract: contract,
       analysisContractHash: contractHash,
       status: "pending",
@@ -486,45 +825,99 @@ function analysisDraft(
   };
 }
 
+const STATE_PREFLIGHT_LIMITS = Object.freeze({
+  maxDepth: 12,
+  maxNodes: 100_000,
+  maxArrayLength: MAX_EARNINGS_RETAINED_BRANCH_MEMBERSHIPS,
+  maxObjectKeys: 32,
+  maxStringBytes: MAX_EARNINGS_AGGREGATE_STATE_BYTES,
+  maxCanonicalBytes: MAX_EARNINGS_AGGREGATE_STATE_BYTES,
+});
+
+const PAYLOAD_PREFLIGHT_LIMITS = Object.freeze({
+  maxDepth: 12,
+  maxNodes: 20_000,
+  maxArrayLength: 10_000,
+  maxObjectKeys: 64,
+  maxStringBytes: 256 * 1024,
+  maxCanonicalBytes: 1024 * 1024,
+});
+
+function inertPayload(value: unknown): JsonObject | null {
+  try {
+    assertJsonWithinLimits(value, PAYLOAD_PREFLIGHT_LIMITS);
+    const snapshot = inertJsonSnapshot(value as JsonValue);
+    if (snapshot === null || typeof snapshot !== "object" || Array.isArray(snapshot)) return null;
+    return snapshot as JsonObject;
+  } catch {
+    return null;
+  }
+}
+
+export function earningsClusterStateCanonicalBytes(state: Readonly<EarningsClusterState>): number {
+  return Buffer.byteLength(canonicalJson(state), "utf8");
+}
+
+function projectedTransition(
+  previous: EarningsClusterState,
+  event: Readonly<StoredEvent>,
+  transition: Transition<EarningsClusterState>,
+): Transition<EarningsClusterState> {
+  if (earningsClusterStateCanonicalBytes(transition.state) <= MAX_EARNINGS_AGGREGATE_STATE_BYTES) {
+    return transition;
+  }
+  return rejectedWithoutStateChange(previous, event, "aggregate-state-capacity-exceeded");
+}
+
 export class EarningsClusterReducer
   implements Reducer<EarningsClusterState, EarningsClusterConfig>
 {
   readonly name = "earnings-cluster";
-  readonly version = "2.2.0";
+  readonly version = "3.0.0";
 
   route(event: Readonly<StoredEvent>): string {
-    if (event.type === "earnings.source.observed") {
-      const parsed = sourceObservedSchema.safeParse(event.payload);
+    if (
+      event.type === "earnings.source.observed" &&
+      (event.schemaVersion === 1 || event.schemaVersion === 2)
+    ) {
+      const snapshot = inertPayload(event.payload);
+      const parsed = sourceRouteSchema.safeParse(snapshot);
       if (parsed.success) return deriveClusterId(parsed.data.issuerCik, parsed.data.fiscalPeriod);
     }
+    const snapshot = event.schemaVersion === 1 ? inertPayload(event.payload) : null;
     if (event.type === "kernel.timer.fired") {
-      const parsed = timerFiredSchema.safeParse(event.payload);
+      const parsed = timerFiredSchema.safeParse(snapshot);
       if (parsed.success) return parsed.data.clusterId;
     }
     if (event.type === "kernel.job.succeeded") {
-      const parsed = jobSucceededSchema.safeParse(event.payload);
+      const parsed = jobSucceededSchema.safeParse(snapshot);
       if (parsed.success) return parsed.data.clusterId;
     }
     if (event.type === "kernel.job.leased") {
-      const parsed = jobLeasedSchema.safeParse(event.payload);
+      const parsed = jobLeasedSchema.safeParse(snapshot);
       if (parsed.success) return parsed.data.clusterId;
     }
     if (event.type === "kernel.job.failed") {
-      const parsed = jobFailedSchema.safeParse(event.payload);
+      const parsed = jobFailedSchema.safeParse(snapshot);
       if (parsed.success) return parsed.data.clusterId;
     }
     return `quarantine:${event.eventId}`;
   }
 
   parseState(value: unknown): EarningsClusterState {
-    const parsed = stateSchema.parse(value);
+    assertJsonWithinLimits(value, STATE_PREFLIGHT_LIMITS, "$.earningsClusterState");
+    const parsed = stateSchema.parse(inertJsonSnapshot(value as JsonValue));
     assertJson(parsed);
-    return cloneJson(parsed as unknown as JsonObject) as EarningsClusterState;
+    const state = cloneJson(parsed as unknown as JsonObject) as EarningsClusterState;
+    if (earningsClusterStateCanonicalBytes(state) > MAX_EARNINGS_AGGREGATE_STATE_BYTES) {
+      throw new TypeError("Earnings aggregate state exceeds the canonical UTF-8 ceiling");
+    }
+    return state;
   }
 
   initialState(aggregateId: string, config: Readonly<EarningsClusterConfig>): EarningsClusterState {
     configSchema.parse(config);
-    return { schemaVersion: 3, aggregateId, cluster: null, rejectionCount: 0 };
+    return { schemaVersion: 4, aggregateId, cluster: null, rejectionCount: 0 };
   }
 
   apply(
@@ -532,27 +925,49 @@ export class EarningsClusterReducer
     event: Readonly<StoredEvent>,
     context: ReducerContext<EarningsClusterConfig>,
   ): Transition<EarningsClusterState> {
-    const state = this.parseState(previous);
+    const previousState = this.parseState(previous);
+    const state = cloneJson(previousState as unknown as JsonObject) as EarningsClusterState;
     configSchema.parse(context.config);
-    if (event.schemaVersion !== 1) return rejected(state, event, "unsupported-schema-version");
-
+    let transition: Transition<EarningsClusterState>;
     switch (event.type) {
       case "earnings.source.observed":
-        return this.#sourceObserved(state, event, context);
+        transition =
+          event.schemaVersion === 1 || event.schemaVersion === 2
+            ? this.#sourceObserved(state, event, context)
+            : rejected(state, event, "unsupported-schema-version");
+        break;
       case "kernel.timer.fired":
-        return this.#timerFired(state, event, context);
+        transition =
+          event.schemaVersion === 1
+            ? this.#timerFired(state, event, context)
+            : rejected(state, event, "unsupported-schema-version");
+        break;
       case "kernel.job.succeeded":
-        return this.#jobSucceeded(state, event, context);
+        transition =
+          event.schemaVersion === 1
+            ? this.#jobSucceeded(state, event, context)
+            : rejected(state, event, "unsupported-schema-version");
+        break;
       case "kernel.job.leased":
-        return this.#jobLeased(state, event);
+        transition =
+          event.schemaVersion === 1
+            ? this.#jobLeased(state, event)
+            : rejected(state, event, "unsupported-schema-version");
+        break;
       case "kernel.job.failed":
-        return this.#jobFailed(state, event);
+        transition =
+          event.schemaVersion === 1
+            ? this.#jobFailed(state, event)
+            : rejected(state, event, "unsupported-schema-version");
+        break;
       default:
-        return noEffects(
+        transition = noEffects(
           state,
           decision("kernel.event.ignored", { eventId: event.eventId, eventType: event.type }),
         );
+        break;
     }
+    return projectedTransition(previousState, event, transition);
   }
 
   #sourceObserved(
@@ -560,25 +975,113 @@ export class EarningsClusterReducer
     event: Readonly<StoredEvent>,
     context: ReducerContext<EarningsClusterConfig>,
   ): Transition<EarningsClusterState> {
-    const parsed = sourceObservedSchema.safeParse(event.payload);
+    const snapshot = inertPayload(event.payload);
+    if (snapshot === null) return rejected(state, event, "invalid-source-payload");
+    const rawEvidence = snapshot["evidence"];
+    if (
+      event.schemaVersion === 2 &&
+      Array.isArray(rawEvidence) &&
+      rawEvidence.length > MAX_EARNINGS_SOURCE_EVIDENCE_REFERENCES
+    ) {
+      return rejectedWithoutStateChange(state, event, "source-evidence-limit-exceeded");
+    }
+    const parsed =
+      event.schemaVersion === 1
+        ? sourceObservedV1Schema.safeParse(snapshot)
+        : sourceObservedV2Schema.safeParse(snapshot);
     if (!parsed.success) return rejected(state, event, "invalid-source-payload");
     const payload = parsed.data;
     const issuerCik = canonicalizeCik(payload.issuerCik);
     const clusterId = deriveClusterId(issuerCik, payload.fiscalPeriod);
     if (state.aggregateId !== clusterId) return rejected(state, event, "aggregate-route-mismatch");
-    if (!subjectMatches(event.subject, issuerCik, payload.fiscalPeriod)) {
-      return rejected(state, event, "subject-identity-mismatch");
-    }
-    if (payload.artifactHash !== event.provider.artifactHash) {
+    const primaryArtifactHash =
+      event.schemaVersion === 1
+        ? (payload as z.infer<typeof sourceObservedV1Schema>).artifactHash
+        : (payload as z.infer<typeof sourceObservedV2Schema>).primaryArtifactHash;
+    if (primaryArtifactHash !== event.provider.artifactHash) {
       return rejected(state, event, "artifact-provenance-mismatch");
     }
 
+    let evidenceBundleHash: string | null = null;
+    let evidence: EvidenceReference[] = [
+      { role: "legacy.primary", artifactHash: primaryArtifactHash },
+    ];
+    if (event.schemaVersion === 1) {
+      if (!subjectMatches(event.subject, issuerCik, payload.fiscalPeriod)) {
+        return rejected(state, event, "subject-identity-mismatch");
+      }
+    } else {
+      const v2 = payload as z.infer<typeof sourceObservedV2Schema>;
+      evidenceBundleHash = v2.evidenceBundleHash;
+      const expectedRecordSuffix =
+        v2.sourceKind === "sec_8k" ? "earnings-source-v2" : "periodic-source-v2";
+      const recordMatch = /^sec:\d{10}-\d{2}-\d{6}:(earnings-source-v2|periodic-source-v2)$/u.exec(
+        event.provider.recordId,
+      );
+      if (
+        event.provider.provider !== "sec-edgar" ||
+        event.source !== "sec:normalizer-v1" ||
+        event.provider.revisionId !== "1" ||
+        recordMatch?.[1] !== expectedRecordSuffix ||
+        event.subject !== `earnings:${v2.issuerCik}:${v2.fiscalPeriod}` ||
+        event.correlationId !== event.subject ||
+        event.causationId !== evidenceBundleHash
+      ) {
+        return rejected(state, event, "source-identity-mismatch");
+      }
+      const bundleInput = {
+        provider: event.provider.provider,
+        source: event.source,
+        recordId: event.provider.recordId,
+        revisionId: event.provider.revisionId,
+        subject: event.subject,
+        issuerCik: v2.issuerCik,
+        fiscalPeriod: v2.fiscalPeriod,
+        sourceKind: v2.sourceKind,
+        primaryArtifactHash: v2.primaryArtifactHash,
+        evidence: v2.evidence,
+      };
+      let recomputed: string;
+      try {
+        recomputed = computeProviderEvidenceBundleHash(bundleInput);
+      } catch (error) {
+        const reason =
+          error instanceof ProviderEvidenceBundleError && error.code === "member-limit-exceeded"
+            ? "source-evidence-limit-exceeded"
+            : "source-evidence-invalid";
+        return rejectedWithoutStateChange(state, event, reason);
+      }
+      if (recomputed !== evidenceBundleHash) {
+        return rejectedWithoutStateChange(state, event, "evidence-bundle-hash-mismatch");
+      }
+      try {
+        const bundle = validateSecEvidenceBundle({ ...bundleInput, evidenceBundleHash });
+        evidence = bundle.evidence.map((member) => ({ ...member }));
+      } catch (error) {
+        if (error instanceof SecContractError) {
+          const reason =
+            error.reasonCode === "sec.bundle-hash-mismatch"
+              ? "evidence-bundle-hash-mismatch"
+              : error.reasonCode === "sec.identity-mismatch"
+                ? "source-identity-mismatch"
+                : error.reasonCode === "sec.member-limit-exceeded"
+                  ? "source-evidence-limit-exceeded"
+                  : "source-evidence-invalid";
+          return rejectedWithoutStateChange(state, event, reason);
+        }
+        return rejectedWithoutStateChange(state, event, "source-evidence-invalid");
+      }
+    }
+
     const source: SourceObservation = {
+      eventSchemaVersion: event.schemaVersion as 1 | 2,
       eventId: event.eventId,
       eventHash: event.eventHash,
       position: event.position,
       sourceKind: payload.sourceKind,
-      artifactHash: payload.artifactHash,
+      primaryArtifactHash,
+      evidenceBundleHash,
+      evidence: canonicalEvidence(evidence),
       provider: event.provider.provider,
       providerRecordId: event.provider.recordId,
       providerRevisionId: event.provider.revisionId,
@@ -671,7 +1174,9 @@ export class EarningsClusterReducer
     }
 
     const matchingArtifact = cluster.sources.find(
-      (candidate) => candidate.artifactHash === source.artifactHash,
+      (candidate) =>
+        candidate.primaryArtifactHash === source.primaryArtifactHash &&
+        candidate.evidenceBundleHash === source.evidenceBundleHash,
     );
     if (matchingArtifact !== undefined) {
       cluster.sources.push(source);
@@ -681,7 +1186,8 @@ export class EarningsClusterReducer
           clusterId,
           sourceEventId: event.eventId,
           canonicalSourceEventId: matchingArtifact.eventId,
-          artifactHash: source.artifactHash,
+          primaryArtifactHash: source.primaryArtifactHash,
+          evidenceBundleHash: source.evidenceBundleHash,
           provider: source.provider,
           providerRecordId: source.providerRecordId,
           providerRevisionId: source.providerRevisionId,
@@ -715,13 +1221,22 @@ export class EarningsClusterReducer
       return rejectedWithoutStateChange(state, event, "analysis-branch-limit-exceeded");
     }
     cluster.sources.push(source);
-    const analysis = analysisDraft(
-      context.runId,
-      cluster,
-      phase,
-      context.nowMs,
-      expectedAnalysisContract(context),
-    );
+    let analysis: ReturnType<typeof analysisDraft>;
+    try {
+      analysis = analysisDraft(
+        context.runId,
+        cluster,
+        phase,
+        context.nowMs,
+        expectedAnalysisContract(context),
+      );
+    } catch (error) {
+      cluster.sources.pop();
+      if (error instanceof AnalysisCapacityError) {
+        return rejectedWithoutStateChange(state, event, error.reason);
+      }
+      throw error;
+    }
     if (cluster.analysisBranches.some((branch) => branch.branchId === analysis.branch.branchId)) {
       return noEffects(
         state,
@@ -752,7 +1267,7 @@ export class EarningsClusterReducer
     event: Readonly<StoredEvent>,
     context: ReducerContext<EarningsClusterConfig>,
   ): Transition<EarningsClusterState> {
-    const parsed = timerFiredSchema.safeParse(event.payload);
+    const parsed = timerFiredSchema.safeParse(inertPayload(event.payload));
     if (!parsed.success) return rejected(state, event, "invalid-timer-payload");
     const payload = parsed.data;
     const cluster = state.cluster;
@@ -809,38 +1324,52 @@ export class EarningsClusterReducer
     }
     timer.status = "fired";
     if (timer.timerType === "earnings.mirror-debounce") {
-      const currentInputs = uniqueAnalysisInputs(cluster.sources);
+      const currentInputs = analysisInputs(cluster.sources);
+      const currentArtifacts = artifactCatalog(currentInputs);
       const inputsAlreadyRepresented = cluster.analysisBranches.some(
-        (branch) => canonicalJson(branch.inputSources) === canonicalJson(currentInputs),
+        (branch) =>
+          canonicalJson(branch.inputSources) === canonicalJson(currentInputs) &&
+          canonicalJson(branch.artifactCatalog) === canonicalJson(currentArtifacts),
       );
       const windowComplete = decision("earnings.cluster.mirror-window-complete", {
         clusterId: cluster.clusterId,
         sourceCount: cluster.sources.length,
-        uniqueArtifactCount: currentInputs.length,
+        uniqueArtifactCount: currentArtifacts.length,
       });
       if (inputsAlreadyRepresented) return noEffects(state, windowComplete);
+      const capacityFallback = (): Transition<EarningsClusterState> => ({
+        state,
+        decisions: [
+          windowComplete,
+          decision("earnings.analysis.capacity-exhausted", {
+            clusterId: cluster.clusterId,
+            phase: "source_confirmation",
+          }),
+        ],
+        jobs: [],
+        outbox: [],
+      });
       if (cluster.analysisBranches.length >= context.config.maxAnalysisBranches) {
-        return {
-          state,
-          decisions: [
-            windowComplete,
-            decision("earnings.analysis.capacity-exhausted", {
-              clusterId: cluster.clusterId,
-              phase: "source_confirmation",
-            }),
-          ],
-          jobs: [],
-          outbox: [],
-        };
+        return capacityFallback();
       }
-      const analysis = analysisDraft(
-        context.runId,
-        cluster,
-        "source_confirmation",
-        context.nowMs,
-        expectedAnalysisContract(context),
-      );
+      let analysis: ReturnType<typeof analysisDraft>;
+      try {
+        analysis = analysisDraft(
+          context.runId,
+          cluster,
+          "source_confirmation",
+          context.nowMs,
+          expectedAnalysisContract(context),
+        );
+      } catch (error) {
+        if (error instanceof AnalysisCapacityError) return capacityFallback();
+        throw error;
+      }
       cluster.analysisBranches.push(analysis.branch);
+      if (earningsClusterStateCanonicalBytes(state) > MAX_EARNINGS_AGGREGATE_STATE_BYTES) {
+        cluster.analysisBranches.pop();
+        return capacityFallback();
+      }
       return {
         state,
         decisions: [
@@ -872,7 +1401,7 @@ export class EarningsClusterReducer
     event: Readonly<StoredEvent>,
     context: ReducerContext<EarningsClusterConfig>,
   ): Transition<EarningsClusterState> {
-    const parsed = jobSucceededSchema.safeParse(event.payload);
+    const parsed = jobSucceededSchema.safeParse(inertPayload(event.payload));
     if (!parsed.success) return rejected(state, event, "invalid-job-success-payload");
     const payload = parsed.data;
     assertJson(payload.result);
@@ -930,19 +1459,25 @@ export class EarningsClusterReducer
     ) {
       return rejected(state, event, "analysis-contract-mismatch");
     }
-    const expectedEventIds = branch.inputSources.map((source) => source.eventId);
-    const expectedArtifacts = branch.inputSources.map((source) => source.artifactHash);
+    const submittedInputs = canonicalAnalysisInputs(payload.provenance.inputSources);
+    const submittedArtifacts = [...payload.provenance.artifactCatalog].sort();
     if (
-      canonicalJson(payload.provenance.inputEventIds) !== canonicalJson(expectedEventIds) ||
-      canonicalJson(payload.provenance.inputArtifactHashes) !== canonicalJson(expectedArtifacts)
+      canonicalJson(submittedInputs) !== canonicalJson(branch.inputSources) ||
+      canonicalJson(submittedArtifacts) !== canonicalJson(branch.artifactCatalog)
     ) {
       return rejected(state, event, "analysis-input-set-mismatch");
     }
+    const canonicalProvenance: EarningsAnalysisResultProvenance = {
+      ...submittedContract,
+      analysisContractHash: payload.provenance.analysisContractHash,
+      inputSources: submittedInputs,
+      artifactCatalog: submittedArtifacts,
+    };
     branch.status = "succeeded";
     branch.resultEventId = event.eventId;
-    branch.resultHash = canonicalHash("peas/analysis-result/v2", {
+    branch.resultHash = canonicalHash("peas/analysis-result/v3", {
       result: payload.result as JsonObject,
-      provenance: payload.provenance,
+      provenance: canonicalProvenance,
       attempt: payload.attempt,
       fencingToken: payload.fencingToken,
     });
@@ -976,7 +1511,7 @@ export class EarningsClusterReducer
     state: EarningsClusterState,
     event: Readonly<StoredEvent>,
   ): Transition<EarningsClusterState> {
-    const parsed = jobFailedSchema.safeParse(event.payload);
+    const parsed = jobFailedSchema.safeParse(inertPayload(event.payload));
     if (!parsed.success) return rejected(state, event, "invalid-job-failure-payload");
     const payload = parsed.data;
     const cluster = state.cluster;
@@ -1023,7 +1558,7 @@ export class EarningsClusterReducer
     state: EarningsClusterState,
     event: Readonly<StoredEvent>,
   ): Transition<EarningsClusterState> {
-    const parsed = jobLeasedSchema.safeParse(event.payload);
+    const parsed = jobLeasedSchema.safeParse(inertPayload(event.payload));
     if (!parsed.success) return rejected(state, event, "invalid-job-lease-payload");
     const payload = parsed.data;
     const cluster = state.cluster;
