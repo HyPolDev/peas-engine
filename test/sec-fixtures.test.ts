@@ -608,6 +608,46 @@ function focusPairs(markup: string): string[] {
   return years.map((year, index) => `${year}-${periods[index]}`);
 }
 
+function parseStrictRfc3339(value: string): number {
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/u.exec(
+      value,
+    );
+  assert.ok(match, `${value} must be strict RFC 3339 with an explicit UTC offset`);
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, fraction, zone] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  const millisecond = Number((fraction ?? "").padEnd(3, "0"));
+  assert.ok(month >= 1 && month <= 12, value);
+  assert.ok(hour <= 23 && minute <= 59 && second <= 59, value);
+  const localEpoch = Date.UTC(year, month - 1, day, hour, minute, second, millisecond);
+  const local = new Date(localEpoch);
+  assert.deepEqual(
+    [
+      local.getUTCFullYear(),
+      local.getUTCMonth() + 1,
+      local.getUTCDate(),
+      local.getUTCHours(),
+      local.getUTCMinutes(),
+      local.getUTCSeconds(),
+      local.getUTCMilliseconds(),
+    ],
+    [year, month, day, hour, minute, second, millisecond],
+    value,
+  );
+  if (zone === "Z") return localEpoch;
+  assert.ok(zone);
+  const sign = zone[0] === "+" ? 1 : -1;
+  const offsetHour = Number(zone.slice(1, 3));
+  const offsetMinute = Number(zone.slice(4, 6));
+  assert.ok(offsetHour <= 23 && offsetMinute <= 59, value);
+  return localEpoch - sign * (offsetHour * 60 + offsetMinute) * 60_000;
+}
+
 function boundaryTokenMarkup(count: number): Buffer {
   const base = ["<?fixture?>", "<root>", "<!--comment-->", "<![CDATA[cdata]]>", "text"];
   let remaining = count - 6;
@@ -1105,6 +1145,47 @@ test("structurally valid ignored and quarantined semantics retain bundle identit
   }
   for (const fixture of SEC_FIXTURE_CASES.filter((candidate) => candidate.area === "B")) {
     assert.equal(fixture.expected.bundleValidity, "invalid", fixture.caseId);
+  }
+});
+
+test("every structurally valid case declares one present primary digest under its source role", () => {
+  for (const fixture of SEC_FIXTURE_CASES.filter(
+    (candidate) => candidate.expected.bundleValidity === "valid",
+  )) {
+    assert.match(fixture.expectedPrimaryArtifactHash ?? "", SHA256, fixture.caseId);
+    const declaredPrimaryMembers = fixture.members.filter(
+      (member) => member.artifactHash === fixture.expectedPrimaryArtifactHash,
+    );
+    assert.equal(declaredPrimaryMembers.length, 1, fixture.caseId);
+    assert.equal(
+      declaredPrimaryMembers[0]?.role,
+      fixture.sourceKind === "sec_8k" ? "sec.exhibit-99.1" : "sec.primary-document",
+      fixture.caseId,
+    );
+  }
+});
+
+test("exact expected timestamps independently parse selected RFC3339 evidence", async () => {
+  const exactCases = SEC_FIXTURE_CASES.filter(
+    (fixture) => fixture.expected.timestampConfidence === "exact",
+  );
+  assert.ok(exactCases.length > 0);
+  for (const fixture of exactCases) {
+    const submissions = memberByRole(fixture, "sec.submissions");
+    assert.notEqual(submissions.selectedObservation, null, fixture.caseId);
+    assert.equal(
+      submissions.selectedObservation?.artifactDigest,
+      submissions.artifactHash,
+      fixture.caseId,
+    );
+    const acceptanceDateTime = (await jsonFor(submissions))["acceptanceDateTime"];
+    assert.ok(typeof acceptanceDateTime === "string", fixture.caseId);
+    assert.equal(fixture.expected.originalTimestamp, acceptanceDateTime, fixture.caseId);
+    assert.equal(
+      fixture.expected.publishedAtMs,
+      parseStrictRfc3339(acceptanceDateTime),
+      fixture.caseId,
+    );
   }
 });
 

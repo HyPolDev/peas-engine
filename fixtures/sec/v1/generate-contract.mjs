@@ -1145,6 +1145,8 @@ addCase("valid-10q-inline-focus", "A", "form-10q-inline-focus", {
     m("sec.primary-document", "primary-10q-next", "primary-document"),
   ],
   primaryArtifactId: "primary-10q-next",
+  publishedAtMs: Date.parse("2026-05-08T07:30:00-04:00"),
+  originalTimestamp: "2026-05-08T07:30:00-04:00",
 });
 addCase("valid-10k-separate-xbrl", "A", "form-10k-separate-focus", {
   sourceKind: "filing",
@@ -1458,6 +1460,7 @@ addCase("timestamp-linked-periodic-excluded", "E", "linked-periodic-time-exclude
 for (const label of decoderAliases) {
   addCase(`decoder-accepted-${label}`, "F", `accepted-decoder-alias:${label}`, {
     members: common8k({ exhibit: `decoder-${label}` }),
+    primaryArtifactId: `decoder-${label}`,
     decoder: {
       vector: "declared",
       label,
@@ -1467,38 +1470,46 @@ for (const label of decoderAliases) {
 }
 addCase("decoder-utf8-bom", "F", "utf8-bom-precedence", {
   members: common8k({ exhibit: "decoder-bom" }),
+  primaryArtifactId: "decoder-bom",
   decoder: { vector: "bom", label: "utf-8", canonical: "utf-8" },
 });
 addCase("decoder-undeclared-utf8", "F", "undeclared-fatal-utf8-success", {
   members: common8k({ exhibit: "decoder-undeclared-utf8" }),
+  primaryArtifactId: "decoder-undeclared-utf8",
   decoder: { vector: "undeclared", label: null, canonical: "utf-8" },
 });
 addCase("decoder-undeclared-windows1252", "F", "undeclared-windows1252-fallback", {
   members: common8k({ exhibit: "decoder-undeclared-1252" }),
+  primaryArtifactId: "decoder-undeclared-1252",
   decoder: { vector: "fallback", label: null, canonical: "windows-1252" },
 });
 addCase("decoder-unsupported", "F", "unsupported-declaration", {
   status: "quarantined",
   reasonCode: "sec.unsupported-encoding",
   members: common8k({ exhibit: "decoder-unsupported" }),
+  primaryArtifactId: "decoder-unsupported",
   decoder: { vector: "unsupported", label: "koi8-r", canonical: null },
 });
 addCase("decoder-bom-conflict", "F", "bom-declaration-conflict", {
   status: "quarantined",
   reasonCode: "sec.unsupported-encoding",
   members: common8k({ exhibit: "decoder-bom-conflict" }),
+  primaryArtifactId: "decoder-bom-conflict",
   decoder: { vector: "bom-conflict", label: "windows-1252", canonical: null },
 });
 addCase("decoder-sniff-exact-boundary", "F", "declaration-ends-at-byte-1024", {
   members: common8k({ exhibit: "decoder-sniff-exact" }),
+  primaryArtifactId: "decoder-sniff-exact",
   decoder: { vector: "sniff-exact", label: "utf-8", canonical: "utf-8" },
 });
 addCase("decoder-sniff-crossing-boundary", "F", "declaration-crosses-byte-1024", {
   members: common8k({ exhibit: "decoder-sniff-crossing" }),
+  primaryArtifactId: "decoder-sniff-crossing",
   decoder: { vector: "sniff-crossing", label: null, canonical: "utf-8" },
 });
 addCase("markup-tolerated", "F", "tolerated-html-recovery", {
   members: common8k({ exhibit: "markup-tolerated" }),
+  primaryArtifactId: "markup-tolerated",
 });
 addCase("markup-quarantined", "F", "mismatched-required-xml", {
   status: "quarantined",
