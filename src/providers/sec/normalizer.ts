@@ -548,8 +548,19 @@ function resolveIssuer(
   return issuerCik;
 }
 
-function fiscalPairs(markup: SecMarkupExtraction): string[] | null {
-  if (markup.fiscalYears.length !== markup.fiscalPeriods.length) return null;
+type FiscalFocus =
+  | Readonly<{ kind: "complete"; pairs: readonly string[] }>
+  | Readonly<{ kind: "incomplete" }>
+  | Readonly<{ kind: "invalid" }>;
+
+function fiscalFocus(markup: SecMarkupExtraction): FiscalFocus {
+  if (
+    markup.fiscalYears.length === 0 ||
+    markup.fiscalPeriods.length === 0 ||
+    markup.fiscalYears.length !== markup.fiscalPeriods.length
+  ) {
+    return { kind: "incomplete" };
+  }
   const pairs: string[] = [];
   for (let index = 0; index < markup.fiscalYears.length; index += 1) {
     const year = markup.fiscalYears[index];
@@ -560,11 +571,11 @@ function fiscalPairs(markup: SecMarkupExtraction): string[] | null {
       !/^\d{4}$/u.test(year) ||
       !/^(?:Q[1-4]|FY)$/u.test(period)
     ) {
-      return null;
+      return { kind: "invalid" };
     }
     pairs.push(`${year}-${period}`);
   }
-  return pairs;
+  return { kind: "complete", pairs };
 }
 
 function resolveFiscalPeriod(
@@ -572,20 +583,45 @@ function resolveFiscalPeriod(
   declared: string,
   parsed: readonly ParsedMember[],
 ): string {
+  const pairs: string[] = [];
+  if (sourceKind === "filing") {
+    const primary = only(
+      parsed.map((member) =>
+        member.member.role === "sec.primary-document" ? member.markup : null,
+      ),
+    );
+    const inlineFocus = fiscalFocus(primary);
+    const xbrl = parsed.find((member) => member.member.role === "sec.xbrl-instance")?.markup;
+    if (inlineFocus.kind === "invalid") return failure("sec.fiscal-period-ambiguous");
+    if (inlineFocus.kind === "incomplete") {
+      if (xbrl === null || xbrl === undefined) {
+        return failure("sec.required-member-missing");
+      }
+      const linkedFocus = fiscalFocus(xbrl);
+      if (linkedFocus.kind !== "complete") return failure("sec.required-member-missing");
+      pairs.push(...linkedFocus.pairs);
+    } else {
+      pairs.push(...inlineFocus.pairs);
+      if (xbrl !== null && xbrl !== undefined) {
+        const linkedFocus = fiscalFocus(xbrl);
+        if (linkedFocus.kind !== "complete") return failure("sec.fiscal-period-ambiguous");
+        pairs.push(...linkedFocus.pairs);
+      }
+    }
+  }
   const structured = parsed.filter(
     (member) =>
       member.markup !== null &&
       (member.member.role === "sec.xbrl-instance" ||
-        member.member.role === "sec.periodic-report" ||
-        (sourceKind === "filing" && member.member.role === "sec.primary-document")),
+        member.member.role === "sec.periodic-report") &&
+      sourceKind === "sec_8k",
   );
-  const pairs: string[] = [];
   for (const member of structured) {
     const markup = member.markup;
     if (markup === null) continue;
-    const found = fiscalPairs(markup);
-    if (found === null) return failure("sec.fiscal-period-ambiguous");
-    pairs.push(...found);
+    const found = fiscalFocus(markup);
+    if (found.kind !== "complete") return failure("sec.fiscal-period-ambiguous");
+    pairs.push(...found.pairs);
     if (member.member.role === "sec.periodic-report") {
       if (markup.documentTypes.length !== 1 || !isSecPeriodicForm(markup.documentTypes[0])) {
         return failure("sec.identity-mismatch");

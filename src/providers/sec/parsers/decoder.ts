@@ -23,11 +23,20 @@ const WINDOWS_1252_LABELS = new Set([
   "us-ascii",
 ]);
 const ASCII_WHITESPACE = /^[\t\n\f\r ]+|[\t\n\f\r ]+$/gu;
-const META_TAG = /<meta(?:[\t\n\f\r ][^<>]*)?>/giu;
 const ATTRIBUTE =
   /([^\t\n\f\r />=]+)[\t\n\f\r ]*=[\t\n\f\r ]*(?:"([^"]*)"|'([^']*)'|([^\t\n\f\r "'=<>`]+))/gu;
 const CONTENT_CHARSET = /(?:^|;)[\t\n\f\r ]*charset[\t\n\f\r ]*=[\t\n\f\r ]*([^;\t\n\f\r ]+)/giu;
 const XML_DECLARATION = /^(?:<\?xml[\t\n\f\r ][^?]*\?>)/iu;
+const HTML_TEXT_CONTAINERS = new Set([
+  "iframe",
+  "noembed",
+  "noframes",
+  "script",
+  "style",
+  "textarea",
+  "title",
+  "xmp",
+]);
 
 function asciiLower(value: string): string {
   let normalized = "";
@@ -74,20 +83,109 @@ function attributes(tag: string): Map<string, string> {
   return result;
 }
 
+function isTagNameCode(code: number): boolean {
+  return (
+    (code >= 0x30 && code <= 0x39) ||
+    (code >= 0x41 && code <= 0x5a) ||
+    (code >= 0x61 && code <= 0x7a) ||
+    code === 0x2d ||
+    code === 0x3a ||
+    code === 0x5f
+  );
+}
+
+function isTagBoundary(value: string | undefined): boolean {
+  return value === undefined || value === ">" || value === "/" || /[\t\n\f\r ]/u.test(value);
+}
+
+function findTagEnd(value: string, start: number): number {
+  let quote: '"' | "'" | null = null;
+  for (let index = start; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote !== null) {
+      if (character === quote) quote = null;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === ">") return index;
+  }
+  return -1;
+}
+
+function tagNameAt(value: string, start: number): { name: string; end: number } | null {
+  let end = start;
+  while (end < value.length && isTagNameCode(value.charCodeAt(end))) end += 1;
+  if (end === start) return null;
+  return { name: asciiLower(value.slice(start, end)), end };
+}
+
+function afterRawTextContainer(value: string, start: number, name: string): number {
+  const lower = asciiLower(value);
+  const close = `</${name}`;
+  let candidate = lower.indexOf(close, start);
+  while (candidate >= 0) {
+    const nameEnd = candidate + close.length;
+    if (isTagBoundary(value[nameEnd])) {
+      const tagEnd = findTagEnd(value, nameEnd);
+      return tagEnd < 0 ? value.length : tagEnd + 1;
+    }
+    candidate = lower.indexOf(close, candidate + 1);
+  }
+  return value.length;
+}
+
+function appendMetaDeclarations(tag: string, declarations: string[]): void {
+  const values = attributes(tag);
+  const direct = values.get("charset");
+  if (direct !== undefined) declarations.push(normalizeSecEncodingLabel(direct));
+  if (asciiLower(values.get("http-equiv") ?? "") !== "content-type") return;
+  const content = values.get("content");
+  if (content === undefined) return;
+  for (const charset of content.matchAll(CONTENT_CHARSET)) {
+    const label = charset[1];
+    if (label !== undefined) declarations.push(normalizeSecEncodingLabel(label));
+  }
+}
+
 function htmlDeclarations(bytes: Uint8Array): string[] {
   const sniff = asciiSniff(bytes);
   const declarations: string[] = [];
-  for (const match of sniff.matchAll(META_TAG)) {
-    const tag = match[0];
-    const values = attributes(tag);
-    const direct = values.get("charset");
-    if (direct !== undefined) declarations.push(normalizeSecEncodingLabel(direct));
-    if (asciiLower(values.get("http-equiv") ?? "") !== "content-type") continue;
-    const content = values.get("content");
-    if (content === undefined) continue;
-    for (const charset of content.matchAll(CONTENT_CHARSET)) {
-      const label = charset[1];
-      if (label !== undefined) declarations.push(normalizeSecEncodingLabel(label));
+  let cursor = 0;
+  while (cursor < sniff.length) {
+    const open = sniff.indexOf("<", cursor);
+    if (open < 0) break;
+    if (sniff.startsWith("<!--", open)) {
+      const end = sniff.indexOf("-->", open + 4);
+      if (end < 0) break;
+      cursor = end + 3;
+      continue;
+    }
+    const marker = sniff[open + 1];
+    if (marker === "!" || marker === "?" || marker === "%") {
+      const end = findTagEnd(sniff, open + 2);
+      if (end < 0) break;
+      cursor = end + 1;
+      continue;
+    }
+    const closing = marker === "/";
+    const nameStart = open + (closing ? 2 : 1);
+    const tagName = tagNameAt(sniff, nameStart);
+    if (tagName === null || !isTagBoundary(sniff[tagName.end])) {
+      cursor = open + 1;
+      continue;
+    }
+    const end = findTagEnd(sniff, tagName.end);
+    if (end < 0) break;
+    if (!closing && tagName.name === "meta") {
+      appendMetaDeclarations(sniff.slice(open, end + 1), declarations);
+    }
+    cursor = end + 1;
+    if (!closing && tagName.name === "plaintext") break;
+    if (!closing && HTML_TEXT_CONTAINERS.has(tagName.name)) {
+      cursor = afterRawTextContainer(sniff, cursor, tagName.name);
     }
   }
   return declarations;

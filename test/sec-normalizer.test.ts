@@ -39,7 +39,7 @@ import {
   probeSecDecoderCapabilities,
 } from "../src/providers/sec/parsers/decoder.js";
 import { SecParserError } from "../src/providers/sec/parsers/errors.js";
-import { parseSecMarkup } from "../src/providers/sec/parsers/markup.js";
+import { parseSecMarkup, SEC_MARKUP_CHUNK_BYTES } from "../src/providers/sec/parsers/markup.js";
 
 const FIXTURE_ROOT = path.resolve("fixtures/sec/v1");
 const PINNED_OUTPUT_HASH = "719d48ac767090f829ffb93cd4b24c886e8c8c50183a95a9ea5fb4a701ccd3cc";
@@ -61,60 +61,7 @@ function body(relative: string): Buffer {
   return readFileSync(path.join(FIXTURE_ROOT, relative));
 }
 
-function correctedPrimary(fixtureCase: SecFixtureCase): string | null {
-  if (fixtureCase.expected.bundleValidity !== "valid") {
-    return fixtureCase.expectedPrimaryArtifactHash;
-  }
-  if (fixtureCase.sourceKind === "filing") {
-    return (
-      fixtureCase.members.find((member) => member.role === "sec.primary-document")?.artifactHash ??
-      null
-    );
-  }
-  const indexMember = fixtureCase.members.find((member) => member.role === "sec.filing-index");
-  assert.ok(indexMember);
-  const filingIndex = JSON.parse(body(indexMember.path).toString("utf8")) as {
-    exhibits: Array<{ memberKey: string; type: string; sequence: number }>;
-  };
-  const qualifying = filingIndex.exhibits
-    .filter((entry) => entry.type === "EX-99.1" && entry.sequence > 0)
-    .sort((left, right) => left.sequence - right.sequence);
-  if (
-    qualifying.length === 0 ||
-    (qualifying[1] !== undefined && qualifying[0]?.sequence === qualifying[1].sequence)
-  ) {
-    return null;
-  }
-  const selected = qualifying[0];
-  if (selected === undefined) return null;
-  return (
-    fixtureCase.members.find(
-      (member) => member.role === "sec.exhibit-99.1" && member.memberKey === selected.memberKey,
-    )?.artifactHash ?? null
-  );
-}
-
 function verifiedFixtureBundle(fixtureCase: SecFixtureCase): VerifiedSecBundle {
-  const primaryArtifactHash = correctedPrimary(fixtureCase);
-  let evidenceBundleHash = fixtureCase.expected.evidenceBundleHash;
-  if (fixtureCase.expected.bundleValidity === "valid") {
-    assert.notEqual(primaryArtifactHash, null);
-    evidenceBundleHash = createProviderEvidenceBundle({
-      provider: fixtureCase.provider,
-      source: fixtureCase.source,
-      recordId: fixtureCase.recordId,
-      revisionId: fixtureCase.revisionId,
-      subject: `earnings:${fixtureCase.subjectCik.padStart(10, "0")}:${fixtureCase.fiscalPeriod}`,
-      issuerCik: fixtureCase.subjectCik.padStart(10, "0"),
-      fiscalPeriod: fixtureCase.fiscalPeriod,
-      sourceKind: fixtureCase.sourceKind,
-      primaryArtifactHash,
-      evidence: fixtureCase.members.map((member) => ({
-        role: member.role,
-        artifactHash: member.artifactHash,
-      })),
-    }).evidenceBundleHash;
-  }
   return {
     provider: fixtureCase.provider,
     source: fixtureCase.source,
@@ -124,8 +71,8 @@ function verifiedFixtureBundle(fixtureCase: SecFixtureCase): VerifiedSecBundle {
     accession: fixtureCase.accession,
     subjectCik: fixtureCase.subjectCik,
     fiscalPeriod: fixtureCase.fiscalPeriod,
-    primaryArtifactHash,
-    evidenceBundleHash,
+    primaryArtifactHash: fixtureCase.expectedPrimaryArtifactHash,
+    evidenceBundleHash: fixtureCase.expected.evidenceBundleHash,
     members: fixtureCase.members.map((member) => ({
       role: member.role,
       memberKey: member.memberKey,
@@ -274,6 +221,67 @@ function customSec8k(exhibitBytes: Uint8Array, exhibitCount = 1): VerifiedSecBun
   );
 }
 
+function customFiling(primaryFocus: string, xbrlFocus: string | null): VerifiedSecBundle {
+  const accession = "0000123456-26-000101";
+  const primary = member(
+    "sec.primary-document",
+    "primary-document",
+    Buffer.from(
+      "<html><DOCUMENT-TYPE>10-Q</DOCUMENT-TYPE>" +
+        "<SUBJECT-CIK>0000123456</SUBJECT-CIK>" +
+        "<ACCEPTANCE-DATETIME>20260508120000</ACCEPTANCE-DATETIME>" +
+        `${primaryFocus}</html>`,
+      "utf8",
+    ),
+  );
+  const members: VerifiedSecMember[] = [
+    member(
+      "sec.submissions",
+      "submissions",
+      Buffer.from(
+        JSON.stringify({
+          accession,
+          cik: "123456",
+          form: "10-Q",
+          items: [],
+          acceptanceDateTime: "2026-05-08T12:00:00-04:00",
+        }),
+        "utf8",
+      ),
+    ),
+    member(
+      "sec.filing-index",
+      "filing-index",
+      Buffer.from(
+        JSON.stringify({
+          accession,
+          form: "10-Q",
+          items: [],
+          subjectCik: "0000123456",
+          exhibits: [],
+        }),
+        "utf8",
+      ),
+    ),
+    primary,
+  ];
+  if (xbrlFocus !== null) {
+    members.push(
+      member(
+        "sec.xbrl-instance",
+        "xbrl-instance",
+        Buffer.from(
+          '<?xml version="1.0" encoding="UTF-8"?><xbrl>' +
+            "<dei:EntityCentralIndexKey>0000123456</dei:EntityCentralIndexKey>" +
+            `${xbrlFocus}</xbrl>`,
+          "utf8",
+        ),
+      ),
+    );
+  }
+  return assembleBundle("filing", accession, "123456", "2026-Q1", members, primary.artifactHash);
+}
+
 test("decoder policy pins capability, closed aliases, BOM precedence, fallback, and sniff edges", () => {
   assert.equal(probeSecDecoderCapabilities(), true);
   const aliases = new Map([
@@ -321,6 +329,32 @@ test("decoder policy pins capability, closed aliases, BOM precedence, fallback, 
   );
 });
 
+test("HTML decoder sniff ignores false meta declarations outside real markup", () => {
+  const falseMetaContexts = [
+    '<!-- <meta charset="utf-8"> -->',
+    "<script>const fake = '<meta charset=\"utf-8\">';</script>",
+    '<style>/* <meta charset="utf-8"> */</style>',
+    '<?fixture value="<meta charset=utf-8>"?>',
+    '<div data-fixture="<meta charset=utf-8>"></div>',
+    '<textarea><meta charset="utf-8"></textarea>',
+  ];
+  for (const context of falseMetaContexts) {
+    const decoded = decodeSecMember(
+      Buffer.concat([Buffer.from(context, "ascii"), Buffer.from([0x93])]),
+      "html",
+    );
+    assert.equal(decoded.encoding, "windows-1252", context);
+    assert.equal(decoded.declaredLabel, null, context);
+    assert.match(decoded.text, /\u201c/u, context);
+  }
+  const realAfterFalse = decodeSecMember(
+    Buffer.from('<!-- <meta charset="koi8-r"> --><meta charset="utf-8"><p>caf\u00e9</p>'),
+    "html",
+  );
+  assert.equal(realAfterFalse.encoding, "utf-8");
+  assert.equal(realAfterFalse.declaredLabel, "utf-8");
+});
+
 test("RFC 3339 and post-2007 Eastern conversion are host-timezone independent at DST edges", () => {
   assert.equal(
     parseSecRfc3339AcceptanceDateTime("2026-05-07T20:15:30-04:00"),
@@ -364,6 +398,11 @@ test("streaming callbacks count directives, comments, CDATA, coalesced text, and
 
   const html = parseSecMarkup("<html><body><p>synthetic<div>continued", "html", 2);
   assert.ok(html.semanticTokens > 0);
+  const astralAcrossByteBoundary = `<x>${"a".repeat(SEC_MARKUP_CHUNK_BYTES - 4)}\ud83d\ude00</x>`;
+  const astralFixed = parseSecMarkup(astralAcrossByteBoundary, "xml");
+  assert.deepEqual(parseSecMarkup(astralAcrossByteBoundary, "xml", 1), astralFixed);
+  assert.deepEqual(parseSecMarkup(astralAcrossByteBoundary, "xml", 17), astralFixed);
+  assert.equal(astralFixed.extractedTextBytes, SEC_MARKUP_CHUNK_BYTES);
   assert.throws(
     () => parseSecMarkup(body("bodies/xbrl-malformed.xml").toString("utf8"), "xml"),
     (error: unknown) =>
@@ -404,17 +443,60 @@ test("all four markup ceilings pass exact and fail one-over with stable limitKin
     "attributes-per-tag",
   );
 
-  assert.equal(
-    parseSecMarkup(`<x>${"a".repeat(SEC_MAX_EXTRACTED_TEXT_BYTES)}</x>`, "xml").extractedTextBytes,
-    SEC_MAX_EXTRACTED_TEXT_BYTES,
-  );
+  const astralExact = `<x>${"a".repeat(SEC_MAX_EXTRACTED_TEXT_BYTES - 4)}\ud83d\ude00</x>`;
+  assert.equal(parseSecMarkup(astralExact, "xml").extractedTextBytes, SEC_MAX_EXTRACTED_TEXT_BYTES);
   expectParserLimit(
-    () => parseSecMarkup(`<x>${"a".repeat(SEC_MAX_EXTRACTED_TEXT_BYTES + 1)}</x>`, "xml"),
+    () => parseSecMarkup(astralExact.replace("</x>", "a</x>"), "xml"),
     "extracted-text-bytes",
   );
 });
 
+test("filing with incomplete inline focus conditionally requires eligible XBRL focus", () => {
+  const incompleteInline = '<ix:nonNumeric name="dei:DocumentFiscalYearFocus">2026</ix:nonNumeric>';
+  const completeXbrl =
+    "<dei:DocumentFiscalYearFocus>2026</dei:DocumentFiscalYearFocus>" +
+    "<dei:DocumentFiscalPeriodFocus>Q1</dei:DocumentFiscalPeriodFocus>";
+
+  const absent = normalizeSecBundle(customFiling(incompleteInline, null));
+  assert.equal(absent.status, "quarantined");
+  assert.equal(absent.reasonCode, "sec.required-member-missing");
+  assert.equal(absent.transcript.outputHash, null);
+
+  const incomplete = normalizeSecBundle(
+    customFiling(
+      incompleteInline,
+      "<dei:DocumentFiscalPeriodFocus>Q1</dei:DocumentFiscalPeriodFocus>",
+    ),
+  );
+  assert.equal(incomplete.status, "quarantined");
+  assert.equal(incomplete.reasonCode, "sec.required-member-missing");
+  assert.equal(incomplete.transcript.outputHash, null);
+
+  const supplied = normalizeSecBundle(customFiling(incompleteInline, completeXbrl));
+  assert.equal(supplied.status, "emitted");
+  assert.equal(supplied.draft.payload["fiscalPeriod"], "2026-Q1");
+});
+
 test("fixture A-F normalization outcomes follow pure-normalizer boundaries", () => {
+  const structurallyValid = SEC_FIXTURE_CASES.filter(
+    (candidate) => candidate.expected.bundleValidity === "valid",
+  );
+  assert.equal(structurallyValid.length, 59);
+  for (const fixtureCase of structurallyValid) {
+    const declaredPrimaryMembers = fixtureCase.members.filter(
+      (member) => member.artifactHash === fixtureCase.expectedPrimaryArtifactHash,
+    );
+    assert.equal(declaredPrimaryMembers.length, 1, fixtureCase.caseId);
+    const bundle = verifiedFixtureBundle(fixtureCase);
+    assert.equal(bundle.primaryArtifactHash, fixtureCase.expectedPrimaryArtifactHash);
+    assert.equal(bundle.evidenceBundleHash, fixtureCase.expected.evidenceBundleHash);
+  }
+  assert.equal(
+    SEC_FIXTURE_CASES.filter((candidate) => candidate.expected.timestampConfidence === "exact")
+      .length,
+    35,
+  );
+
   const loaderFailures = SEC_FIXTURE_CASES.filter(
     (candidate) => candidate.expected.loaderStatus === "quarantined",
   );
@@ -422,39 +504,48 @@ test("fixture A-F normalization outcomes follow pure-normalizer boundaries", () 
     loaderFailures.map((candidate) => candidate.area),
     ["D", "D", "D", "D", "D"],
   );
+  const stateful = fixture("record-revision-conflicting-primary");
+  assert.equal(stateful.expected.status, "quarantined");
+  assert.equal(stateful.expected.reasonCode, "sec.identity-mismatch");
 
   for (const fixtureCase of SEC_FIXTURE_CASES.filter(
-    (candidate) => candidate.expected.loaderStatus === "verified",
+    (candidate) =>
+      candidate.expected.loaderStatus === "verified" &&
+      candidate.caseId !== "record-revision-conflicting-primary",
   )) {
     const result = normalizeSecBundle(verifiedFixtureBundle(fixtureCase));
-    const pureExpectedStatus =
-      fixtureCase.caseId === "record-revision-conflicting-primary"
-        ? "emitted"
-        : fixtureCase.expected.status;
-    assert.equal(result.status, pureExpectedStatus, fixtureCase.caseId);
+    assert.equal(result.status, fixtureCase.expected.status, fixtureCase.caseId);
     if (result.status !== "emitted") {
       assert.equal(result.reasonCode, fixtureCase.expected.reasonCode, fixtureCase.caseId);
       assert.equal(result.transcript.outputHash, null, fixtureCase.caseId);
       assert.equal(result.transcript.limitKind, fixtureCase.expected.limitKind, fixtureCase.caseId);
       continue;
     }
-    const expectedPublishedAt =
-      fixtureCase.caseId === "valid-10q-inline-focus"
-        ? Date.UTC(2026, 4, 8, 11, 30)
-        : fixtureCase.caseId === "record-revision-conflicting-primary"
-          ? fixture("valid-item-202").expected.publishedAtMs
-          : fixtureCase.expected.publishedAtMs;
-    const expectedIssuer =
-      fixtureCase.caseId === "record-revision-conflicting-primary"
-        ? fixtureCase.subjectCik.padStart(10, "0")
-        : fixtureCase.expected.issuerCik;
-    const expectedFiscalPeriod =
-      fixtureCase.caseId === "record-revision-conflicting-primary"
-        ? fixtureCase.fiscalPeriod
-        : fixtureCase.expected.fiscalPeriod;
-    assert.equal(result.draft.payload["issuerCik"], expectedIssuer, fixtureCase.caseId);
-    assert.equal(result.draft.payload["fiscalPeriod"], expectedFiscalPeriod, fixtureCase.caseId);
-    assert.equal(result.draft.payload["publishedAtMs"], expectedPublishedAt, fixtureCase.caseId);
+    assert.equal(
+      result.draft.payload["issuerCik"],
+      fixtureCase.expected.issuerCik,
+      fixtureCase.caseId,
+    );
+    assert.equal(
+      result.draft.payload["fiscalPeriod"],
+      fixtureCase.expected.fiscalPeriod,
+      fixtureCase.caseId,
+    );
+    assert.equal(
+      result.draft.payload["publishedAtMs"],
+      fixtureCase.expected.publishedAtMs,
+      fixtureCase.caseId,
+    );
+    assert.equal(
+      result.draft.payload["timestampConfidence"],
+      fixtureCase.expected.timestampConfidence,
+      fixtureCase.caseId,
+    );
+    assert.equal(
+      result.draft.payload["originalTimestamp"],
+      fixtureCase.expected.originalTimestamp,
+      fixtureCase.caseId,
+    );
     assert.notEqual(result.transcript.outputHash, null, fixtureCase.caseId);
     assert.equal(result.transcript.reasonCode, null, fixtureCase.caseId);
   }

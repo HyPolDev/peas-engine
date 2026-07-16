@@ -70,6 +70,30 @@ function frozen(value: SecMarkupExtraction): SecMarkupExtraction {
   return deepFreezeJson(inertJsonSnapshot(value as unknown as JsonValue)) as SecMarkupExtraction;
 }
 
+function utf8BytesForScalar(codePoint: number): number {
+  if (codePoint <= 0x7f) return 1;
+  if (codePoint <= 0x7ff) return 2;
+  if (codePoint <= 0xffff) return 3;
+  return 4;
+}
+
+function assertUnicodeScalars(value: string): void {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const low = value.charCodeAt(index + 1);
+      if (!(low >= 0xdc00 && low <= 0xdfff)) {
+        secParserFailure("sec.malformed-markup", "SEC markup contains an unpaired surrogate");
+      }
+      index += 1;
+      continue;
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      secParserFailure("sec.malformed-markup", "SEC markup contains an unpaired surrogate");
+    }
+  }
+}
+
 export function parseSecMarkup(
   decoded: string,
   mode: SecMarkupMode,
@@ -90,6 +114,7 @@ export function parseSecMarkup(
   let extractedTextBytes = 0;
   let attributesOnTag = 0;
   let pendingTextToken = false;
+  let pendingHighSurrogate: number | null = null;
   let inCdata = false;
   let malformedXml = false;
   let ended = false;
@@ -105,9 +130,63 @@ export function parseSecMarkup(
       );
     }
   };
+  const finishTextScalar = (): void => {
+    if (pendingHighSurrogate !== null) {
+      secParserFailure("sec.malformed-markup", "SEC markup contains an unpaired surrogate");
+    }
+  };
   const boundary = (): void => {
+    finishTextScalar();
     if (pendingTextToken) token();
     pendingTextToken = false;
+  };
+  const countExtractedText = (data: string): void => {
+    let index = 0;
+    if (pendingHighSurrogate !== null) {
+      const low = data.charCodeAt(0);
+      if (!(low >= 0xdc00 && low <= 0xdfff)) {
+        secParserFailure("sec.malformed-markup", "SEC markup contains an unpaired surrogate");
+      }
+      const codePoint = 0x10000 + ((pendingHighSurrogate - 0xd800) << 10) + (low - 0xdc00);
+      extractedTextBytes += utf8BytesForScalar(codePoint);
+      pendingHighSurrogate = null;
+      index = 1;
+      if (extractedTextBytes > SEC_MAX_EXTRACTED_TEXT_BYTES) {
+        secParserFailure(
+          "sec.parse-limit-exceeded",
+          "SEC markup exceeds the extracted-text ceiling",
+          "extracted-text-bytes",
+        );
+      }
+    }
+    for (; index < data.length; index += 1) {
+      const code = data.charCodeAt(index);
+      let bytes: number;
+      if (code >= 0xd800 && code <= 0xdbff) {
+        const low = data.charCodeAt(index + 1);
+        if (low >= 0xdc00 && low <= 0xdfff) {
+          bytes = 4;
+          index += 1;
+        } else if (index + 1 === data.length) {
+          pendingHighSurrogate = code;
+          break;
+        } else {
+          secParserFailure("sec.malformed-markup", "SEC markup contains an unpaired surrogate");
+        }
+      } else if (code >= 0xdc00 && code <= 0xdfff) {
+        secParserFailure("sec.malformed-markup", "SEC markup contains an unpaired surrogate");
+      } else {
+        bytes = utf8BytesForScalar(code);
+      }
+      extractedTextBytes += bytes;
+      if (extractedTextBytes > SEC_MAX_EXTRACTED_TEXT_BYTES) {
+        secParserFailure(
+          "sec.parse-limit-exceeded",
+          "SEC markup exceeds the extracted-text ceiling",
+          "extracted-text-bytes",
+        );
+      }
+    }
   };
   const retain = (target: Target, value: string): void => {
     const normalized = trimAscii(value);
@@ -185,15 +264,7 @@ export function parseSecMarkup(
         },
         ontext(data) {
           if (data === "") return;
-          const bytes = Buffer.byteLength(data, "utf8");
-          extractedTextBytes += bytes;
-          if (extractedTextBytes > SEC_MAX_EXTRACTED_TEXT_BYTES) {
-            secParserFailure(
-              "sec.parse-limit-exceeded",
-              "SEC markup exceeds the extracted-text ceiling",
-              "extracted-text-bytes",
-            );
-          }
+          countExtractedText(data);
           if (!inCdata) pendingTextToken = true;
           const frame = frames.at(-1);
           if (frame !== undefined && frameTarget(frame) !== null) frame.chunks.push(data);
@@ -212,6 +283,7 @@ export function parseSecMarkup(
           inCdata = true;
         },
         oncdataend() {
+          finishTextScalar();
           inCdata = false;
           pendingTextToken = false;
         },
@@ -232,9 +304,17 @@ export function parseSecMarkup(
         recognizeSelfClosing: true,
       },
     );
-    for (let offset = 0; offset < decoded.length; offset += chunkSize) {
-      parser.write(decoded.slice(offset, offset + chunkSize));
+    assertUnicodeScalars(decoded);
+    const encoded = Buffer.from(decoded, "utf8");
+    const streamDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+    for (let offset = 0; offset < encoded.byteLength; offset += chunkSize) {
+      const emitted = streamDecoder.decode(encoded.subarray(offset, offset + chunkSize), {
+        stream: true,
+      });
+      if (emitted !== "") parser.write(emitted);
     }
+    const tail = streamDecoder.decode();
+    if (tail !== "") parser.write(tail);
     parser.end();
   } catch (error) {
     if (error instanceof SecParserError) throw error;
