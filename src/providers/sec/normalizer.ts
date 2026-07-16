@@ -2,9 +2,10 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { types as utilityTypes } from "node:util";
 
-import { validateEventDraft, type EventDraft } from "../../core/event.js";
+import { type EventDraft, validateEventDraft } from "../../core/event.js";
 import { canonicalHash } from "../../core/hash.js";
 import {
+  assertSchemaPrototypeSafety,
   canonicalJson,
   deepFreezeJson,
   inertJsonSnapshot,
@@ -25,11 +26,11 @@ import {
   SEC_QUALIFYING_EXHIBIT_TYPE,
   SEC_REVISION_ID,
   SecContractError,
-  selectSec8kPrimaryArtifact,
   type SecEvidenceRole,
   type SecParseLimitKind,
   type SecReasonCode,
   type SecSourceKind,
+  selectSec8kPrimaryArtifact,
 } from "./contracts.js";
 import {
   decodeSecMember,
@@ -159,6 +160,7 @@ const BUNDLE_FIELDS = Object.freeze([
   "members",
 ]);
 const MEMBER_FIELDS = Object.freeze(["role", "memberKey", "artifactHash", "sizeBytes", "bytes"]);
+const SEC_NORMALIZER_SCHEMA_FIELDS = Object.freeze([...BUNDLE_FIELDS, ...MEMBER_FIELDS]);
 
 function failure(reasonCode: SecReasonCode, limitKind: SecParseLimitKind | null = null): never {
   throw new NormalizationFailure(reasonCode, limitKind);
@@ -864,6 +866,7 @@ export function normalizeSecBundle(
   value: unknown,
   policy: SecNormalizerPolicy = SEC_NORMALIZER_POLICY,
 ): SecNormalizationResult {
+  assertSchemaPrototypeSafety(SEC_NORMALIZER_SCHEMA_FIELDS);
   let bundleHash: string | null = null;
   let selectedEvidence: SecTranscriptEvidence[] = [];
   try {

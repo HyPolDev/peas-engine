@@ -685,6 +685,7 @@ test("durable recorded capture, replay paging, reopen, vectors, and dry-run effe
   vault = await openVault(root, clock);
   const reopenedLog = new SqliteEventLog(vault.database, { clock: new ManualClock(0) });
   assert.equal(canonical(await readEvents(reopenedLog, 2)), canonical(memoryEvents));
+  const reopenPrefixLength = 3;
   for (const pageSize of PAGE_SIZES) {
     const processingPath = join(root, `processing-${pageSize}.sqlite`);
     let processingDatabase = openSqliteDatabase(processingPath, MIGRATIONS);
@@ -692,8 +693,13 @@ test("durable recorded capture, replay paging, reopen, vectors, and dry-run effe
       const processingLog = new SqliteEventLog(processingDatabase, {
         clock: new ManualClock(CAPTURE_TIME_MS),
       });
-      for (const event of memoryEvents) await processingLog.append(draftFromStored(event));
-      assert.equal(canonical(await readEvents(processingLog, pageSize)), canonical(memoryEvents));
+      for (const event of memoryEvents.slice(0, reopenPrefixLength)) {
+        await processingLog.append(draftFromStored(event));
+      }
+      assert.equal(
+        canonical(await readEvents(processingLog, pageSize)),
+        canonical(memoryEvents.slice(0, reopenPrefixLength)),
+      );
       const processor = new DeterministicProcessor({
         reducer: new EarningsClusterReducer(),
         store: new SqliteProcessingStore<EarningsClusterState>(processingDatabase),
@@ -707,14 +713,19 @@ test("durable recorded capture, replay paging, reopen, vectors, and dry-run effe
     processingDatabase = openSqliteDatabase(processingPath, MIGRATIONS);
     try {
       const processingLog = new SqliteEventLog(processingDatabase, {
-        clock: new ManualClock(0),
+        clock: new ManualClock(CAPTURE_TIME_MS),
       });
+      for (const event of memoryEvents.slice(reopenPrefixLength)) {
+        await processingLog.append(draftFromStored(event));
+      }
+      assert.equal(canonical(await readEvents(processingLog, pageSize)), canonical(memoryEvents));
       const reopenedProcessor = new DeterministicProcessor({
         reducer: new EarningsClusterReducer(),
         store: new SqliteProcessingStore<EarningsClusterState>(processingDatabase),
         eventLog: processingLog,
         manifest: makeManifest("recorded-sec-pr2b-replay"),
       });
+      await reopenedProcessor.processAvailable(pageSize);
       assert.equal(
         canonical(await reopenedProcessor.snapshot(pageSize)),
         canonical(expectedSnapshot),

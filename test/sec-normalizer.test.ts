@@ -830,6 +830,29 @@ test("hostile containers, accessors, Proxy, cycles, shared bytes, and malformed 
   );
 });
 
+test("indexed Array prototype pollution fails before inherited code can execute", () => {
+  const valid = verifiedFixtureBundle(fixture("valid-item-202"));
+  const previous = Object.getOwnPropertyDescriptor(Array.prototype, "0");
+  let executions = 0;
+  let thrown: unknown;
+  Object.defineProperty(Array.prototype, "0", {
+    configurable: true,
+    set() {
+      executions += 1;
+    },
+  });
+  try {
+    normalizeSecBundle(valid);
+  } catch (error) {
+    thrown = error;
+  } finally {
+    if (previous === undefined) delete (Array.prototype as unknown as Record<string, unknown>)["0"];
+    else Object.defineProperty(Array.prototype, "0", previous);
+  }
+  assert.equal(executions, 0);
+  assert.match(String(thrown), /Array\.prototype contains indexed schema property 0/u);
+});
+
 test("normalization has no clock, randomness, locale, or environment dependency", async () => {
   const input = verifiedFixtureBundle(fixture("valid-item-202"));
   const baseline = canonicalJson(normalizeSecBundle(input) as unknown as JsonValue);
