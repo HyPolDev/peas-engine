@@ -115,6 +115,38 @@ function findTagEnd(value: string, start: number): number {
   return -1;
 }
 
+function findDeclarationEnd(value: string, start: number): number {
+  let quote: '"' | "'" | null = null;
+  let bracketDepth = 0;
+  for (let index = start; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote !== null) {
+      if (character === quote) quote = null;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (value.startsWith("<!--", index)) {
+      const commentEnd = value.indexOf("-->", index + 4);
+      if (commentEnd < 0) return -1;
+      index = commentEnd + 2;
+      continue;
+    }
+    if (character === "[") {
+      bracketDepth += 1;
+      continue;
+    }
+    if (character === "]" && bracketDepth > 0) {
+      bracketDepth -= 1;
+      continue;
+    }
+    if (character === ">" && bracketDepth === 0) return index;
+  }
+  return -1;
+}
+
 function tagNameAt(value: string, start: number): { name: string; end: number } | null {
   let end = start;
   while (end < value.length && isTagNameCode(value.charCodeAt(end))) end += 1;
@@ -164,7 +196,13 @@ function htmlDeclarations(bytes: Uint8Array): string[] {
       continue;
     }
     const marker = sniff[open + 1];
-    if (marker === "!" || marker === "?" || marker === "%") {
+    if (marker === "!") {
+      const end = findDeclarationEnd(sniff, open + 2);
+      if (end < 0) break;
+      cursor = end + 1;
+      continue;
+    }
+    if (marker === "?" || marker === "%") {
       const end = findTagEnd(sniff, open + 2);
       if (end < 0) break;
       cursor = end + 1;

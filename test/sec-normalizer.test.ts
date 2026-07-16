@@ -355,6 +355,47 @@ test("HTML decoder sniff ignores false meta declarations outside real markup", (
   assert.equal(realAfterFalse.declaredLabel, "utf-8");
 });
 
+test("HTML decoder skips complete bounded declarations and DOCTYPE internal subsets atomically", () => {
+  const fallback = (declaration: string) =>
+    decodeSecMember(
+      Buffer.concat([Buffer.from(declaration, "ascii"), Buffer.from([0x93])]),
+      "html",
+    );
+
+  const internalSubset = fallback('<!DOCTYPE html [ <!ELEMENT x ANY> <meta charset="utf-8"> ]>');
+  assert.equal(internalSubset.encoding, "windows-1252");
+  assert.equal(internalSubset.declaredLabel, null);
+  assert.match(internalSubset.text, /\u201c/u);
+
+  const nestedAndQuoted = fallback(
+    "<!DOCTYPE html [" +
+      " <!ELEMENT x (a | b)>" +
+      ' <!ATTLIST x note CDATA "quoted > ] [">' +
+      " <!ENTITY fake '<meta charset=\"utf-8\">'>" +
+      ' <!-- nested ] > [ <meta charset="utf-8"> -->' +
+      " ]>",
+  );
+  assert.equal(nestedAndQuoted.encoding, "windows-1252");
+  assert.equal(nestedAndQuoted.declaredLabel, null);
+
+  const realAfterDoctype = decodeSecMember(
+    Buffer.from(
+      "<!DOCTYPE html [ <!ENTITY fake \"<meta charset='koi8-r'>\"> ]>" +
+        '<meta charset="utf-8"><p>caf\u00e9</p>',
+      "utf8",
+    ),
+    "html",
+  );
+  assert.equal(realAfterDoctype.encoding, "utf-8");
+  assert.equal(realAfterDoctype.declaredLabel, "utf-8");
+
+  const unclosed = fallback(
+    "<!DOCTYPE html [ <!ELEMENT x ANY> <!ENTITY fake 'quoted > [ ]'> " + '<meta charset="utf-8">',
+  );
+  assert.equal(unclosed.encoding, "windows-1252");
+  assert.equal(unclosed.declaredLabel, null);
+});
+
 test("RFC 3339 and post-2007 Eastern conversion are host-timezone independent at DST edges", () => {
   assert.equal(
     parseSecRfc3339AcceptanceDateTime("2026-05-07T20:15:30-04:00"),
