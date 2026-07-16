@@ -1,0 +1,21 @@
+{
+  "accession": "0000123456-26-000001",
+  "form": "8-K",
+  "items": ["2.02"],
+  "subjectCik": "0000123456",
+  "exhibits": [
+    { "memberKey": "exhibit-01", "type": "EX-99.1", "sequence": 1 },
+    { "memberKey": "exhibit-02", "type": "EX-99.1", "sequence": 2 },
+    { "memberKey": "exhibit-03", "type": "EX-99.1", "sequence": 3 },
+    { "memberKey": "exhibit-04", "type": "EX-99.1", "sequence": 4 },
+    { "memberKey": "exhibit-05", "type": "EX-99.1", "sequence": 5 },
+    { "memberKey": "exhibit-06", "type": "EX-99.1", "sequence": 6 },
+    { "memberKey": "exhibit-07", "type": "EX-99.1", "sequence": 7 },
+    { "memberKey": "exhibit-08", "type": "EX-99.1", "sequence": 8 },
+    { "memberKey": "exhibit-09", "type": "EX-99.1", "sequence": 9 },
+    { "memberKey": "exhibit-10", "type": "EX-99.1", "sequence": 10 },
+    { "memberKey": "exhibit-11", "type": "EX-99.1", "sequence": 11 },
+    { "memberKey": "exhibit-12", "type": "EX-99.1", "sequence": 12 },
+    { "memberKey": "exhibit-13", "type": "EX-99.1", "sequence": 13 }
+  ]
+}
