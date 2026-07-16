@@ -1,7 +1,7 @@
 # Read-only earnings vertical-slice plan
 
 - Status: Kernel V2 RC.2 has effective `GO`; PR 2A is complete and merged; PR 2B recorded SEC is
-  the current implementation gate
+  at the external-audit and explicit-merge-approval gate
 - RC.2 evidence: immutable prerelease `v0.2.0-kernel-rc.2` at
   `fe04e32f9b218b41b1c56bffd2a131fb32192f82`; Windows, Linux, 10k, 100k, release, asset, and
   checksum verification passed
@@ -62,8 +62,9 @@ The accepted contract and implementation sequence are in
 [`ADR 0007`](adr/0007-recorded-sec-normalization.md). Copy-ready bounded agent assignments are in
 [`docs/agent-prompts/pr-2b-recorded-sec.md`](agent-prompts/pr-2b-recorded-sec.md). Independent review
 closed the contract gate on 2026-07-13. The fixture, evidence-bundle, normalizer, reducer, and
-recorded end-to-end gates are implemented and independently audited. PR 2B is now in review; live
-provider work remains deferred.
+recorded end-to-end gates are implemented and independently audited. Pull request #3 is clean and
+mergeable, with Windows, Ubuntu, and the 10k scale gate green. An external audit and explicit merge
+approval remain; live provider work remains deferred.
 
 ### Binding EventDraft resource boundary
 

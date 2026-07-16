@@ -88,8 +88,11 @@ invariant.
 
 ## Immediate sequence
 
-1. Review and merge PR 2B after Windows and Linux CI confirm the independently audited recorded SEC
-   slice. Do not begin live reads inside PR 2B.
+Current checkpoint: PR 2B is open as pull request #3. Windows, Ubuntu, and the 10k scale gate are
+green; the remaining gate is an independent external audit followed by explicit merge approval.
+
+1. Obtain the external audit verdict and merge PR 2B only if no unresolved blocker or high-severity
+   finding remains. Do not begin live reads inside PR 2B.
 2. Add PR 2C recorded FMP/issuer-IR mirrors and arrival-permutation tests against the accepted PR 2B
    evidence and replay contracts.
 3. Define observation telemetry before live reads: source publication time, request start/end,

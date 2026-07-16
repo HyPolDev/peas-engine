@@ -15,7 +15,7 @@
     "mainCommit": "22d3ca3d639ef8feffe62f81afabf2fa6fa9fd94",
     "release": "v0.2.0-kernel-rc.2",
     "focus": "PR 2B recorded SEC end-to-end review",
-    "nextGate": "Ready-for-review PR passes Windows and Linux CI, then receives explicit merge approval"
+    "nextGate": "External audit returns GO or GO_WITH_NOTES with no unresolved blocker or high finding, then explicit merge approval"
   },
   "stages": [
     {
@@ -98,7 +98,8 @@
             "fixtures/recorded-sec-pr2b.captured.ndjson",
             "fixtures/recorded-sec-pr2b.golden.json",
             "test/sec-recorded-acceptance.test.ts",
-            "docs/audit/golden-change-log.md"
+            "docs/audit/golden-change-log.md",
+            "https://github.com/HyPolDev/peas-engine/pull/3"
           ]
         },
         {
