@@ -63,3 +63,18 @@ the checked-in files. Memory and SQLite are compared at page sizes 1, 2, 7, and 
 close/reopen boundary. Replay, shadow, research, and paper manifests all set `effectsAllowed: false`
 and produce zero dispatchable jobs or outbox rows. Normal test execution is compare-only; a vector
 change requires an intentional review of this explanation and both new hashes.
+
+## Recorded SEC fixture generator: Windows path identity repair
+
+- Generator source hash: `a23146ce81be01ddc4808929b5e791bc81a83bfa5c101ca43f437436c9794f19`
+  -> `8b4b61096748186af5ba64d49b6fcea535ccd412d506e7e1f2e8de2c1f5b1edc`.
+- Fixture manifest hash: `a1c1bbe68b38bf4869c4587a162ca667773aab495e40df307dfc82e12c1c5dac`
+  -> `ed35f9964a25be7c609988bd50510c5e6ececec145b1b6984d9d1c0e1781d540`.
+- Fixture artifact bytes, case semantics, evidence identities, and recorded PR 2B replay vectors are
+  unchanged.
+
+Reason: GitHub's Windows runner exposes the system temporary directory through an 8.3 alias while
+`realpath` returns its long identity. The generator now canonicalizes both sides of path comparisons
+only after proving every existing ancestor is a plain directory and not a Windows reparse point. A
+focused 8.3 test proves the protected default fixture tree cannot be targeted through an alternate
+short/long spelling. The manifest hash changes only because it binds the generator source hash.

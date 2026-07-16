@@ -219,6 +219,27 @@ async function runGeneratorArguments(
   });
 }
 
+async function windowsShortPath(candidate: string): Promise<string> {
+  const { stdout } = await execFileAsync(
+    "powershell.exe",
+    [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "$fso = New-Object -ComObject Scripting.FileSystemObject; $fso.GetFolder($env:PEAS_SEC_FIXTURE_ALIAS_PATH).ShortPath",
+    ],
+    {
+      encoding: "utf8",
+      env: { ...process.env, PEAS_SEC_FIXTURE_ALIAS_PATH: candidate },
+      windowsHide: true,
+    },
+  );
+  const result = stdout.trim();
+  assert.notEqual(result, "", "Windows did not return a short-path identity");
+  return result;
+}
+
 async function runTestGenerator(
   targetRoot: string,
   stagingParent: string,
@@ -853,7 +874,7 @@ test("generator rejects unknown flags, malformed handshakes, and unconfined test
 
     await assert.rejects(
       runTestGenerator(ROOT, stagingParent),
-      /default fixture tree|system temporary directory/u,
+      /Test target root cannot name the default fixture tree/u,
     );
     const nonTemporaryStaging = nonTemporaryStagingSentinel();
     await assert.rejects(
@@ -878,6 +899,53 @@ test("generator rejects unknown flags, malformed handshakes, and unconfined test
       }),
       /Malformed test-mode promotion failure control/u,
     );
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test("Windows short-path generator identity cannot bypass the default-root guard", {
+  skip: process.platform !== "win32" ? "Windows 8.3 path evidence" : false,
+}, async (context) => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "peas-sec-fixture-short-alias-"));
+  const copiedRoot = path.join(temporary, "generator-copy", "fixtures", "sec", "v1");
+  const copiedGenerator = path.join(copiedRoot, "generate-contract.mjs");
+  const stagingParent = path.join(temporary, "staging");
+  try {
+    await mkdir(copiedRoot, { recursive: true });
+    await mkdir(stagingParent);
+    await copyFile(GENERATOR, copiedGenerator);
+    const shortRoot = await windowsShortPath(copiedRoot);
+    const canonicalRoot = await realpath(copiedRoot);
+    if (shortRoot.toLowerCase() === canonicalRoot.toLowerCase()) {
+      context.skip("8.3 aliases are disabled on this volume");
+      return;
+    }
+    const shortGenerator = path.join(shortRoot, "generate-contract.mjs");
+    await assert.rejects(
+      execFileAsync(
+        process.execPath,
+        [
+          "--preserve-symlinks-main",
+          shortGenerator,
+          "--test-mode",
+          GENERATOR_TEST_HANDSHAKE,
+          "--target-root",
+          canonicalRoot,
+          "--staging-parent",
+          stagingParent,
+          "--end-test-mode",
+        ],
+        {
+          cwd: path.resolve("."),
+          encoding: "utf8",
+          env: { ...process.env, TZ: "UTC", LANG: "C", LC_ALL: "C" },
+          windowsHide: true,
+        },
+      ),
+      /Test target root cannot name the default fixture tree/u,
+    );
+    assert.deepEqual(await readdir(stagingParent), []);
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }

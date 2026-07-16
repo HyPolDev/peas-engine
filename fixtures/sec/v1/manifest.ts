@@ -15113,7 +15113,7 @@ export const SEC_GENERATED_BOUNDARY_VECTORS: readonly SecGeneratedBoundaryVector
 ] as const;
 
 export const SEC_FIXTURE_GENERATOR_SOURCE_HASH =
-  "a23146ce81be01ddc4808929b5e791bc81a83bfa5c101ca43f437436c9794f19";
+  "8b4b61096748186af5ba64d49b6fcea535ccd412d506e7e1f2e8de2c1f5b1edc";
 
 export const SEC_FIXTURE_GENERATED_PATHS: readonly string[] = [
   "bodies/decoder-alias-cp1252.html",
@@ -15214,4 +15214,4 @@ export const SEC_FIXTURE_MANIFEST = {
 } as const;
 
 export const SEC_FIXTURE_MANIFEST_HASH =
-  "a1c1bbe68b38bf4869c4587a162ca667773aab495e40df307dfc82e12c1c5dac";
+  "ed35f9964a25be7c609988bd50510c5e6ececec145b1b6984d9d1c0e1781d540";

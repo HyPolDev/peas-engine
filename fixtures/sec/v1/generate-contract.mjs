@@ -39,13 +39,18 @@ function samePath(left, right) {
 
 function parseInvocation(arguments_) {
   if (arguments_.length === 0) {
-    return { mode: "normal", targetRoot: DEFAULT_ROOT, stagingParent: os.tmpdir(), test: null };
+    return {
+      mode: "normal",
+      targetRoot: canonicalizePlainPath(DEFAULT_ROOT, "Default fixture root"),
+      stagingParent: canonicalizePlainPath(os.tmpdir(), "Staging parent"),
+      test: null,
+    };
   }
   if (arguments_.length === 2 && arguments_[0] === "--output-root") {
     return {
       mode: "normal",
-      targetRoot: path.resolve(arguments_[1]),
-      stagingParent: os.tmpdir(),
+      targetRoot: canonicalizePlainPath(arguments_[1], "Output root"),
+      stagingParent: canonicalizePlainPath(os.tmpdir(), "Staging parent"),
       test: null,
     };
   }
@@ -59,10 +64,11 @@ function parseInvocation(arguments_) {
     arguments_[5] !== "" &&
     arguments_[6] === "--end-test-mode"
   ) {
-    const temporaryRoot = realpathSync.native(os.tmpdir());
-    const targetRoot = path.resolve(arguments_[3]);
-    const stagingParent = path.resolve(arguments_[5]);
-    if (samePath(targetRoot, DEFAULT_ROOT)) {
+    const temporaryRoot = canonicalizePlainPath(os.tmpdir(), "System temporary directory");
+    const targetRoot = canonicalizePlainPath(arguments_[3], "Test target root");
+    const stagingParent = canonicalizePlainPath(arguments_[5], "Test staging parent");
+    const defaultRoot = canonicalizePlainPath(DEFAULT_ROOT, "Default fixture root");
+    if (samePath(targetRoot, defaultRoot)) {
       throw new Error("Test target root cannot name the default fixture tree");
     }
     if (!strictDescendant(temporaryRoot, targetRoot)) {
@@ -79,7 +85,14 @@ function parseInvocation(arguments_) {
       return value === undefined || value === "" ? null : value;
     };
     const formatFailure = optionalControl("PEAS_SEC_FIXTURE_TEST_FORMAT_FAILURE");
-    const forbidFormatRoot = optionalControl("PEAS_SEC_FIXTURE_TEST_FORBID_FORMAT_ROOT");
+    const rawForbidFormatRoot = optionalControl("PEAS_SEC_FIXTURE_TEST_FORBID_FORMAT_ROOT");
+    if (rawForbidFormatRoot !== null && !path.isAbsolute(rawForbidFormatRoot)) {
+      throw new Error("Test-mode forbidden formatter root must be below the temporary directory");
+    }
+    const forbidFormatRoot =
+      rawForbidFormatRoot === null
+        ? null
+        : canonicalizePlainPath(rawForbidFormatRoot, "Test-mode forbidden formatter root");
     const promotionFailure = optionalControl("PEAS_SEC_FIXTURE_TEST_PROMOTION_FAILURE");
     if (formatFailure !== null && formatFailure !== "bodies" && formatFailure !== "manifest") {
       throw new Error("Malformed test-mode formatter failure control");
@@ -89,8 +102,7 @@ function parseInvocation(arguments_) {
     }
     if (
       forbidFormatRoot !== null &&
-      (!path.isAbsolute(forbidFormatRoot) ||
-        !strictDescendant(temporaryRoot, path.resolve(forbidFormatRoot)))
+      !strictDescendant(temporaryRoot, path.resolve(forbidFormatRoot))
     ) {
       throw new Error("Test-mode forbidden formatter root must be below the temporary directory");
     }
@@ -262,6 +274,27 @@ function assertNoWindowsReparse(paths, label) {
   if (result.status !== 0) {
     throw new Error(`${label} contains a Windows reparse point`);
   }
+}
+
+function canonicalizePlainPath(candidate, label) {
+  const absolute = path.resolve(candidate);
+  let anchor = absolute;
+  while (lstatOrNull(anchor) === null) {
+    const parent = path.dirname(anchor);
+    if (parent === anchor) throw new Error(`${label} has no existing filesystem anchor`);
+    anchor = parent;
+  }
+  const root = path.parse(anchor).root;
+  const existingChain = pathComponentsFrom(root, anchor);
+  for (const component of existingChain) {
+    const stats = lstatSync(component);
+    if (!stats.isDirectory() || stats.isSymbolicLink()) {
+      throw new Error(`${label} contains a redirect or non-directory ancestor`);
+    }
+  }
+  assertNoWindowsReparse(existingChain, label);
+  const canonicalAnchor = realpathSync.native(anchor);
+  return path.resolve(canonicalAnchor, path.relative(anchor, absolute));
 }
 
 function assertSafeStagingParent(stagingParent) {
