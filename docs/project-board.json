@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "project": "PEAS Engine",
-  "lastReviewed": "2026-07-13",
+  "lastReviewed": "2026-07-16",
   "operatingModel": {
     "execution": "GitHub Issues/Projects",
     "specification": "Repository docs, ADRs, fixtures, and evidence",
@@ -10,12 +10,12 @@
   },
   "current": {
     "stage": "P1",
-    "status": "in-progress",
+    "status": "review",
     "branch": "dev/pr-2b-recorded-sec-ete",
     "mainCommit": "22d3ca3d639ef8feffe62f81afabf2fa6fa9fd94",
     "release": "v0.2.0-kernel-rc.2",
-    "focus": "PR 2B fixture and evidence-bundle gates",
-    "nextGate": "Reviewed synthetic SEC fixtures and canonical bundle contracts satisfy accepted ADR 0007"
+    "focus": "PR 2B recorded SEC end-to-end review",
+    "nextGate": "Ready-for-review PR passes Windows and Linux CI, then receives explicit merge approval"
   },
   "stages": [
     {
@@ -87,14 +87,18 @@
         {
           "id": "P1-01",
           "title": "Recorded SEC end-to-end",
-          "status": "in-progress",
+          "status": "review",
           "owner": "dev/pr-2b-recorded-sec-ete",
           "dependsOn": ["P0-04"],
           "acceptance": "Recorded SEC response becomes a verified artifact, normalized EventDraft, and audited earnings cluster.",
           "evidence": [
             "docs/read-only-vertical-slice-plan.md",
             "docs/adr/0007-recorded-sec-normalization.md",
-            "docs/agent-prompts/pr-2b-recorded-sec.md"
+            "docs/agent-prompts/pr-2b-recorded-sec.md",
+            "fixtures/recorded-sec-pr2b.captured.ndjson",
+            "fixtures/recorded-sec-pr2b.golden.json",
+            "test/sec-recorded-acceptance.test.ts",
+            "docs/audit/golden-change-log.md"
           ]
         },
         {
