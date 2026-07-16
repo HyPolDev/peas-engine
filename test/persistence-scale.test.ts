@@ -19,21 +19,19 @@ import { canonicalJson, type JsonObject, type JsonValue } from "../src/core/json
 import { DeterministicProcessor } from "../src/core/processor.js";
 import {
   EarningsClusterReducer,
+  MAX_EARNINGS_AGGREGATE_STATE_BYTES,
+  MAX_EARNINGS_ANALYSIS_ARTIFACTS,
+  MAX_EARNINGS_ANALYSIS_MEMBERSHIPS,
   type EarningsClusterState,
   type SourceKind,
 } from "../src/domain/earnings-cluster/reducer.js";
+import {
+  createProviderEvidenceBundle,
+  type EvidenceReference,
+} from "../src/providers/evidence-bundle.js";
 import { BASE_TIME_MS, CONFIG, FISCAL_PERIOD, makeManifest } from "./scenario.js";
 
 const migrations = loadMigrations(join(process.cwd(), "migrations"));
-const sourceKinds: readonly SourceKind[] = [
-  "issuer_release",
-  "fmp_release",
-  "sec_8k",
-  "call",
-  "transcript",
-  "filing",
-];
-
 function temporaryDatabasePath(context: test.TestContext, label: string): string {
   const directory = mkdtempSync(join(tmpdir(), `peas-scale-${label}-`));
   context.after(() => {
@@ -77,6 +75,86 @@ function sourceDraft(options: {
       publishedAtMs: options.occurredAtMs,
       timestampConfidence: "exact",
       originalTimestamp: null,
+    },
+  };
+}
+
+function denseV2SourceDraft(options: {
+  index: number;
+  issuerCik: string;
+  occurredAtMs: number;
+}): EventDraft {
+  const label = `dense-v2-${options.index}`;
+  const primaryArtifactHash = canonicalHash("peas/scale-artifact/v2", {
+    label,
+    role: "sec.exhibit-99.1-primary",
+  });
+  const evidence: EvidenceReference[] = [
+    {
+      role: "sec.submissions",
+      artifactHash: canonicalHash("peas/scale-artifact/v2", { label, role: "sec.submissions" }),
+    },
+    {
+      role: "sec.filing-index",
+      artifactHash: canonicalHash("peas/scale-artifact/v2", { label, role: "sec.filing-index" }),
+    },
+    {
+      role: "sec.primary-document",
+      artifactHash: canonicalHash("peas/scale-artifact/v2", {
+        label,
+        role: "sec.primary-document",
+      }),
+    },
+    {
+      role: "sec.xbrl-instance",
+      artifactHash: canonicalHash("peas/scale-artifact/v2", { label, role: "sec.xbrl-instance" }),
+    },
+    { role: "sec.exhibit-99.1", artifactHash: primaryArtifactHash },
+  ];
+  for (let member = evidence.length; member < 16; member += 1) {
+    evidence.push({
+      role: "sec.exhibit-99.1",
+      artifactHash: canonicalHash("peas/scale-artifact/v2", { label, member }),
+    });
+  }
+  const subject = `earnings:${options.issuerCik}:${FISCAL_PERIOD}`;
+  const bundle = createProviderEvidenceBundle({
+    provider: "sec-edgar",
+    source: "sec:normalizer-v1",
+    recordId: `sec:${options.issuerCik}-27-${String(options.index + 1).padStart(6, "0")}:earnings-source-v2`,
+    revisionId: "1",
+    subject,
+    issuerCik: options.issuerCik,
+    fiscalPeriod: FISCAL_PERIOD,
+    sourceKind: "sec_8k",
+    primaryArtifactHash,
+    evidence,
+  });
+  return {
+    envelopeVersion: 2,
+    type: "earnings.source.observed",
+    schemaVersion: 2,
+    source: bundle.source,
+    subject,
+    occurredAtMs: options.occurredAtMs,
+    correlationId: subject,
+    causationId: bundle.evidenceBundleHash,
+    provider: {
+      provider: bundle.provider,
+      recordId: bundle.recordId,
+      revisionId: bundle.revisionId,
+      artifactHash: bundle.primaryArtifactHash,
+    },
+    payload: {
+      issuerCik: bundle.issuerCik,
+      fiscalPeriod: bundle.fiscalPeriod,
+      sourceKind: bundle.sourceKind,
+      primaryArtifactHash: bundle.primaryArtifactHash,
+      evidenceBundleHash: bundle.evidenceBundleHash,
+      evidence: bundle.evidence,
+      publishedAtMs: options.occurredAtMs,
+      timestampConfidence: "exact",
+      originalTimestamp: "2027-01-15T21:00:00Z",
     },
   };
 }
@@ -330,7 +408,7 @@ async function runSqliteScale(
   }
 }
 
-test("one dense cluster retains all 32 source snapshots within its bounded checkpoint", async (context) => {
+test("one representative dense V2 cluster retains 32x16 evidence within the 8 MiB aggregate contract", async (context) => {
   const databasePath = temporaryDatabasePath(context, "dense-32");
   const database = openSqliteDatabase(databasePath, migrations);
   const clock = new ManualClock(BASE_TIME_MS);
@@ -344,28 +422,66 @@ test("one dense cluster retains all 32 source snapshots within its bounded check
   try {
     const issuerCik = "0000999999";
     for (let index = 0; index < CONFIG.maxSourcesPerCluster; index += 1) {
-      const sourceKind = sourceKinds[index % sourceKinds.length];
-      assert.ok(sourceKind);
       const appended = await eventLog.append(
-        sourceDraft({ index, issuerCik, sourceKind, occurredAtMs: clock.nowMs() }),
+        denseV2SourceDraft({ index, issuerCik, occurredAtMs: clock.nowMs() }),
       );
       await processor.process(appended.event);
       clock.advanceBy(1);
     }
+    const beforeMirror = await processor.snapshot(7);
+    const beforeMirrorCluster = beforeMirror.aggregates[0]?.state.cluster;
+    assert.ok(beforeMirrorCluster);
+    const mirrorTimer = beforeMirrorCluster.timers.find(
+      (timer) => timer.timerType === "earnings.mirror-debounce",
+    );
+    assert.ok(mirrorTimer);
+    clock.advanceTo(mirrorTimer.scheduledForLogicalMs);
+    const mirrorPayload: JsonObject = {
+      timerType: mirrorTimer.timerType,
+      clusterId: beforeMirrorCluster.clusterId,
+      jobId: mirrorTimer.jobId,
+      scheduledForLogicalMs: mirrorTimer.scheduledForLogicalMs,
+      fencingToken: 1,
+    };
+    const fired = await eventLog.append({
+      envelopeVersion: 2,
+      type: "kernel.timer.fired",
+      schemaVersion: 1,
+      source: "scale-scheduler",
+      subject: `earnings:${issuerCik}:${FISCAL_PERIOD}`,
+      occurredAtMs: clock.nowMs(),
+      correlationId: `scale-${issuerCik}`,
+      causationId: mirrorTimer.jobId,
+      provider: {
+        provider: "peas-scheduler",
+        recordId: mirrorTimer.jobId,
+        revisionId: "1",
+        artifactHash: canonicalHash("peas/scale-timer/v2", mirrorPayload),
+      },
+      payload: mirrorPayload,
+    });
+    await processor.process(fired.event);
     const atCap = await processor.snapshot(7);
     assert.equal(atCap.aggregates.length, 1);
     const cluster = atCap.aggregates[0]?.state.cluster;
     assert.ok(cluster);
     assert.equal(cluster.sources.length, 32);
-    assert.ok(cluster.analysisBranches.length > 0);
-    assert.ok(cluster.analysisBranches.length <= CONFIG.maxAnalysisBranches);
+    assert.equal(cluster.analysisBranches.length, 2);
+    const denseBranch = cluster.analysisBranches.find(
+      (branch) => branch.phase === "source_confirmation",
+    );
+    assert.ok(denseBranch);
+    assert.equal(
+      denseBranch.inputSources.flatMap((input) => input.evidence).length,
+      MAX_EARNINGS_ANALYSIS_MEMBERSHIPS,
+    );
+    assert.equal(denseBranch.artifactCatalog.length, MAX_EARNINGS_ANALYSIS_ARTIFACTS);
     assert.equal(atCap.aggregates[0]?.state.rejectionCount, 0);
     const stateAtCap = canonicalJson(atCap.aggregates[0]?.state);
     const overflow = await eventLog.append(
-      sourceDraft({
+      denseV2SourceDraft({
         index: CONFIG.maxSourcesPerCluster,
         issuerCik,
-        sourceKind: "call",
         occurredAtMs: clock.nowMs(),
       }),
     );
@@ -374,11 +490,14 @@ test("one dense cluster retains all 32 source snapshots within its bounded check
     const overflowAggregate = afterOverflow.aggregates[0];
     assert.ok(overflowAggregate);
     assert.equal(canonicalJson(overflowAggregate.state), stateAtCap);
-    assert.equal(afterOverflow.cursor.processedPosition, String(CONFIG.maxSourcesPerCluster + 1));
+    assert.equal(afterOverflow.cursor.processedPosition, String(CONFIG.maxSourcesPerCluster + 2));
 
     const checkpointBytes = Buffer.byteLength(stateAtCap, "utf8");
     context.diagnostic(`PEAS dense-cluster checkpoint bytes: ${checkpointBytes}`);
-    assert.ok(checkpointBytes < 128_000, `dense checkpoint exceeded 128 KiB: ${checkpointBytes}`);
+    assert.ok(
+      checkpointBytes <= MAX_EARNINGS_AGGREGATE_STATE_BYTES,
+      `dense V2 checkpoint exceeded 8 MiB: ${checkpointBytes}`,
+    );
     assert.equal(database.pragma("integrity_check", { simple: true }), "ok");
   } finally {
     database.close();

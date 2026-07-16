@@ -1,7 +1,14 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.3/schema.json",
   "files": {
-    "includes": ["**", "!!.tmp-output-integrity", "!!dist", "!!node_modules", "!!coverage"]
+    "includes": [
+      "**",
+      "!!.tmp-output-integrity",
+      "!!dist",
+      "!!node_modules",
+      "!!coverage",
+      "!!fixtures/sec/v1/bodies"
+    ]
   },
   "formatter": {
     "enabled": true,

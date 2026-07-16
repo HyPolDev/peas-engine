@@ -30,8 +30,16 @@ Do not maintain task state independently in Linear, Notion, and GitHub.
   `e350210a3c8d8f0bd3ae512dde9461fcfb58d0b4` after successful CI.
 - The deterministic `EventDraft` resource boundary is also complete in RC.2 and covered by
   adversarial memory/SQLite tests.
-- No SEC, FMP, issuer-IR, HTTP, calendar, or live-provider implementation exists yet. The immediate
-  task is PR 2B: recorded SEC end-to-end.
+- ADR 0007 is accepted after independent review. It freezes PR 2B evidence membership, selected
+  observation loading, SEC semantics, parser/decoder policy, compatibility, limits, reason codes,
+  and non-live effect isolation without changing frozen ports.
+- PR 2B now implements and independently audits the recorded SEC path: synthetic raw fixtures,
+  verified selected-observation loading, pure deterministic normalization, schema-V2 evidence
+  provenance, trusted capture, and byte-identical live-style/replay processing in memory and
+  SQLite. Historical RC.2 vectors and frozen kernel ports remain unchanged.
+- No live SEC HTTP, FMP, issuer-IR, calendar, market-data, LLM, brokerage, or trading adapter exists
+  yet. After PR 2B review and merge, the next implementation unit is PR 2C recorded FMP and
+  issuer-IR mirrors; observation telemetry is defined before any live reads.
 - The next product slice is explicitly read-only: no LLM dependency, no orders, no brokerage, and
   no portfolio mutation.
 
@@ -40,7 +48,7 @@ Do not maintain task state independently in Linear, Notion, and GitHub.
 | Stage | Outcome | Exit gate |
 | --- | --- | --- |
 | P0 Foundation - complete | Deterministic kernel, durable artifacts, bounded ingress, replay evidence | RC.2 and PR 2A gates are satisfied |
-| P1 Forward read-only slice - next | Recorded SEC path, recorded FMP/IR mirrors, live reads, calendar prewarming, observation telemetry, and raw capture | A readiness drill proves complete provenance, restart recovery, replay equivalence, and zero dispatchable financial effects |
+| P1 Forward read-only slice - in progress | Recorded SEC path, recorded FMP/IR mirrors, live reads, calendar prewarming, observation telemetry, and raw capture | A readiness drill proves complete provenance, restart recovery, replay equivalence, and zero dispatchable financial effects |
 | P2 Observation run | 100–200 forward earnings clusters with latency, missing-event, duplicate, revision, and first-observation price-movement measurements | Dataset has source-level provenance and a reproducible measurement report |
 | P3 Context snapshots | Prospective FMP estimates, regular/aftermarket market data, sector/SPY abnormal movement, session, halt, and first-tradable-quote state | Every decision input is timestamped, versioned, and replayable |
 | P4 Decision packets | Deterministic numbers first; evidence-backed language/guidance extraction second; explicit setup/no-trade classification | Packets are reproducible, source-linked, and safe to compare in replay |
@@ -80,9 +88,13 @@ invariant.
 
 ## Immediate sequence
 
-1. Build PR 2B fixture-first: recorded SEC bytes -> verified artifact bundle -> deterministic SEC
-   normalizer -> bounded `EventDraft` -> trusted capture -> reducer -> audited cluster.
-2. Add PR 2C recorded FMP/issuer-IR mirrors and arrival-permutation tests.
+Current checkpoint: PR 2B is open as pull request #3. Windows, Ubuntu, and the 10k scale gate are
+green; the remaining gate is an independent external audit followed by explicit merge approval.
+
+1. Obtain the external audit verdict and merge PR 2B only if no unresolved blocker or high-severity
+   finding remains. Do not begin live reads inside PR 2B.
+2. Add PR 2C recorded FMP/issuer-IR mirrors and arrival-permutation tests against the accepted PR 2B
+   evidence and replay contracts.
 3. Define observation telemetry before live reads: source publication time, request start/end,
    artifact retrieval, normalization, trusted capture, clock basis, issuer/symbol mapping, and
    duplicate/revision identity.

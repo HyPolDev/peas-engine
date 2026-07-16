@@ -1,0 +1,1741 @@
+{
+  "captureSha256": "91e304d4ef2bfad49e6f4192e369d476d85ccaf037dca0aa1782a33c6c8e953b",
+  "eventCount": 7,
+  "eventHead": "873765eff24bcd96133de49c10409adca082e7be5a047b030d5fe8147ba3e446",
+  "stateHead": "37d18a4a7b1e45f881aceb96764611a6ce656348fe05903d0e4fe1ab139b57a5",
+  "decisionHead": "7ea573b6021c0fbbe772518f83a3439003b169b3b6f3ed8e433711e2f4379806",
+  "outputCount": 18,
+  "aggregateCount": 2,
+  "loaderTranscriptHashes": [
+    "be0fe7491f4b75399d4136c5a0143bae0fbddd4e6d8e4cfb636e0f11c0f9f3f3",
+    "76b791dfffa32b4dc79f2047579b2a257335dc2635ad6806f5b018435e28c142",
+    "4b38c5d24585116f32310063ca438e74141a975ebcaa42a82eb97b802772c5e0",
+    "10d75b3f9570dcfdecad352b3e99b76c4cbd4169172bb1277eb85437c6729fdd",
+    "d03aa27b0126fa9baed25e7502dbe54d8522d350972f26caf90470e85754fb9c",
+    "c51aae06ebfc046e23dbe33b91b5495360e22769fa35dee943407c6306c3a980",
+    "f63f16fe19df24ed343f48aef544a9943009d77f3cc89eaa92f3de81cef24eef"
+  ],
+  "normalizationTranscriptHashes": [
+    "54f94b3e09a7440c9969037b7e32321787487f49f05dfd4c334940311311ed48",
+    "09112288eae796cfc82d9876eefa80e93b097e33bcfffdc140e936e161fb45cd",
+    "d57815d7f4529db2b7d08124f5406f3011e6e1f6d71bc7de49d760a9e000291e",
+    "f064548621df14ce3db19a0fd8a473826b63bbe4bab13cceb7024ef66f91f8b1",
+    "f240e2f5e499187f50c8072069cd89153a50d4a4f1b2c94977fc7dfc7f7d8ef0",
+    "b7e8d4e16178eec7654bff8dcadc6e2ca673bfc4ee4b82d2b278e33639ccf3c7",
+    "6bbc5b5dde16903e2a1e381b2bba8c07381dbdd92ec9c645edd1e654f19078d5"
+  ],
+  "snapshot": {
+    "cursor": {
+      "behaviorHash": "f92b99dafe805e1055bcfefc56815b8544df0dbdd85fb480ffe774c402b5cdd7",
+      "cursorHash": "29a16a8ed8039f9bc06deb7a7201d667baf2077fcb5628d4ccc612696a70335e",
+      "decisionHead": "7ea573b6021c0fbbe772518f83a3439003b169b3b6f3ed8e433711e2f4379806",
+      "lastEventHash": "873765eff24bcd96133de49c10409adca082e7be5a047b030d5fe8147ba3e446",
+      "logicalAtMs": 1800000000000,
+      "manifestHash": "ac15f0385d98d1455a30f216748256df4d453c75f3a1f34d3b4c83fe7093886e",
+      "processedPosition": "7",
+      "runId": "recorded-sec-pr2b-replay",
+      "stateHead": "37d18a4a7b1e45f881aceb96764611a6ce656348fe05903d0e4fe1ab139b57a5"
+    },
+    "outputs": [
+      {
+        "aggregateId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+        "body": {
+          "payload": {
+            "clusterId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+            "fiscalPeriod": "2026-Q1",
+            "inputBundleHash": "8bc1294f6e2a0c2c0c7045075dd1425bb7b0877576636d02c2c7348d3216031b",
+            "issuerCik": "0000123456",
+            "sourceEventId": "47a4afbf7ecb6a79f79723d76018273551d7de3dd2da4bc3e57d81cc53331687"
+          },
+          "type": "earnings.cluster.first-source-ready"
+        },
+        "bodyHash": "f692cb2ce41254c8cfbd3218dba8f2c291c5e35550eb6837366f509034264056",
+        "category": "decision",
+        "dedupeKey": null,
+        "inputEventId": "47a4afbf7ecb6a79f79723d76018273551d7de3dd2da4bc3e57d81cc53331687",
+        "inputPosition": "1",
+        "notBeforeLogicalMs": null,
+        "ordinal": 0,
+        "outputId": "df212021fc0d82af9167fcc9fae1324b4ff550a60ec009be9cc573c95ee0d7a9",
+        "runId": "recorded-sec-pr2b-replay",
+        "sequence": "1"
+      },
+      {
+        "aggregateId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+        "body": {
+          "dedupeKey": "timer:earnings.mirror-debounce:92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+          "inputBundleHash": "4f1bc136e56412171f7718ae5565cc26b0b9b3d3662ad0035cec9bd49d891027",
+          "jobId": "283f1e6da12b9881f2d32498768e30f9be070fa49fe82a4478f058cbedf4d72a",
+          "notBeforeLogicalMs": 1800000060000,
+          "payload": {
+            "clusterId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+            "scheduledForLogicalMs": 1800000060000,
+            "timerType": "earnings.mirror-debounce"
+          },
+          "type": "kernel.timer"
+        },
+        "bodyHash": "986ffe38495c34b26cce33d3ffdbbd5802c7515893463a90a3d85e331f8cac6a",
+        "category": "job",
+        "dedupeKey": "timer:earnings.mirror-debounce:92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+        "inputEventId": "47a4afbf7ecb6a79f79723d76018273551d7de3dd2da4bc3e57d81cc53331687",
+        "inputPosition": "1",
+        "notBeforeLogicalMs": 1800000060000,
+        "ordinal": 0,
+        "outputId": "ebf1d1c249bde03579959f9224ef06f4f0ba8a41f84112a4fd3caba5be2bbc4b",
+        "runId": "recorded-sec-pr2b-replay",
+        "sequence": "2"
+      },
+      {
+        "aggregateId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+        "body": {
+          "dedupeKey": "timer:earnings.lifecycle-finalize:92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+          "inputBundleHash": "041bcef89f2e60be9ea5b94eff565e4a8abb3c7f12ece433911e6ea90fe0643b",
+          "jobId": "01574ff77eaed891717923053207caf285cb4a208e0fbd4975b555b1d4008bc4",
+          "notBeforeLogicalMs": 1800021600000,
+          "payload": {
+            "clusterId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+            "scheduledForLogicalMs": 1800021600000,
+            "timerType": "earnings.lifecycle-finalize"
+          },
+          "type": "kernel.timer"
+        },
+        "bodyHash": "e652a467b64e2b0dddd4dd49f4acb791d1c112f05763439de19328adca4c98f3",
+        "category": "job",
+        "dedupeKey": "timer:earnings.lifecycle-finalize:92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+        "inputEventId": "47a4afbf7ecb6a79f79723d76018273551d7de3dd2da4bc3e57d81cc53331687",
+        "inputPosition": "1",
+        "notBeforeLogicalMs": 1800021600000,
+        "ordinal": 1,
+        "outputId": "203a33ac4abbf72cdf05e6d3d46da23a5ab9787586c3e20f689adf84e7c024b6",
+        "runId": "recorded-sec-pr2b-replay",
+        "sequence": "3"
+      },
+      {
+        "aggregateId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+        "body": {
+          "dedupeKey": "analysis:eab43b0b9532db496a1759811555175ba0fa53e268655821d9f243875bf26004",
+          "inputBundleHash": "8bc1294f6e2a0c2c0c7045075dd1425bb7b0877576636d02c2c7348d3216031b",
+          "jobId": "04804943d3f7b004be106954edb02138db6981fc00fe152ccc423ef75186a3bd",
+          "notBeforeLogicalMs": 1800000000000,
+          "payload": {
+            "analysisContract": {
+              "datasetId": null,
+              "extractorVersion": "fixture-extractor-v2",
+              "featureSetId": "earnings-kernel-v2",
+              "modelId": null,
+              "promptId": null
+            },
+            "analysisContractHash": "2eeeb21b4fc155c8e6189aff83f4b8130e256f598ff129b2afda22e15477a3c6",
+            "artifactCatalog": [
+              "2f1bf5ec7ac28dffde4dfb30da242b48e617445737e495d92d7e3410e36bf211",
+              "4a7c73998c3c1aeee682da57e9f627567cedc70154237e83f2c34f8c24bdabb0",
+              "5ee1bbdb8b8a69b799d6aff6a05b47616c5dab3399c630a3db28a48ad9d2023d",
+              "7cf7fa745b77740d4b22e56bbf7a11b2ae3f35edb3b196587a27cca014224fe4",
+              "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de"
+            ],
+            "branchId": "eab43b0b9532db496a1759811555175ba0fa53e268655821d9f243875bf26004",
+            "clusterId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+            "inputBundleHash": "8bc1294f6e2a0c2c0c7045075dd1425bb7b0877576636d02c2c7348d3216031b",
+            "inputSources": [
+              {
+                "eventHash": "3d09a13b12f3a1dffaac0a712f3e1d0ce99e7a484807827b5bf58f45ae670f11",
+                "eventId": "47a4afbf7ecb6a79f79723d76018273551d7de3dd2da4bc3e57d81cc53331687",
+                "eventSchemaVersion": 2,
+                "evidence": [
+                  {
+                    "artifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                    "role": "sec.exhibit-99.1"
+                  },
+                  {
+                    "artifactHash": "5ee1bbdb8b8a69b799d6aff6a05b47616c5dab3399c630a3db28a48ad9d2023d",
+                    "role": "sec.filing-index"
+                  },
+                  {
+                    "artifactHash": "7cf7fa745b77740d4b22e56bbf7a11b2ae3f35edb3b196587a27cca014224fe4",
+                    "role": "sec.primary-document"
+                  },
+                  {
+                    "artifactHash": "2f1bf5ec7ac28dffde4dfb30da242b48e617445737e495d92d7e3410e36bf211",
+                    "role": "sec.submissions"
+                  },
+                  {
+                    "artifactHash": "4a7c73998c3c1aeee682da57e9f627567cedc70154237e83f2c34f8c24bdabb0",
+                    "role": "sec.xbrl-instance"
+                  }
+                ],
+                "evidenceBundleHash": "6365abf328a18be7cd0b07ade6e34e2b09b96d28cbb78c0ebaf30ac28929ec61",
+                "position": "1",
+                "primaryArtifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                "provider": "sec-edgar",
+                "providerRecordId": "sec:0000123456-26-000001:earnings-source-v2",
+                "providerRevisionId": "1",
+                "sourceKind": "sec_8k"
+              }
+            ],
+            "phase": "first_source"
+          },
+          "type": "earnings.cluster.analyze"
+        },
+        "bodyHash": "2c130fd3ab05694e6cb8dd225404f6d74c28d3aad00df31b96cee60615efe9b0",
+        "category": "job",
+        "dedupeKey": "analysis:eab43b0b9532db496a1759811555175ba0fa53e268655821d9f243875bf26004",
+        "inputEventId": "47a4afbf7ecb6a79f79723d76018273551d7de3dd2da4bc3e57d81cc53331687",
+        "inputPosition": "1",
+        "notBeforeLogicalMs": 1800000000000,
+        "ordinal": 2,
+        "outputId": "54b99956f7db9a27967513055a781e309e3a1e0abdbb3473551aa65caffe725c",
+        "runId": "recorded-sec-pr2b-replay",
+        "sequence": "4"
+      },
+      {
+        "aggregateId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+        "body": {
+          "dedupeKey": "first-source:92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+          "messageId": "4901328ea274cc522f9ad6910332611e5939b55e8c2721f00aaeac35819ef36d",
+          "payload": {
+            "clusterId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+            "fiscalPeriod": "2026-Q1",
+            "inputBundleHash": "8bc1294f6e2a0c2c0c7045075dd1425bb7b0877576636d02c2c7348d3216031b",
+            "issuerCik": "0000123456",
+            "sourceEventId": "47a4afbf7ecb6a79f79723d76018273551d7de3dd2da4bc3e57d81cc53331687"
+          },
+          "topic": "earnings.cluster.first-source-ready"
+        },
+        "bodyHash": "a59afd11f1dc070048e3fe747f9ef4d3a473134b468b1c03f9aedf57ebd7b3fe",
+        "category": "outbox",
+        "dedupeKey": "first-source:92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+        "inputEventId": "47a4afbf7ecb6a79f79723d76018273551d7de3dd2da4bc3e57d81cc53331687",
+        "inputPosition": "1",
+        "notBeforeLogicalMs": null,
+        "ordinal": 0,
+        "outputId": "5e03ea5aac8f55415fbd8bc1f983fb8063e34594def6a229e026d4b815109ff4",
+        "runId": "recorded-sec-pr2b-replay",
+        "sequence": "5"
+      },
+      {
+        "aggregateId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+        "body": {
+          "payload": {
+            "branchId": "12a3f1771d103ec5f2e0e90f639a66620798328b34fbe6078907bd4a42596dda",
+            "clusterId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+            "sourceEventId": "ff8892e44b8d03caf9a65ce9e131334702b6bc99509cc285b85331af75fd5101",
+            "sourceKind": "filing"
+          },
+          "type": "earnings.source.joined"
+        },
+        "bodyHash": "32b9b9261cf21c58cf0e582a9410ff0fdaf3d16780cda3fce3b71ce2e5733d04",
+        "category": "decision",
+        "dedupeKey": null,
+        "inputEventId": "ff8892e44b8d03caf9a65ce9e131334702b6bc99509cc285b85331af75fd5101",
+        "inputPosition": "2",
+        "notBeforeLogicalMs": null,
+        "ordinal": 0,
+        "outputId": "f977eec688352a13ad48b83e13aaa75e2d42b07913c20f909f30126a0a069f5f",
+        "runId": "recorded-sec-pr2b-replay",
+        "sequence": "6"
+      },
+      {
+        "aggregateId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+        "body": {
+          "dedupeKey": "analysis:12a3f1771d103ec5f2e0e90f639a66620798328b34fbe6078907bd4a42596dda",
+          "inputBundleHash": "9f9c662520ace5a4c5df2e700e3301d5a18d23361d19edb19bf459139aed722b",
+          "jobId": "8c7ab112ca9bf9ba2be3df0f2403845346ea2645db63ee61a98b6ac01f2fc88d",
+          "notBeforeLogicalMs": 1800000000000,
+          "payload": {
+            "analysisContract": {
+              "datasetId": null,
+              "extractorVersion": "fixture-extractor-v2",
+              "featureSetId": "earnings-kernel-v2",
+              "modelId": null,
+              "promptId": null
+            },
+            "analysisContractHash": "2eeeb21b4fc155c8e6189aff83f4b8130e256f598ff129b2afda22e15477a3c6",
+            "artifactCatalog": [
+              "2dc5b8757bc3407ef61e12fbc5b4db929bf85031a118ae06824854db13913ce2",
+              "2f1bf5ec7ac28dffde4dfb30da242b48e617445737e495d92d7e3410e36bf211",
+              "4a7c73998c3c1aeee682da57e9f627567cedc70154237e83f2c34f8c24bdabb0",
+              "5ee1bbdb8b8a69b799d6aff6a05b47616c5dab3399c630a3db28a48ad9d2023d",
+              "647847baa766771bdfca20a4af585a85ac00ce6aec7e7ca8038bd5d20dc164ef",
+              "7cf7fa745b77740d4b22e56bbf7a11b2ae3f35edb3b196587a27cca014224fe4",
+              "8e1e33fc7d6cc894944dd4d5dc9486f9511d809224f0b1ae991ec363e538196d",
+              "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de"
+            ],
+            "branchId": "12a3f1771d103ec5f2e0e90f639a66620798328b34fbe6078907bd4a42596dda",
+            "clusterId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+            "inputBundleHash": "9f9c662520ace5a4c5df2e700e3301d5a18d23361d19edb19bf459139aed722b",
+            "inputSources": [
+              {
+                "eventHash": "3d09a13b12f3a1dffaac0a712f3e1d0ce99e7a484807827b5bf58f45ae670f11",
+                "eventId": "47a4afbf7ecb6a79f79723d76018273551d7de3dd2da4bc3e57d81cc53331687",
+                "eventSchemaVersion": 2,
+                "evidence": [
+                  {
+                    "artifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                    "role": "sec.exhibit-99.1"
+                  },
+                  {
+                    "artifactHash": "5ee1bbdb8b8a69b799d6aff6a05b47616c5dab3399c630a3db28a48ad9d2023d",
+                    "role": "sec.filing-index"
+                  },
+                  {
+                    "artifactHash": "7cf7fa745b77740d4b22e56bbf7a11b2ae3f35edb3b196587a27cca014224fe4",
+                    "role": "sec.primary-document"
+                  },
+                  {
+                    "artifactHash": "2f1bf5ec7ac28dffde4dfb30da242b48e617445737e495d92d7e3410e36bf211",
+                    "role": "sec.submissions"
+                  },
+                  {
+                    "artifactHash": "4a7c73998c3c1aeee682da57e9f627567cedc70154237e83f2c34f8c24bdabb0",
+                    "role": "sec.xbrl-instance"
+                  }
+                ],
+                "evidenceBundleHash": "6365abf328a18be7cd0b07ade6e34e2b09b96d28cbb78c0ebaf30ac28929ec61",
+                "position": "1",
+                "primaryArtifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                "provider": "sec-edgar",
+                "providerRecordId": "sec:0000123456-26-000001:earnings-source-v2",
+                "providerRevisionId": "1",
+                "sourceKind": "sec_8k"
+              },
+              {
+                "eventHash": "0e824b70b1d27364dd076dfba8451d1c27c4d0fc7a6e985a14b13724f46d17a1",
+                "eventId": "ff8892e44b8d03caf9a65ce9e131334702b6bc99509cc285b85331af75fd5101",
+                "eventSchemaVersion": 2,
+                "evidence": [
+                  {
+                    "artifactHash": "8e1e33fc7d6cc894944dd4d5dc9486f9511d809224f0b1ae991ec363e538196d",
+                    "role": "sec.filing-index"
+                  },
+                  {
+                    "artifactHash": "647847baa766771bdfca20a4af585a85ac00ce6aec7e7ca8038bd5d20dc164ef",
+                    "role": "sec.primary-document"
+                  },
+                  {
+                    "artifactHash": "2dc5b8757bc3407ef61e12fbc5b4db929bf85031a118ae06824854db13913ce2",
+                    "role": "sec.submissions"
+                  }
+                ],
+                "evidenceBundleHash": "3ff8cfcc21328b93109cc752868b4223871e0227c87218fcd04072f21cc518d5",
+                "position": "2",
+                "primaryArtifactHash": "647847baa766771bdfca20a4af585a85ac00ce6aec7e7ca8038bd5d20dc164ef",
+                "provider": "sec-edgar",
+                "providerRecordId": "sec:0000123456-26-000003:periodic-source-v2",
+                "providerRevisionId": "1",
+                "sourceKind": "filing"
+              }
+            ],
+            "phase": "incremental_filing"
+          },
+          "type": "earnings.cluster.analyze"
+        },
+        "bodyHash": "d76218c0b44fe0dba22d8f95e01208ab37c266948d2c72bad3a60a4090a27da9",
+        "category": "job",
+        "dedupeKey": "analysis:12a3f1771d103ec5f2e0e90f639a66620798328b34fbe6078907bd4a42596dda",
+        "inputEventId": "ff8892e44b8d03caf9a65ce9e131334702b6bc99509cc285b85331af75fd5101",
+        "inputPosition": "2",
+        "notBeforeLogicalMs": 1800000000000,
+        "ordinal": 0,
+        "outputId": "d28b6b531f873f3da0a409c4f7aafa5b30489fa6bea68f6127452ae9b15204c5",
+        "runId": "recorded-sec-pr2b-replay",
+        "sequence": "7"
+      },
+      {
+        "aggregateId": "9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+        "body": {
+          "payload": {
+            "clusterId": "9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+            "fiscalPeriod": "2025-FY",
+            "inputBundleHash": "4b82f60f3ffea273bc914a36d7ce0c21c73ddde4c69b7dc6887b9217bc436949",
+            "issuerCik": "0000123456",
+            "sourceEventId": "569fcfeff461e8ffbe0a6f51cffd8031be125d6e6103442847aa24d28c8ca286"
+          },
+          "type": "earnings.cluster.first-source-ready"
+        },
+        "bodyHash": "fb83d132dcd1763c49495b6a779dc99f1c2ead02264d0efbe72995d9ee8bcf03",
+        "category": "decision",
+        "dedupeKey": null,
+        "inputEventId": "569fcfeff461e8ffbe0a6f51cffd8031be125d6e6103442847aa24d28c8ca286",
+        "inputPosition": "3",
+        "notBeforeLogicalMs": null,
+        "ordinal": 0,
+        "outputId": "93a82fc5c502c7ba6e98e84b2da529526383f3a10cdb84d0e29d5d33f5f8c0b7",
+        "runId": "recorded-sec-pr2b-replay",
+        "sequence": "8"
+      },
+      {
+        "aggregateId": "9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+        "body": {
+          "dedupeKey": "timer:earnings.mirror-debounce:9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+          "inputBundleHash": "e37f0bb69eb63ae7dc99b058d9163e246684e410859df4dbbd3ba336453965f0",
+          "jobId": "1fb61b9bb2228e8b91ecf5c7fe1bcf935332f400116b77a2932d81e08c1b2d35",
+          "notBeforeLogicalMs": 1800000060000,
+          "payload": {
+            "clusterId": "9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+            "scheduledForLogicalMs": 1800000060000,
+            "timerType": "earnings.mirror-debounce"
+          },
+          "type": "kernel.timer"
+        },
+        "bodyHash": "15575a49eda3030cb82901c322fff99b87a313cf0f6f4303087425c3da16eebb",
+        "category": "job",
+        "dedupeKey": "timer:earnings.mirror-debounce:9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+        "inputEventId": "569fcfeff461e8ffbe0a6f51cffd8031be125d6e6103442847aa24d28c8ca286",
+        "inputPosition": "3",
+        "notBeforeLogicalMs": 1800000060000,
+        "ordinal": 0,
+        "outputId": "0599374ba4f45835778d3b5e745e66e0717953505c8ab538702dae84bf8a5ac0",
+        "runId": "recorded-sec-pr2b-replay",
+        "sequence": "9"
+      },
+      {
+        "aggregateId": "9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+        "body": {
+          "dedupeKey": "timer:earnings.lifecycle-finalize:9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+          "inputBundleHash": "e6b8f929a50863345ad7efc36c2925f2cf600423e3193a1dd567150ac20e8a6f",
+          "jobId": "c53fdc7b70240900628d7d97797e514e564e8cb845a313d95afbdd110bbcb8a3",
+          "notBeforeLogicalMs": 1800021600000,
+          "payload": {
+            "clusterId": "9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+            "scheduledForLogicalMs": 1800021600000,
+            "timerType": "earnings.lifecycle-finalize"
+          },
+          "type": "kernel.timer"
+        },
+        "bodyHash": "5277638b19c4f00e708f4d8eea010e9c9dfe5506f0474483f4c745a0549b7992",
+        "category": "job",
+        "dedupeKey": "timer:earnings.lifecycle-finalize:9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+        "inputEventId": "569fcfeff461e8ffbe0a6f51cffd8031be125d6e6103442847aa24d28c8ca286",
+        "inputPosition": "3",
+        "notBeforeLogicalMs": 1800021600000,
+        "ordinal": 1,
+        "outputId": "bca6848dc885692d93dbc5f19046a1d031b0bafd0bfa82acfe17021876e9f40d",
+        "runId": "recorded-sec-pr2b-replay",
+        "sequence": "10"
+      },
+      {
+        "aggregateId": "9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+        "body": {
+          "dedupeKey": "analysis:d38cedb6485c680737e9978a6cf65dfe57b4dd16de2f8c8bb254dbaf6ad002bf",
+          "inputBundleHash": "4b82f60f3ffea273bc914a36d7ce0c21c73ddde4c69b7dc6887b9217bc436949",
+          "jobId": "5cc48aad7a55891a05ba21b56f0717310bf7a44ac5e152a74d4065347ba26dd2",
+          "notBeforeLogicalMs": 1800000000000,
+          "payload": {
+            "analysisContract": {
+              "datasetId": null,
+              "extractorVersion": "fixture-extractor-v2",
+              "featureSetId": "earnings-kernel-v2",
+              "modelId": null,
+              "promptId": null
+            },
+            "analysisContractHash": "2eeeb21b4fc155c8e6189aff83f4b8130e256f598ff129b2afda22e15477a3c6",
+            "artifactCatalog": [
+              "1bde195b7224664ea56fbb37588862e912b75e7efa72a88db887ac36008bb713",
+              "7289b6c207b4f29d5aeae088eb4911be3eb8553e99c72ea84894ce91bac6889f",
+              "777c8884dc100e7bae21bfba77dd5cb05d030dc682979b0148dd84919adf5163",
+              "fe519e44123ff2d84253ebd1aacfaf798d4ab44e601277b6fa95a693e064b434"
+            ],
+            "branchId": "d38cedb6485c680737e9978a6cf65dfe57b4dd16de2f8c8bb254dbaf6ad002bf",
+            "clusterId": "9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+            "inputBundleHash": "4b82f60f3ffea273bc914a36d7ce0c21c73ddde4c69b7dc6887b9217bc436949",
+            "inputSources": [
+              {
+                "eventHash": "313bcfa41ed3a5ae232776980b84300cfe8d39771cfcc09ddf727b00a2e00365",
+                "eventId": "569fcfeff461e8ffbe0a6f51cffd8031be125d6e6103442847aa24d28c8ca286",
+                "eventSchemaVersion": 2,
+                "evidence": [
+                  {
+                    "artifactHash": "777c8884dc100e7bae21bfba77dd5cb05d030dc682979b0148dd84919adf5163",
+                    "role": "sec.filing-index"
+                  },
+                  {
+                    "artifactHash": "fe519e44123ff2d84253ebd1aacfaf798d4ab44e601277b6fa95a693e064b434",
+                    "role": "sec.primary-document"
+                  },
+                  {
+                    "artifactHash": "1bde195b7224664ea56fbb37588862e912b75e7efa72a88db887ac36008bb713",
+                    "role": "sec.submissions"
+                  },
+                  {
+                    "artifactHash": "7289b6c207b4f29d5aeae088eb4911be3eb8553e99c72ea84894ce91bac6889f",
+                    "role": "sec.xbrl-instance"
+                  }
+                ],
+                "evidenceBundleHash": "e2f916961011fc3460de764b05af477f8061f1afd8a1ca1942033091bca02a48",
+                "position": "3",
+                "primaryArtifactHash": "fe519e44123ff2d84253ebd1aacfaf798d4ab44e601277b6fa95a693e064b434",
+                "provider": "sec-edgar",
+                "providerRecordId": "sec:0000123456-26-000004:periodic-source-v2",
+                "providerRevisionId": "1",
+                "sourceKind": "filing"
+              }
+            ],
+            "phase": "first_source"
+          },
+          "type": "earnings.cluster.analyze"
+        },
+        "bodyHash": "c051963c22563fbe70d94eba825b120ade281072a63c5c6d6e5c3691702f1da5",
+        "category": "job",
+        "dedupeKey": "analysis:d38cedb6485c680737e9978a6cf65dfe57b4dd16de2f8c8bb254dbaf6ad002bf",
+        "inputEventId": "569fcfeff461e8ffbe0a6f51cffd8031be125d6e6103442847aa24d28c8ca286",
+        "inputPosition": "3",
+        "notBeforeLogicalMs": 1800000000000,
+        "ordinal": 2,
+        "outputId": "be7dc2b0d139fd56eeaebc8d50d51d55847df39069353e160670d8cdcc55d778",
+        "runId": "recorded-sec-pr2b-replay",
+        "sequence": "11"
+      },
+      {
+        "aggregateId": "9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+        "body": {
+          "dedupeKey": "first-source:9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+          "messageId": "b2d1e5785127269e7ca5ec74c2f8454c6788bdc36817b09bbbd1dbee30643c35",
+          "payload": {
+            "clusterId": "9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+            "fiscalPeriod": "2025-FY",
+            "inputBundleHash": "4b82f60f3ffea273bc914a36d7ce0c21c73ddde4c69b7dc6887b9217bc436949",
+            "issuerCik": "0000123456",
+            "sourceEventId": "569fcfeff461e8ffbe0a6f51cffd8031be125d6e6103442847aa24d28c8ca286"
+          },
+          "topic": "earnings.cluster.first-source-ready"
+        },
+        "bodyHash": "8004ddc7dce3f4cbd6094c30a787a646ab6ff2f23e3abcfb9d0620515126b541",
+        "category": "outbox",
+        "dedupeKey": "first-source:9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+        "inputEventId": "569fcfeff461e8ffbe0a6f51cffd8031be125d6e6103442847aa24d28c8ca286",
+        "inputPosition": "3",
+        "notBeforeLogicalMs": null,
+        "ordinal": 0,
+        "outputId": "7b2008dccf1726e9c5257d5cc2049393cf2fae14cd235f9e0b2eb2194efbf2d1",
+        "runId": "recorded-sec-pr2b-replay",
+        "sequence": "12"
+      },
+      {
+        "aggregateId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+        "body": {
+          "payload": {
+            "clusterId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+            "mirrorWindowEndsAtMs": 1800000060000,
+            "sourceEventId": "b136624f8e1c7991669de096d0b056d53ab95e56efc25d11888cb0546fb8578b",
+            "sourceKind": "sec_8k"
+          },
+          "type": "earnings.source.mirror-debounced"
+        },
+        "bodyHash": "11b209559d5510dcc98b30bff7e688a0715e85b7b5bf6e3e83573d6d71a7219c",
+        "category": "decision",
+        "dedupeKey": null,
+        "inputEventId": "b136624f8e1c7991669de096d0b056d53ab95e56efc25d11888cb0546fb8578b",
+        "inputPosition": "4",
+        "notBeforeLogicalMs": null,
+        "ordinal": 0,
+        "outputId": "d1911f06900903bc2dab9fcd04d5c78c301a4f6afebac7ee815f7fbb041ad3c1",
+        "runId": "recorded-sec-pr2b-replay",
+        "sequence": "13"
+      },
+      {
+        "aggregateId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+        "body": {
+          "payload": {
+            "clusterId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+            "mirrorWindowEndsAtMs": 1800000060000,
+            "sourceEventId": "ff35d90ae4a67572cada5635f723889a329fa6522a0f05e5c76c182dadadb9d4",
+            "sourceKind": "sec_8k"
+          },
+          "type": "earnings.source.mirror-debounced"
+        },
+        "bodyHash": "3ba19c86b5199949816fc3ce29aa79bf34e374c22362bf9253a003393e914cf8",
+        "category": "decision",
+        "dedupeKey": null,
+        "inputEventId": "ff35d90ae4a67572cada5635f723889a329fa6522a0f05e5c76c182dadadb9d4",
+        "inputPosition": "5",
+        "notBeforeLogicalMs": null,
+        "ordinal": 0,
+        "outputId": "69b2cc3828a962759c25a96a4aa0982b52f56f381f7b9e1bc75639374760e652",
+        "runId": "recorded-sec-pr2b-replay",
+        "sequence": "14"
+      },
+      {
+        "aggregateId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+        "body": {
+          "payload": {
+            "branchId": "2dce36bc6b24ef736770bcb71fcd592150b8f1019fbbd8054c86c05c95f87b2b",
+            "clusterId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+            "sourceEventId": "9cb7d7ce4eb06d0170b8ca6f1226d62f7a309621d8135c673414d84c1cf04f04",
+            "sourceKind": "filing"
+          },
+          "type": "earnings.source.joined"
+        },
+        "bodyHash": "68403893a716fac912da00bf53e31331b3816fd8e031bb5d8934fd98708a5411",
+        "category": "decision",
+        "dedupeKey": null,
+        "inputEventId": "9cb7d7ce4eb06d0170b8ca6f1226d62f7a309621d8135c673414d84c1cf04f04",
+        "inputPosition": "6",
+        "notBeforeLogicalMs": null,
+        "ordinal": 0,
+        "outputId": "a076b8cd02b29868bad47e97086c482a3bdb67a1b459bd10890cdcd52bb17dce",
+        "runId": "recorded-sec-pr2b-replay",
+        "sequence": "15"
+      },
+      {
+        "aggregateId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+        "body": {
+          "dedupeKey": "analysis:2dce36bc6b24ef736770bcb71fcd592150b8f1019fbbd8054c86c05c95f87b2b",
+          "inputBundleHash": "b5f9444d363ee75ea40aebef08df8cfb617fce38a92f5a50eb80fb9b970698a2",
+          "jobId": "070b1ce4045c5eab2989b3d68e30c75b681ecee76c096d1123b6876a06938d06",
+          "notBeforeLogicalMs": 1800000000000,
+          "payload": {
+            "analysisContract": {
+              "datasetId": null,
+              "extractorVersion": "fixture-extractor-v2",
+              "featureSetId": "earnings-kernel-v2",
+              "modelId": null,
+              "promptId": null
+            },
+            "analysisContractHash": "2eeeb21b4fc155c8e6189aff83f4b8130e256f598ff129b2afda22e15477a3c6",
+            "artifactCatalog": [
+              "0de679546110b9f6948e1a83436efa11a71d620af76c2bf8fbdd09622f60718f",
+              "2dc5b8757bc3407ef61e12fbc5b4db929bf85031a118ae06824854db13913ce2",
+              "2f1bf5ec7ac28dffde4dfb30da242b48e617445737e495d92d7e3410e36bf211",
+              "3c2767990e8bee1c64494d5cdb3f6f17cc6a6f343427aafb28f17070a464027e",
+              "416aec2b8c1f3c316edb2402a8fcf9432dd8f9f4d7bacdbae072427c61e08a30",
+              "439c8b947cd0f5081ca9294119bb3a3df6b1fc99ec65be2473e22b8b4d77ed6a",
+              "4a7c73998c3c1aeee682da57e9f627567cedc70154237e83f2c34f8c24bdabb0",
+              "4eac5fbcbc4269820a64bdeba055239b4e7ae12dc538a2521df65ae178a58c21",
+              "5ee1bbdb8b8a69b799d6aff6a05b47616c5dab3399c630a3db28a48ad9d2023d",
+              "647847baa766771bdfca20a4af585a85ac00ce6aec7e7ca8038bd5d20dc164ef",
+              "7cf7fa745b77740d4b22e56bbf7a11b2ae3f35edb3b196587a27cca014224fe4",
+              "8e1e33fc7d6cc894944dd4d5dc9486f9511d809224f0b1ae991ec363e538196d",
+              "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+              "dcb4f40250b7a04071437cd622fe3d1264e478cbab47a5d694946982025e0ea6",
+              "e22159926d1c4bcc1fe7bcdccaf2c4a1a4def7d1bd13a26eb18f88dd69e6a517"
+            ],
+            "branchId": "2dce36bc6b24ef736770bcb71fcd592150b8f1019fbbd8054c86c05c95f87b2b",
+            "clusterId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+            "inputBundleHash": "b5f9444d363ee75ea40aebef08df8cfb617fce38a92f5a50eb80fb9b970698a2",
+            "inputSources": [
+              {
+                "eventHash": "3d09a13b12f3a1dffaac0a712f3e1d0ce99e7a484807827b5bf58f45ae670f11",
+                "eventId": "47a4afbf7ecb6a79f79723d76018273551d7de3dd2da4bc3e57d81cc53331687",
+                "eventSchemaVersion": 2,
+                "evidence": [
+                  {
+                    "artifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                    "role": "sec.exhibit-99.1"
+                  },
+                  {
+                    "artifactHash": "5ee1bbdb8b8a69b799d6aff6a05b47616c5dab3399c630a3db28a48ad9d2023d",
+                    "role": "sec.filing-index"
+                  },
+                  {
+                    "artifactHash": "7cf7fa745b77740d4b22e56bbf7a11b2ae3f35edb3b196587a27cca014224fe4",
+                    "role": "sec.primary-document"
+                  },
+                  {
+                    "artifactHash": "2f1bf5ec7ac28dffde4dfb30da242b48e617445737e495d92d7e3410e36bf211",
+                    "role": "sec.submissions"
+                  },
+                  {
+                    "artifactHash": "4a7c73998c3c1aeee682da57e9f627567cedc70154237e83f2c34f8c24bdabb0",
+                    "role": "sec.xbrl-instance"
+                  }
+                ],
+                "evidenceBundleHash": "6365abf328a18be7cd0b07ade6e34e2b09b96d28cbb78c0ebaf30ac28929ec61",
+                "position": "1",
+                "primaryArtifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                "provider": "sec-edgar",
+                "providerRecordId": "sec:0000123456-26-000001:earnings-source-v2",
+                "providerRevisionId": "1",
+                "sourceKind": "sec_8k"
+              },
+              {
+                "eventHash": "0e824b70b1d27364dd076dfba8451d1c27c4d0fc7a6e985a14b13724f46d17a1",
+                "eventId": "ff8892e44b8d03caf9a65ce9e131334702b6bc99509cc285b85331af75fd5101",
+                "eventSchemaVersion": 2,
+                "evidence": [
+                  {
+                    "artifactHash": "8e1e33fc7d6cc894944dd4d5dc9486f9511d809224f0b1ae991ec363e538196d",
+                    "role": "sec.filing-index"
+                  },
+                  {
+                    "artifactHash": "647847baa766771bdfca20a4af585a85ac00ce6aec7e7ca8038bd5d20dc164ef",
+                    "role": "sec.primary-document"
+                  },
+                  {
+                    "artifactHash": "2dc5b8757bc3407ef61e12fbc5b4db929bf85031a118ae06824854db13913ce2",
+                    "role": "sec.submissions"
+                  }
+                ],
+                "evidenceBundleHash": "3ff8cfcc21328b93109cc752868b4223871e0227c87218fcd04072f21cc518d5",
+                "position": "2",
+                "primaryArtifactHash": "647847baa766771bdfca20a4af585a85ac00ce6aec7e7ca8038bd5d20dc164ef",
+                "provider": "sec-edgar",
+                "providerRecordId": "sec:0000123456-26-000003:periodic-source-v2",
+                "providerRevisionId": "1",
+                "sourceKind": "filing"
+              },
+              {
+                "eventHash": "aaadbb42fe3699de291c23637b88ebda6a2307cd46b0b83c2b505f427003910d",
+                "eventId": "b136624f8e1c7991669de096d0b056d53ab95e56efc25d11888cb0546fb8578b",
+                "eventSchemaVersion": 2,
+                "evidence": [
+                  {
+                    "artifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                    "role": "sec.exhibit-99.1"
+                  },
+                  {
+                    "artifactHash": "e22159926d1c4bcc1fe7bcdccaf2c4a1a4def7d1bd13a26eb18f88dd69e6a517",
+                    "role": "sec.filing-index"
+                  },
+                  {
+                    "artifactHash": "7cf7fa745b77740d4b22e56bbf7a11b2ae3f35edb3b196587a27cca014224fe4",
+                    "role": "sec.primary-document"
+                  },
+                  {
+                    "artifactHash": "4eac5fbcbc4269820a64bdeba055239b4e7ae12dc538a2521df65ae178a58c21",
+                    "role": "sec.submissions"
+                  },
+                  {
+                    "artifactHash": "4a7c73998c3c1aeee682da57e9f627567cedc70154237e83f2c34f8c24bdabb0",
+                    "role": "sec.xbrl-instance"
+                  }
+                ],
+                "evidenceBundleHash": "de90c0c9d2cae7617135e1b93838169ca87d552c94ba6a1e77062a21fd2d0d12",
+                "position": "4",
+                "primaryArtifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                "provider": "sec-edgar",
+                "providerRecordId": "sec:0000999999-26-000001:earnings-source-v2",
+                "providerRevisionId": "1",
+                "sourceKind": "sec_8k"
+              },
+              {
+                "eventHash": "57db4b6aa8fdb63d0b1cc4f7a8971b1a93a1a6e9e1eae57d4f93f1ce6ae7d919",
+                "eventId": "ff35d90ae4a67572cada5635f723889a329fa6522a0f05e5c76c182dadadb9d4",
+                "eventSchemaVersion": 2,
+                "evidence": [
+                  {
+                    "artifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                    "role": "sec.exhibit-99.1"
+                  },
+                  {
+                    "artifactHash": "0de679546110b9f6948e1a83436efa11a71d620af76c2bf8fbdd09622f60718f",
+                    "role": "sec.filing-index"
+                  },
+                  {
+                    "artifactHash": "7cf7fa745b77740d4b22e56bbf7a11b2ae3f35edb3b196587a27cca014224fe4",
+                    "role": "sec.primary-document"
+                  },
+                  {
+                    "artifactHash": "dcb4f40250b7a04071437cd622fe3d1264e478cbab47a5d694946982025e0ea6",
+                    "role": "sec.submissions"
+                  },
+                  {
+                    "artifactHash": "4a7c73998c3c1aeee682da57e9f627567cedc70154237e83f2c34f8c24bdabb0",
+                    "role": "sec.xbrl-instance"
+                  }
+                ],
+                "evidenceBundleHash": "6d78e2b7fd0b118dbc490add9b8452c6a899bcb17993807406bd6ec780fc68a9",
+                "position": "5",
+                "primaryArtifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                "provider": "sec-edgar",
+                "providerRecordId": "sec:0000123456-26-000002:earnings-source-v2",
+                "providerRevisionId": "1",
+                "sourceKind": "sec_8k"
+              },
+              {
+                "eventHash": "fd3b04ea066abcce171d5927ea31c4b435549384a7eb936d20fd801413ed106b",
+                "eventId": "9cb7d7ce4eb06d0170b8ca6f1226d62f7a309621d8135c673414d84c1cf04f04",
+                "eventSchemaVersion": 2,
+                "evidence": [
+                  {
+                    "artifactHash": "416aec2b8c1f3c316edb2402a8fcf9432dd8f9f4d7bacdbae072427c61e08a30",
+                    "role": "sec.filing-index"
+                  },
+                  {
+                    "artifactHash": "3c2767990e8bee1c64494d5cdb3f6f17cc6a6f343427aafb28f17070a464027e",
+                    "role": "sec.primary-document"
+                  },
+                  {
+                    "artifactHash": "439c8b947cd0f5081ca9294119bb3a3df6b1fc99ec65be2473e22b8b4d77ed6a",
+                    "role": "sec.submissions"
+                  }
+                ],
+                "evidenceBundleHash": "8053b9c87a84ba0cdb2ff2a3bd79873f0bcaf96121d48f4afc2ca5ac04909409",
+                "position": "6",
+                "primaryArtifactHash": "3c2767990e8bee1c64494d5cdb3f6f17cc6a6f343427aafb28f17070a464027e",
+                "provider": "sec-edgar",
+                "providerRecordId": "sec:0000123456-26-000005:periodic-source-v2",
+                "providerRevisionId": "1",
+                "sourceKind": "filing"
+              }
+            ],
+            "phase": "incremental_filing"
+          },
+          "type": "earnings.cluster.analyze"
+        },
+        "bodyHash": "dff623465ef0279c6cc50cbd5ecf629afdad4298ce0f8f85ddf1192fa243c594",
+        "category": "job",
+        "dedupeKey": "analysis:2dce36bc6b24ef736770bcb71fcd592150b8f1019fbbd8054c86c05c95f87b2b",
+        "inputEventId": "9cb7d7ce4eb06d0170b8ca6f1226d62f7a309621d8135c673414d84c1cf04f04",
+        "inputPosition": "6",
+        "notBeforeLogicalMs": 1800000000000,
+        "ordinal": 0,
+        "outputId": "87ea30c7b5504058c95fe331b0ab2c4781960a737efd5383618285bc9cc673e9",
+        "runId": "recorded-sec-pr2b-replay",
+        "sequence": "16"
+      },
+      {
+        "aggregateId": "9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+        "body": {
+          "payload": {
+            "branchId": "8bc66d54a1cdfa0e88f421673ac53aa5af8e652c90bb1f354a65555fa995554d",
+            "clusterId": "9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+            "sourceEventId": "464526cb547c910316206ae20d4168165c550cc4bd5244bfd5dfb52341a53a62",
+            "sourceKind": "filing"
+          },
+          "type": "earnings.source.joined"
+        },
+        "bodyHash": "11cfc3faf5c9fc1c5953eeaf025f19e700321b59f55c97ba3cd168d741f657e8",
+        "category": "decision",
+        "dedupeKey": null,
+        "inputEventId": "464526cb547c910316206ae20d4168165c550cc4bd5244bfd5dfb52341a53a62",
+        "inputPosition": "7",
+        "notBeforeLogicalMs": null,
+        "ordinal": 0,
+        "outputId": "4881606d540d6cfff4a54009a068ea7f234ec827f49e74700f02bcf4995498a9",
+        "runId": "recorded-sec-pr2b-replay",
+        "sequence": "17"
+      },
+      {
+        "aggregateId": "9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+        "body": {
+          "dedupeKey": "analysis:8bc66d54a1cdfa0e88f421673ac53aa5af8e652c90bb1f354a65555fa995554d",
+          "inputBundleHash": "a80e6049979db83dac0ae83055ea44ae5552ab3d27326a4f247b218c9743340a",
+          "jobId": "5bb35fb916ccb13ca8f1f295a714301964b9edb795cdd7e0bcabe4234b7970a0",
+          "notBeforeLogicalMs": 1800000000000,
+          "payload": {
+            "analysisContract": {
+              "datasetId": null,
+              "extractorVersion": "fixture-extractor-v2",
+              "featureSetId": "earnings-kernel-v2",
+              "modelId": null,
+              "promptId": null
+            },
+            "analysisContractHash": "2eeeb21b4fc155c8e6189aff83f4b8130e256f598ff129b2afda22e15477a3c6",
+            "artifactCatalog": [
+              "1bde195b7224664ea56fbb37588862e912b75e7efa72a88db887ac36008bb713",
+              "505b5b3c804bf813eede969dce83ac9a907f165756394637b4e549b1b3cebc93",
+              "7289b6c207b4f29d5aeae088eb4911be3eb8553e99c72ea84894ce91bac6889f",
+              "777c8884dc100e7bae21bfba77dd5cb05d030dc682979b0148dd84919adf5163",
+              "935a7833ee2eedca1794ef6a95324208ea911f32b910440b65818c61ff795bb2",
+              "b9e3a878366b85a04e698215fdd5665b1fb60fc5d4df0a30f1fbf5da6850ecdd",
+              "fe519e44123ff2d84253ebd1aacfaf798d4ab44e601277b6fa95a693e064b434"
+            ],
+            "branchId": "8bc66d54a1cdfa0e88f421673ac53aa5af8e652c90bb1f354a65555fa995554d",
+            "clusterId": "9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+            "inputBundleHash": "a80e6049979db83dac0ae83055ea44ae5552ab3d27326a4f247b218c9743340a",
+            "inputSources": [
+              {
+                "eventHash": "313bcfa41ed3a5ae232776980b84300cfe8d39771cfcc09ddf727b00a2e00365",
+                "eventId": "569fcfeff461e8ffbe0a6f51cffd8031be125d6e6103442847aa24d28c8ca286",
+                "eventSchemaVersion": 2,
+                "evidence": [
+                  {
+                    "artifactHash": "777c8884dc100e7bae21bfba77dd5cb05d030dc682979b0148dd84919adf5163",
+                    "role": "sec.filing-index"
+                  },
+                  {
+                    "artifactHash": "fe519e44123ff2d84253ebd1aacfaf798d4ab44e601277b6fa95a693e064b434",
+                    "role": "sec.primary-document"
+                  },
+                  {
+                    "artifactHash": "1bde195b7224664ea56fbb37588862e912b75e7efa72a88db887ac36008bb713",
+                    "role": "sec.submissions"
+                  },
+                  {
+                    "artifactHash": "7289b6c207b4f29d5aeae088eb4911be3eb8553e99c72ea84894ce91bac6889f",
+                    "role": "sec.xbrl-instance"
+                  }
+                ],
+                "evidenceBundleHash": "e2f916961011fc3460de764b05af477f8061f1afd8a1ca1942033091bca02a48",
+                "position": "3",
+                "primaryArtifactHash": "fe519e44123ff2d84253ebd1aacfaf798d4ab44e601277b6fa95a693e064b434",
+                "provider": "sec-edgar",
+                "providerRecordId": "sec:0000123456-26-000004:periodic-source-v2",
+                "providerRevisionId": "1",
+                "sourceKind": "filing"
+              },
+              {
+                "eventHash": "873765eff24bcd96133de49c10409adca082e7be5a047b030d5fe8147ba3e446",
+                "eventId": "464526cb547c910316206ae20d4168165c550cc4bd5244bfd5dfb52341a53a62",
+                "eventSchemaVersion": 2,
+                "evidence": [
+                  {
+                    "artifactHash": "505b5b3c804bf813eede969dce83ac9a907f165756394637b4e549b1b3cebc93",
+                    "role": "sec.filing-index"
+                  },
+                  {
+                    "artifactHash": "b9e3a878366b85a04e698215fdd5665b1fb60fc5d4df0a30f1fbf5da6850ecdd",
+                    "role": "sec.primary-document"
+                  },
+                  {
+                    "artifactHash": "935a7833ee2eedca1794ef6a95324208ea911f32b910440b65818c61ff795bb2",
+                    "role": "sec.submissions"
+                  },
+                  {
+                    "artifactHash": "7289b6c207b4f29d5aeae088eb4911be3eb8553e99c72ea84894ce91bac6889f",
+                    "role": "sec.xbrl-instance"
+                  }
+                ],
+                "evidenceBundleHash": "ba5fdd633e6701c426c07d29e19776f32abefea4803b0e5b833c2c1dd4bad677",
+                "position": "7",
+                "primaryArtifactHash": "b9e3a878366b85a04e698215fdd5665b1fb60fc5d4df0a30f1fbf5da6850ecdd",
+                "provider": "sec-edgar",
+                "providerRecordId": "sec:0000123456-26-000006:periodic-source-v2",
+                "providerRevisionId": "1",
+                "sourceKind": "filing"
+              }
+            ],
+            "phase": "incremental_filing"
+          },
+          "type": "earnings.cluster.analyze"
+        },
+        "bodyHash": "16f78948c07c9c6d52d4ff77087172b98d78475bbedbf79fe9357514ba4f2e3c",
+        "category": "job",
+        "dedupeKey": "analysis:8bc66d54a1cdfa0e88f421673ac53aa5af8e652c90bb1f354a65555fa995554d",
+        "inputEventId": "464526cb547c910316206ae20d4168165c550cc4bd5244bfd5dfb52341a53a62",
+        "inputPosition": "7",
+        "notBeforeLogicalMs": 1800000000000,
+        "ordinal": 0,
+        "outputId": "6ea3df0dddef5f9f196723a1f68c2394a39f2292b2988da58d30ba9fabae5666",
+        "runId": "recorded-sec-pr2b-replay",
+        "sequence": "18"
+      }
+    ],
+    "aggregates": [
+      {
+        "aggregateId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+        "checkpointHash": "1198869a683350420fd1e87f52d63d469303c070a6fcc284fe21a8c08ace59dd",
+        "lastInputPosition": "6",
+        "runId": "recorded-sec-pr2b-replay",
+        "state": {
+          "aggregateId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+          "cluster": {
+            "analysisBranches": [
+              {
+                "analysisContract": {
+                  "datasetId": null,
+                  "extractorVersion": "fixture-extractor-v2",
+                  "featureSetId": "earnings-kernel-v2",
+                  "modelId": null,
+                  "promptId": null
+                },
+                "analysisContractHash": "2eeeb21b4fc155c8e6189aff83f4b8130e256f598ff129b2afda22e15477a3c6",
+                "artifactCatalog": [
+                  "2f1bf5ec7ac28dffde4dfb30da242b48e617445737e495d92d7e3410e36bf211",
+                  "4a7c73998c3c1aeee682da57e9f627567cedc70154237e83f2c34f8c24bdabb0",
+                  "5ee1bbdb8b8a69b799d6aff6a05b47616c5dab3399c630a3db28a48ad9d2023d",
+                  "7cf7fa745b77740d4b22e56bbf7a11b2ae3f35edb3b196587a27cca014224fe4",
+                  "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de"
+                ],
+                "branchId": "eab43b0b9532db496a1759811555175ba0fa53e268655821d9f243875bf26004",
+                "errorCode": null,
+                "expectedAttempt": 0,
+                "expectedFencingToken": 0,
+                "inputBundleHash": "8bc1294f6e2a0c2c0c7045075dd1425bb7b0877576636d02c2c7348d3216031b",
+                "inputSources": [
+                  {
+                    "eventHash": "3d09a13b12f3a1dffaac0a712f3e1d0ce99e7a484807827b5bf58f45ae670f11",
+                    "eventId": "47a4afbf7ecb6a79f79723d76018273551d7de3dd2da4bc3e57d81cc53331687",
+                    "eventSchemaVersion": 2,
+                    "evidence": [
+                      {
+                        "artifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                        "role": "sec.exhibit-99.1"
+                      },
+                      {
+                        "artifactHash": "5ee1bbdb8b8a69b799d6aff6a05b47616c5dab3399c630a3db28a48ad9d2023d",
+                        "role": "sec.filing-index"
+                      },
+                      {
+                        "artifactHash": "7cf7fa745b77740d4b22e56bbf7a11b2ae3f35edb3b196587a27cca014224fe4",
+                        "role": "sec.primary-document"
+                      },
+                      {
+                        "artifactHash": "2f1bf5ec7ac28dffde4dfb30da242b48e617445737e495d92d7e3410e36bf211",
+                        "role": "sec.submissions"
+                      },
+                      {
+                        "artifactHash": "4a7c73998c3c1aeee682da57e9f627567cedc70154237e83f2c34f8c24bdabb0",
+                        "role": "sec.xbrl-instance"
+                      }
+                    ],
+                    "evidenceBundleHash": "6365abf328a18be7cd0b07ade6e34e2b09b96d28cbb78c0ebaf30ac28929ec61",
+                    "position": "1",
+                    "primaryArtifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                    "provider": "sec-edgar",
+                    "providerRecordId": "sec:0000123456-26-000001:earnings-source-v2",
+                    "providerRevisionId": "1",
+                    "sourceKind": "sec_8k"
+                  }
+                ],
+                "jobId": "04804943d3f7b004be106954edb02138db6981fc00fe152ccc423ef75186a3bd",
+                "phase": "first_source",
+                "requestedAtMs": 1800000000000,
+                "resultEventId": null,
+                "resultHash": null,
+                "status": "pending"
+              },
+              {
+                "analysisContract": {
+                  "datasetId": null,
+                  "extractorVersion": "fixture-extractor-v2",
+                  "featureSetId": "earnings-kernel-v2",
+                  "modelId": null,
+                  "promptId": null
+                },
+                "analysisContractHash": "2eeeb21b4fc155c8e6189aff83f4b8130e256f598ff129b2afda22e15477a3c6",
+                "artifactCatalog": [
+                  "2dc5b8757bc3407ef61e12fbc5b4db929bf85031a118ae06824854db13913ce2",
+                  "2f1bf5ec7ac28dffde4dfb30da242b48e617445737e495d92d7e3410e36bf211",
+                  "4a7c73998c3c1aeee682da57e9f627567cedc70154237e83f2c34f8c24bdabb0",
+                  "5ee1bbdb8b8a69b799d6aff6a05b47616c5dab3399c630a3db28a48ad9d2023d",
+                  "647847baa766771bdfca20a4af585a85ac00ce6aec7e7ca8038bd5d20dc164ef",
+                  "7cf7fa745b77740d4b22e56bbf7a11b2ae3f35edb3b196587a27cca014224fe4",
+                  "8e1e33fc7d6cc894944dd4d5dc9486f9511d809224f0b1ae991ec363e538196d",
+                  "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de"
+                ],
+                "branchId": "12a3f1771d103ec5f2e0e90f639a66620798328b34fbe6078907bd4a42596dda",
+                "errorCode": null,
+                "expectedAttempt": 0,
+                "expectedFencingToken": 0,
+                "inputBundleHash": "9f9c662520ace5a4c5df2e700e3301d5a18d23361d19edb19bf459139aed722b",
+                "inputSources": [
+                  {
+                    "eventHash": "3d09a13b12f3a1dffaac0a712f3e1d0ce99e7a484807827b5bf58f45ae670f11",
+                    "eventId": "47a4afbf7ecb6a79f79723d76018273551d7de3dd2da4bc3e57d81cc53331687",
+                    "eventSchemaVersion": 2,
+                    "evidence": [
+                      {
+                        "artifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                        "role": "sec.exhibit-99.1"
+                      },
+                      {
+                        "artifactHash": "5ee1bbdb8b8a69b799d6aff6a05b47616c5dab3399c630a3db28a48ad9d2023d",
+                        "role": "sec.filing-index"
+                      },
+                      {
+                        "artifactHash": "7cf7fa745b77740d4b22e56bbf7a11b2ae3f35edb3b196587a27cca014224fe4",
+                        "role": "sec.primary-document"
+                      },
+                      {
+                        "artifactHash": "2f1bf5ec7ac28dffde4dfb30da242b48e617445737e495d92d7e3410e36bf211",
+                        "role": "sec.submissions"
+                      },
+                      {
+                        "artifactHash": "4a7c73998c3c1aeee682da57e9f627567cedc70154237e83f2c34f8c24bdabb0",
+                        "role": "sec.xbrl-instance"
+                      }
+                    ],
+                    "evidenceBundleHash": "6365abf328a18be7cd0b07ade6e34e2b09b96d28cbb78c0ebaf30ac28929ec61",
+                    "position": "1",
+                    "primaryArtifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                    "provider": "sec-edgar",
+                    "providerRecordId": "sec:0000123456-26-000001:earnings-source-v2",
+                    "providerRevisionId": "1",
+                    "sourceKind": "sec_8k"
+                  },
+                  {
+                    "eventHash": "0e824b70b1d27364dd076dfba8451d1c27c4d0fc7a6e985a14b13724f46d17a1",
+                    "eventId": "ff8892e44b8d03caf9a65ce9e131334702b6bc99509cc285b85331af75fd5101",
+                    "eventSchemaVersion": 2,
+                    "evidence": [
+                      {
+                        "artifactHash": "8e1e33fc7d6cc894944dd4d5dc9486f9511d809224f0b1ae991ec363e538196d",
+                        "role": "sec.filing-index"
+                      },
+                      {
+                        "artifactHash": "647847baa766771bdfca20a4af585a85ac00ce6aec7e7ca8038bd5d20dc164ef",
+                        "role": "sec.primary-document"
+                      },
+                      {
+                        "artifactHash": "2dc5b8757bc3407ef61e12fbc5b4db929bf85031a118ae06824854db13913ce2",
+                        "role": "sec.submissions"
+                      }
+                    ],
+                    "evidenceBundleHash": "3ff8cfcc21328b93109cc752868b4223871e0227c87218fcd04072f21cc518d5",
+                    "position": "2",
+                    "primaryArtifactHash": "647847baa766771bdfca20a4af585a85ac00ce6aec7e7ca8038bd5d20dc164ef",
+                    "provider": "sec-edgar",
+                    "providerRecordId": "sec:0000123456-26-000003:periodic-source-v2",
+                    "providerRevisionId": "1",
+                    "sourceKind": "filing"
+                  }
+                ],
+                "jobId": "8c7ab112ca9bf9ba2be3df0f2403845346ea2645db63ee61a98b6ac01f2fc88d",
+                "phase": "incremental_filing",
+                "requestedAtMs": 1800000000000,
+                "resultEventId": null,
+                "resultHash": null,
+                "status": "pending"
+              },
+              {
+                "analysisContract": {
+                  "datasetId": null,
+                  "extractorVersion": "fixture-extractor-v2",
+                  "featureSetId": "earnings-kernel-v2",
+                  "modelId": null,
+                  "promptId": null
+                },
+                "analysisContractHash": "2eeeb21b4fc155c8e6189aff83f4b8130e256f598ff129b2afda22e15477a3c6",
+                "artifactCatalog": [
+                  "0de679546110b9f6948e1a83436efa11a71d620af76c2bf8fbdd09622f60718f",
+                  "2dc5b8757bc3407ef61e12fbc5b4db929bf85031a118ae06824854db13913ce2",
+                  "2f1bf5ec7ac28dffde4dfb30da242b48e617445737e495d92d7e3410e36bf211",
+                  "3c2767990e8bee1c64494d5cdb3f6f17cc6a6f343427aafb28f17070a464027e",
+                  "416aec2b8c1f3c316edb2402a8fcf9432dd8f9f4d7bacdbae072427c61e08a30",
+                  "439c8b947cd0f5081ca9294119bb3a3df6b1fc99ec65be2473e22b8b4d77ed6a",
+                  "4a7c73998c3c1aeee682da57e9f627567cedc70154237e83f2c34f8c24bdabb0",
+                  "4eac5fbcbc4269820a64bdeba055239b4e7ae12dc538a2521df65ae178a58c21",
+                  "5ee1bbdb8b8a69b799d6aff6a05b47616c5dab3399c630a3db28a48ad9d2023d",
+                  "647847baa766771bdfca20a4af585a85ac00ce6aec7e7ca8038bd5d20dc164ef",
+                  "7cf7fa745b77740d4b22e56bbf7a11b2ae3f35edb3b196587a27cca014224fe4",
+                  "8e1e33fc7d6cc894944dd4d5dc9486f9511d809224f0b1ae991ec363e538196d",
+                  "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                  "dcb4f40250b7a04071437cd622fe3d1264e478cbab47a5d694946982025e0ea6",
+                  "e22159926d1c4bcc1fe7bcdccaf2c4a1a4def7d1bd13a26eb18f88dd69e6a517"
+                ],
+                "branchId": "2dce36bc6b24ef736770bcb71fcd592150b8f1019fbbd8054c86c05c95f87b2b",
+                "errorCode": null,
+                "expectedAttempt": 0,
+                "expectedFencingToken": 0,
+                "inputBundleHash": "b5f9444d363ee75ea40aebef08df8cfb617fce38a92f5a50eb80fb9b970698a2",
+                "inputSources": [
+                  {
+                    "eventHash": "3d09a13b12f3a1dffaac0a712f3e1d0ce99e7a484807827b5bf58f45ae670f11",
+                    "eventId": "47a4afbf7ecb6a79f79723d76018273551d7de3dd2da4bc3e57d81cc53331687",
+                    "eventSchemaVersion": 2,
+                    "evidence": [
+                      {
+                        "artifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                        "role": "sec.exhibit-99.1"
+                      },
+                      {
+                        "artifactHash": "5ee1bbdb8b8a69b799d6aff6a05b47616c5dab3399c630a3db28a48ad9d2023d",
+                        "role": "sec.filing-index"
+                      },
+                      {
+                        "artifactHash": "7cf7fa745b77740d4b22e56bbf7a11b2ae3f35edb3b196587a27cca014224fe4",
+                        "role": "sec.primary-document"
+                      },
+                      {
+                        "artifactHash": "2f1bf5ec7ac28dffde4dfb30da242b48e617445737e495d92d7e3410e36bf211",
+                        "role": "sec.submissions"
+                      },
+                      {
+                        "artifactHash": "4a7c73998c3c1aeee682da57e9f627567cedc70154237e83f2c34f8c24bdabb0",
+                        "role": "sec.xbrl-instance"
+                      }
+                    ],
+                    "evidenceBundleHash": "6365abf328a18be7cd0b07ade6e34e2b09b96d28cbb78c0ebaf30ac28929ec61",
+                    "position": "1",
+                    "primaryArtifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                    "provider": "sec-edgar",
+                    "providerRecordId": "sec:0000123456-26-000001:earnings-source-v2",
+                    "providerRevisionId": "1",
+                    "sourceKind": "sec_8k"
+                  },
+                  {
+                    "eventHash": "0e824b70b1d27364dd076dfba8451d1c27c4d0fc7a6e985a14b13724f46d17a1",
+                    "eventId": "ff8892e44b8d03caf9a65ce9e131334702b6bc99509cc285b85331af75fd5101",
+                    "eventSchemaVersion": 2,
+                    "evidence": [
+                      {
+                        "artifactHash": "8e1e33fc7d6cc894944dd4d5dc9486f9511d809224f0b1ae991ec363e538196d",
+                        "role": "sec.filing-index"
+                      },
+                      {
+                        "artifactHash": "647847baa766771bdfca20a4af585a85ac00ce6aec7e7ca8038bd5d20dc164ef",
+                        "role": "sec.primary-document"
+                      },
+                      {
+                        "artifactHash": "2dc5b8757bc3407ef61e12fbc5b4db929bf85031a118ae06824854db13913ce2",
+                        "role": "sec.submissions"
+                      }
+                    ],
+                    "evidenceBundleHash": "3ff8cfcc21328b93109cc752868b4223871e0227c87218fcd04072f21cc518d5",
+                    "position": "2",
+                    "primaryArtifactHash": "647847baa766771bdfca20a4af585a85ac00ce6aec7e7ca8038bd5d20dc164ef",
+                    "provider": "sec-edgar",
+                    "providerRecordId": "sec:0000123456-26-000003:periodic-source-v2",
+                    "providerRevisionId": "1",
+                    "sourceKind": "filing"
+                  },
+                  {
+                    "eventHash": "aaadbb42fe3699de291c23637b88ebda6a2307cd46b0b83c2b505f427003910d",
+                    "eventId": "b136624f8e1c7991669de096d0b056d53ab95e56efc25d11888cb0546fb8578b",
+                    "eventSchemaVersion": 2,
+                    "evidence": [
+                      {
+                        "artifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                        "role": "sec.exhibit-99.1"
+                      },
+                      {
+                        "artifactHash": "e22159926d1c4bcc1fe7bcdccaf2c4a1a4def7d1bd13a26eb18f88dd69e6a517",
+                        "role": "sec.filing-index"
+                      },
+                      {
+                        "artifactHash": "7cf7fa745b77740d4b22e56bbf7a11b2ae3f35edb3b196587a27cca014224fe4",
+                        "role": "sec.primary-document"
+                      },
+                      {
+                        "artifactHash": "4eac5fbcbc4269820a64bdeba055239b4e7ae12dc538a2521df65ae178a58c21",
+                        "role": "sec.submissions"
+                      },
+                      {
+                        "artifactHash": "4a7c73998c3c1aeee682da57e9f627567cedc70154237e83f2c34f8c24bdabb0",
+                        "role": "sec.xbrl-instance"
+                      }
+                    ],
+                    "evidenceBundleHash": "de90c0c9d2cae7617135e1b93838169ca87d552c94ba6a1e77062a21fd2d0d12",
+                    "position": "4",
+                    "primaryArtifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                    "provider": "sec-edgar",
+                    "providerRecordId": "sec:0000999999-26-000001:earnings-source-v2",
+                    "providerRevisionId": "1",
+                    "sourceKind": "sec_8k"
+                  },
+                  {
+                    "eventHash": "57db4b6aa8fdb63d0b1cc4f7a8971b1a93a1a6e9e1eae57d4f93f1ce6ae7d919",
+                    "eventId": "ff35d90ae4a67572cada5635f723889a329fa6522a0f05e5c76c182dadadb9d4",
+                    "eventSchemaVersion": 2,
+                    "evidence": [
+                      {
+                        "artifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                        "role": "sec.exhibit-99.1"
+                      },
+                      {
+                        "artifactHash": "0de679546110b9f6948e1a83436efa11a71d620af76c2bf8fbdd09622f60718f",
+                        "role": "sec.filing-index"
+                      },
+                      {
+                        "artifactHash": "7cf7fa745b77740d4b22e56bbf7a11b2ae3f35edb3b196587a27cca014224fe4",
+                        "role": "sec.primary-document"
+                      },
+                      {
+                        "artifactHash": "dcb4f40250b7a04071437cd622fe3d1264e478cbab47a5d694946982025e0ea6",
+                        "role": "sec.submissions"
+                      },
+                      {
+                        "artifactHash": "4a7c73998c3c1aeee682da57e9f627567cedc70154237e83f2c34f8c24bdabb0",
+                        "role": "sec.xbrl-instance"
+                      }
+                    ],
+                    "evidenceBundleHash": "6d78e2b7fd0b118dbc490add9b8452c6a899bcb17993807406bd6ec780fc68a9",
+                    "position": "5",
+                    "primaryArtifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                    "provider": "sec-edgar",
+                    "providerRecordId": "sec:0000123456-26-000002:earnings-source-v2",
+                    "providerRevisionId": "1",
+                    "sourceKind": "sec_8k"
+                  },
+                  {
+                    "eventHash": "fd3b04ea066abcce171d5927ea31c4b435549384a7eb936d20fd801413ed106b",
+                    "eventId": "9cb7d7ce4eb06d0170b8ca6f1226d62f7a309621d8135c673414d84c1cf04f04",
+                    "eventSchemaVersion": 2,
+                    "evidence": [
+                      {
+                        "artifactHash": "416aec2b8c1f3c316edb2402a8fcf9432dd8f9f4d7bacdbae072427c61e08a30",
+                        "role": "sec.filing-index"
+                      },
+                      {
+                        "artifactHash": "3c2767990e8bee1c64494d5cdb3f6f17cc6a6f343427aafb28f17070a464027e",
+                        "role": "sec.primary-document"
+                      },
+                      {
+                        "artifactHash": "439c8b947cd0f5081ca9294119bb3a3df6b1fc99ec65be2473e22b8b4d77ed6a",
+                        "role": "sec.submissions"
+                      }
+                    ],
+                    "evidenceBundleHash": "8053b9c87a84ba0cdb2ff2a3bd79873f0bcaf96121d48f4afc2ca5ac04909409",
+                    "position": "6",
+                    "primaryArtifactHash": "3c2767990e8bee1c64494d5cdb3f6f17cc6a6f343427aafb28f17070a464027e",
+                    "provider": "sec-edgar",
+                    "providerRecordId": "sec:0000123456-26-000005:periodic-source-v2",
+                    "providerRevisionId": "1",
+                    "sourceKind": "filing"
+                  }
+                ],
+                "jobId": "070b1ce4045c5eab2989b3d68e30c75b681ecee76c096d1123b6876a06938d06",
+                "phase": "incremental_filing",
+                "requestedAtMs": 1800000000000,
+                "resultEventId": null,
+                "resultHash": null,
+                "status": "pending"
+              }
+            ],
+            "clusterId": "92938347884dc85bcaac615aab9fd01459cad4c58d3766ddbad0182c209738b4",
+            "finalizedAtMs": null,
+            "firstObservedAtMs": 1800000000000,
+            "fiscalPeriod": "2026-Q1",
+            "issuerCik": "0000123456",
+            "lifecycleEndsAtMs": 1800021600000,
+            "sources": [
+              {
+                "eventHash": "3d09a13b12f3a1dffaac0a712f3e1d0ce99e7a484807827b5bf58f45ae670f11",
+                "eventId": "47a4afbf7ecb6a79f79723d76018273551d7de3dd2da4bc3e57d81cc53331687",
+                "eventSchemaVersion": 2,
+                "evidence": [
+                  {
+                    "artifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                    "role": "sec.exhibit-99.1"
+                  },
+                  {
+                    "artifactHash": "5ee1bbdb8b8a69b799d6aff6a05b47616c5dab3399c630a3db28a48ad9d2023d",
+                    "role": "sec.filing-index"
+                  },
+                  {
+                    "artifactHash": "7cf7fa745b77740d4b22e56bbf7a11b2ae3f35edb3b196587a27cca014224fe4",
+                    "role": "sec.primary-document"
+                  },
+                  {
+                    "artifactHash": "2f1bf5ec7ac28dffde4dfb30da242b48e617445737e495d92d7e3410e36bf211",
+                    "role": "sec.submissions"
+                  },
+                  {
+                    "artifactHash": "4a7c73998c3c1aeee682da57e9f627567cedc70154237e83f2c34f8c24bdabb0",
+                    "role": "sec.xbrl-instance"
+                  }
+                ],
+                "evidenceBundleHash": "6365abf328a18be7cd0b07ade6e34e2b09b96d28cbb78c0ebaf30ac28929ec61",
+                "originalTimestamp": "2026-05-07T20:15:30-04:00",
+                "position": "1",
+                "primaryArtifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                "provider": "sec-edgar",
+                "providerRecordId": "sec:0000123456-26-000001:earnings-source-v2",
+                "providerRevisionId": "1",
+                "publishedAtMs": 1778199330000,
+                "receivedAtMs": 1800000000000,
+                "sourceKind": "sec_8k",
+                "timestampConfidence": "exact"
+              },
+              {
+                "eventHash": "0e824b70b1d27364dd076dfba8451d1c27c4d0fc7a6e985a14b13724f46d17a1",
+                "eventId": "ff8892e44b8d03caf9a65ce9e131334702b6bc99509cc285b85331af75fd5101",
+                "eventSchemaVersion": 2,
+                "evidence": [
+                  {
+                    "artifactHash": "8e1e33fc7d6cc894944dd4d5dc9486f9511d809224f0b1ae991ec363e538196d",
+                    "role": "sec.filing-index"
+                  },
+                  {
+                    "artifactHash": "647847baa766771bdfca20a4af585a85ac00ce6aec7e7ca8038bd5d20dc164ef",
+                    "role": "sec.primary-document"
+                  },
+                  {
+                    "artifactHash": "2dc5b8757bc3407ef61e12fbc5b4db929bf85031a118ae06824854db13913ce2",
+                    "role": "sec.submissions"
+                  }
+                ],
+                "evidenceBundleHash": "3ff8cfcc21328b93109cc752868b4223871e0227c87218fcd04072f21cc518d5",
+                "originalTimestamp": "2026-05-08T07:30:00-04:00",
+                "position": "2",
+                "primaryArtifactHash": "647847baa766771bdfca20a4af585a85ac00ce6aec7e7ca8038bd5d20dc164ef",
+                "provider": "sec-edgar",
+                "providerRecordId": "sec:0000123456-26-000003:periodic-source-v2",
+                "providerRevisionId": "1",
+                "publishedAtMs": 1778239800000,
+                "receivedAtMs": 1800000000000,
+                "sourceKind": "filing",
+                "timestampConfidence": "exact"
+              },
+              {
+                "eventHash": "aaadbb42fe3699de291c23637b88ebda6a2307cd46b0b83c2b505f427003910d",
+                "eventId": "b136624f8e1c7991669de096d0b056d53ab95e56efc25d11888cb0546fb8578b",
+                "eventSchemaVersion": 2,
+                "evidence": [
+                  {
+                    "artifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                    "role": "sec.exhibit-99.1"
+                  },
+                  {
+                    "artifactHash": "e22159926d1c4bcc1fe7bcdccaf2c4a1a4def7d1bd13a26eb18f88dd69e6a517",
+                    "role": "sec.filing-index"
+                  },
+                  {
+                    "artifactHash": "7cf7fa745b77740d4b22e56bbf7a11b2ae3f35edb3b196587a27cca014224fe4",
+                    "role": "sec.primary-document"
+                  },
+                  {
+                    "artifactHash": "4eac5fbcbc4269820a64bdeba055239b4e7ae12dc538a2521df65ae178a58c21",
+                    "role": "sec.submissions"
+                  },
+                  {
+                    "artifactHash": "4a7c73998c3c1aeee682da57e9f627567cedc70154237e83f2c34f8c24bdabb0",
+                    "role": "sec.xbrl-instance"
+                  }
+                ],
+                "evidenceBundleHash": "de90c0c9d2cae7617135e1b93838169ca87d552c94ba6a1e77062a21fd2d0d12",
+                "originalTimestamp": "2026-05-07T20:15:30-04:00",
+                "position": "4",
+                "primaryArtifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                "provider": "sec-edgar",
+                "providerRecordId": "sec:0000999999-26-000001:earnings-source-v2",
+                "providerRevisionId": "1",
+                "publishedAtMs": 1778199330000,
+                "receivedAtMs": 1800000000000,
+                "sourceKind": "sec_8k",
+                "timestampConfidence": "exact"
+              },
+              {
+                "eventHash": "57db4b6aa8fdb63d0b1cc4f7a8971b1a93a1a6e9e1eae57d4f93f1ce6ae7d919",
+                "eventId": "ff35d90ae4a67572cada5635f723889a329fa6522a0f05e5c76c182dadadb9d4",
+                "eventSchemaVersion": 2,
+                "evidence": [
+                  {
+                    "artifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                    "role": "sec.exhibit-99.1"
+                  },
+                  {
+                    "artifactHash": "0de679546110b9f6948e1a83436efa11a71d620af76c2bf8fbdd09622f60718f",
+                    "role": "sec.filing-index"
+                  },
+                  {
+                    "artifactHash": "7cf7fa745b77740d4b22e56bbf7a11b2ae3f35edb3b196587a27cca014224fe4",
+                    "role": "sec.primary-document"
+                  },
+                  {
+                    "artifactHash": "dcb4f40250b7a04071437cd622fe3d1264e478cbab47a5d694946982025e0ea6",
+                    "role": "sec.submissions"
+                  },
+                  {
+                    "artifactHash": "4a7c73998c3c1aeee682da57e9f627567cedc70154237e83f2c34f8c24bdabb0",
+                    "role": "sec.xbrl-instance"
+                  }
+                ],
+                "evidenceBundleHash": "6d78e2b7fd0b118dbc490add9b8452c6a899bcb17993807406bd6ec780fc68a9",
+                "originalTimestamp": "2026-05-07T20:15:30-04:00",
+                "position": "5",
+                "primaryArtifactHash": "ac045f1e8544205eda656f94496cf31de30be6d9f9796d42ff1f5c137bbc82de",
+                "provider": "sec-edgar",
+                "providerRecordId": "sec:0000123456-26-000002:earnings-source-v2",
+                "providerRevisionId": "1",
+                "publishedAtMs": 1778199330000,
+                "receivedAtMs": 1800000000000,
+                "sourceKind": "sec_8k",
+                "timestampConfidence": "exact"
+              },
+              {
+                "eventHash": "fd3b04ea066abcce171d5927ea31c4b435549384a7eb936d20fd801413ed106b",
+                "eventId": "9cb7d7ce4eb06d0170b8ca6f1226d62f7a309621d8135c673414d84c1cf04f04",
+                "eventSchemaVersion": 2,
+                "evidence": [
+                  {
+                    "artifactHash": "416aec2b8c1f3c316edb2402a8fcf9432dd8f9f4d7bacdbae072427c61e08a30",
+                    "role": "sec.filing-index"
+                  },
+                  {
+                    "artifactHash": "3c2767990e8bee1c64494d5cdb3f6f17cc6a6f343427aafb28f17070a464027e",
+                    "role": "sec.primary-document"
+                  },
+                  {
+                    "artifactHash": "439c8b947cd0f5081ca9294119bb3a3df6b1fc99ec65be2473e22b8b4d77ed6a",
+                    "role": "sec.submissions"
+                  }
+                ],
+                "evidenceBundleHash": "8053b9c87a84ba0cdb2ff2a3bd79873f0bcaf96121d48f4afc2ca5ac04909409",
+                "originalTimestamp": "2026-05-12T09:00:00-04:00",
+                "position": "6",
+                "primaryArtifactHash": "3c2767990e8bee1c64494d5cdb3f6f17cc6a6f343427aafb28f17070a464027e",
+                "provider": "sec-edgar",
+                "providerRecordId": "sec:0000123456-26-000005:periodic-source-v2",
+                "providerRevisionId": "1",
+                "publishedAtMs": 1778590800000,
+                "receivedAtMs": 1800000000000,
+                "sourceKind": "filing",
+                "timestampConfidence": "exact"
+              }
+            ],
+            "status": "open",
+            "timers": [
+              {
+                "jobId": "283f1e6da12b9881f2d32498768e30f9be070fa49fe82a4478f058cbedf4d72a",
+                "scheduledForLogicalMs": 1800000060000,
+                "status": "pending",
+                "timerType": "earnings.mirror-debounce"
+              },
+              {
+                "jobId": "01574ff77eaed891717923053207caf285cb4a208e0fbd4975b555b1d4008bc4",
+                "scheduledForLogicalMs": 1800021600000,
+                "status": "pending",
+                "timerType": "earnings.lifecycle-finalize"
+              }
+            ]
+          },
+          "rejectionCount": 0,
+          "schemaVersion": 4
+        },
+        "stateHash": "235b8af34accf7c5d25a384eb53294ece48fc6f572980b9aad5cd916a72fa00c",
+        "version": "5"
+      },
+      {
+        "aggregateId": "9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+        "checkpointHash": "b2373b7a69b488ebbfba35a4df66e5fabf1b355c906c297a8fe5edae4185c7e1",
+        "lastInputPosition": "7",
+        "runId": "recorded-sec-pr2b-replay",
+        "state": {
+          "aggregateId": "9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+          "cluster": {
+            "analysisBranches": [
+              {
+                "analysisContract": {
+                  "datasetId": null,
+                  "extractorVersion": "fixture-extractor-v2",
+                  "featureSetId": "earnings-kernel-v2",
+                  "modelId": null,
+                  "promptId": null
+                },
+                "analysisContractHash": "2eeeb21b4fc155c8e6189aff83f4b8130e256f598ff129b2afda22e15477a3c6",
+                "artifactCatalog": [
+                  "1bde195b7224664ea56fbb37588862e912b75e7efa72a88db887ac36008bb713",
+                  "7289b6c207b4f29d5aeae088eb4911be3eb8553e99c72ea84894ce91bac6889f",
+                  "777c8884dc100e7bae21bfba77dd5cb05d030dc682979b0148dd84919adf5163",
+                  "fe519e44123ff2d84253ebd1aacfaf798d4ab44e601277b6fa95a693e064b434"
+                ],
+                "branchId": "d38cedb6485c680737e9978a6cf65dfe57b4dd16de2f8c8bb254dbaf6ad002bf",
+                "errorCode": null,
+                "expectedAttempt": 0,
+                "expectedFencingToken": 0,
+                "inputBundleHash": "4b82f60f3ffea273bc914a36d7ce0c21c73ddde4c69b7dc6887b9217bc436949",
+                "inputSources": [
+                  {
+                    "eventHash": "313bcfa41ed3a5ae232776980b84300cfe8d39771cfcc09ddf727b00a2e00365",
+                    "eventId": "569fcfeff461e8ffbe0a6f51cffd8031be125d6e6103442847aa24d28c8ca286",
+                    "eventSchemaVersion": 2,
+                    "evidence": [
+                      {
+                        "artifactHash": "777c8884dc100e7bae21bfba77dd5cb05d030dc682979b0148dd84919adf5163",
+                        "role": "sec.filing-index"
+                      },
+                      {
+                        "artifactHash": "fe519e44123ff2d84253ebd1aacfaf798d4ab44e601277b6fa95a693e064b434",
+                        "role": "sec.primary-document"
+                      },
+                      {
+                        "artifactHash": "1bde195b7224664ea56fbb37588862e912b75e7efa72a88db887ac36008bb713",
+                        "role": "sec.submissions"
+                      },
+                      {
+                        "artifactHash": "7289b6c207b4f29d5aeae088eb4911be3eb8553e99c72ea84894ce91bac6889f",
+                        "role": "sec.xbrl-instance"
+                      }
+                    ],
+                    "evidenceBundleHash": "e2f916961011fc3460de764b05af477f8061f1afd8a1ca1942033091bca02a48",
+                    "position": "3",
+                    "primaryArtifactHash": "fe519e44123ff2d84253ebd1aacfaf798d4ab44e601277b6fa95a693e064b434",
+                    "provider": "sec-edgar",
+                    "providerRecordId": "sec:0000123456-26-000004:periodic-source-v2",
+                    "providerRevisionId": "1",
+                    "sourceKind": "filing"
+                  }
+                ],
+                "jobId": "5cc48aad7a55891a05ba21b56f0717310bf7a44ac5e152a74d4065347ba26dd2",
+                "phase": "first_source",
+                "requestedAtMs": 1800000000000,
+                "resultEventId": null,
+                "resultHash": null,
+                "status": "pending"
+              },
+              {
+                "analysisContract": {
+                  "datasetId": null,
+                  "extractorVersion": "fixture-extractor-v2",
+                  "featureSetId": "earnings-kernel-v2",
+                  "modelId": null,
+                  "promptId": null
+                },
+                "analysisContractHash": "2eeeb21b4fc155c8e6189aff83f4b8130e256f598ff129b2afda22e15477a3c6",
+                "artifactCatalog": [
+                  "1bde195b7224664ea56fbb37588862e912b75e7efa72a88db887ac36008bb713",
+                  "505b5b3c804bf813eede969dce83ac9a907f165756394637b4e549b1b3cebc93",
+                  "7289b6c207b4f29d5aeae088eb4911be3eb8553e99c72ea84894ce91bac6889f",
+                  "777c8884dc100e7bae21bfba77dd5cb05d030dc682979b0148dd84919adf5163",
+                  "935a7833ee2eedca1794ef6a95324208ea911f32b910440b65818c61ff795bb2",
+                  "b9e3a878366b85a04e698215fdd5665b1fb60fc5d4df0a30f1fbf5da6850ecdd",
+                  "fe519e44123ff2d84253ebd1aacfaf798d4ab44e601277b6fa95a693e064b434"
+                ],
+                "branchId": "8bc66d54a1cdfa0e88f421673ac53aa5af8e652c90bb1f354a65555fa995554d",
+                "errorCode": null,
+                "expectedAttempt": 0,
+                "expectedFencingToken": 0,
+                "inputBundleHash": "a80e6049979db83dac0ae83055ea44ae5552ab3d27326a4f247b218c9743340a",
+                "inputSources": [
+                  {
+                    "eventHash": "313bcfa41ed3a5ae232776980b84300cfe8d39771cfcc09ddf727b00a2e00365",
+                    "eventId": "569fcfeff461e8ffbe0a6f51cffd8031be125d6e6103442847aa24d28c8ca286",
+                    "eventSchemaVersion": 2,
+                    "evidence": [
+                      {
+                        "artifactHash": "777c8884dc100e7bae21bfba77dd5cb05d030dc682979b0148dd84919adf5163",
+                        "role": "sec.filing-index"
+                      },
+                      {
+                        "artifactHash": "fe519e44123ff2d84253ebd1aacfaf798d4ab44e601277b6fa95a693e064b434",
+                        "role": "sec.primary-document"
+                      },
+                      {
+                        "artifactHash": "1bde195b7224664ea56fbb37588862e912b75e7efa72a88db887ac36008bb713",
+                        "role": "sec.submissions"
+                      },
+                      {
+                        "artifactHash": "7289b6c207b4f29d5aeae088eb4911be3eb8553e99c72ea84894ce91bac6889f",
+                        "role": "sec.xbrl-instance"
+                      }
+                    ],
+                    "evidenceBundleHash": "e2f916961011fc3460de764b05af477f8061f1afd8a1ca1942033091bca02a48",
+                    "position": "3",
+                    "primaryArtifactHash": "fe519e44123ff2d84253ebd1aacfaf798d4ab44e601277b6fa95a693e064b434",
+                    "provider": "sec-edgar",
+                    "providerRecordId": "sec:0000123456-26-000004:periodic-source-v2",
+                    "providerRevisionId": "1",
+                    "sourceKind": "filing"
+                  },
+                  {
+                    "eventHash": "873765eff24bcd96133de49c10409adca082e7be5a047b030d5fe8147ba3e446",
+                    "eventId": "464526cb547c910316206ae20d4168165c550cc4bd5244bfd5dfb52341a53a62",
+                    "eventSchemaVersion": 2,
+                    "evidence": [
+                      {
+                        "artifactHash": "505b5b3c804bf813eede969dce83ac9a907f165756394637b4e549b1b3cebc93",
+                        "role": "sec.filing-index"
+                      },
+                      {
+                        "artifactHash": "b9e3a878366b85a04e698215fdd5665b1fb60fc5d4df0a30f1fbf5da6850ecdd",
+                        "role": "sec.primary-document"
+                      },
+                      {
+                        "artifactHash": "935a7833ee2eedca1794ef6a95324208ea911f32b910440b65818c61ff795bb2",
+                        "role": "sec.submissions"
+                      },
+                      {
+                        "artifactHash": "7289b6c207b4f29d5aeae088eb4911be3eb8553e99c72ea84894ce91bac6889f",
+                        "role": "sec.xbrl-instance"
+                      }
+                    ],
+                    "evidenceBundleHash": "ba5fdd633e6701c426c07d29e19776f32abefea4803b0e5b833c2c1dd4bad677",
+                    "position": "7",
+                    "primaryArtifactHash": "b9e3a878366b85a04e698215fdd5665b1fb60fc5d4df0a30f1fbf5da6850ecdd",
+                    "provider": "sec-edgar",
+                    "providerRecordId": "sec:0000123456-26-000006:periodic-source-v2",
+                    "providerRevisionId": "1",
+                    "sourceKind": "filing"
+                  }
+                ],
+                "jobId": "5bb35fb916ccb13ca8f1f295a714301964b9edb795cdd7e0bcabe4234b7970a0",
+                "phase": "incremental_filing",
+                "requestedAtMs": 1800000000000,
+                "resultEventId": null,
+                "resultHash": null,
+                "status": "pending"
+              }
+            ],
+            "clusterId": "9a913cc20142479d5faf5b17fbf68811198718158bd80be7d49f89937b2218e6",
+            "finalizedAtMs": null,
+            "firstObservedAtMs": 1800000000000,
+            "fiscalPeriod": "2025-FY",
+            "issuerCik": "0000123456",
+            "lifecycleEndsAtMs": 1800021600000,
+            "sources": [
+              {
+                "eventHash": "313bcfa41ed3a5ae232776980b84300cfe8d39771cfcc09ddf727b00a2e00365",
+                "eventId": "569fcfeff461e8ffbe0a6f51cffd8031be125d6e6103442847aa24d28c8ca286",
+                "eventSchemaVersion": 2,
+                "evidence": [
+                  {
+                    "artifactHash": "777c8884dc100e7bae21bfba77dd5cb05d030dc682979b0148dd84919adf5163",
+                    "role": "sec.filing-index"
+                  },
+                  {
+                    "artifactHash": "fe519e44123ff2d84253ebd1aacfaf798d4ab44e601277b6fa95a693e064b434",
+                    "role": "sec.primary-document"
+                  },
+                  {
+                    "artifactHash": "1bde195b7224664ea56fbb37588862e912b75e7efa72a88db887ac36008bb713",
+                    "role": "sec.submissions"
+                  },
+                  {
+                    "artifactHash": "7289b6c207b4f29d5aeae088eb4911be3eb8553e99c72ea84894ce91bac6889f",
+                    "role": "sec.xbrl-instance"
+                  }
+                ],
+                "evidenceBundleHash": "e2f916961011fc3460de764b05af477f8061f1afd8a1ca1942033091bca02a48",
+                "originalTimestamp": "2026-02-20T16:10:00-05:00",
+                "position": "3",
+                "primaryArtifactHash": "fe519e44123ff2d84253ebd1aacfaf798d4ab44e601277b6fa95a693e064b434",
+                "provider": "sec-edgar",
+                "providerRecordId": "sec:0000123456-26-000004:periodic-source-v2",
+                "providerRevisionId": "1",
+                "publishedAtMs": 1771621800000,
+                "receivedAtMs": 1800000000000,
+                "sourceKind": "filing",
+                "timestampConfidence": "exact"
+              },
+              {
+                "eventHash": "873765eff24bcd96133de49c10409adca082e7be5a047b030d5fe8147ba3e446",
+                "eventId": "464526cb547c910316206ae20d4168165c550cc4bd5244bfd5dfb52341a53a62",
+                "eventSchemaVersion": 2,
+                "evidence": [
+                  {
+                    "artifactHash": "505b5b3c804bf813eede969dce83ac9a907f165756394637b4e549b1b3cebc93",
+                    "role": "sec.filing-index"
+                  },
+                  {
+                    "artifactHash": "b9e3a878366b85a04e698215fdd5665b1fb60fc5d4df0a30f1fbf5da6850ecdd",
+                    "role": "sec.primary-document"
+                  },
+                  {
+                    "artifactHash": "935a7833ee2eedca1794ef6a95324208ea911f32b910440b65818c61ff795bb2",
+                    "role": "sec.submissions"
+                  },
+                  {
+                    "artifactHash": "7289b6c207b4f29d5aeae088eb4911be3eb8553e99c72ea84894ce91bac6889f",
+                    "role": "sec.xbrl-instance"
+                  }
+                ],
+                "evidenceBundleHash": "ba5fdd633e6701c426c07d29e19776f32abefea4803b0e5b833c2c1dd4bad677",
+                "originalTimestamp": "2026-02-25T09:00:00-05:00",
+                "position": "7",
+                "primaryArtifactHash": "b9e3a878366b85a04e698215fdd5665b1fb60fc5d4df0a30f1fbf5da6850ecdd",
+                "provider": "sec-edgar",
+                "providerRecordId": "sec:0000123456-26-000006:periodic-source-v2",
+                "providerRevisionId": "1",
+                "publishedAtMs": 1772028000000,
+                "receivedAtMs": 1800000000000,
+                "sourceKind": "filing",
+                "timestampConfidence": "exact"
+              }
+            ],
+            "status": "open",
+            "timers": [
+              {
+                "jobId": "1fb61b9bb2228e8b91ecf5c7fe1bcf935332f400116b77a2932d81e08c1b2d35",
+                "scheduledForLogicalMs": 1800000060000,
+                "status": "pending",
+                "timerType": "earnings.mirror-debounce"
+              },
+              {
+                "jobId": "c53fdc7b70240900628d7d97797e514e564e8cb845a313d95afbdd110bbcb8a3",
+                "scheduledForLogicalMs": 1800021600000,
+                "status": "pending",
+                "timerType": "earnings.lifecycle-finalize"
+              }
+            ]
+          },
+          "rejectionCount": 0,
+          "schemaVersion": 4
+        },
+        "stateHash": "bb2890b23d57af4a727fbb844b5226dd0bb3eec5489a0b555322cb71910eb265",
+        "version": "2"
+      }
+    ]
+  }
+}

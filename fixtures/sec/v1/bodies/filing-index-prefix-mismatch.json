@@ -1,0 +1,7 @@
+{
+  "accession": "0000999999-26-000001",
+  "form": "8-K",
+  "items": ["2.02"],
+  "subjectCik": "0000123456",
+  "exhibits": [{ "memberKey": "exhibit-a", "type": "EX-99.1", "sequence": 1 }]
+}

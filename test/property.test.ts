@@ -16,6 +16,7 @@ import {
   type EarningsClusterConfig,
   type EarningsClusterState,
 } from "../src/domain/earnings-cluster/reducer.js";
+import { createProviderEvidenceBundle } from "../src/providers/evidence-bundle.js";
 import { BASE_TIME_MS, FISCAL_PERIOD } from "./scenario.js";
 
 const unicodeText = fc.string({ unit: "grapheme", minLength: 0, maxLength: 24 });
@@ -428,8 +429,8 @@ test("fast-check lease reclaim sequences fence stale work and accept only the la
             provenance: {
               ...branch.analysisContract,
               analysisContractHash: branch.analysisContractHash,
-              inputEventIds: branch.inputSources.map((input) => input.eventId),
-              inputArtifactHashes: branch.inputSources.map((input) => input.artifactHash),
+              inputSources: branch.inputSources,
+              artifactCatalog: branch.artifactCatalog,
             },
             result: { verdict: "stale" },
           },
@@ -458,8 +459,8 @@ test("fast-check lease reclaim sequences fence stale work and accept only the la
           provenance: {
             ...latest.analysisContract,
             analysisContractHash: latest.analysisContractHash,
-            inputEventIds: latest.inputSources.map((input) => input.eventId),
-            inputArtifactHashes: latest.inputSources.map((input) => input.artifactHash),
+            inputSources: latest.inputSources,
+            artifactCatalog: latest.artifactCatalog,
           },
           result: { verdict: "latest" },
         },
@@ -472,5 +473,98 @@ test("fast-check lease reclaim sequences fence stale work and accept only the la
       assert.equal(requiredBranch(completed.state).status, "succeeded");
     }),
     { numRuns: 50 },
+  );
+});
+
+test("fast-check V2 evidence presentation permutations canonicalize at the reducer boundary", () => {
+  const issuerCik = "0000123456";
+  const subject = `earnings:${issuerCik}:${FISCAL_PERIOD}`;
+  const primaryArtifactHash = canonicalHash("peas/property-v2/v1", { member: "exhibit" });
+  const evidence = [
+    {
+      role: "sec.submissions",
+      artifactHash: canonicalHash("peas/property-v2/v1", { member: "submissions" }),
+    },
+    {
+      role: "sec.filing-index",
+      artifactHash: canonicalHash("peas/property-v2/v1", { member: "index" }),
+    },
+    {
+      role: "sec.primary-document",
+      artifactHash: canonicalHash("peas/property-v2/v1", { member: "primary" }),
+    },
+    { role: "sec.exhibit-99.1", artifactHash: primaryArtifactHash },
+    {
+      role: "sec.xbrl-instance",
+      artifactHash: canonicalHash("peas/property-v2/v1", { member: "xbrl" }),
+    },
+  ];
+  const bundle = createProviderEvidenceBundle({
+    provider: "sec-edgar",
+    source: "sec:normalizer-v1",
+    recordId: "sec:0000123456-27-000001:earnings-source-v2",
+    revisionId: "1",
+    subject,
+    issuerCik,
+    fiscalPeriod: FISCAL_PERIOD,
+    sourceKind: "sec_8k",
+    primaryArtifactHash,
+    evidence,
+  });
+
+  fc.assert(
+    fc.property(fc.integer({ min: 0, max: evidence.length - 1 }), (offset) => {
+      const harness = directHarness();
+      const memberOrder = [...evidence.slice(offset), ...evidence.slice(0, offset)];
+      const raw = harness.event({
+        type: "earnings.source.observed",
+        nowMs: BASE_TIME_MS,
+        artifactHash: primaryArtifactHash,
+        payload: {
+          issuerCik,
+          fiscalPeriod: FISCAL_PERIOD,
+          sourceKind: "sec_8k",
+          primaryArtifactHash,
+          evidenceBundleHash: bundle.evidenceBundleHash,
+          evidence: memberOrder,
+          publishedAtMs: BASE_TIME_MS,
+          timestampConfidence: "exact",
+          originalTimestamp: null,
+        },
+      });
+      const event: StoredEvent = {
+        ...raw,
+        schemaVersion: 2,
+        source: bundle.source,
+        subject,
+        correlationId: subject,
+        causationId: bundle.evidenceBundleHash,
+        provider: {
+          provider: bundle.provider,
+          recordId: bundle.recordId,
+          revisionId: bundle.revisionId,
+          artifactHash: primaryArtifactHash,
+        },
+      };
+      const reducer = new EarningsClusterReducer();
+      const transition = reducer.apply(
+        reducer.initialState(reducer.route(event), directConfig),
+        event,
+        directContext(event.logicalAtMs),
+      );
+      const source = transition.state.cluster?.sources[0];
+      assert.ok(source);
+      assert.deepEqual(
+        source.evidence.map((member) => member.role),
+        [
+          "sec.exhibit-99.1",
+          "sec.filing-index",
+          "sec.primary-document",
+          "sec.submissions",
+          "sec.xbrl-instance",
+        ],
+      );
+    }),
+    { numRuns: 25 },
   );
 });

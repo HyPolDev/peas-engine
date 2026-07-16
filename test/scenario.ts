@@ -37,8 +37,8 @@ export const CONFIG: EarningsClusterConfig = {
 const BUILD_DIGEST = canonicalHash("peas/test-build/v2", { commit: "kernel-contracts-v2" });
 const SCHEMA_DIGEST = canonicalHash("peas/test-schema-registry/v2", {
   eventEnvelope: 2,
-  earningsSource: 1,
-  earningsState: 3,
+  earningsSource: 2,
+  earningsState: 4,
 });
 
 export function makeManifest(
@@ -54,7 +54,7 @@ export function makeManifest(
     canonicalizationVersion: "peas-json-v1",
     behavior: {
       reducerName: "earnings-cluster",
-      reducerVersion: "2.2.0",
+      reducerVersion: "3.0.0",
       buildDigest: BUILD_DIGEST,
       schemaRegistryDigest: SCHEMA_DIGEST,
       configuration: CONFIG,
@@ -307,8 +307,8 @@ export async function captureScenario(): Promise<
     provenance: {
       ...firstAnalysisContract,
       analysisContractHash: stringField(firstAnalysisPayload, "analysisContractHash"),
-      inputEventIds: arrayField(firstAnalysisPayload, "inputEventIds"),
-      inputArtifactHashes: arrayField(firstAnalysisPayload, "artifactHashes"),
+      inputSources: arrayField(firstAnalysisPayload, "inputSources"),
+      artifactCatalog: arrayField(firstAnalysisPayload, "artifactCatalog"),
     },
     result: { score: "0.87", signal: "positive" },
   };
@@ -329,6 +329,73 @@ export async function captureScenario(): Promise<
       artifactHash: artifactFor("first-analysis", firstResultPayload),
     },
     payload: firstResultPayload,
+  });
+
+  const beforeConfirmationAnalysis = await processor.snapshot();
+  const confirmationAnalysis = outputBy(
+    beforeConfirmationAnalysis.outputs,
+    "job",
+    (_body, payload) => payload["phase"] === "source_confirmation",
+  );
+  const confirmationBody = confirmationAnalysis.body;
+  const confirmationPayload = objectField(confirmationBody, "payload");
+  const confirmationJobId = stringField(confirmationBody, "jobId");
+  const confirmationBundleHash = stringField(confirmationBody, "inputBundleHash");
+  const confirmationContract = objectField(confirmationPayload, "analysisContract");
+  const confirmationLeasePayload: JsonObject = {
+    jobType: "earnings.cluster.analyze",
+    clusterId: stringField(confirmationPayload, "clusterId"),
+    branchId: stringField(confirmationPayload, "branchId"),
+    jobId: confirmationJobId,
+    inputBundleHash: confirmationBundleHash,
+    attempt: 1,
+    fencingToken: 1,
+  };
+  clock.advanceBy(5_000);
+  await processDraft({
+    envelopeVersion: 2,
+    type: "kernel.job.leased",
+    schemaVersion: 1,
+    source: "fixture:worker",
+    subject: SUBJECT,
+    occurredAtMs: clock.nowMs(),
+    correlationId: "correlation-acme-q2",
+    causationId: confirmationJobId,
+    provider: {
+      provider: "peas-worker",
+      recordId: `lease:${confirmationJobId}`,
+      revisionId: "fence-1",
+      artifactHash: artifactFor("confirmation-analysis-lease", confirmationLeasePayload),
+    },
+    payload: confirmationLeasePayload,
+  });
+  const confirmationResultPayload: JsonObject = {
+    ...confirmationLeasePayload,
+    provenance: {
+      ...confirmationContract,
+      analysisContractHash: stringField(confirmationPayload, "analysisContractHash"),
+      inputSources: arrayField(confirmationPayload, "inputSources"),
+      artifactCatalog: arrayField(confirmationPayload, "artifactCatalog"),
+    },
+    result: { score: "0.91", signal: "source-confirmed" },
+  };
+  clock.advanceBy(5_000);
+  await processDraft({
+    envelopeVersion: 2,
+    type: "kernel.job.succeeded",
+    schemaVersion: 1,
+    source: "fixture:worker",
+    subject: SUBJECT,
+    occurredAtMs: clock.nowMs(),
+    correlationId: "correlation-acme-q2",
+    causationId: confirmationJobId,
+    provider: {
+      provider: "peas-worker",
+      recordId: confirmationJobId,
+      revisionId: "attempt-1",
+      artifactHash: artifactFor("confirmation-analysis", confirmationResultPayload),
+    },
+    payload: confirmationResultPayload,
   });
 
   clock.advanceTo(BASE_TIME_MS + 60 * 60 * 1_000);
@@ -412,8 +479,8 @@ export async function captureScenario(): Promise<
     provenance: {
       ...callAnalysisContract,
       analysisContractHash: stringField(callPayload, "analysisContractHash"),
-      inputEventIds: arrayField(callPayload, "inputEventIds"),
-      inputArtifactHashes: arrayField(callPayload, "artifactHashes"),
+      inputSources: arrayField(callPayload, "inputSources"),
+      artifactCatalog: arrayField(callPayload, "artifactCatalog"),
     },
     result: { score: "0.11", signal: "stale-wrong-result" },
   };

@@ -244,7 +244,7 @@ test("migration ledger rejects changed history and output audit reads verify has
   database.close();
 });
 
-test("malformed and stale results are quarantined without wedging later events", async () => {
+test("malformed and stale results are quarantined while all three analysis branches succeed", async () => {
   const scenario = await captureScenario();
   assert.equal(scenario.snapshot.cursor.processedPosition, String(scenario.events.length));
   const totalRejections = scenario.snapshot.aggregates.reduce(
@@ -256,7 +256,7 @@ test("malformed and stale results are quarantined without wedging later events",
   assert.ok(main?.state.cluster);
   assert.equal(main.state.cluster.status, "finalized");
   assert.equal(main.state.cluster.sources.length, 3);
-  assert.equal(main.state.cluster.analysisBranches.length, 2);
+  assert.equal(main.state.cluster.analysisBranches.length, 3);
   assert.equal(
     main.state.cluster.analysisBranches.every((branch) => branch.status === "succeeded"),
     true,

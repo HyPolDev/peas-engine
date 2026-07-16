@@ -18,8 +18,9 @@ vertical-slice work.
 
 The provider-neutral artifact vault was subsequently merged in
 [#2](https://github.com/HyPolDev/peas-engine/pull/2) at main commit
-`e350210a3c8d8f0bd3ae512dde9461fcfb58d0b4`. Provider normalizers and live clients are not yet
-implemented. The next reviewable unit is PR 2B: the recorded SEC end-to-end slice.
+`e350210a3c8d8f0bd3ae512dde9461fcfb58d0b4`. PR 2B adds the deterministic recorded SEC
+normalizer and end-to-end replay slice without adding a live client. It is the current reviewable
+unit; after it merges, PR 2C is the recorded FMP and issuer-IR mirror slice.
 
 ## Requirements
 

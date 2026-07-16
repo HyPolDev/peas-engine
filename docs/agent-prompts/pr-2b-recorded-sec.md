@@ -1,12 +1,13 @@
 # PR 2B implementation-agent prompts
 
-- Status: Proposed
+- Status: Ready for implementation
 - Architecture source: [`docs/adr/0007-recorded-sec-normalization.md`](../adr/0007-recorded-sec-normalization.md)
-- Rule: do not start implementation agents until ADR 0007 decisions are accepted or amended
+- Contract gate: complete; ADR 0007 is accepted after independent review
 
 ## Coordination rules
 
-- Start every agent from the same clean, reviewed base SHA on a branch derived from updated `main`.
+- Start Agents 1 and 2 from the same clean accepted-contract SHA on separate branches derived from
+  `dev/pr-2b-recorded-sec-ete`.
 - Give each agent one bounded ownership area and one acceptance gate.
 - Do not let two agents edit reducer contracts, migrations, fixtures, or golden files concurrently.
 - Fixture and pure-parser agents may work in parallel only after contracts and reason codes freeze.
@@ -20,7 +21,7 @@ Replace `<BASE_SHA>` and `<BRANCH>` before sending a prompt.
 
 ## Agent 0: contract-review agent
 
-Use this agent first. It is read-only.
+This read-only review is complete. Retain the prompt as the historical review assignment.
 
 ```text
 You are the independent architecture reviewer for PEAS PR 2B.
@@ -56,50 +57,139 @@ Do not suggest live HTTP, LLMs, FMP/IR work, market data, or trading. Do not imp
 
 ## Agent 1: fixture-contract agent
 
-Run after the contract-review findings are resolved.
+Run from the accepted-contract SHA. It may overlap with Agent 2, but neither agent may edit the
+other's ownership area.
 
 ```text
 You own only the recorded SEC fixture contract for PEAS PR 2B.
 
-Base SHA: <BASE_SHA>
-Branch: <BRANCH>
+Base SHA: <ACCEPTED_CONTRACT_SHA>
+Branch: dev/pr-2b-sec-fixtures
 Architecture: docs/adr/0007-recorded-sec-normalization.md
+
+The ADR at Base SHA must have Status: Accepted. If it does not, stop without editing.
 
 Allowed changes:
 - fixtures/sec/v1/**
 - test/sec-fixtures.test.ts
 - fixture-specific documentation under fixtures/sec/v1/
 
-Do not change production code, kernel code, reducer code, migrations, package dependencies, or
-existing golden files.
+Do not change production code, kernel code, artifact-vault code, reducer code, database code,
+migrations, package dependencies, existing RC.2 fixtures/goldens, normalizer transcripts, or PR 2B
+integration goldens. Do not access the network or install dependencies.
 
 Objective:
-Create reviewed synthetic SEC fixture cases and manifests for:
-- Item 2.02 + EX-99.1 happy path;
-- linked periodic filing;
-- missing exhibit;
-- non-earnings 8-K;
-- amendment/redelivery;
-- timestamp conflict;
-- malformed markup;
-- subject-CIK normalization and accession-prefix mismatch;
-- fiscal-period ambiguity; and
-- next-morning filing.
+Create the complete test-first recorded SEC fixture contract consumed by later bundle, normalizer,
+reducer, and integration agents. Use minimal reviewed synthetic structures unless redistribution of
+a provider body was explicitly approved per artifact.
 
-Each manifest must declare safe logical roles, response metadata, expected SHA-256 digests, member
-ordering inputs, and expected outcome/reason code. Do not persist raw URLs, query strings,
-credentials, or provider filenames in golden outputs. Use real provider bodies only if
-redistribution was explicitly reviewed; otherwise use minimal synthetic structures.
+Each fixture manifest declares:
+- caseId, sourceKind, canonical accession, canonical subject CIK, and logical asOfMs;
+- provider/source/record/revision identity and expected primary artifact;
+- 1-16 evidence members, each with logical role, fixture-relative path, expected SHA-256 digest,
+  deterministic retrieval-attempt metadata, and exactly one selectedObservationId;
+- selected observation provider, digest, retrievedAtMs, and expected observation hash;
+- safe response metadata and deliberately permuted presentation-order inputs;
+- expected emitted, ignored, or quarantined status plus reasonCode/limitKind when applicable;
+- expected issuer, period, timestamp value/confidence/original text when emitted;
+- expected evidence-bundle hash for valid V2 cases; and
+- whether outputHash must later be non-null or null.
 
-Acceptance:
-- fixtures are deterministic byte-for-byte;
-- manifest paths cannot escape the fixture root;
-- every expected digest is recomputed by the test;
-- member-order permutations do not change the declared logical bundle; and
-- the fixture test runs without network access.
+Fixture-relative paths are loading instructions only. Raw URLs, query strings, credentials,
+arbitrary headers, and SEC provider filenames cannot enter expected domain output or hashes.
 
-Run the narrow fixture test and formatting checks. Hand off the exact fixture matrix, hashes,
-commands, and any semantic assumption the normalizer agent must know.
+Required fixture matrix:
+
+A. Valid observations
+- Item 2.02 8-K with exactly one submissions, filing index, primary document, EX-99.1, and XBRL
+  fiscal-focus member.
+- Item 2.02 8-K with two EX-99.1 exhibits; lowest positive sequence is primary and both remain
+  evidence.
+- 10-Q whose primary inline-XBRL document supplies fiscal focus.
+- 10-K with a separate XBRL instance.
+- linked periodic report with matching subject CIK and fiscal period.
+- next-morning periodic filing emitted independently without retroactively changing the 8-K.
+
+B. Membership failures
+- each required role missing independently;
+- duplicate singleton role and duplicate artifact digest;
+- primary absent or under the wrong role;
+- tied/conflicting EX-99.1 sequence;
+- more than 16 members; and
+- unknown SEC role.
+
+C. Classification, identity, and linkage
+- non-earnings 8-K without Item 2.02;
+- padded/unpadded subject CIK and accession-prefix/subject-CIK mismatch;
+- conflicting subject CIK;
+- linked periodic foreign CIK and different period;
+- absent and conflicting fiscal focus;
+- exact redelivery, amendment accession, and conflicting same record/revision bytes.
+
+D. Selected observation and as-of behavior
+- observation exactly at asOfMs and one millisecond after;
+- missing observation ID, mismatched digest, wrong provider, and reused observation ID; and
+- two eligible observations for identical bytes: same expected domain identity, different loader
+  transcript identity.
+
+The manifest selects one observation per member. Do not design an observation scan or earliest-
+observation rule.
+
+E. Publication timestamps
+- equivalent submissions RFC 3339 and filing-header Eastern candidates;
+- RFC 3339 only, filing-header standard time, and filing-header daylight time;
+- absent, conflicting, malformed, and unsupported pre-2007 local timestamps;
+- filing date and retrieval time excluded from publication time; and
+- linked-periodic time excluded from the preceding 8-K.
+
+F. Decoder and markup bytes
+- UTF-8 BOM, declared UTF-8, and undeclared valid UTF-8;
+- declared Windows-1252 and undeclared Windows-1252 fallback;
+- every accepted decoder alias from ADR 0007;
+- unsupported declaration, BOM/declaration conflict, exact sniff-window boundary, and a declaration
+  beginning inside but ending outside the window; and
+- tolerated and quarantined malformed markup.
+
+G. Deterministic generated boundaries
+- exact/one-over member and total-bundle bytes;
+- 250,000/250,001 semantic tokens;
+- depth 256/257;
+- 256/257 attributes per tag;
+- exact/one-over extracted-text bytes; and
+- the 256 KiB transcript contract without storing raw provider text.
+
+Generate large boundary inputs in test code instead of checking in unnecessarily large bodies.
+
+test/sec-fixtures.test.ts independently verifies:
+- every path resolves inside fixtures/sec/v1 and cannot escape through traversal, absolute paths,
+  links, junctions, or reparse points;
+- every body digest, observation ID/hash, and valid expected bundle hash is recomputed using frozen
+  identity/hash utilities;
+- declared artifactHash, observation artifactDigest, and recomputed body digest agree;
+- selected observations meet asOfMs unless the case intentionally expects sec.observation-invalid;
+- valid role cardinalities and canonical membership satisfy ADR 0007;
+- raw member permutations preserve the logical bundle;
+- manifests are canonical, bounded, duplicate-free, and byte-for-byte deterministic;
+- ignored/quarantined outputHash is null and emitted cases require a future non-null value without
+  inventing the draft;
+- no fixture or expected output contains prohibited request identity or secrets; and
+- no test reaches the network.
+
+Do not implement or mock the production normalizer. These tests validate fixture integrity and
+declared contract expectations, not production parsing behavior.
+
+Run the narrow fixture test, formatting checks for changed files, and typecheck if TypeScript
+helpers are introduced.
+
+Hand off:
+- exact base SHA and branch;
+- files changed and complete fixture matrix;
+- checked-in/generated artifact, observation, and bundle hashes;
+- commands/results and redistribution statement;
+- assumptions consumed from ADR 0007 and cases deferred to parser tests; and
+- confirmation that no production file, dependency, network path, or existing golden changed.
+
+Do not commit, push, merge, or modify the integration branch without explicit user authorization.
 ```
 
 ## Agent 2: evidence-bundle contract agent
