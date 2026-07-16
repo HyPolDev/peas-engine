@@ -18,14 +18,26 @@ is part of the immutable run behavior identity and therefore the genesis hash ch
 
 ## Earnings evidence V2: reducer 3.0.0 / aggregate schema 4
 
-- Existing RC.2 captured stream and `fixtures/earnings-cluster.v2.golden.json`: unchanged.
-- Shared scenario helper: advanced to reducer 3.0.0/schema 4 so non-golden kernel contract tests exercise
-  the current reducer; it is not used to rewrite the historical RC.2 files.
-- New PR 2B domain golden files: none in the Agent 4 scope.
+- Frozen reducer-2.2 RC.2 capture: `fixtures/earnings-cluster.v2.captured.ndjson`, unchanged at
+  SHA-256 `0803d3b49d42e5f91391755b361c9b02e6ea35ab378239e7f5a8b0851f0ddc2f`.
+- Frozen reducer-2.2 RC.2 golden: `fixtures/earnings-cluster.v2.golden.json`, unchanged at SHA-256
+  `9dcdaabbca76f73bee9539957136bc6d539168e65fe9c3b667e34a63d0169ff2`.
+- Current reducer-3.0/state-schema-4 capture:
+  `fixtures/earnings-cluster.pr2b-reducer-3.0-state-4.captured.ndjson`, SHA-256
+  `9ddaf070e244d71022a4c5308482a58bd4e54888fa51de0df2af166deb490837`.
+- Current reducer-3.0/state-schema-4 golden:
+  `fixtures/earnings-cluster.pr2b-reducer-3.0-state-4.golden.json`, SHA-256
+  `db68db31c7ee3f41cb5ec58a78753429a9da675de1d2f5228873de8d369f37a0`.
+- Current heads are event
+  `fda2f33758ae476def10f4bd04ec7c19759ce2c8179bcf58e90e10f012919e10`, state
+  `2a58a708473322645da6cb039d5437e01e39dfa06462dcb64285471db8a21012`, and decision
+  `d59fbc496190b91938244dc540943266ad730c755e9ab6a91b1f8715dc1b6288`.
 
 Reason: reducer 3.0.0 intentionally refuses reducer-2.2/schema-3 checkpoints and starts new runs from
 schema-4 genesis. Schema-V1 source events remain replayable from position zero and map to one
 `legacy.primary` evidence member; schema-V2 events independently verify and retain their complete
 SEC evidence membership. Updating the immutable RC.2 scenario or heads would misrepresent historical
-2.2.0 release evidence. PR 2B integration must publish separate captured vectors and heads after the
-recorded pipeline is assembled.
+2.2.0 release evidence. Current acceptance therefore uses separately named PR 2B assets and never
+submits the historical RC.2 worker-result payloads to reducer 3.0. The versioned PR 2B scenario also
+leases and succeeds its `source_confirmation` job before lifecycle finalization, so all three retained
+analysis branches are succeeded.

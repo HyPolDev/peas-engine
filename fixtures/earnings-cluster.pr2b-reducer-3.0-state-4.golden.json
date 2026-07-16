@@ -1,0 +1,12 @@
+{
+  "reducerVersion": "3.0.0",
+  "stateSchemaVersion": 4,
+  "eventCount": 15,
+  "eventHead": "fda2f33758ae476def10f4bd04ec7c19759ce2c8179bcf58e90e10f012919e10",
+  "stateHead": "2a58a708473322645da6cb039d5437e01e39dfa06462dcb64285471db8a21012",
+  "decisionHead": "d59fbc496190b91938244dc540943266ad730c755e9ab6a91b1f8715dc1b6288",
+  "aggregateCount": 2,
+  "outputCount": 25,
+  "rejectionCount": 2,
+  "maxAggregateBytes": 8792
+}

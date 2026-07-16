@@ -49,6 +49,13 @@ function digest(label: string): string {
   return canonicalHash("peas/earnings-evidence-v2-test/v1", { label });
 }
 
+function stateDigest(state: EarningsClusterState): string {
+  return canonicalHash(
+    "peas/earnings-evidence-v2-state-assertion/v1",
+    state as unknown as JsonObject,
+  );
+}
+
 function context(
   nowMs: number,
   configuration: EarningsClusterConfig = config,
@@ -253,6 +260,81 @@ function success(
   });
 }
 
+function failure(state: EarningsClusterState, selected: AnalysisBranch): StoredEvent {
+  return stored({
+    type: "kernel.job.failed",
+    causationId: selected.jobId,
+    payload: {
+      jobType: "earnings.cluster.analyze",
+      clusterId: cluster(state).clusterId,
+      branchId: selected.branchId,
+      jobId: selected.jobId,
+      inputBundleHash: selected.inputBundleHash,
+      attempt: 1,
+      fencingToken: 1,
+      errorCode: "representative-analysis-failure",
+    },
+  });
+}
+
+function timerFired(
+  state: EarningsClusterState,
+  timerType: "earnings.mirror-debounce" | "earnings.lifecycle-finalize",
+): StoredEvent {
+  const timer = cluster(state).timers.find((candidate) => candidate.timerType === timerType);
+  assert.ok(timer);
+  return stored({
+    type: "kernel.timer.fired",
+    nowMs: timer.scheduledForLogicalMs,
+    causationId: timer.jobId,
+    payload: {
+      timerType,
+      clusterId: cluster(state).clusterId,
+      jobId: timer.jobId,
+      scheduledForLogicalMs: timer.scheduledForLogicalMs,
+      fencingToken: 1,
+    },
+  });
+}
+
+function syntheticallyPadReachableStateToBytes(
+  source: EarningsClusterState,
+  targetBytes: number,
+  carrierIndex = 0,
+): EarningsClusterState {
+  const state = cloneJson(source as unknown as JsonObject) as unknown as EarningsClusterState;
+  const carrier = cluster(state).sources[carrierIndex];
+  assert.ok(carrier);
+  carrier.originalTimestamp = "";
+  const carrierInputs = cluster(state).analysisBranches.flatMap((item) =>
+    item.inputSources.filter((input) => input.eventId === carrier.eventId),
+  );
+  const occurrences = 1 + carrierInputs.length;
+  carrier.position = "1";
+  for (const input of carrierInputs) input.position = "1";
+  const baseBytes = earningsClusterStateCanonicalBytes(state);
+  assert.ok(baseBytes < targetBytes);
+  const positionLength = 1 + Math.floor((targetBytes - baseBytes) / occurrences);
+  const position = "9".repeat(positionLength);
+  carrier.position = position;
+  for (const input of carrierInputs) input.position = position;
+  for (const item of cluster(state).analysisBranches) {
+    item.inputSources.sort((left, right) => {
+      if (left.position.length !== right.position.length) {
+        return left.position.length - right.position.length;
+      }
+      if (left.position !== right.position) return left.position < right.position ? -1 : 1;
+      return left.eventId < right.eventId ? -1 : left.eventId > right.eventId ? 1 : 0;
+    });
+  }
+  const remainder = targetBytes - earningsClusterStateCanonicalBytes(state);
+  assert.ok(remainder >= 0 && remainder <= 512);
+  carrier.originalTimestamp = "t".repeat(remainder);
+  assert.equal(earningsClusterStateCanonicalBytes(state), targetBytes);
+  assert.doesNotThrow(() => reducer.parseState(state));
+  return state;
+}
+
 test("reducer 3.0 starts only from schema-4 genesis and replays V1 as legacy evidence", () => {
   const first = v1Event();
   const genesis = reducer.initialState(reducer.route(first), config);
@@ -434,6 +516,42 @@ test("dense 32x16 reaches every exact input ceiling and one-over source addition
   assert.equal(overTransition.decisions[0]?.payload["reason"], "source-evidence-limit-exceeded");
 });
 
+test("result provenance accepts exact 512 memberships/artifacts and rejects one-over", () => {
+  let state = denseState();
+  const selectedBeforeLease = branch(state, 1);
+  state = lease(state, selectedBeforeLease);
+  const selected = branch(state, 1);
+  assert.equal(
+    selected.inputSources.flatMap((input) => input.evidence).length,
+    MAX_EARNINGS_ANALYSIS_MEMBERSHIPS,
+  );
+  assert.equal(selected.artifactCatalog.length, MAX_EARNINGS_ANALYSIS_ARTIFACTS);
+
+  const overInputs = cloneJson(
+    selected.inputSources as unknown as JsonObject[],
+  ) as unknown as AnalysisBranch["inputSources"];
+  const extraArtifact = digest("result-provenance-member-513");
+  overInputs.at(-1)?.evidence.push({ role: "sec.exhibit-99.1", artifactHash: extraArtifact });
+  const overEvent = success(state, selected, {
+    ...selected.analysisContract,
+    analysisContractHash: selected.analysisContractHash,
+    inputSources: overInputs,
+    artifactCatalog: [...selected.artifactCatalog, extraArtifact].sort(),
+  });
+  const rejected = reducer.apply(state, overEvent, context(overEvent.logicalAtMs));
+  assert.equal(rejected.decisions[0]?.payload["reason"], "invalid-job-success-payload");
+  assert.equal(branch(rejected.state, 1).status, "pending");
+
+  const exactEvent = success(state, selected, {
+    ...selected.analysisContract,
+    analysisContractHash: selected.analysisContractHash,
+    inputSources: selected.inputSources,
+    artifactCatalog: selected.artifactCatalog,
+  });
+  const accepted = reducer.apply(state, exactEvent, context(exactEvent.logicalAtMs));
+  assert.equal(branch(accepted.state, 1).status, "succeeded");
+});
+
 test("mirror timer capacity fallback fires the timer without adding a branch", () => {
   let state = initialize(v1Event());
   const mirrorBase = v1Event(BASE + 1);
@@ -529,7 +647,7 @@ function exactByteState(source: EarningsClusterState): EarningsClusterState {
   throw new Error("Unable to synthesize exact aggregate byte boundary");
 }
 
-test("exact 8 MiB state is accepted and an over-cap success leaves it byte-identical", () => {
+test("synthetic exact 8 MiB boundary is accepted and +1 byte is rejected", () => {
   const exact = exactByteState(denseState());
   assert.equal(earningsClusterStateCanonicalBytes(exact), MAX_EARNINGS_AGGREGATE_STATE_BYTES);
   assert.doesNotThrow(() => reducer.parseState(exact));
@@ -551,6 +669,113 @@ test("exact 8 MiB state is accepted and an over-cap success leaves it byte-ident
   const transition = reducer.apply(leased, completedEvent, context(completedEvent.logicalAtMs));
   assert.equal(canonicalJson(transition.state), canonicalJson(leased));
   assert.equal(transition.decisions[0]?.payload["reason"], "aggregate-state-capacity-exceeded");
+});
+
+test("reachable setups enforce projected bytes for source, mirror fallback, success, failure, and finalization", () => {
+  const target = MAX_EARNINGS_AGGREGATE_STATE_BYTES - 1;
+
+  const sourceBase = initialize(v1Event());
+  const sourceNearCap = syntheticallyPadReachableStateToBytes(sourceBase, target);
+  const callBase = v1Event(BASE + 1);
+  const call = { ...callBase, payload: { ...callBase.payload, sourceKind: "call" } };
+  const sourceTransition = reducer.apply(sourceNearCap, call, context(call.logicalAtMs));
+  assert.equal(stateDigest(sourceTransition.state), stateDigest(sourceNearCap));
+  assert.equal(
+    sourceTransition.decisions[0]?.payload["reason"],
+    "aggregate-state-capacity-exceeded",
+  );
+
+  let mirrorBase = initialize(v1Event());
+  const mirrorSourceBase = v1Event(BASE + 1);
+  const mirrorSource = {
+    ...mirrorSourceBase,
+    provider: { ...mirrorSourceBase.provider, provider: "fmp" },
+    payload: { ...mirrorSourceBase.payload, sourceKind: "fmp_release" },
+  };
+  mirrorBase = reducer.apply(mirrorBase, mirrorSource, context(mirrorSource.logicalAtMs)).state;
+  const mirrorNearCap = syntheticallyPadReachableStateToBytes(mirrorBase, target);
+  const mirrorEvent = timerFired(mirrorNearCap, "earnings.mirror-debounce");
+  const mirrorTransition = reducer.apply(
+    mirrorNearCap,
+    mirrorEvent,
+    context(mirrorEvent.logicalAtMs),
+  );
+  assert.equal(cluster(mirrorTransition.state).analysisBranches.length, 1);
+  assert.equal(
+    cluster(mirrorTransition.state).timers.find(
+      (timer) => timer.timerType === "earnings.mirror-debounce",
+    )?.status,
+    "fired",
+  );
+  assert.equal(mirrorTransition.decisions[1]?.type, "earnings.analysis.capacity-exhausted");
+  assert.ok(earningsClusterStateCanonicalBytes(mirrorTransition.state) <= target);
+
+  let successBase = initialize(v1Event());
+  const successCarrierBase = v1Event(BASE + 1);
+  const primary = cluster(successBase).sources[0]?.primaryArtifactHash;
+  assert.ok(primary);
+  const successCarrier = {
+    ...successCarrierBase,
+    provider: { ...successCarrierBase.provider, provider: "fmp", artifactHash: primary },
+    payload: {
+      ...successCarrierBase.payload,
+      sourceKind: "fmp_release",
+      artifactHash: primary,
+    },
+  };
+  successBase = reducer.apply(
+    successBase,
+    successCarrier,
+    context(successCarrier.logicalAtMs),
+  ).state;
+  successBase = lease(successBase, branch(successBase));
+  const successNearCap = syntheticallyPadReachableStateToBytes(successBase, target, 1);
+  const successBranch = branch(successNearCap);
+  const successEvent = success(successNearCap, successBranch, {
+    ...successBranch.analysisContract,
+    analysisContractHash: successBranch.analysisContractHash,
+    inputSources: successBranch.inputSources,
+    artifactCatalog: successBranch.artifactCatalog,
+  });
+  const successTransition = reducer.apply(
+    successNearCap,
+    successEvent,
+    context(successEvent.logicalAtMs),
+  );
+  assert.equal(stateDigest(successTransition.state), stateDigest(successNearCap));
+  assert.equal(
+    successTransition.decisions[0]?.payload["reason"],
+    "aggregate-state-capacity-exceeded",
+  );
+
+  let failureBase = initialize(v1Event());
+  failureBase = lease(failureBase, branch(failureBase));
+  const failureNearCap = syntheticallyPadReachableStateToBytes(failureBase, target);
+  const failureEvent = failure(failureNearCap, branch(failureNearCap));
+  const failureTransition = reducer.apply(
+    failureNearCap,
+    failureEvent,
+    context(failureEvent.logicalAtMs),
+  );
+  assert.equal(stateDigest(failureTransition.state), stateDigest(failureNearCap));
+  assert.equal(
+    failureTransition.decisions[0]?.payload["reason"],
+    "aggregate-state-capacity-exceeded",
+  );
+
+  const finalizationBase = initialize(v1Event());
+  const finalizationNearCap = syntheticallyPadReachableStateToBytes(finalizationBase, target);
+  const finalizationEvent = timerFired(finalizationNearCap, "earnings.lifecycle-finalize");
+  const finalizationTransition = reducer.apply(
+    finalizationNearCap,
+    finalizationEvent,
+    context(finalizationEvent.logicalAtMs),
+  );
+  assert.equal(stateDigest(finalizationTransition.state), stateDigest(finalizationNearCap));
+  assert.equal(
+    finalizationTransition.decisions[0]?.payload["reason"],
+    "aggregate-state-capacity-exceeded",
+  );
 });
 
 test("hostile state and payload inputs fail closed", () => {

@@ -331,6 +331,73 @@ export async function captureScenario(): Promise<
     payload: firstResultPayload,
   });
 
+  const beforeConfirmationAnalysis = await processor.snapshot();
+  const confirmationAnalysis = outputBy(
+    beforeConfirmationAnalysis.outputs,
+    "job",
+    (_body, payload) => payload["phase"] === "source_confirmation",
+  );
+  const confirmationBody = confirmationAnalysis.body;
+  const confirmationPayload = objectField(confirmationBody, "payload");
+  const confirmationJobId = stringField(confirmationBody, "jobId");
+  const confirmationBundleHash = stringField(confirmationBody, "inputBundleHash");
+  const confirmationContract = objectField(confirmationPayload, "analysisContract");
+  const confirmationLeasePayload: JsonObject = {
+    jobType: "earnings.cluster.analyze",
+    clusterId: stringField(confirmationPayload, "clusterId"),
+    branchId: stringField(confirmationPayload, "branchId"),
+    jobId: confirmationJobId,
+    inputBundleHash: confirmationBundleHash,
+    attempt: 1,
+    fencingToken: 1,
+  };
+  clock.advanceBy(5_000);
+  await processDraft({
+    envelopeVersion: 2,
+    type: "kernel.job.leased",
+    schemaVersion: 1,
+    source: "fixture:worker",
+    subject: SUBJECT,
+    occurredAtMs: clock.nowMs(),
+    correlationId: "correlation-acme-q2",
+    causationId: confirmationJobId,
+    provider: {
+      provider: "peas-worker",
+      recordId: `lease:${confirmationJobId}`,
+      revisionId: "fence-1",
+      artifactHash: artifactFor("confirmation-analysis-lease", confirmationLeasePayload),
+    },
+    payload: confirmationLeasePayload,
+  });
+  const confirmationResultPayload: JsonObject = {
+    ...confirmationLeasePayload,
+    provenance: {
+      ...confirmationContract,
+      analysisContractHash: stringField(confirmationPayload, "analysisContractHash"),
+      inputSources: arrayField(confirmationPayload, "inputSources"),
+      artifactCatalog: arrayField(confirmationPayload, "artifactCatalog"),
+    },
+    result: { score: "0.91", signal: "source-confirmed" },
+  };
+  clock.advanceBy(5_000);
+  await processDraft({
+    envelopeVersion: 2,
+    type: "kernel.job.succeeded",
+    schemaVersion: 1,
+    source: "fixture:worker",
+    subject: SUBJECT,
+    occurredAtMs: clock.nowMs(),
+    correlationId: "correlation-acme-q2",
+    causationId: confirmationJobId,
+    provider: {
+      provider: "peas-worker",
+      recordId: confirmationJobId,
+      revisionId: "attempt-1",
+      artifactHash: artifactFor("confirmation-analysis", confirmationResultPayload),
+    },
+    payload: confirmationResultPayload,
+  });
+
   clock.advanceTo(BASE_TIME_MS + 60 * 60 * 1_000);
   await processDraft(
     sourceDraft({
