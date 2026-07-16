@@ -41,3 +41,25 @@ SEC evidence membership. Updating the immutable RC.2 scenario or heads would mis
 submits the historical RC.2 worker-result payloads to reducer 3.0. The versioned PR 2B scenario also
 leases and succeeds its `source_confirmation` job before lifecycle finalization, so all three retained
 analysis branches are succeeded.
+
+## Recorded SEC end-to-end: PR 2B loader and replay vectors
+
+- Recorded capture: `fixtures/recorded-sec-pr2b.captured.ndjson`, SHA-256
+  `91e304d4ef2bfad49e6f4192e369d476d85ccaf037dca0aa1782a33c6c8e953b`.
+- Recorded golden: `fixtures/recorded-sec-pr2b.golden.json`, SHA-256
+  `634ffcd00ee15ad8ae152ed352ec777e30daff77cfbf12292ebfe403a9831310`.
+- The capture has 7 schema-V2 events and 18 immutable outputs across 2 aggregates.
+- Heads are event `873765eff24bcd96133de49c10409adca082e7be5a047b030d5fe8147ba3e446`,
+  state `37d18a4a7b1e45f881aceb96764611a6ce656348fe05903d0e4fe1ab139b57a5`, and
+  decision `7ea573b6021c0fbbe772518f83a3439003b169b3b6f3ed8e433711e2f4379806`.
+
+Reason: this separately named vector proves the PR 2B path from synthetic SEC bytes through durable
+artifact storage, close/reopen, exact selected-observation loading, complete verified reads, pure
+normalization, trusted capture, and reducer-3.0 replay. Its seven fixture cases use distinct durable
+provider record identities; exact redelivery is tested separately so one revision is never
+reinterpreted as different content. The acceptance suite recomputes the capture, loader and
+normalizer transcript hashes, and full processing snapshot, then compares them byte-for-byte with
+the checked-in files. Memory and SQLite are compared at page sizes 1, 2, 7, and 10,000 with a
+close/reopen boundary. Replay, shadow, research, and paper manifests all set `effectsAllowed: false`
+and produce zero dispatchable jobs or outbox rows. Normal test execution is compare-only; a vector
+change requires an intentional review of this explanation and both new hashes.
