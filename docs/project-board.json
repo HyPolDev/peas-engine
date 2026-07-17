@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "project": "PEAS Engine",
-  "lastReviewed": "2026-07-16",
+  "lastReviewed": "2026-07-17",
   "operatingModel": {
     "execution": "GitHub Issues/Projects",
     "specification": "Repository docs, ADRs, fixtures, and evidence",
@@ -11,11 +11,11 @@
   "current": {
     "stage": "P1",
     "status": "review",
-    "branch": "dev/pr-2b-recorded-sec-ete",
-    "mainCommit": "22d3ca3d639ef8feffe62f81afabf2fa6fa9fd94",
+    "branch": "dev/pr-2c-recorded-mirrors",
+    "mainCommit": "41f19b83e104857ed32b45fa5838c8199f5467ab",
     "release": "v0.2.0-kernel-rc.2",
-    "focus": "PR 2B recorded SEC end-to-end review",
-    "nextGate": "External audit returns GO or GO_WITH_NOTES with no unresolved blocker or high finding, then explicit merge approval"
+    "focus": "PR 2C recorded FMP and NVIDIA IR contract-and-fixture gate",
+    "nextGate": "Intentional commit, push, and draft PR publication after independent final GO"
   },
   "stages": [
     {
@@ -87,7 +87,7 @@
         {
           "id": "P1-01",
           "title": "Recorded SEC end-to-end",
-          "status": "review",
+          "status": "done",
           "owner": "dev/pr-2b-recorded-sec-ete",
           "dependsOn": ["P0-04"],
           "acceptance": "Recorded SEC response becomes a verified artifact, normalized EventDraft, and audited earnings cluster.",
@@ -99,17 +99,28 @@
             "fixtures/recorded-sec-pr2b.golden.json",
             "test/sec-recorded-acceptance.test.ts",
             "docs/audit/golden-change-log.md",
-            "https://github.com/HyPolDev/peas-engine/pull/3"
+            "https://github.com/HyPolDev/peas-engine/pull/3",
+            "main@41f19b83e104857ed32b45fa5838c8199f5467ab"
           ]
         },
         {
           "id": "P1-02",
           "title": "Recorded FMP and issuer-IR mirrors",
-          "status": "blocked",
-          "owner": "agent",
+          "status": "review",
+          "owner": "dev/pr-2c-recorded-mirrors",
           "dependsOn": ["P1-01"],
           "acceptance": "Arrival permutations, mirrors, corrections, inferred times, and redelivery are replay-tested.",
-          "evidence": ["docs/read-only-vertical-slice-plan.md"]
+          "evidence": [
+            "docs/adr/0008-recorded-fmp-and-nvidia-ir-normalization.md",
+            "docs/contracts/pr-2c-fixture-manifest.md",
+            "docs/contracts/pr-2c-acceptance-matrix.md",
+            "docs/goals/pr-2c-contract-review.md",
+            "fixtures/fmp/v1/manifest.ts",
+            "fixtures/ir/nvidia/v1/manifest.ts",
+            "test/fmp-recorded-contract.test.ts",
+            "test/nvidia-ir-recorded-contract.test.ts",
+            "test/recorded-mirror-acceptance.test.ts"
+          ]
         },
         {
           "id": "P1-03",
@@ -132,11 +143,16 @@
         {
           "id": "P1-05",
           "title": "Observation telemetry and clock contract",
-          "status": "planned",
+          "status": "review",
           "owner": "integration-owner",
           "dependsOn": ["P1-01"],
           "acceptance": "Publication, request, retrieval, normalization, and capture times plus clock basis, issuer/symbol mapping, duplicate identity, and revision identity are joinable and replay-auditable.",
-          "evidence": []
+          "evidence": [
+            "docs/adr/0009-observation-telemetry-and-clock-contract.md",
+            "docs/contracts/pr-2c-observation-ledger-schema.md",
+            "src/providers/observation-ledger.ts",
+            "test/observation-ledger-contract.test.ts"
+          ]
         },
         {
           "id": "P1-06",

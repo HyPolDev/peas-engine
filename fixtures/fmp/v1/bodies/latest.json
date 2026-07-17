@@ -1,0 +1,20 @@
+[
+  {
+    "symbol": "SYNX",
+    "publishedDate": "2026-05-07T16:30:00Z",
+    "title": "Synthetic Dynamics Reports First Quarter Fiscal 2026 Results",
+    "text": "Synthetic Dynamics reports original test revenue and operating results for its fictional first quarter.",
+    "site": "fixture.invalid",
+    "image": "https://fixture.invalid/synthetic-dynamics.png",
+    "url": "https://fixture.invalid/releases/synx-q1-2026"
+  },
+  {
+    "symbol": "LABZ",
+    "publishedDate": "2026-05-06T12:00:00+02:00",
+    "title": "Laboratory Zero Opens a Synthetic Testing Annex",
+    "text": "Laboratory Zero opened a fictional annex for deterministic parser testing.",
+    "site": null,
+    "image": null,
+    "url": null
+  }
+]

@@ -1,0 +1,9 @@
+[
+  {
+    "symbol": "BADJ",
+    "publishedDate": "2026-05-07T16:30:00Z",
+    "title": "Malformed Synthetic Release",
+    "text": "This fixture intentionally omits its closing object and array tokens.",
+    "site": null,
+    "image": null,
+    "url": null

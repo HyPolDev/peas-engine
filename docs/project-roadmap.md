@@ -33,13 +33,16 @@ Do not maintain task state independently in Linear, Notion, and GitHub.
 - ADR 0007 is accepted after independent review. It freezes PR 2B evidence membership, selected
   observation loading, SEC semantics, parser/decoder policy, compatibility, limits, reason codes,
   and non-live effect isolation without changing frozen ports.
-- PR 2B now implements and independently audits the recorded SEC path: synthetic raw fixtures,
+- PR 2B merged as pull request #3 at `41f19b83e104857ed32b45fa5838c8199f5467ab`. It implements
+  and independently audits the recorded SEC path: synthetic raw fixtures,
   verified selected-observation loading, pure deterministic normalization, schema-V2 evidence
   provenance, trusted capture, and byte-identical live-style/replay processing in memory and
   SQLite. Historical RC.2 vectors and frozen kernel ports remain unchanged.
-- No live SEC HTTP, FMP, issuer-IR, calendar, market-data, LLM, brokerage, or trading adapter exists
-  yet. After PR 2B review and merge, the next implementation unit is PR 2C recorded FMP and
-  issuer-IR mirrors; observation telemetry is defined before any live reads.
+- PR 2C is review-ready on `dev/pr-2c-recorded-mirrors`. ADRs 0008 and 0009 passed independent
+  contract review; synthetic fixtures and executable compatibility tests pass; and the independent
+  final implementation audit returned `GO` for recorded FMP, NVIDIA Newsroom RSS, and the
+  observation ledger.
+- No live SEC HTTP, FMP, issuer-IR, calendar, market-data, LLM, brokerage, or trading adapter exists.
 - The next product slice is explicitly read-only: no LLM dependency, no orders, no brokerage, and
   no portfolio mutation.
 
@@ -88,16 +91,13 @@ invariant.
 
 ## Immediate sequence
 
-Current checkpoint: PR 2B is open as pull request #3. Windows, Ubuntu, and the 10k scale gate are
-green; the remaining gate is an independent external audit followed by explicit merge approval.
+Current checkpoint: PR 2B is merged as pull request #3. PR 2C has independent contract and final
+implementation `GO` decisions; its synthetic fixture, parser, cross-source, replay, and final
+validation gates pass. The remaining action is draft-PR publication and merge review.
 
-1. Obtain the external audit verdict and merge PR 2B only if no unresolved blocker or high-severity
-   finding remains. Do not begin live reads inside PR 2B.
-2. Add PR 2C recorded FMP/issuer-IR mirrors and arrival-permutation tests against the accepted PR 2B
-   evidence and replay contracts.
-3. Define observation telemetry before live reads: source publication time, request start/end,
-   artifact retrieval, normalization, trusted capture, clock basis, issuer/symbol mapping, and
-   duplicate/revision identity.
+1. Publish PR 2C as a draft for merge review; do not add live reads or merge it from this gate.
+2. Review the recorded FMP/NVIDIA mirror, observation-ledger, and SEC compatibility evidence.
+3. Merge PR 2C only through the separate human review workflow.
 4. Enable live read-only SEC/FMP/IR capture plus calendar prewarming and raw artifact retention.
 5. Run a restart/reconciliation and completeness drill, then begin the 100-200 cluster observation
    run before adding LLM extraction or trade simulation.
