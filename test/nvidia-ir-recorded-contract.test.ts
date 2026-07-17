@@ -79,7 +79,7 @@ test("RSS plus release emits one deterministic candidate and draft across parser
   assert.equal(whole.draft.provider.artifactHash, whole.candidate.primaryArtifactHash);
 });
 
-test("semantic corrections and raw-only changes create revisions without changing record family", async () => {
+test("semantic corrections create revisions while raw-only comments preserve identity", async () => {
   const rssBytes = await fixture("baseline.rss");
   const baselineHtml = await fixture("baseline.html");
   const baseline = normalizeRecordedNvidiaIr({
@@ -109,7 +109,78 @@ test("semantic corrections and raw-only changes create revisions without changin
   );
   assert.notEqual(changed.candidate.providerRevisionId, baseline.candidate.providerRevisionId);
   assert.equal(rawOnly.candidate.selectedProjectionHash, baseline.candidate.selectedProjectionHash);
-  assert.notEqual(rawOnly.candidate.providerRevisionId, baseline.candidate.providerRevisionId);
+  assert.equal(rawOnly.candidate.providerRevisionId, baseline.candidate.providerRevisionId);
+  assert.equal(rawOnly.transcript.candidateHash, baseline.transcript.candidateHash);
+  assert.equal(rawOnly.transcript.eventDraftHash, baseline.transcript.eventDraftHash);
+  assert.deepEqual(rawOnly.draft, baseline.draft);
+});
+
+test("URL-only and comment-only NVIDIA changes preserve projections and event identity", async () => {
+  const rss = (await fixture("baseline.rss")).toString("utf8");
+  const html = (await fixture("baseline.html")).toString("utf8");
+  const baseline = normalizeRecordedNvidiaIr({
+    rssBytes: bytes(rss),
+    releaseHtmlBytes: bytes(html),
+    selectionKey: KEY,
+  });
+  const urlOnly = normalizeRecordedNvidiaIr({
+    rssBytes: bytes(
+      rss
+        .replace("?source=rss#release", "?credential=changed#different-fragment")
+        .replace(
+          "Entirely synthetic release.",
+          "Entirely synthetic release. https://user:secret@nvidianews.nvidia.com/private?token=x#y",
+        ),
+    ),
+    releaseHtmlBytes: bytes(
+      html
+        .replace(
+          'href="https://nvidianews.nvidia.com/news/synthetic-fiscal-2030-q1"',
+          'href="https://nvidianews.nvidia.com/news/synthetic-fiscal-2030-q1?canonical=changed#fragment"',
+        )
+        .replace("?view=full", "?credential=changed#fragment")
+        .replace(
+          "All prose in this fixture is original.",
+          "All prose in this fixture is original. https://user:secret@nvidianews.nvidia.com/private?token=x#y",
+        ),
+    ),
+    selectionKey: `${KEY}?loader=changed#fragment`,
+  });
+  const commentOnly = normalizeRecordedNvidiaIr({
+    rssBytes: bytes(rss.replace("<item>", "<!-- nonsemantic RSS comment --><item>")),
+    releaseHtmlBytes: bytes(
+      html.replace("<article class=", "<!-- nonsemantic HTML comment --><article class="),
+    ),
+    selectionKey: KEY,
+  });
+  for (const result of [baseline, urlOnly, commentOnly]) assert.equal(result.status, "emitted");
+  if (
+    baseline.status !== "emitted" ||
+    urlOnly.status !== "emitted" ||
+    commentOnly.status !== "emitted"
+  )
+    return;
+  for (const result of [urlOnly, commentOnly]) {
+    assert.deepEqual(result.projections, baseline.projections);
+    assert.deepEqual(result.candidate, baseline.candidate);
+    assert.deepEqual(result.draft, baseline.draft);
+    assert.equal(
+      result.transcript.selectedProjectionHash,
+      baseline.transcript.selectedProjectionHash,
+    );
+    assert.equal(result.transcript.candidateHash, baseline.transcript.candidateHash);
+    assert.equal(result.transcript.eventDraftHash, baseline.transcript.eventDraftHash);
+  }
+  assert.notEqual(urlOnly.transcript.rssArtifactHash, baseline.transcript.rssArtifactHash);
+  assert.notEqual(
+    urlOnly.transcript.releaseHtmlArtifactHash,
+    baseline.transcript.releaseHtmlArtifactHash,
+  );
+  assert.notEqual(commentOnly.transcript.rssArtifactHash, baseline.transcript.rssArtifactHash);
+  assert.notEqual(
+    commentOnly.transcript.releaseHtmlArtifactHash,
+    baseline.transcript.releaseHtmlArtifactHash,
+  );
 });
 
 test("missing item publication time remains null/unknown", async () => {

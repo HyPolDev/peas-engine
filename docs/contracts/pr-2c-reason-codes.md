@@ -62,7 +62,7 @@ IR `limitKind`: `xml-tokens`, `xml-depth`, `xml-attributes`, `html-tokens`, `htm
 `observation.mapping-missing`, `observation.mapping-conflict`,
 `observation.publication-time-unknown`, `observation.publication-time-invalid`,
 `observation.publication-time-conflict`, `observation.clock-basis-invalid`,
-`observation.clock-regressed`, `observation.request-failed`,
+`observation.clock-regression-invalid`, `observation.clock-regressed`, `observation.request-failed`,
 `observation.request-abandoned`, `observation.request-expired`,
 `observation.artifact-missing`, `observation.artifact-mismatch`,
 `observation.artifact-limit-exceeded`, `observation.verified-read-failed`,

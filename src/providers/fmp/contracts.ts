@@ -45,7 +45,6 @@ export type FmpSelectedProjectionV1 = Readonly<{
   publishedDate: string | null;
   title: string;
   text: string;
-  site: string | null;
 }>;
 
 export type FmpSelectorV1 = Readonly<{ recordId: string; revisionId: string }>;

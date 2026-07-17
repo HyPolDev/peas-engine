@@ -71,7 +71,7 @@ The branch may be pushed and a draft pull request may be opened only after the f
 financial effect, frozen-port change, or fixture licensing violation. The pull request must remain
 unmerged.
 
-That gate is satisfied: the fresh independent final audit returned `GO`; format, lint, typecheck,
-and build pass; and the final focused compatibility run passed 69 tests with zero failures. Source
-inspection found no live HTTP/polling surface, credential, financial effect, Docker change, or
-frozen kernel/`ArtifactStore` port change. All checked-in FMP and NVIDIA bodies are synthetic.
+The prior final-audit gate is superseded for audited head
+`9aa6a404a3098e0a6d99c7ed7ab38aa8e965fe13`. After repairs are completely validated and pushed,
+the new head must receive a fresh independent review. This implementation task does not approve or
+merge the pull request.

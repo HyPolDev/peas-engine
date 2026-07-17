@@ -61,7 +61,7 @@ test("synthetic latest/search manifests pin canonical candidate and draft hashes
     const result = await load(fixture);
     assert.equal(result.status, fixture.expected.status, fixture.caseId);
     assert.equal(result.reasonCode, fixture.expected.reasonCode, fixture.caseId);
-    assert.equal(result.primaryArtifactHash, fixture.expected.primaryArtifactHash, fixture.caseId);
+    assert.equal(result.primaryArtifactHash, fixture.expected.rawArtifactHash, fixture.caseId);
     if (result.status !== "emitted") continue;
     assert.equal(result.recordId, fixture.expected.recordId, fixture.caseId);
     assert.equal(result.revisionId, fixture.expected.revisionId, fixture.caseId);
@@ -89,14 +89,14 @@ test("synthetic latest/search manifests pin canonical candidate and draft hashes
       provider: "financial-modeling-prep",
       recordId:
         "fmp-recorded-synthetic:c08d87be4da7598dc42f3c2461a601162a0f007c4ba015a7e459002bb850055e",
-      revisionId: "sha256:cc43824b44239244fd88670707dd9bf633de17de257233ce4b508a0302c76372",
-      artifactHash: "6440ac3e4e0cff9079ce648e6105bfa7e3438f2223da43694eb0d45b647934b9",
+      revisionId: "sha256:981b30ba0401e2e5b0514a3ed7d4b129f812463f87a0282f15e2fa753fa36b63",
+      artifactHash: "0ffe1c006be7e781542d3fc01c37fcc01384a5ac8c78942b05144c9745819bf9",
     },
     payload: {
       issuerCik: "0000000001",
       fiscalPeriod: "2026-Q1",
       sourceKind: "fmp_release",
-      artifactHash: "6440ac3e4e0cff9079ce648e6105bfa7e3438f2223da43694eb0d45b647934b9",
+      artifactHash: "0ffe1c006be7e781542d3fc01c37fcc01384a5ac8c78942b05144c9745819bf9",
       publishedAtMs: 1_778_171_400_000,
       timestampConfidence: "provider",
       originalTimestamp: "2026-05-07T16:30:00Z",
@@ -144,10 +144,95 @@ test("identical duplicates collapse while byte-different corrections create a ne
   assert.equal(original.recordId, duplicate.recordId);
   assert.equal(original.recordId, correction.recordId);
   assert.equal(original.selectedProjectionHash, duplicate.selectedProjectionHash);
-  assert.notEqual(original.revisionId, duplicate.revisionId);
+  assert.equal(original.revisionId, duplicate.revisionId);
+  assert.equal(original.eventDraftHash, duplicate.eventDraftHash);
   assert.notEqual(original.revisionId, correction.revisionId);
   assert.notEqual(original.selectedProjectionHash, correction.selectedProjectionHash);
   assert.notEqual(original.eventDraftHash, correction.eventDraftHash);
+});
+
+function normalizedSelf(items: readonly Record<string, unknown>[]) {
+  const bytes = Buffer.from(JSON.stringify(items));
+  const inspected = inspectRecordedFmpCollection(bytes);
+  const selected = inspected.items[0];
+  assert.ok(selected);
+  return normalizeRecordedFmpCollection({
+    bytes,
+    selector: { recordId: selected.recordId, revisionId: selected.revisionId },
+    route: ROUTE,
+  });
+}
+
+test("URL-only and comment-only FMP changes cannot alter semantic or event identity", () => {
+  const item = {
+    symbol: "SYNX",
+    publishedDate: "2026-05-07T16:30:00Z",
+    title: "Synthetic URL-Free Results",
+    text: "Synthetic semantic body.",
+    site: "first.invalid",
+    image: "https://user:secret@first.invalid/image.png?token=one#fragment",
+    url: "https://first.invalid/release?credential=one#first",
+  };
+  const baseline = normalizedSelf([item]);
+  const urlOnly = normalizedSelf([
+    {
+      ...item,
+      site: "second.invalid",
+      image: "https://other:credential@second.invalid/other.png?token=two#fragment",
+      url: "https://second.invalid/release?credential=two#second",
+      text: `${item.text} https://user:password@first.invalid/path?token=one#fragment`,
+    },
+  ]);
+  const commentOnly = normalizedSelf([
+    {
+      ...item,
+      text: `${item.text}<!-- arbitrary nonsemantic acquisition comment -->`,
+    },
+  ]);
+  for (const result of [baseline, urlOnly, commentOnly]) assert.equal(result.status, "emitted");
+  if (
+    baseline.status !== "emitted" ||
+    urlOnly.status !== "emitted" ||
+    commentOnly.status !== "emitted"
+  )
+    return;
+  for (const result of [urlOnly, commentOnly]) {
+    assert.equal(result.recordId, baseline.recordId);
+    assert.equal(result.revisionId, baseline.revisionId);
+    assert.equal(result.selectedProjectionHash, baseline.selectedProjectionHash);
+    assert.equal(result.candidateHash, baseline.candidateHash);
+    assert.equal(result.eventDraftHash, baseline.eventDraftHash);
+    assert.deepEqual(result.draft, baseline.draft);
+    assert.notEqual(result.primaryArtifactHash, baseline.primaryArtifactHash);
+  }
+});
+
+test("record-family duplicate conflicts reject in either item order", () => {
+  const original = {
+    symbol: "SYNX",
+    publishedDate: "2026-05-07T16:30:00Z",
+    title: "Synthetic Duplicate Conflict Results",
+    text: "First retained semantic body.",
+    site: null,
+    image: null,
+    url: null,
+  };
+  const corrected = { ...original, text: "Conflicting retained semantic body." };
+  for (const items of [
+    [original, corrected],
+    [corrected, original],
+  ]) {
+    const bytes = Buffer.from(JSON.stringify(items));
+    const selected = inspectRecordedFmpCollection(bytes).items[0];
+    assert.ok(selected);
+    const result = normalizeRecordedFmpCollection({
+      bytes,
+      selector: { recordId: selected.recordId, revisionId: selected.revisionId },
+      route: ROUTE,
+    });
+    assert.equal(result.status, "quarantined");
+    assert.equal(result.reasonCode, "fmp.duplicate-conflict");
+  }
 });
 
 test("missing or naive time never falls back to retrieval time", async () => {
@@ -315,6 +400,74 @@ test("full recorded evidence, projection proof, and path confinement fail closed
   assert.equal(valid.transcript.artifactHash, member.artifactHash);
   assert.equal(valid.transcript.projectionHash, proof.projectionHash);
   assert.match(valid.transcriptHash, /^[a-f0-9]{64}$/u);
+});
+
+test("expected outcomes and provenance are strict atomic loader gates", async () => {
+  const fixture = emitted("latest-explicit-time");
+  const rejected = async (manifest: unknown): Promise<void> => {
+    const result = await loadRecordedFmpFixture({
+      fixtureRoot: FIXTURE_ROOT,
+      manifest: manifest as FmpFixtureCase,
+    });
+    assert.equal(result.status, "quarantined");
+    assert.equal(result.reasonCode, "fmp.bundle-hash-mismatch");
+    assert.equal(result.candidate, null);
+    assert.equal(result.draft, null);
+  };
+
+  await rejected({
+    ...fixture,
+    expected: { ...fixture.expected, status: "quarantined" },
+  });
+  await rejected({
+    ...fixture,
+    expected: { ...fixture.expected, candidateHash: "0".repeat(64) },
+  });
+  await rejected({
+    ...fixture,
+    provenance: {
+      ...fixture.provenance,
+      classification: "redistribution-approved",
+      approvalReference: null,
+    },
+  });
+  await rejected({
+    ...fixture,
+    provenance: { ...fixture.provenance, approvalReference: "unapproved" },
+  });
+  await rejected({
+    ...fixture,
+    provenance: { ...fixture.provenance, note: "x".repeat(4_097) },
+  });
+
+  const withExtra = { ...fixture.expected, unexpected: null };
+  await rejected({ ...fixture, expected: withExtra });
+  const { candidateHash: _missing, ...missingExpected } = fixture.expected;
+  await rejected({ ...fixture, expected: missingExpected });
+
+  const inherited = Object.assign(Object.create({ inherited: true }), fixture.expected);
+  await rejected({ ...fixture, expected: inherited });
+
+  const accessor = { ...fixture.expected } as Record<string, unknown>;
+  Object.defineProperty(accessor, "candidateHash", {
+    enumerable: true,
+    get() {
+      throw new Error("accessor must not execute");
+    },
+  });
+  await rejected({ ...fixture, expected: accessor });
+
+  const symbolExpected = { ...fixture.expected } as Record<PropertyKey, unknown>;
+  symbolExpected[Symbol("unexpected")] = true;
+  await rejected({ ...fixture, expected: symbolExpected });
+  await rejected({ ...fixture, expected: new Proxy({ ...fixture.expected }, {}) });
+
+  const sparseProofs = new Array(1);
+  await rejected({ ...fixture, derivedProofs: sparseProofs });
+
+  const cyclic = { ...fixture.expected } as Record<string, unknown>;
+  cyclic["cycle"] = cyclic;
+  await rejected({ ...fixture, expected: cyclic });
 });
 
 test("JSON token, depth, decoded-total, and transcript exact/one-over limits are executable", () => {

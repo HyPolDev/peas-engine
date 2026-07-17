@@ -1,6 +1,6 @@
 # ADR 0008: Recorded FMP and NVIDIA issuer-IR normalization
 
-- Status: Accepted after independent contract review `GO`
+- Status: Repaired implementation; fresh independent review required
 - Date: 2026-07-16
 - Target: PR 2C contract-and-fixture gate
 - Base: PR #3 merge `41f19b83e104857ed32b45fa5838c8199f5467ab`
@@ -99,7 +99,10 @@ and any mapping inequality reject before hashing.
 The top level is an array of exact seven-field items: `symbol`, nullable `publishedDate`, `title`,
 `text`, nullable `site`, nullable `image`, and nullable `url`. Unknown/missing/inherited/accessor/
 symbol/sparse/proxy/duplicate keys reject. Symbol/title/text are non-empty. Historical `date` is no
-alias. URL/image are transcript-only and excluded from projections and domain identities.
+alias. Site/image/URL are transcript-only and excluded from projections and domain identities.
+Before identity formation, title/text remove HTML comments and complete `http:`/`https:` URL tokens,
+collapse ASCII whitespace, and reject an empty result. This semantic transform never follows or
+parses a URL.
 
 The selected projection is the following exact object; these are its only keys:
 
@@ -111,7 +114,6 @@ type FmpSelectedProjectionV1 = Readonly<{
   publishedDate: string | null;
   title: string;
   text: string;
-  site: string | null;
 }>;
 ```
 
@@ -125,13 +127,15 @@ selectedProjectionHash = projectionDigest = H(
 )
 revisionId = "sha256:" + H(
   "peas/fmp-recorded-synthetic-press-release-revision/v1",
-  {projection,rawPrimaryArtifactHash}
+  projection
 )
 ```
 
-Selection declares record/revision. Every bounded item is derived; identical projections collapse;
-exactly one distinct match is required. Zero is item-invalid and multiple distinct matches is
-duplicate-conflict. Latest/search/page/limit/filter are acquisition telemetry only.
+Selection declares record/revision. Conflict detection first groups the bounded collection by
+record family: identical projections collapse and two distinct projections in one family are
+`fmp.duplicate-conflict`, independent of item order. The surviving projection must match the
+declared revision. A later acquisition with a semantic correction forms a deterministic new
+revision. Latest/search/page/limit/filter are acquisition telemetry only.
 
 Classification/fiscal period are never inferred from prose. A closed route declares
 earnings/not-earnings, nullable exact CIK/symbol/fiscal mapping, authority, and version.
@@ -147,10 +151,12 @@ geography, locale, or retrieval inference exists.
 
 FMP has one retrieved `fmp.collection-json` member and one separate derived
 `fmp.press-release-item` proof. The loader performs one observation lookup/read. Projection is
-recomputed from fully consumed parent bytes. Raw collection digest is the V1 primary. A
-byte-different collection always changes revision and captured event identity even when selected
-semantic projection is unchanged. Invariance applies to manifest/object-key order and replay page
-size over identical raw bytes; byte-different order/siblings are new acquisition-bound revisions.
+recomputed from fully consumed parent bytes. The loader outcome retains the raw collection digest
+as immutable provenance; the candidate and EventDraft primary artifact is the selected semantic
+projection hash. Raw-only byte differences, including URLs, queries, fragments, comments, object
+order, siblings, and replay paging, cannot change record/revision/candidate/EventDraft identity.
+They may change evidence/ledger acquisition provenance. A semantic correction changes projection,
+revision, and EventDraft deterministically.
 
 ## NVIDIA recorded-synthetic dialect
 
@@ -162,7 +168,7 @@ recordId = "ir:nvidia:" + H("peas/nvidia-ir-record-family/v1", {
   itemPubDateOriginal: rssProjection.pubDate?.originalTimestamp ?? null
 })
 revisionId = "sha256:" + H("peas/nvidia-ir-revision/v1", {
-  rssItemProjectionHash, releaseVisibleProjectionHash, rawReleaseHtmlArtifactHash
+  rssItemProjectionHash, releaseVisibleProjectionHash
 })
 ```
 
@@ -170,7 +176,8 @@ GUID/link/canonical/query/fragment/redirect/selector are validation/telemetry on
 record/revision/projection hash. No non-URL stable provider ID is documented, so title or item time
 change creates a new record; supersession is not guessed. Within one feed, duplicate family plus
 identical projections collapses; conflicting projections are `ir.record-family-ambiguous`. Across
-a later acquisition, changed projection or raw primary digest is a deterministic new revision.
+a later acquisition, changed retained semantics is a deterministic new revision; a raw-only change
+preserves the revision and EventDraft.
 
 The two hash-bearing NVIDIA projections and their retained token are exact:
 
@@ -229,7 +236,8 @@ selectedProjectionHash = projectionDigest = H(
 
 The candidate `selectedProjectionHash`, ledger `projectionDigest`, and `projectionId` formula all
 use that exact composite and no individual projection or raw document in its place. The revision
-formula continues to bind both component hashes plus the raw HTML primary digest.
+formula binds only those two component projection hashes. Candidate and EventDraft artifact fields
+equal the selected composite projection hash.
 
 RSS root/version are empty-namespace `rss`/`2.0`; core
 fields are empty namespace; Media RSS is recognized only by expanded official URI. DTD/entity
@@ -304,8 +312,9 @@ the exact lowercase tokens `article`, `article-title`, `article-subtitle`, `arti
 `article-body`; token order and extra class tokens do not affect selection.
 
 The retained projection token is exactly `SemanticHtmlTokenV1` above.
-Attributes, namespaces, comments, and processing instructions never enter tokens. Text/entity
-chunks are decoded, coalesced, ASCII-whitespace-collapsed, and empty text is dropped before token
+Attributes, namespaces, comments, and processing instructions never enter tokens. Complete
+`http:`/`https:` URL tokens are removed from retained text. Remaining text/entity chunks are
+decoded, coalesced, ASCII-whitespace-collapsed, and empty text is dropped before token
 emission. `br` emits adjacent start/end tokens. Subtrees rooted at
 `script|style|template|audio|video|svg|canvas|picture|img|iframe|object|embed` are dropped with all
 descendants. All other non-allowlisted elements are transparent: their retained descendants remain
@@ -314,8 +323,9 @@ text/structure changes revise.
 
 NVIDIA has retrieved `ir.rss-feed` and `ir.release-html` members plus derived `ir.rss-item` and
 `ir.release-visible` proofs. Each raw member has one verified observation; derived proofs have none.
-Raw release HTML digest is the V1 primary. Classification accepts only exact NVIDIA financial-
-results titles: first/second/third quarter -> Q1/Q2/Q3; fourth quarter and fiscal year -> FY, years
+Both raw digests remain immutable evidence/ledger provenance; neither enters domain identity. The
+selected composite projection hash is the candidate/EventDraft primary. Classification accepts
+only exact NVIDIA financial-results titles: first/second/third quarter -> Q1/Q2/Q3; fourth quarter and fiscal year -> FY, years
 2000-9999. Nonmatch is ignored; RSS/H1 mismatch quarantines; issuer is fixed CIK/symbol.
 
 GUID is an empty-namespace XML element with the sole empty-namespace attribute
@@ -355,9 +365,10 @@ text, 256 KiB transcript. Field limits and every exact/one-over case are frozen 
 First source freezes a branch and mirror timer. A distinct SEC/FMP/IR release before deadline is
 retained and mirror-debounced; timer creates confirmation. At/after deadline it confirms
 immediately. SEC V2 non-null bundle versus V1 null can never satisfy exact mirror-duplicate even
-with equal primary digest. FMP/IR V1 may exact-mirror only with equal raw primary and both null
-bundles. Later arrivals cannot mutate a leased branch. Redelivery is idempotent; same revision with
-conflicting raw draft fails capture. All runs are non-live `effectsAllowed:false` and offline.
+with equal primary digest. FMP/IR V1 may exact-mirror only with equal semantic primary and both null
+bundles. Later arrivals cannot mutate a leased branch. Redelivery is idempotent; the same provider
+record/revision with conflicting semantic draft/evidence fails closed. All runs are non-live
+`effectsAllowed:false` and offline.
 
 All fixtures are original synthetic content; real bodies require per-artifact redistribution
 approval and licensing. Required executable cases are the binding acceptance matrix.

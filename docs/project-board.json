@@ -15,7 +15,7 @@
     "mainCommit": "41f19b83e104857ed32b45fa5838c8199f5467ab",
     "release": "v0.2.0-kernel-rc.2",
     "focus": "PR 2C recorded FMP and NVIDIA IR contract-and-fixture gate",
-    "nextGate": "Intentional commit, push, and draft PR publication after independent final GO"
+    "nextGate": "Complete validation, push repaired head, and request fresh independent review"
   },
   "stages": [
     {

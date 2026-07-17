@@ -1,4 +1,8 @@
 import type { FmpRecordedRouteV1, FmpSelectorV1 } from "../../../src/providers/fmp/contracts.js";
+import type {
+  RecordedFmpExpectedV1,
+  RecordedFmpProvenanceV1,
+} from "../../../src/adapters/fmp/recorded-fmp-fixture.js";
 
 export type FmpFixtureCase = Readonly<{
   schemaVersion: 1;
@@ -33,23 +37,8 @@ export type FmpFixtureCase = Readonly<{
     projectionHash: string;
     projectionSizeBytes: number;
   }>[];
-  expected: Readonly<{
-    status: "emitted" | "quarantined";
-    reasonCode: string | null;
-    recordId: string | null;
-    revisionId: string | null;
-    primaryArtifactHash: string | null;
-    selectedProjectionHash: string | null;
-    candidateHash: string | null;
-    eventDraftHash: string | null;
-    publishedAtMs: number | null;
-    timestampConfidence: "provider" | "unknown" | null;
-  }>;
-  provenance: Readonly<{
-    classification: "synthetic";
-    note: string;
-    approvalReference: null;
-  }>;
+  expected: RecordedFmpExpectedV1;
+  provenance: RecordedFmpProvenanceV1;
 }>;
 
 const ROUTE_SYNX = {
@@ -142,22 +131,26 @@ export const FMP_FIXTURE_CASES: readonly FmpFixtureCase[] = [
     observationHash: "10bc82851455f8bb5604d56846ac892d2f974844d1ea376f6c53183370dbddd0",
     selector: {
       recordId: SYNX_RECORD,
-      revisionId: "sha256:cc43824b44239244fd88670707dd9bf633de17de257233ce4b508a0302c76372",
+      revisionId: "sha256:981b30ba0401e2e5b0514a3ed7d4b129f812463f87a0282f15e2fa753fa36b63",
     },
     route: ROUTE_SYNX,
-    projectionHash: "335c172a65a41a64bf9660993eb4e04070dde3039d10bffa3264d51752cf0209",
-    projectionSizeBytes: 335,
+    projectionHash: "0ffe1c006be7e781542d3fc01c37fcc01384a5ac8c78942b05144c9745819bf9",
+    projectionSizeBytes: 310,
     expected: {
       status: "emitted",
       reasonCode: null,
+      limitKind: null,
       recordId: SYNX_RECORD,
-      revisionId: "sha256:cc43824b44239244fd88670707dd9bf633de17de257233ce4b508a0302c76372",
-      primaryArtifactHash: "6440ac3e4e0cff9079ce648e6105bfa7e3438f2223da43694eb0d45b647934b9",
-      selectedProjectionHash: "335c172a65a41a64bf9660993eb4e04070dde3039d10bffa3264d51752cf0209",
-      candidateHash: "668f3a79127061ff229d942e0ac0410fdca9223cfd442775951a3079a8581396",
-      eventDraftHash: "57a9ed34e897517132c77873bb2f03bcc8b2a5116cc554fffe6426a4e059056d",
+      revisionId: "sha256:981b30ba0401e2e5b0514a3ed7d4b129f812463f87a0282f15e2fa753fa36b63",
+      rawArtifactHash: "6440ac3e4e0cff9079ce648e6105bfa7e3438f2223da43694eb0d45b647934b9",
+      primaryArtifactHash: "0ffe1c006be7e781542d3fc01c37fcc01384a5ac8c78942b05144c9745819bf9",
+      selectedProjectionHash: "0ffe1c006be7e781542d3fc01c37fcc01384a5ac8c78942b05144c9745819bf9",
+      routeHash: "c2a9057f396d45453222bb8c78a5b3d05af58d553a177bb8fdffc886b8274ed5",
+      candidateHash: "e8f4a5dfdcc1b2854507543eafae9da10b006b921aee9caac16951825030f4fd",
+      eventDraftHash: "5985f9744062a30b23c6baed8e9d84672ec50fae92d56a85101875c4f9764c41",
       publishedAtMs: 1_778_171_400_000,
       timestampConfidence: "provider",
+      originalTimestamp: "2026-05-07T16:30:00Z",
     },
   }),
   fixture({
@@ -170,22 +163,26 @@ export const FMP_FIXTURE_CASES: readonly FmpFixtureCase[] = [
     observationHash: "19e00c9f1b6762d28ee1627bb33af569f5c2a3d4b935e8b93d39c1c18817b352",
     selector: {
       recordId: SYNX_RECORD,
-      revisionId: "sha256:50500f066f6bb70372ac5fbde3695025bc49d72cde0614f7fe08e9da49d6c6c0",
+      revisionId: "sha256:981b30ba0401e2e5b0514a3ed7d4b129f812463f87a0282f15e2fa753fa36b63",
     },
     route: ROUTE_SYNX,
-    projectionHash: "335c172a65a41a64bf9660993eb4e04070dde3039d10bffa3264d51752cf0209",
-    projectionSizeBytes: 335,
+    projectionHash: "0ffe1c006be7e781542d3fc01c37fcc01384a5ac8c78942b05144c9745819bf9",
+    projectionSizeBytes: 310,
     expected: {
       status: "emitted",
       reasonCode: null,
+      limitKind: null,
       recordId: SYNX_RECORD,
-      revisionId: "sha256:50500f066f6bb70372ac5fbde3695025bc49d72cde0614f7fe08e9da49d6c6c0",
-      primaryArtifactHash: "5bf78d0dc66edb370645e9c4bb37974aaa52752ee6066e05b4c0004865602fe7",
-      selectedProjectionHash: "335c172a65a41a64bf9660993eb4e04070dde3039d10bffa3264d51752cf0209",
-      candidateHash: "d3003387d75915f3275cde071fe03c2a0de307b5e7a57e64c4589a0e4412fdf6",
-      eventDraftHash: "eab598bd5b5bb97c1cf24191e532996a48803db5bead0e3afa8e09d88c71ec61",
+      revisionId: "sha256:981b30ba0401e2e5b0514a3ed7d4b129f812463f87a0282f15e2fa753fa36b63",
+      rawArtifactHash: "5bf78d0dc66edb370645e9c4bb37974aaa52752ee6066e05b4c0004865602fe7",
+      primaryArtifactHash: "0ffe1c006be7e781542d3fc01c37fcc01384a5ac8c78942b05144c9745819bf9",
+      selectedProjectionHash: "0ffe1c006be7e781542d3fc01c37fcc01384a5ac8c78942b05144c9745819bf9",
+      routeHash: "c2a9057f396d45453222bb8c78a5b3d05af58d553a177bb8fdffc886b8274ed5",
+      candidateHash: "e8f4a5dfdcc1b2854507543eafae9da10b006b921aee9caac16951825030f4fd",
+      eventDraftHash: "5985f9744062a30b23c6baed8e9d84672ec50fae92d56a85101875c4f9764c41",
       publishedAtMs: 1_778_171_400_000,
       timestampConfidence: "provider",
+      originalTimestamp: "2026-05-07T16:30:00Z",
     },
   }),
   fixture({
@@ -198,22 +195,26 @@ export const FMP_FIXTURE_CASES: readonly FmpFixtureCase[] = [
     observationHash: "e531185c16fb0e2eeb435e11cd6b9a2bc3172373b60511d2158853c32f6ae8c8",
     selector: {
       recordId: SYNX_RECORD,
-      revisionId: "sha256:c059c276b680a7209b383430ea755845dcac1f199923d63c0a7605bcaa2c6896",
+      revisionId: "sha256:981b30ba0401e2e5b0514a3ed7d4b129f812463f87a0282f15e2fa753fa36b63",
     },
     route: ROUTE_SYNX,
-    projectionHash: "335c172a65a41a64bf9660993eb4e04070dde3039d10bffa3264d51752cf0209",
-    projectionSizeBytes: 335,
+    projectionHash: "0ffe1c006be7e781542d3fc01c37fcc01384a5ac8c78942b05144c9745819bf9",
+    projectionSizeBytes: 310,
     expected: {
       status: "emitted",
       reasonCode: null,
+      limitKind: null,
       recordId: SYNX_RECORD,
-      revisionId: "sha256:c059c276b680a7209b383430ea755845dcac1f199923d63c0a7605bcaa2c6896",
-      primaryArtifactHash: "b56824d52e46429030e38e5dce9fc75da7ef8904d93f59c6be41db5fe2c6a4c2",
-      selectedProjectionHash: "335c172a65a41a64bf9660993eb4e04070dde3039d10bffa3264d51752cf0209",
-      candidateHash: "d88fb1c1e96e494c25f44e27b8f986a25a7eaf1efbe7999715a63c0451194b35",
-      eventDraftHash: "79ca6bfc1b6087bb07cd068236c21e685491b8b7ceda1dc773a7b9c66c7a50b2",
+      revisionId: "sha256:981b30ba0401e2e5b0514a3ed7d4b129f812463f87a0282f15e2fa753fa36b63",
+      rawArtifactHash: "b56824d52e46429030e38e5dce9fc75da7ef8904d93f59c6be41db5fe2c6a4c2",
+      primaryArtifactHash: "0ffe1c006be7e781542d3fc01c37fcc01384a5ac8c78942b05144c9745819bf9",
+      selectedProjectionHash: "0ffe1c006be7e781542d3fc01c37fcc01384a5ac8c78942b05144c9745819bf9",
+      routeHash: "c2a9057f396d45453222bb8c78a5b3d05af58d553a177bb8fdffc886b8274ed5",
+      candidateHash: "e8f4a5dfdcc1b2854507543eafae9da10b006b921aee9caac16951825030f4fd",
+      eventDraftHash: "5985f9744062a30b23c6baed8e9d84672ec50fae92d56a85101875c4f9764c41",
       publishedAtMs: 1_778_171_400_000,
       timestampConfidence: "provider",
+      originalTimestamp: "2026-05-07T16:30:00Z",
     },
   }),
   fixture({
@@ -226,22 +227,26 @@ export const FMP_FIXTURE_CASES: readonly FmpFixtureCase[] = [
     observationHash: "7133d5c92b53d47b1e6ff767141ac0447e07504c7fc409069b0872547f61bf01",
     selector: {
       recordId: SYNX_RECORD,
-      revisionId: "sha256:b98df8d95bdd04bc098af311dad3601e23b3c56025531f127fa5983357a9554f",
+      revisionId: "sha256:231e38273a287c32015ba41b7d1f005347c0f1af3a716c3a5cd1278c1e480601",
     },
     route: ROUTE_SYNX,
-    projectionHash: "97aa5347fdb8fd61580a8703bdef7296e2fad25c9a840a8c26c2c74b919b77e1",
-    projectionSizeBytes: 336,
+    projectionHash: "d1d6a6e2ca606bf0748608556c28c9dee445d3bb6fb8df240034d56c8105237f",
+    projectionSizeBytes: 311,
     expected: {
       status: "emitted",
       reasonCode: null,
+      limitKind: null,
       recordId: SYNX_RECORD,
-      revisionId: "sha256:b98df8d95bdd04bc098af311dad3601e23b3c56025531f127fa5983357a9554f",
-      primaryArtifactHash: "a7d4aaf59d17ff03b0d22295ced5ca1eb50b95e4f4e947f7edb032ee44530099",
-      selectedProjectionHash: "97aa5347fdb8fd61580a8703bdef7296e2fad25c9a840a8c26c2c74b919b77e1",
-      candidateHash: "0cff92f834f831f0febe7272684ec6024245d91a9cb174ab4a80f5e0f27d81d7",
-      eventDraftHash: "73c2b5cb89642f1acbf9343cac9b2fb838a445a4a29b113422b630353ad55c24",
+      revisionId: "sha256:231e38273a287c32015ba41b7d1f005347c0f1af3a716c3a5cd1278c1e480601",
+      rawArtifactHash: "a7d4aaf59d17ff03b0d22295ced5ca1eb50b95e4f4e947f7edb032ee44530099",
+      primaryArtifactHash: "d1d6a6e2ca606bf0748608556c28c9dee445d3bb6fb8df240034d56c8105237f",
+      selectedProjectionHash: "d1d6a6e2ca606bf0748608556c28c9dee445d3bb6fb8df240034d56c8105237f",
+      routeHash: "c2a9057f396d45453222bb8c78a5b3d05af58d553a177bb8fdffc886b8274ed5",
+      candidateHash: "633e74398735e77b3f46fc3df394395f246f4cdaa7c52c5f479dfcec811bdc6f",
+      eventDraftHash: "78154bca8f7163d9329c37dddae2c1f3284cd8dbc62dd8373533de1eb7fe2784",
       publishedAtMs: 1_778_171_400_000,
       timestampConfidence: "provider",
+      originalTimestamp: "2026-05-07T16:30:00Z",
     },
   }),
   fixture({
@@ -255,23 +260,27 @@ export const FMP_FIXTURE_CASES: readonly FmpFixtureCase[] = [
     selector: {
       recordId:
         "fmp-recorded-synthetic:726b3c842790ac7208d5a4aa968e1b19eb63b2d3e43d572e55ca3dc3457957a9",
-      revisionId: "sha256:826f9e643387a529972364930ba252ee1f4024e195292a87f095506a973cbca4",
+      revisionId: "sha256:5fdff5c791550bc255e9d9cac7fa532862c8467a91611ddcaf326612a3cb686b",
     },
     route: ROUTE_NULLT,
-    projectionHash: "9d317a8d70f31156e19e2825c2184224cfc3759f11f9aa0196da8839b49bca9e",
-    projectionSizeBytes: 272,
+    projectionHash: "4c35bb60709d090defc7a1a980679d324ab0d5a83c5eee1c99276f5d8c835bfa",
+    projectionSizeBytes: 260,
     expected: {
       status: "emitted",
       reasonCode: null,
+      limitKind: null,
       recordId:
         "fmp-recorded-synthetic:726b3c842790ac7208d5a4aa968e1b19eb63b2d3e43d572e55ca3dc3457957a9",
-      revisionId: "sha256:826f9e643387a529972364930ba252ee1f4024e195292a87f095506a973cbca4",
-      primaryArtifactHash: "10d10235ed20a089b0f64bc9ecb799a9de79fa3ad4ec6c30bc444433ff8f1daf",
-      selectedProjectionHash: "9d317a8d70f31156e19e2825c2184224cfc3759f11f9aa0196da8839b49bca9e",
-      candidateHash: "54f039b81756b446b7c0fd0510af06b1205c8df2893ab52ffa623327f493a7eb",
-      eventDraftHash: "9d23f4e97eef0f443a0bf1422a444fe8372e3f1184f6ed07f960a63933e0ce57",
+      revisionId: "sha256:5fdff5c791550bc255e9d9cac7fa532862c8467a91611ddcaf326612a3cb686b",
+      rawArtifactHash: "10d10235ed20a089b0f64bc9ecb799a9de79fa3ad4ec6c30bc444433ff8f1daf",
+      primaryArtifactHash: "4c35bb60709d090defc7a1a980679d324ab0d5a83c5eee1c99276f5d8c835bfa",
+      selectedProjectionHash: "4c35bb60709d090defc7a1a980679d324ab0d5a83c5eee1c99276f5d8c835bfa",
+      routeHash: "ed1bd3dad463f0803632e5849737ed5025fb18f1b9037cddfe859c97ce7921e8",
+      candidateHash: "ac08ca3a00e2eb173663c8696b2834aab010768ba56a5d3fc7622e9f65361983",
+      eventDraftHash: "b795ccab4cee10b53c6a06553d44ca015efd70abf74e07c40a4f2f84a73546c7",
       publishedAtMs: null,
       timestampConfidence: "unknown",
+      originalTimestamp: null,
     },
   }),
   fixture({
@@ -292,14 +301,18 @@ export const FMP_FIXTURE_CASES: readonly FmpFixtureCase[] = [
     expected: {
       status: "quarantined",
       reasonCode: "fmp.malformed-json",
+      limitKind: null,
       recordId: null,
       revisionId: null,
-      primaryArtifactHash: "1e7d13a7087d52764e81fbd3a19ddc4465e4f36ff835aa26c292f26f4d296b97",
+      rawArtifactHash: "1e7d13a7087d52764e81fbd3a19ddc4465e4f36ff835aa26c292f26f4d296b97",
+      primaryArtifactHash: null,
       selectedProjectionHash: null,
+      routeHash: null,
       candidateHash: null,
       eventDraftHash: null,
       publishedAtMs: null,
       timestampConfidence: null,
+      originalTimestamp: null,
     },
   }),
 ];

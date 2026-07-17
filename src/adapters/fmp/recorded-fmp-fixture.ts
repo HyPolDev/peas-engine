@@ -15,8 +15,10 @@ import {
   FMP_MAX_DECODED_BYTES,
   FMP_MAX_TRANSCRIPT_BYTES,
   FMP_PROVIDER,
+  FMP_REASON_CODES,
   FMP_RECORDED_DIALECT,
   FMP_RECORDED_SOURCE,
+  type FmpLimitKind,
   type FmpNormalizationResult,
   type FmpReasonCode,
   type FmpRecordedRouteV1,
@@ -64,6 +66,31 @@ const PROOF_FIELDS = Object.freeze([
   "projectionSizeBytes",
   "role",
 ]);
+const SELECTOR_FIELDS = Object.freeze(["recordId", "revisionId"]);
+const ROUTE_FIELDS = Object.freeze([
+  "classification",
+  "issuerMapping",
+  "mappingAuthority",
+  "mappingVersion",
+]);
+const ISSUER_MAPPING_FIELDS = Object.freeze(["fiscalPeriod", "issuerCik", "symbol"]);
+const EXPECTED_FIELDS = Object.freeze([
+  "status",
+  "reasonCode",
+  "limitKind",
+  "recordId",
+  "revisionId",
+  "rawArtifactHash",
+  "primaryArtifactHash",
+  "selectedProjectionHash",
+  "routeHash",
+  "candidateHash",
+  "eventDraftHash",
+  "publishedAtMs",
+  "timestampConfidence",
+  "originalTimestamp",
+]);
+const PROVENANCE_FIELDS = Object.freeze(["approvalReference", "classification", "note"]);
 
 export type RecordedFmpObservationV1 = Readonly<{
   provider: typeof FMP_PROVIDER;
@@ -91,6 +118,29 @@ export type RecordedFmpDerivedProofV1 = Readonly<{
   projectionSizeBytes: number;
 }>;
 
+export type RecordedFmpExpectedV1 = Readonly<{
+  status: "emitted" | "ignored" | "quarantined";
+  reasonCode: FmpReasonCode | null;
+  limitKind: FmpLimitKind | null;
+  recordId: string | null;
+  revisionId: string | null;
+  rawArtifactHash: string | null;
+  primaryArtifactHash: string | null;
+  selectedProjectionHash: string | null;
+  routeHash: string | null;
+  candidateHash: string | null;
+  eventDraftHash: string | null;
+  publishedAtMs: number | null;
+  timestampConfidence: "provider" | "unknown" | null;
+  originalTimestamp: string | null;
+}>;
+
+export type RecordedFmpProvenanceV1 = Readonly<{
+  classification: "synthetic" | "redistribution-approved";
+  note: string;
+  approvalReference: string | null;
+}>;
+
 export type RecordedFmpFixtureManifestV1 = Readonly<{
   schemaVersion: 1;
   caseId: string;
@@ -102,8 +152,8 @@ export type RecordedFmpFixtureManifestV1 = Readonly<{
   route: FmpRecordedRouteV1;
   retrievedMembers: readonly [RecordedFmpRetrievedMemberV1];
   derivedProofs: readonly RecordedFmpDerivedProofV1[];
-  expected: unknown;
-  provenance: unknown;
+  expected: RecordedFmpExpectedV1;
+  provenance: RecordedFmpProvenanceV1;
 }>;
 
 export type FmpLoaderTranscriptV1 = Readonly<{
@@ -207,6 +257,10 @@ function detachManifest(value: RecordedFmpFixtureManifestV1): RecordedFmpFixture
       value as unknown as JsonValue,
     ) as RecordedFmpFixtureManifestV1;
     exact(manifest as unknown as JsonObject, MANIFEST_FIELDS);
+    exact(manifest.selector as unknown as JsonObject, SELECTOR_FIELDS);
+    exact(manifest.route as unknown as JsonObject, ROUTE_FIELDS);
+    exact(manifest.expected as unknown as JsonObject, EXPECTED_FIELDS);
+    exact(manifest.provenance as unknown as JsonObject, PROVENANCE_FIELDS);
     if (
       manifest.schemaVersion !== 1 ||
       manifest.provider !== FMP_PROVIDER ||
@@ -223,6 +277,32 @@ function detachManifest(value: RecordedFmpFixtureManifestV1): RecordedFmpFixture
     ) {
       throw new FixtureFailure("fmp.bundle-hash-mismatch");
     }
+    if (
+      !/^fmp-recorded-synthetic:[a-f0-9]{64}$/u.test(manifest.selector.recordId) ||
+      !/^sha256:[a-f0-9]{64}$/u.test(manifest.selector.revisionId) ||
+      (manifest.route.classification !== "earnings-release" &&
+        manifest.route.classification !== "not-earnings-release") ||
+      typeof manifest.route.mappingAuthority !== "string" ||
+      manifest.route.mappingAuthority.length < 1 ||
+      Buffer.byteLength(manifest.route.mappingAuthority, "utf8") > 512 ||
+      typeof manifest.route.mappingVersion !== "string" ||
+      manifest.route.mappingVersion.length < 1 ||
+      Buffer.byteLength(manifest.route.mappingVersion, "utf8") > 512
+    ) {
+      throw new FixtureFailure("fmp.bundle-hash-mismatch");
+    }
+    if (manifest.route.issuerMapping !== null) {
+      exact(manifest.route.issuerMapping as unknown as JsonObject, ISSUER_MAPPING_FIELDS);
+      if (
+        !/^\d{10}$/u.test(manifest.route.issuerMapping.issuerCik) ||
+        !/^[A-Z0-9][A-Z0-9.-]{0,31}$/u.test(manifest.route.issuerMapping.symbol) ||
+        !/^\d{4}-(?:Q[1-4]|FY)$/u.test(manifest.route.issuerMapping.fiscalPeriod)
+      ) {
+        throw new FixtureFailure("fmp.bundle-hash-mismatch");
+      }
+    }
+    validateExpected(manifest.expected);
+    validateProvenance(manifest.provenance);
     const member = manifest.retrievedMembers[0];
     exact(member as unknown as JsonObject, MEMBER_FIELDS);
     exact(member.observation as unknown as JsonObject, OBSERVATION_FIELDS);
@@ -265,6 +345,117 @@ function detachManifest(value: RecordedFmpFixtureManifestV1): RecordedFmpFixture
     if (error instanceof FixtureFailure) throw error;
     throw new FixtureFailure("fmp.bundle-hash-mismatch");
   }
+}
+
+function nullableHash(value: string | null): boolean {
+  return value === null || SHA256.test(value);
+}
+
+function validateExpected(expected: RecordedFmpExpectedV1): void {
+  const emitted = expected.status === "emitted";
+  const terminal = expected.status === "ignored" || expected.status === "quarantined";
+  if (
+    (!emitted && !terminal) ||
+    (expected.reasonCode !== null && !FMP_REASON_CODES.includes(expected.reasonCode)) ||
+    (expected.limitKind !== null &&
+      !["json-tokens", "json-depth", "object-keys", "decoded-string-bytes"].includes(
+        expected.limitKind,
+      )) ||
+    !nullableHash(expected.rawArtifactHash) ||
+    !nullableHash(expected.primaryArtifactHash) ||
+    !nullableHash(expected.selectedProjectionHash) ||
+    !nullableHash(expected.routeHash) ||
+    !nullableHash(expected.candidateHash) ||
+    !nullableHash(expected.eventDraftHash) ||
+    (expected.publishedAtMs !== null &&
+      (!Number.isSafeInteger(expected.publishedAtMs) || expected.publishedAtMs < 0)) ||
+    !["provider", "unknown", null].includes(expected.timestampConfidence) ||
+    (expected.originalTimestamp !== null &&
+      (typeof expected.originalTimestamp !== "string" ||
+        Buffer.byteLength(expected.originalTimestamp, "utf8") > 128))
+  ) {
+    throw new FixtureFailure("fmp.bundle-hash-mismatch");
+  }
+  if (emitted) {
+    if (
+      expected.reasonCode !== null ||
+      expected.limitKind !== null ||
+      expected.recordId === null ||
+      !/^fmp-recorded-synthetic:[a-f0-9]{64}$/u.test(expected.recordId) ||
+      expected.revisionId === null ||
+      !/^sha256:[a-f0-9]{64}$/u.test(expected.revisionId) ||
+      expected.rawArtifactHash === null ||
+      expected.primaryArtifactHash === null ||
+      expected.selectedProjectionHash === null ||
+      expected.routeHash === null ||
+      expected.candidateHash === null ||
+      expected.eventDraftHash === null ||
+      (expected.timestampConfidence === "provider") !==
+        (expected.publishedAtMs !== null && expected.originalTimestamp !== null) ||
+      (expected.timestampConfidence === "unknown" &&
+        (expected.publishedAtMs !== null || expected.originalTimestamp !== null)) ||
+      expected.timestampConfidence === null
+    ) {
+      throw new FixtureFailure("fmp.bundle-hash-mismatch");
+    }
+    return;
+  }
+  if (
+    expected.reasonCode === null ||
+    expected.recordId !== null ||
+    expected.revisionId !== null ||
+    expected.primaryArtifactHash !== null ||
+    expected.selectedProjectionHash !== null ||
+    expected.routeHash !== null ||
+    expected.candidateHash !== null ||
+    expected.eventDraftHash !== null ||
+    expected.publishedAtMs !== null ||
+    expected.timestampConfidence !== null ||
+    expected.originalTimestamp !== null
+  ) {
+    throw new FixtureFailure("fmp.bundle-hash-mismatch");
+  }
+}
+
+function validateProvenance(provenance: RecordedFmpProvenanceV1): void {
+  if (
+    (provenance.classification !== "synthetic" &&
+      provenance.classification !== "redistribution-approved") ||
+    typeof provenance.note !== "string" ||
+    provenance.note.length < 1 ||
+    Buffer.byteLength(provenance.note, "utf8") > 4_096 ||
+    (provenance.classification === "synthetic" && provenance.approvalReference !== null) ||
+    (provenance.classification === "redistribution-approved" &&
+      (typeof provenance.approvalReference !== "string" ||
+        provenance.approvalReference.length < 1 ||
+        Buffer.byteLength(provenance.approvalReference, "utf8") > 512))
+  ) {
+    throw new FixtureFailure("fmp.bundle-hash-mismatch");
+  }
+}
+
+function expectedMatches(expected: RecordedFmpExpectedV1, result: FmpNormalizationResult): boolean {
+  if (
+    expected.status !== result.status ||
+    expected.reasonCode !== result.reasonCode ||
+    expected.limitKind !== result.limitKind ||
+    expected.rawArtifactHash !== result.primaryArtifactHash
+  ) {
+    return false;
+  }
+  if (result.status !== "emitted") return true;
+  return (
+    expected.recordId === result.recordId &&
+    expected.revisionId === result.revisionId &&
+    expected.primaryArtifactHash === result.candidate.primaryArtifactHash &&
+    expected.selectedProjectionHash === result.selectedProjectionHash &&
+    expected.routeHash === result.routeHash &&
+    expected.candidateHash === result.candidateHash &&
+    expected.eventDraftHash === result.eventDraftHash &&
+    expected.publishedAtMs === result.candidate.publishedAtMs &&
+    expected.timestampConfidence === result.candidate.timestampConfidence &&
+    expected.originalTimestamp === result.candidate.originalTimestamp
+  );
 }
 
 function insideRoot(root: string, candidate: string): boolean {
@@ -366,6 +557,9 @@ export async function loadRecordedFmpFixture(
       return failed("fmp.bundle-hash-mismatch", baseContext);
     }
   } else if (result.status !== "quarantined" && manifest.derivedProofs.length !== 1) {
+    return failed("fmp.bundle-hash-mismatch", baseContext);
+  }
+  if (!expectedMatches(manifest.expected, result)) {
     return failed("fmp.bundle-hash-mismatch", baseContext);
   }
   return withTranscript(result, baseContext);

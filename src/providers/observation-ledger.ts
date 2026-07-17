@@ -985,6 +985,7 @@ function validateFacts(value: ObservationLedgerFactsV1): void {
         !ENTRY_ID.test(value.regressingEntryId) ||
         !safeInteger(value.priorWallTimeMs) ||
         !safeInteger(value.currentWallTimeMs) ||
+        typeof value.monotonicOrderPreserved !== "boolean" ||
         value.currentWallTimeMs >= value.priorWallTimeMs
       ) {
         fail("observation.entry-invalid");
@@ -1089,6 +1090,39 @@ function validateParentTransition(
     if (canonicalJson(parents.map((parent) => parent.entryId).sort()) !== canonicalJson(ids)) {
       fail("observation.parent-transition-invalid");
     }
+    const prior = byId.get(entry.facts.priorEntryId);
+    const regressing = byId.get(entry.facts.regressingEntryId);
+    if (
+      prior === undefined ||
+      regressing === undefined ||
+      prior.clock.clockBasisId === null ||
+      regressing.clock.clockBasisId === null ||
+      prior.clock.wallTimeMs === null ||
+      regressing.clock.wallTimeMs === null ||
+      prior.clock.clockBasisId !== regressing.clock.clockBasisId ||
+      entry.clock.clockBasisId !== regressing.clock.clockBasisId ||
+      entry.clock.wallTimeMs !== regressing.clock.wallTimeMs ||
+      entry.clock.monotonicTimeUs !== regressing.clock.monotonicTimeUs ||
+      entry.facts.priorWallTimeMs !== prior.clock.wallTimeMs ||
+      entry.facts.currentWallTimeMs !== regressing.clock.wallTimeMs ||
+      regressing.clock.wallTimeMs >= prior.clock.wallTimeMs
+    ) {
+      fail("observation.clock-regression-invalid");
+    }
+    if (
+      prior.clock.monotonicTimeUs !== null &&
+      regressing.clock.monotonicTimeUs !== null &&
+      regressing.clock.monotonicTimeUs < prior.clock.monotonicTimeUs
+    ) {
+      fail("observation.clock-basis-invalid");
+    }
+    const monotonicOrderPreserved =
+      prior.clock.monotonicTimeUs !== null &&
+      regressing.clock.monotonicTimeUs !== null &&
+      regressing.clock.monotonicTimeUs > prior.clock.monotonicTimeUs;
+    if (entry.facts.monotonicOrderPreserved !== monotonicOrderPreserved) {
+      fail("observation.clock-regression-invalid");
+    }
     return;
   }
   const actualKinds = parents.map((parent) => parent.facts.kind).sort();
@@ -1131,16 +1165,28 @@ function validateParentTransition(
     entry.facts.kind === "normalization.quarantined"
   ) {
     for (const link of entry.facts.rawArtifactLinks) {
-      const verified = parents.find(
+      const verifiedEntry = parents.find(
         (parent) =>
           parent.facts.kind === "artifact.verified" &&
-          parent.facts.acquisitionObservationId === link.acquisitionObservationId,
-      )?.facts;
+          parent.facts.acquisitionObservationId === link.acquisitionObservationId &&
+          parent.facts.vaultObservationId === link.vaultObservationId &&
+          parent.facts.artifactDigest === link.artifactDigest,
+      );
+      const verified = verifiedEntry?.facts;
+      const committed = verifiedEntry?.parentEntryIds
+        .map((id) => byId.get(id))
+        .find((parent) => parent?.facts.kind === "artifact.committed")?.facts;
       if (
         verified?.kind !== "artifact.verified" ||
         verified.vaultObservationId !== link.vaultObservationId ||
         verified.artifactDigest !== link.artifactDigest ||
-        verified.metadataSizeBytes !== link.sizeBytes
+        verified.metadataSizeBytes !== link.sizeBytes ||
+        committed?.kind !== "artifact.committed" ||
+        committed.acquisitionObservationId !== link.acquisitionObservationId ||
+        committed.vaultObservationId !== link.vaultObservationId ||
+        committed.vaultObservationHash !== link.vaultObservationHash ||
+        committed.artifactDigest !== link.artifactDigest ||
+        committed.sizeBytes !== link.sizeBytes
       ) {
         fail("observation.parent-transition-invalid");
       }
@@ -1277,13 +1323,17 @@ export function validateObservationLedgerBundle(
   const depths = new Map<string, number>();
   const clockBases = new Map<string, ObservationLedgerEntryV1>();
   const lastMonotonic = new Map<string, number>();
+  const lastWallEntry = new Map<string, ObservationLedgerEntryV1>();
+  const requiredRegressions = new Set<string>();
+  const witnessedRegressions = new Set<string>();
   const acquisitionEntryCounts = new Map<string, number>();
   const projectionCounts = new Map<string, number>();
   const blockedCommits = new Set<string>();
   const blockedNormalizations = new Set<string>();
   const recordedCommits = new Set<string>();
   const committedAcquisitions = new Map<string, string>();
-  const committedVaultDigests = new Map<string, string>();
+  const committedVaultEvidence = new Map<string, string>();
+  const providerRevisions = new Map<string, string>();
   let edges = 0;
   let executionId: string | null = null;
   for (const candidate of values) {
@@ -1359,20 +1409,44 @@ export function validateObservationLedgerBundle(
       }
       const commitIdentity = canonicalJson({
         vaultObservationId: entry.facts.vaultObservationId,
+        vaultObservationHash: entry.facts.vaultObservationHash,
         artifactDigest: entry.facts.artifactDigest,
+        sizeBytes: entry.facts.sizeBytes,
+      });
+      const vaultEvidence = canonicalJson({
+        vaultObservationHash: entry.facts.vaultObservationHash,
+        artifactDigest: entry.facts.artifactDigest,
+        sizeBytes: entry.facts.sizeBytes,
       });
       const priorCommit = committedAcquisitions.get(entry.facts.acquisitionObservationId);
-      const priorVaultDigest = committedVaultDigests.get(entry.facts.vaultObservationId);
+      const priorVaultEvidence = committedVaultEvidence.get(entry.facts.vaultObservationId);
       if (
         (priorCommit !== undefined && priorCommit !== commitIdentity) ||
-        (priorVaultDigest !== undefined && priorVaultDigest !== entry.facts.artifactDigest)
+        (priorVaultEvidence !== undefined && priorVaultEvidence !== vaultEvidence)
       ) {
         fail("observation.parent-transition-invalid");
       }
       committedAcquisitions.set(entry.facts.acquisitionObservationId, commitIdentity);
-      committedVaultDigests.set(entry.facts.vaultObservationId, entry.facts.artifactDigest);
+      committedVaultEvidence.set(entry.facts.vaultObservationId, vaultEvidence);
     }
     if (entry.facts.kind === "normalization.emitted") {
+      const revisionKey = canonicalJson({
+        provider: entry.facts.sourceIdentity.provider,
+        source: entry.facts.sourceIdentity.source,
+        providerRecordId: entry.facts.sourceIdentity.providerRecordId,
+        providerRevisionId: entry.facts.sourceIdentity.providerRevisionId,
+      });
+      const revisionValue = canonicalJson({
+        projectionDigest: entry.facts.projectionDigest,
+        evidenceBundleHash: entry.facts.evidenceBundleHash,
+        sourceVersionIdentity: entry.facts.sourceIdentity.sourceVersionIdentity,
+        revisionFamilyIdentity: entry.facts.sourceIdentity.revisionFamilyIdentity,
+      });
+      const priorRevision = providerRevisions.get(revisionKey);
+      if (priorRevision !== undefined && priorRevision !== revisionValue) {
+        fail("observation.revision-conflict");
+      }
+      providerRevisions.set(revisionKey, revisionValue);
       const count = (projectionCounts.get(entry.facts.subject) ?? 0) + 1;
       if (count > OBSERVATION_LEDGER_MAX_PROJECTIONS_PER_SUBJECT) {
         fail("observation.bundle-limit-exceeded");
@@ -1427,6 +1501,25 @@ export function validateObservationLedgerBundle(
         }
         lastMonotonic.set(entry.clock.clockBasisId, entry.clock.monotonicTimeUs);
       }
+      if (entry.facts.kind === "clock.regression") {
+        const regressionKey = `${entry.facts.priorEntryId}:${entry.facts.regressingEntryId}`;
+        if (!requiredRegressions.has(regressionKey) || witnessedRegressions.has(regressionKey)) {
+          fail("observation.clock-regression-invalid");
+        }
+        witnessedRegressions.add(regressionKey);
+        lastWallEntry.set(entry.clock.clockBasisId, entry);
+      } else {
+        const prior = lastWallEntry.get(entry.clock.clockBasisId);
+        if (
+          prior !== undefined &&
+          prior.clock.wallTimeMs !== null &&
+          entry.clock.wallTimeMs !== null &&
+          entry.clock.wallTimeMs < prior.clock.wallTimeMs
+        ) {
+          requiredRegressions.add(`${prior.entryId}:${entry.entryId}`);
+        }
+        lastWallEntry.set(entry.clock.clockBasisId, entry);
+      }
     } else if (
       entry.parentEntryIds.some((parent) => byId.get(parent)?.facts.kind === "clock-basis.declared")
     ) {
@@ -1434,6 +1527,12 @@ export function validateObservationLedgerBundle(
     }
     byId.set(entry.entryId, entry);
     depths.set(entry.entryId, depth);
+  }
+  if (
+    requiredRegressions.size !== witnessedRegressions.size ||
+    [...requiredRegressions].some((key) => !witnessedRegressions.has(key))
+  ) {
+    fail("observation.clock-regression-invalid");
   }
   return Object.freeze([...values]);
 }

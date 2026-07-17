@@ -2,7 +2,7 @@
 
 - Review mode: fresh read-only agent per pass; no reviewer authored the ADRs
 - Base: `41f19b83e104857ed32b45fa5838c8199f5467ab`
-- Final verdict: `GO`
+- Current verdict: `RE-AUDIT REQUIRED`
 
 The Ralph loop ran eight independent passes. Each `NO_GO` finding was returned to the contract
 authors and repaired before a fresh reviewer began. The amendments closed, in order: candidate and
@@ -22,13 +22,14 @@ landed. Its first pass returned `NO_GO` for five gaps: unknown ledger fact kinds
 parents, replayed clock-regression IDs, incomplete ledger-bound vectors, and cross-source tests
 that did not yet consume the recorded loaders. The repair pass closed all five. A second pass found
 two remaining gaps: a missing hostile vector for null clocks with basis parents and an unreachable
-aggregate edge boundary. The final repair added the hostile vector and replaced the aggregate edge
-limit with a reachable 12,279-edge ceiling exercised by valid 4,096-entry exact and 12,280-edge
-one-over ledgers.
+aggregate edge boundary. The attempted repair added the hostile vector but its 12,279-edge witness
+used fabricated null-clock regression facts and was not an otherwise-valid ledger; the later audit
+therefore superseded the implementation verdict.
 
-The fresh final re-audit returned binary `GO`. It confirmed deterministic identity and revision
-behavior, full evidence provenance, independent mirror observations, bounded parsing and ledger
-state, replay and page-size compatibility, timestamp/clock semantics, synthetic fixture safety,
-effect isolation, and unchanged frozen ports. The final focused gate passed 69 tests with zero
-failures across FMP, NVIDIA IR, observation-ledger, cross-source, provider-evidence, SEC normalizer,
-and recorded SEC acceptance suites.
+That prior implementation verdict is superseded for audited head
+`9aa6a404a3098e0a6d99c7ed7ab38aa8e965fe13`. A later audit found malformed fixture evidence,
+raw-byte contamination of semantic identity, incomplete clock-regression and raw-link enforcement,
+unvalidated FMP expected/provenance declarations, missing provider-revision conflict enforcement,
+an unreachable FMP duplicate conflict, an invalid edge-boundary witness, and incomplete processor
+replay acceptance. The repair changes and executable evidence require a fresh independent review
+against the new pushed head; this document does not confer approval or merge authority.

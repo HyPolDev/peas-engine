@@ -1,6 +1,6 @@
 # ADR 0009: Observation telemetry and clock contract
 
-- Status: Accepted after independent contract review `GO`
+- Status: Repaired implementation; fresh independent review required
 - Date: 2026-07-16
 - Compatibility: additive adapter-side contract; no port, reducer, migration, or manifest change
 
@@ -51,10 +51,11 @@ prohibits commit; store/read failure prohibits normalization; ignored/quarantine
 Successful sibling evidence remains visible after one member fails, but no partial source emits.
 
 Raw links are exact `{role,acquisitionObservationId,vaultObservationId,vaultObservationHash,
-artifactDigest,sizeBytes}`. One acquisition commits at most one vault observation/digest; one vault
-observation cannot name two digests. Links sort by role/acquisition ID/vault observation ID and
-duplicates reject.
-Verified metadata, consumed, and committed sizes are equal.
+artifactDigest,sizeBytes}`. Each link reconciles through its exact committed -> verified ->
+normalization chain, including equality of the committed observation hash, digest, and size. One
+acquisition commits one immutable vault/hash/digest/size tuple; one vault observation ID cannot name
+multiple hashes, digests, or sizes. Links sort by role/acquisition ID/vault observation ID and
+duplicates reject. Verified metadata, consumed, and committed sizes are equal.
 
 ## Acyclic identities
 
@@ -85,17 +86,21 @@ entryId = "ole1_" + entryHash
 
 Validators recompute every displayed identity. `providerStableRecordFamily` is exactly
 `providerRecordId` for PR 2C and the
-merged SEC path. Acquisition ID is known before bytes/normalization. New
-attempts change acquisition/source-observation telemetry but preserve semantic projection/version.
-URLs, paths, queries, credentials, headers, times, and observation IDs enter none of the raw-
-evidence/projection/record/version/family hashes. Provider-stable family is defined by ADR 0008;
-supersession is never guessed. Same provider record/revision plus changed projection is
-`observation.revision-conflict` and cannot capture. Different providers retain distinct source
-identities even with equal raw/projection digests.
+merged SEC path. Acquisition ID is known before bytes/normalization. New attempts and raw-only byte
+changes may change acquisition/raw-evidence/projection-observation telemetry while preserving
+semantic projection/version. URLs, paths, queries, credentials, headers, times, observation IDs,
+and raw artifact digests enter none of the semantic projection/record/version/family/EventDraft or
+evidence-bundle hashes. Provider-stable family is defined by ADR 0008;
+supersession is never guessed. A bundle map keyed by
+`{provider,source,providerRecordId,providerRevisionId}` requires projection digest, evidence-bundle
+hash, source-version identity, and revision-family identity to remain equal. Any difference is
+`observation.revision-conflict` before capture/selection; exact redelivery is accepted and fixture
+order cannot change the result. Different providers and different revisions remain independent.
 
 `domainPrimaryArtifactKind:raw-artifact` requires the primary digest exactly once in raw links.
 `derived-projection` requires primary equal projection digest and never describes it as retrieval.
-PR 2C FMP/NVIDIA drafts use raw primary artifacts; projections remain transcript/telemetry.
+PR 2C FMP/NVIDIA drafts use `derived-projection`; raw digests remain evidence/ledger provenance and
+cannot contaminate their domain event identity.
 
 ## Publication, mapping, and clocks
 
@@ -118,8 +123,13 @@ Basis ID hashes the other fields under `peas/clock-basis/v1`. Null basis iff bot
 monotonic implies wall+basis. `none` iff session null; process monotonic iff session non-null.
 Maximum error non-null iff verified-bound. Recorded/replayed require not-applicable; system UTC
 permits only verified-bound, operator-asserted, or unspecified. A basis declaration is all-null;
-every non-null-basis entry has its matching declaration as a direct parent. Wall regression appends one clock-regression fact and
-does not reorder causal facts; same-session monotonic regression fails closed. Capture times equal
+every non-null-basis entry has its matching declaration as a direct parent. Immutable ledger order
+determines wall regression within each compatible non-null basis. Every regression requires exactly
+one later `clock.regression` entry whose two causal parents are the prior and regressing entries,
+whose times equal those parent stamps, whose own stamp equals the regressing stamp, and whose
+`monotonicOrderPreserved` value is exactly boolean and equals the parent monotonic evidence. Missing,
+duplicate, fabricated, reordered, null-clock, mismatched-basis, or mismatched-time witnesses reject.
+A same-session monotonic regression fails closed. Capture times equal
 the stored event; kernel logical time remains reducer order, not wall time. Recorded fixtures do not
 invent request intervals; replay references original retrieval/capture facts.
 
@@ -169,8 +179,9 @@ acquisition IDs, then replay-mode commit and verification facts for each immutab
 vault observation. It preserves original clock bases/stamps and re-emits capture when needed by a
 capture-basis selection, then emits normalization/selection facts with same-execution causal
 parents. Projection/source/version/observation identities, selection facts, and join keys remain
-stable; ledger entry IDs change with execution ID. Original entry IDs are typed evidence values
-only, never causal parents. Raw member/
+stable; ledger entry IDs change with execution ID. Causal parents and both `clock.regression` fact
+IDs are remapped to the new execution while prior/current times and monotonic evidence remain
+unchanged. Original entry IDs are typed evidence values only, never causal parents. Raw member/
 fixture order canonicalizes. Same captured sequence produces identical
 projections, versions, selections, draft hashes, and reducer snapshots at all page sizes. Missing
 telemetry can reduce measurement completeness but cannot alter domain behavior.

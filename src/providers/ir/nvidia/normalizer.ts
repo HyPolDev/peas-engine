@@ -32,6 +32,7 @@ type ParseOptions = Readonly<{ rssChunkSize?: number; htmlChunkSize?: number }>;
 
 const ASCII_EDGE = /^[\t\n\r ]+|[\t\n\r ]+$/gu;
 const ASCII_RUN = /[\t\n\f\r ]+/gu;
+const URL_TOKEN = /\bhttps?:\/\/[^\s<>"'`]+/giu;
 const ALLOWED = new Set<AllowedTagV1>([
   "article",
   "section",
@@ -81,6 +82,10 @@ function trim(value: string): string {
 
 function collapse(value: string): string {
   return trim(value.replace(ASCII_RUN, " "));
+}
+
+function semanticText(value: string): string {
+  return collapse(value.replace(URL_TOKEN, " "));
 }
 
 function decode(bytes: Uint8Array): string {
@@ -213,13 +218,16 @@ function semanticTokens(input: readonly (Node | string)[]): SemanticHtmlTokenV1[
   const visit = (entry: Node | string, dropped: boolean): void => {
     if (typeof entry === "string") {
       if (dropped) return;
-      const text = collapse(entry);
+      const text = semanticText(entry);
       if (text === "") return;
       textBytes += Buffer.byteLength(text, "utf8");
       assertNvidiaDeclaredLimit("extracted-text-bytes", textBytes);
       const previous = output.at(-1);
       if (previous?.kind === "text")
-        output[output.length - 1] = { kind: "text", text: collapse(`${previous.text} ${text}`) };
+        output[output.length - 1] = {
+          kind: "text",
+          text: semanticText(`${previous.text} ${text}`),
+        };
       else output.push({ kind: "text", text });
       return;
     }
@@ -496,10 +504,10 @@ function parseRssItem(item: Node, mediaBound: boolean, chunkSize: number | undef
       dialect: "peas-nvidia-newsroom-rss-synthetic-v1",
       issuerCik: NVIDIA_ISSUER_CIK,
       title,
-      subtitle,
+      subtitle: subtitle === null ? null : semanticText(subtitle) || null,
       contentType: "releases",
       contentTokens,
-      description: optionalScalar("description"),
+      description: semanticText(optionalScalar("description") ?? "") || null,
       categories,
       pubDate: pubDateValue === null ? null : parseTime(pubDateValue),
       modDate: modDateValue === null ? null : parseTime(modDateValue),
@@ -666,7 +674,6 @@ export function normalizeRecordedNvidiaIr(
   try {
     assertNvidiaRecordedMemberBounds(input.rssBytes, input.releaseHtmlBytes);
     const selectionKey = parseNvidiaReference(input.selectionKey);
-    if (selectionKey !== input.selectionKey) throw new NvidiaContractError("ir.link-invalid");
     const rss = parseRss(decode(input.rssBytes), selectionKey, options.rssChunkSize);
     hashes.rssItemProjectionHash = canonicalHash(
       "peas/nvidia-ir-rss-item-projection/v1",
@@ -724,7 +731,6 @@ export function normalizeRecordedNvidiaIr(
     const revisionHash = canonicalHash("peas/nvidia-ir-revision/v1", {
       rssItemProjectionHash: hashes.rssItemProjectionHash,
       releaseVisibleProjectionHash: hashes.releaseVisibleProjectionHash,
-      rawReleaseHtmlArtifactHash: releaseHtmlArtifactHash,
     });
     const routeHash = canonicalHash("peas/nvidia-ir-recorded-route/v1", {
       classificationPolicy: "nvidia-financial-results-title-v1",
@@ -744,7 +750,7 @@ export function normalizeRecordedNvidiaIr(
       issuerCik: NVIDIA_ISSUER_CIK,
       symbol: NVIDIA_SYMBOL,
       fiscalPeriod: period,
-      primaryArtifactHash: releaseHtmlArtifactHash,
+      primaryArtifactHash: hashes.selectedProjectionHash,
       selectedProjectionHash: hashes.selectedProjectionHash,
       routeHash,
       ...publication,
@@ -766,13 +772,13 @@ export function normalizeRecordedNvidiaIr(
         provider: NVIDIA_IR_PROVIDER,
         recordId: candidate.providerRecordId,
         revisionId: candidate.providerRevisionId,
-        artifactHash: releaseHtmlArtifactHash,
+        artifactHash: hashes.selectedProjectionHash,
       },
       payload: {
         issuerCik: NVIDIA_ISSUER_CIK,
         fiscalPeriod: period,
         sourceKind: "issuer_release",
-        artifactHash: releaseHtmlArtifactHash,
+        artifactHash: hashes.selectedProjectionHash,
         ...publication,
       },
     } satisfies EventDraft);

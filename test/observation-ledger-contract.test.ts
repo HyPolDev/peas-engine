@@ -230,7 +230,7 @@ function recordedLedger(acquisitionSuffix = ""): readonly ObservationLedgerEntry
   return validateObservationLedgerBundle(entries);
 }
 
-function edgeBoundaryLedger(clockOneRoot: boolean): readonly ObservationLedgerEntryV1[] {
+function edgeBoundaryLedger(overByOne: boolean): readonly ObservationLedgerEntryV1[] {
   const entries: ObservationLedgerEntryV1[] = [];
   const basis = createClockBasis({
     wallClock: "recorded-fixture",
@@ -245,47 +245,224 @@ function edgeBoundaryLedger(clockOneRoot: boolean): readonly ObservationLedgerEn
     [],
     nullClock,
   );
-  const regressionClock = {
+  const clock = {
     clockBasisId: basis.clockBasisId,
     wallTimeMs: WALL_TIME,
     monotonicTimeUs: null,
   };
-  const roots = ["prior", "regressing"].map((label, index) => {
+  const cohorts: Array<{
+    links: Array<{
+      role: string;
+      acquisitionObservationId: string;
+      vaultObservationId: string;
+      vaultObservationHash: string;
+      artifactDigest: string;
+      sizeBytes: number;
+    }>;
+    verified: ObservationLedgerEntryV1[];
+  }> = [];
+  for (let cohort = 0; cohort < 18; cohort += 1) {
+    const links = [];
+    const verifiedEntries: ObservationLedgerEntryV1[] = [];
+    for (let member = 0; member < 16; member += 1) {
+      const label = `edge-${cohort}-${member}`;
+      const acquisitionPreimage = {
+        provider: "synthetic",
+        retrievalAttemptId: label,
+        sanitizedRequestIdentityHash: digest(`${label}-request`),
+        routeLabel: "edge-boundary",
+      };
+      const acquisitionObservationId = deriveAcquisitionObservationId(acquisitionPreimage);
+      const acquisition = add(
+        entries,
+        {
+          kind: "acquisition.declared",
+          ...acquisitionPreimage,
+          acquisitionObservationId,
+        },
+        [basisEntry],
+        clock,
+      );
+      const vaultObservationId = digest(`${label}-vault-id`);
+      const vaultObservationHash = digest(`${label}-vault-hash`);
+      const artifactDigest = digest(`${label}-artifact`);
+      const sizeBytes = member + 1;
+      const committed = add(
+        entries,
+        {
+          kind: "artifact.committed",
+          acquisitionObservationId,
+          vaultObservationId,
+          vaultObservationHash,
+          artifactDigest,
+          sizeBytes,
+          acquisitionMode: "recorded",
+          retrievedAtMs: WALL_TIME,
+        },
+        [basisEntry, acquisition],
+        clock,
+      );
+      verifiedEntries.push(
+        add(
+          entries,
+          {
+            kind: "artifact.verified",
+            acquisitionObservationId,
+            vaultObservationId,
+            artifactDigest,
+            metadataSizeBytes: sizeBytes,
+            consumedSizeBytes: sizeBytes,
+          },
+          [basisEntry, committed],
+          clock,
+        ),
+      );
+      links.push({
+        role: `edge.${member.toString().padStart(2, "0")}`,
+        acquisitionObservationId,
+        vaultObservationId,
+        vaultObservationHash,
+        artifactDigest,
+        sizeBytes,
+      });
+    }
+    cohorts.push({ links, verified: verifiedEntries });
+  }
+  for (let index = 0; index < 475; index += 1) {
+    const cohort = cohorts[Math.floor(index / 29)] as (typeof cohorts)[number];
+    add(
+      entries,
+      {
+        kind: "normalization.ignored",
+        rawArtifactLinks: cohort.links,
+        loaderIdentity: "edge-loader-v1",
+        selectionHash: digest(`edge-selection-${index}`),
+        loaderTranscriptHash: digest(`edge-loader-transcript-${index}`),
+        normalizerIdentity: "edge-normalizer-v1",
+        normalizerTranscriptHash: digest(`edge-normalizer-transcript-${index}`),
+        reasonCode: `edge.ignored.${index}`,
+      },
+      [basisEntry, ...cohort.verified],
+      clock,
+    );
+  }
+  const partialCohort = cohorts[17] as (typeof cohorts)[number];
+  const partialLinkCount = overByOne ? 9 : 8;
+  add(
+    entries,
+    {
+      kind: "normalization.ignored",
+      rawArtifactLinks: partialCohort.links.slice(0, partialLinkCount),
+      loaderIdentity: "edge-loader-v1",
+      selectionHash: digest("edge-selection-partial"),
+      loaderTranscriptHash: digest("edge-loader-transcript-partial"),
+      normalizerIdentity: "edge-normalizer-v1",
+      normalizerTranscriptHash: digest("edge-normalizer-transcript-partial"),
+      reasonCode: "edge.ignored.partial",
+    },
+    [basisEntry, ...partialCohort.verified.slice(0, partialLinkCount)],
+    clock,
+  );
+  while (entries.length < OBSERVATION_LEDGER_MAX_ENTRIES) {
+    const index = entries.length;
     const preimage = {
       provider: "synthetic",
-      retrievalAttemptId: `edge-${label}`,
-      sanitizedRequestIdentityHash: digest(`edge-${label}`),
-      routeLabel: "edge-boundary",
+      retrievalAttemptId: `edge-filler-${index}`,
+      sanitizedRequestIdentityHash: digest(`edge-filler-${index}`),
+      routeLabel: "edge-boundary-filler",
     };
-    return add(
+    add(
       entries,
       {
         kind: "acquisition.declared",
         ...preimage,
         acquisitionObservationId: deriveAcquisitionObservationId(preimage),
       },
-      clockOneRoot && index === 0 ? [basisEntry] : [],
-      clockOneRoot && index === 0 ? regressionClock : nullClock,
-    );
-  });
-  const prior = roots[0] as ObservationLedgerEntryV1;
-  const regressing = roots[1] as ObservationLedgerEntryV1;
-  for (let index = 0; index < 4_093; index += 1) {
-    add(
-      entries,
-      {
-        kind: "clock.regression",
-        priorEntryId: prior.entryId,
-        regressingEntryId: regressing.entryId,
-        priorWallTimeMs: 10_000,
-        currentWallTimeMs: index,
-        monotonicOrderPreserved: true,
-      },
-      [basisEntry, prior, regressing],
-      regressionClock,
+      [basisEntry],
+      clock,
     );
   }
   return entries;
+}
+
+function rewriteNormalization(
+  entry: ObservationLedgerEntryV1,
+  options: Readonly<{
+    projectionDigest?: string;
+    provider?: string;
+    source?: string;
+    providerRecordId?: string;
+    providerRevisionId?: string;
+    evidenceBundleHash?: string | null;
+    rawArtifactLinks?: readonly {
+      role: string;
+      acquisitionObservationId: string;
+      vaultObservationId: string;
+      vaultObservationHash: string;
+      artifactDigest: string;
+      sizeBytes: number;
+    }[];
+  }>,
+): ObservationLedgerEntryV1 {
+  assert.equal(entry.facts.kind, "normalization.emitted");
+  if (entry.facts.kind !== "normalization.emitted") throw new Error("normalization required");
+  const projectionDigest = options.projectionDigest ?? entry.facts.projectionDigest;
+  const provider = options.provider ?? entry.facts.sourceIdentity.provider;
+  const source = options.source ?? entry.facts.sourceIdentity.source;
+  const providerRecordId = options.providerRecordId ?? entry.facts.sourceIdentity.providerRecordId;
+  const providerRevisionId =
+    options.providerRevisionId ?? entry.facts.sourceIdentity.providerRevisionId;
+  const evidenceBundleHash =
+    options.evidenceBundleHash === undefined
+      ? entry.facts.evidenceBundleHash
+      : options.evidenceBundleHash;
+  const rawArtifactLinks = options.rawArtifactLinks ?? entry.facts.rawArtifactLinks;
+  const sourceRecordIdentity = deriveSourceRecordIdentity({ provider, source, providerRecordId });
+  const sourceIdentity = {
+    ...entry.facts.sourceIdentity,
+    provider,
+    source,
+    providerRecordId,
+    providerRevisionId,
+    sourceRecordIdentity,
+    sourceVersionIdentity: deriveSourceVersionIdentity({
+      sourceRecordIdentity,
+      providerRevisionId,
+      projectionDigest,
+      evidenceBundleHash,
+    }),
+    revisionFamilyIdentity: deriveRevisionFamilyIdentity({
+      provider,
+      source,
+      providerStableRecordFamily: providerRecordId,
+    }),
+  };
+  const projectionId = deriveProjectionId({
+    loaderIdentity: entry.facts.loaderIdentity,
+    normalizerIdentity: entry.facts.normalizerIdentity,
+    rawArtifactLinks,
+    projectionDigest,
+  });
+  const sourceObservationId = deriveSourceObservationId({
+    sourceVersionIdentity: sourceIdentity.sourceVersionIdentity,
+    projectionId,
+    rawArtifactLinks,
+  });
+  return createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: entry.executionId,
+    parentEntryIds: entry.parentEntryIds,
+    clock: entry.clock,
+    facts: {
+      ...entry.facts,
+      projectionDigest,
+      projectionId,
+      sourceObservationId,
+      sourceIdentity,
+      evidenceBundleHash,
+      rawArtifactLinks,
+    },
+  });
 }
 
 test("ledger pins the exact entry preimage and derived identity", () => {
@@ -417,59 +594,211 @@ test("unknown facts and extra clock declarations fail closed", () => {
   );
 });
 
-test("clock regression replay remaps both fact identities and causal parents", () => {
+test("clock regression closure is exact, deterministic, and replay-safe", () => {
   const entries: ObservationLedgerEntryV1[] = [];
-  for (const label of ["prior", "regressing"] as const) {
+  const basis = createClockBasis({
+    wallClock: "recorded-fixture",
+    synchronization: "not-applicable",
+    maximumErrorMs: null,
+    monotonicClock: "process-monotonic-us",
+    monotonicSessionId: "regression-session",
+  });
+  const basisEntry = add(
+    entries,
+    { kind: "clock-basis.declared", clockBasis: basis },
+    [],
+    nullClock,
+  );
+  for (const [index, label] of ["prior", "regressing"].entries()) {
     const preimage = {
       provider: "synthetic",
       retrievalAttemptId: `regression-${label}`,
       sanitizedRequestIdentityHash: digest(`regression-${label}`),
       routeLabel: "regression-replay",
     };
-    entries.push(
-      createObservationLedgerEntry({
-        schemaVersion: 1,
-        executionId: "regression-original",
-        parentEntryIds: [],
-        clock: nullClock,
-        facts: {
-          kind: "acquisition.declared",
-          ...preimage,
-          acquisitionObservationId: deriveAcquisitionObservationId(preimage),
-        },
-      }),
+    add(
+      entries,
+      {
+        kind: "acquisition.declared",
+        ...preimage,
+        acquisitionObservationId: deriveAcquisitionObservationId(preimage),
+      },
+      [basisEntry],
+      {
+        clockBasisId: basis.clockBasisId,
+        wallTimeMs: index === 0 ? 200 : 100,
+        monotonicTimeUs: index + 1,
+      },
     );
   }
-  const prior = entries[0] as ObservationLedgerEntryV1;
-  const regressing = entries[1] as ObservationLedgerEntryV1;
-  entries.push(
-    createObservationLedgerEntry({
+  const prior = entries[1] as ObservationLedgerEntryV1;
+  const regressing = entries[2] as ObservationLedgerEntryV1;
+  const witnessFacts = {
+    kind: "clock.regression",
+    priorEntryId: prior.entryId,
+    regressingEntryId: regressing.entryId,
+    priorWallTimeMs: 200,
+    currentWallTimeMs: 100,
+    monotonicOrderPreserved: true,
+  } as const;
+  const witness = add(entries, witnessFacts, [basisEntry, prior, regressing], regressing.clock);
+  assert.equal(validateObservationLedgerBundle(entries).length, 4);
+
+  assert.throws(
+    () =>
+      createObservationLedgerEntry({
+        schemaVersion: 1,
+        executionId: EXECUTION,
+        parentEntryIds: witness.parentEntryIds,
+        clock: witness.clock,
+        facts: { ...witnessFacts, monotonicOrderPreserved: "true" } as never,
+      }),
+    /observation\.entry-invalid/u,
+  );
+  assert.throws(
+    () => validateObservationLedgerBundle(entries.slice(0, 3)),
+    /observation\.clock-regression-invalid/u,
+  );
+
+  const duplicate = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: EXECUTION,
+    parentEntryIds: witness.parentEntryIds,
+    clock: witness.clock,
+    facts: witnessFacts,
+  });
+  assert.throws(
+    () => validateObservationLedgerBundle([...entries, duplicate]),
+    /observation\.(?:clock-regression|parent-transition)-invalid/u,
+  );
+  assert.throws(
+    () => validateObservationLedgerBundle([basisEntry, regressing, prior, witness]),
+    /observation\.(?:clock-regression|parent-transition|clock-basis)-invalid/u,
+  );
+
+  for (const facts of [
+    { ...witnessFacts, priorWallTimeMs: 201 },
+    { ...witnessFacts, currentWallTimeMs: 99 },
+    { ...witnessFacts, monotonicOrderPreserved: false },
+  ] as const) {
+    const hostile = createObservationLedgerEntry({
       schemaVersion: 1,
-      executionId: "regression-original",
-      parentEntryIds: [prior.entryId, regressing.entryId].sort(),
+      executionId: EXECUTION,
+      parentEntryIds: witness.parentEntryIds,
+      clock: witness.clock,
+      facts,
+    });
+    assert.throws(
+      () => validateObservationLedgerBundle([...entries.slice(0, 3), hostile]),
+      /observation\.clock-regression-invalid/u,
+    );
+  }
+
+  const nullParents = ["null-prior", "null-regressing"].map((label) => {
+    const preimage = {
+      provider: "synthetic",
+      retrievalAttemptId: label,
+      sanitizedRequestIdentityHash: digest(label),
+      routeLabel: "null-regression",
+    };
+    return createObservationLedgerEntry({
+      schemaVersion: 1,
+      executionId: EXECUTION,
+      parentEntryIds: [],
       clock: nullClock,
       facts: {
-        kind: "clock.regression",
-        priorEntryId: prior.entryId,
-        regressingEntryId: regressing.entryId,
-        priorWallTimeMs: 2,
-        currentWallTimeMs: 1,
-        monotonicOrderPreserved: true,
+        kind: "acquisition.declared",
+        ...preimage,
+        acquisitionObservationId: deriveAcquisitionObservationId(preimage),
       },
-    }),
+    });
+  });
+  const nullWitness = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: EXECUTION,
+    parentEntryIds: nullParents.map((entry) => entry.entryId).sort(),
+    clock: nullClock,
+    facts: {
+      kind: "clock.regression",
+      priorEntryId: (nullParents[0] as ObservationLedgerEntryV1).entryId,
+      regressingEntryId: (nullParents[1] as ObservationLedgerEntryV1).entryId,
+      priorWallTimeMs: 2,
+      currentWallTimeMs: 1,
+      monotonicOrderPreserved: false,
+    },
+  });
+  assert.throws(
+    () => validateObservationLedgerBundle([...nullParents, nullWitness]),
+    /observation\.clock-regression-invalid/u,
   );
-  const replayed = replayRecordedObservationLedger(
-    validateObservationLedgerBundle(entries),
-    "regression-replay",
+
+  const otherBasis = createClockBasis({
+    wallClock: "replayed-original",
+    synchronization: "not-applicable",
+    maximumErrorMs: null,
+    monotonicClock: "process-monotonic-us",
+    monotonicSessionId: "other-regression-session",
+  });
+  const otherBasisEntry = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: EXECUTION,
+    parentEntryIds: [],
+    clock: nullClock,
+    facts: { kind: "clock-basis.declared", clockBasis: otherBasis },
+  });
+  const crossBasisRegressing = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: EXECUTION,
+    parentEntryIds: [otherBasisEntry.entryId],
+    clock: { clockBasisId: otherBasis.clockBasisId, wallTimeMs: 50, monotonicTimeUs: 2 },
+    facts: regressing.facts,
+  });
+  const crossBasisWitness = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: EXECUTION,
+    parentEntryIds: [otherBasisEntry.entryId, prior.entryId, crossBasisRegressing.entryId].sort(),
+    clock: crossBasisRegressing.clock,
+    facts: {
+      ...witnessFacts,
+      regressingEntryId: crossBasisRegressing.entryId,
+      currentWallTimeMs: 50,
+    },
+  });
+  assert.throws(
+    () =>
+      validateObservationLedgerBundle([
+        basisEntry,
+        otherBasisEntry,
+        prior,
+        crossBasisRegressing,
+        crossBasisWitness,
+      ]),
+    /observation\.clock-regression-invalid/u,
   );
-  const replayedRegression = replayed[2] as ObservationLedgerEntryV1;
+
+  const monotonicRegression = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: EXECUTION,
+    parentEntryIds: [basisEntry.entryId],
+    clock: { clockBasisId: basis.clockBasisId, wallTimeMs: 50, monotonicTimeUs: 0 },
+    facts: regressing.facts,
+  });
+  assert.throws(
+    () => validateObservationLedgerBundle([basisEntry, prior, monotonicRegression]),
+    /observation\.clock-basis-invalid/u,
+  );
+
+  const replayed = replayRecordedObservationLedger(entries, "regression-replay");
+  const replayedRegression = replayed[3] as ObservationLedgerEntryV1;
   assert.equal(replayedRegression.facts.kind, "clock.regression");
   if (replayedRegression.facts.kind !== "clock.regression") return;
   assert.deepEqual(
     [replayedRegression.facts.priorEntryId, replayedRegression.facts.regressingEntryId].sort(),
-    [...replayedRegression.parentEntryIds].sort(),
+    replayedRegression.parentEntryIds.filter((parent) => parent !== replayed[0]?.entryId).sort(),
   );
   assert.notEqual(replayedRegression.facts.priorEntryId, prior.entryId);
+  assert.deepEqual(replayedRegression.clock, witness.clock);
+  assert.equal(replayedRegression.facts.priorWallTimeMs, witnessFacts.priorWallTimeMs);
 });
 
 test("recorded replay preserves semantic identities and page-size reconstruction", () => {
@@ -501,6 +830,129 @@ test("recorded replay preserves semantic identities and page-size reconstruction
       canonicalJson(replayed as unknown as JsonValue),
     );
   }
+});
+
+test("raw links bind the exact committed vault observation evidence", () => {
+  const ledger = recordedLedger();
+  const committed = ledger[2] as ObservationLedgerEntryV1;
+  const normalization = ledger[4] as ObservationLedgerEntryV1;
+  assert.equal(committed.facts.kind, "artifact.committed");
+  assert.equal(normalization.facts.kind, "normalization.emitted");
+  if (
+    committed.facts.kind !== "artifact.committed" ||
+    normalization.facts.kind !== "normalization.emitted"
+  ) {
+    return;
+  }
+  const link = normalization.facts.rawArtifactLinks[0];
+  assert.ok(link);
+  assert.deepEqual(
+    [link.vaultObservationId, link.vaultObservationHash, link.artifactDigest, link.sizeBytes],
+    [
+      committed.facts.vaultObservationId,
+      committed.facts.vaultObservationHash,
+      committed.facts.artifactDigest,
+      committed.facts.sizeBytes,
+    ],
+  );
+
+  const substituted = rewriteNormalization(normalization, {
+    rawArtifactLinks: [
+      { ...link, vaultObservationHash: digest("substituted-vault-observation-hash") },
+    ],
+  });
+  assert.throws(
+    () => validateObservationLedgerBundle([...ledger.slice(0, 4), substituted]),
+    /observation\.parent-transition-invalid/u,
+  );
+
+  const redelivery = recordedLedger("-vault-conflict");
+  const secondAcquisition = redelivery[1] as ObservationLedgerEntryV1;
+  const secondCommit = redelivery[2] as ObservationLedgerEntryV1;
+  assert.equal(secondCommit.facts.kind, "artifact.committed");
+  if (secondCommit.facts.kind !== "artifact.committed") return;
+  for (const facts of [
+    { ...secondCommit.facts, vaultObservationHash: digest("conflicting-vault-hash") },
+    { ...secondCommit.facts, artifactDigest: digest("conflicting-vault-digest") },
+    { ...secondCommit.facts, sizeBytes: secondCommit.facts.sizeBytes + 1 },
+  ]) {
+    const hostile = createObservationLedgerEntry({
+      schemaVersion: 1,
+      executionId: secondCommit.executionId,
+      parentEntryIds: secondCommit.parentEntryIds,
+      clock: secondCommit.clock,
+      facts,
+    });
+    assert.throws(
+      () =>
+        validateObservationLedgerBundle([
+          ledger[0] as ObservationLedgerEntryV1,
+          ledger[1] as ObservationLedgerEntryV1,
+          committed,
+          secondAcquisition,
+          hostile,
+        ]),
+      /observation\.parent-transition-invalid/u,
+    );
+  }
+});
+
+test("provider revision conflicts reject before capture independent of order", () => {
+  const first = recordedLedger("-revision-first");
+  const second = recordedLedger("-revision-second");
+  const basis = first[0] as ObservationLedgerEntryV1;
+  const firstPrefix = first.slice(1, 5) as readonly ObservationLedgerEntryV1[];
+  const secondPrefix = second.slice(1, 5) as readonly ObservationLedgerEntryV1[];
+  const secondNormalization = secondPrefix[3] as ObservationLedgerEntryV1;
+  assert.equal(secondNormalization.facts.kind, "normalization.emitted");
+
+  assert.equal(validateObservationLedgerBundle([basis, ...firstPrefix, ...secondPrefix]).length, 9);
+
+  for (const conflicting of [
+    rewriteNormalization(secondNormalization, {
+      projectionDigest: deriveProjectionDigest({ title: "Conflicting retained release" }),
+    }),
+    rewriteNormalization(secondNormalization, { evidenceBundleHash: digest("changed-bundle") }),
+  ]) {
+    for (const values of [
+      [basis, ...firstPrefix, ...secondPrefix.slice(0, 3), conflicting],
+      [basis, ...secondPrefix.slice(0, 3), conflicting, ...firstPrefix],
+    ]) {
+      assert.throws(
+        () => validateObservationLedgerBundle(values),
+        (error) =>
+          error instanceof ObservationLedgerContractError &&
+          error.reasonCode === "observation.revision-conflict",
+      );
+    }
+  }
+
+  const newRevision = rewriteNormalization(secondNormalization, {
+    providerRevisionId: digest("genuine-new-provider-revision"),
+    projectionDigest: deriveProjectionDigest({ title: "Genuine semantic correction" }),
+  });
+  assert.equal(
+    validateObservationLedgerBundle([
+      basis,
+      ...firstPrefix,
+      ...secondPrefix.slice(0, 3),
+      newRevision,
+    ]).length,
+    9,
+  );
+
+  const otherProvider = rewriteNormalization(secondNormalization, {
+    provider: "independent-synthetic-provider",
+  });
+  assert.equal(
+    validateObservationLedgerBundle([
+      basis,
+      ...firstPrefix,
+      ...secondPrefix.slice(0, 3),
+      otherProvider,
+    ]).length,
+    9,
+  );
 });
 
 test("all displayed provider identities are recomputed and cannot be caller assertions", () => {
@@ -788,7 +1240,27 @@ test("representative exact and one-over entry, parent, depth, and bundle bounds 
   );
 
   const depthEntries: ObservationLedgerEntryV1[] = [];
-  for (const label of ["depth-anchor", "depth-first"]) {
+  const depthBasis = createClockBasis({
+    wallClock: "recorded-fixture",
+    synchronization: "not-applicable",
+    maximumErrorMs: null,
+    monotonicClock: "none",
+    monotonicSessionId: null,
+  });
+  const depthBasisEntry = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: "depth-boundary",
+    parentEntryIds: [],
+    clock: nullClock,
+    facts: { kind: "clock-basis.declared", clockBasis: depthBasis },
+  });
+  depthEntries.push(depthBasisEntry);
+  const depthClock = (wallTimeMs: number): ClockStampV1 => ({
+    clockBasisId: depthBasis.clockBasisId,
+    wallTimeMs,
+    monotonicTimeUs: null,
+  });
+  for (const [index, label] of ["depth-prior", "depth-regressing"].entries()) {
     const preimage = {
       provider: "synthetic",
       retrievalAttemptId: label,
@@ -799,8 +1271,8 @@ test("representative exact and one-over entry, parent, depth, and bundle bounds 
       createObservationLedgerEntry({
         schemaVersion: 1,
         executionId: "depth-boundary",
-        parentEntryIds: [],
-        clock: nullClock,
+        parentEntryIds: [depthBasisEntry.entryId],
+        clock: depthClock(1_000 - index),
         facts: {
           kind: "acquisition.declared",
           ...preimage,
@@ -809,28 +1281,47 @@ test("representative exact and one-over entry, parent, depth, and bundle bounds 
       }),
     );
   }
-  const anchor = depthEntries[0] as ObservationLedgerEntryV1;
-  for (let depth = 2; depth <= 17; depth += 1) {
-    const prior = depthEntries.at(-1) as ObservationLedgerEntryV1;
-    depthEntries.push(
-      createObservationLedgerEntry({
-        schemaVersion: 1,
-        executionId: "depth-boundary",
-        parentEntryIds: [anchor.entryId, prior.entryId].sort(),
-        clock: nullClock,
-        facts: {
-          kind: "clock.regression",
-          priorEntryId: anchor.entryId,
-          regressingEntryId: prior.entryId,
-          priorWallTimeMs: 100,
-          currentWallTimeMs: 99,
-          monotonicOrderPreserved: true,
-        },
-      }),
-    );
-    if (depth === 16) {
-      assert.doesNotThrow(() => validateObservationLedgerBundle(depthEntries));
-    }
+  let prior = depthEntries[1] as ObservationLedgerEntryV1;
+  let regressing = depthEntries[2] as ObservationLedgerEntryV1;
+  for (let depth = 3; depth <= 17; depth += 1) {
+    const witness = createObservationLedgerEntry({
+      schemaVersion: 1,
+      executionId: "depth-boundary",
+      parentEntryIds: [depthBasisEntry.entryId, prior.entryId, regressing.entryId].sort(),
+      clock: regressing.clock,
+      facts: {
+        kind: "clock.regression",
+        priorEntryId: prior.entryId,
+        regressingEntryId: regressing.entryId,
+        priorWallTimeMs: prior.clock.wallTimeMs as number,
+        currentWallTimeMs: regressing.clock.wallTimeMs as number,
+        monotonicOrderPreserved: false,
+      },
+    });
+    depthEntries.push(witness);
+    if (depth === 16) assert.doesNotThrow(() => validateObservationLedgerBundle(depthEntries));
+    if (depth === 17) break;
+    const label = `depth-regressing-${depth}`;
+    const preimage = {
+      provider: "synthetic",
+      retrievalAttemptId: label,
+      sanitizedRequestIdentityHash: digest(label),
+      routeLabel: "depth-boundary",
+    };
+    const next = createObservationLedgerEntry({
+      schemaVersion: 1,
+      executionId: "depth-boundary",
+      parentEntryIds: [depthBasisEntry.entryId],
+      clock: depthClock(998 - depth),
+      facts: {
+        kind: "acquisition.declared",
+        ...preimage,
+        acquisitionObservationId: deriveAcquisitionObservationId(preimage),
+      },
+    });
+    depthEntries.push(next);
+    prior = witness;
+    regressing = next;
   }
   assert.throws(
     () => validateObservationLedgerBundle(depthEntries),

@@ -43,6 +43,9 @@ const ITEM_FIELDS = Object.freeze([
 const EXPLICIT_TIME =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/u;
 const NAIVE_TIME = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,3})?$/u;
+const HTML_COMMENT = /<!--[\s\S]*?-->/gu;
+const URL_TOKEN = /\bhttps?:\/\/[^\s<>"'`]+/giu;
+const SEMANTIC_SPACE = /\s+/gu;
 
 type FmpItem = Readonly<{
   symbol: string;
@@ -122,6 +125,14 @@ function byteBoundedString(value: JsonValue | undefined, minimum: number, maximu
 function nullableString(value: JsonValue | undefined, maximum: number): string | null {
   if (value === null) return null;
   return byteBoundedString(value, 0, maximum);
+}
+
+function semanticText(value: string): string {
+  return value
+    .replace(HTML_COMMENT, " ")
+    .replace(URL_TOKEN, " ")
+    .replace(SEMANTIC_SPACE, " ")
+    .trim();
 }
 
 function parseItem(value: JsonValue): FmpItem {
@@ -266,31 +277,24 @@ function validateRoute(value: FmpRecordedRouteV1): FmpRecordedRouteV1 {
   return freeze(route);
 }
 
-export function deriveFmpItemIdentity(
-  item: FmpItem,
-  rawPrimaryArtifactHash: string,
-): DerivedFmpItem {
-  if (!/^[a-f0-9]{64}$/u.test(rawPrimaryArtifactHash)) {
-    throw new NormalizeFailure("fmp.identity-invalid");
-  }
+export function deriveFmpItemIdentity(item: FmpItem): DerivedFmpItem {
+  const title = semanticText(item.title);
+  const text = semanticText(item.text);
+  if (title.length === 0 || text.length === 0) throw new NormalizeFailure("fmp.item-invalid");
   const projection = freeze({
     projectionVersion: 1,
     dialect: FMP_RECORDED_DIALECT,
     symbol: item.symbol,
     publishedDate: item.publishedDate,
-    title: item.title,
-    text: item.text,
-    site: item.site,
+    title,
+    text,
   }) as FmpSelectedProjectionV1;
   const recordId = `fmp-recorded-synthetic:${canonicalHash(FMP_RECORD_DOMAIN, {
     symbol: item.symbol,
     publishedDate: item.publishedDate,
-    title: item.title,
+    title,
   })}`;
-  const revisionId = `sha256:${canonicalHash(FMP_REVISION_DOMAIN, {
-    projection,
-    rawPrimaryArtifactHash,
-  })}`;
+  const revisionId = `sha256:${canonicalHash(FMP_REVISION_DOMAIN, projection)}`;
   return freeze({
     projection,
     recordId,
@@ -324,7 +328,7 @@ export function inspectRecordedFmpCollection(bytes: Uint8Array): Readonly<{
   if (parsed.length > FMP_MAX_ITEMS) throw new NormalizeFailure("fmp.item-limit-exceeded");
   return freeze({
     primaryArtifactHash,
-    items: parsed.map((raw) => deriveFmpItemIdentity(parseItem(raw), primaryArtifactHash)),
+    items: parsed.map((raw) => deriveFmpItemIdentity(parseItem(raw))),
   });
 }
 
@@ -364,13 +368,11 @@ export function normalizeRecordedFmpCollection(
     primaryArtifactHash = inspected.primaryArtifactHash;
     const selected = selector(input.selector);
     const route = validateRoute(input.route);
-    const matches = inspected.items.filter(
-      (item) => item.recordId === selected.recordId && item.revisionId === selected.revisionId,
-    );
-    if (matches.length < 1) throw new NormalizeFailure("fmp.item-invalid");
-    const distinct = new Map(matches.map((item) => [item.selectedProjectionHash, item]));
+    const family = inspected.items.filter((item) => item.recordId === selected.recordId);
+    if (family.length < 1) throw new NormalizeFailure("fmp.item-invalid");
+    const distinct = new Map(family.map((item) => [item.selectedProjectionHash, item]));
     if (distinct.size !== 1) throw new NormalizeFailure("fmp.duplicate-conflict");
-    const item = distinct.values().next().value;
+    const item = family.find((candidate) => candidate.revisionId === selected.revisionId);
     if (item === undefined) throw new NormalizeFailure("fmp.item-invalid");
     if (route.classification === "not-earnings-release") {
       return ignored("fmp.not-earnings-related", primaryArtifactHash);
@@ -392,7 +394,7 @@ export function normalizeRecordedFmpCollection(
       issuerCik: route.issuerMapping.issuerCik,
       symbol: route.issuerMapping.symbol,
       fiscalPeriod: route.issuerMapping.fiscalPeriod,
-      primaryArtifactHash,
+      primaryArtifactHash: item.selectedProjectionHash,
       selectedProjectionHash: item.selectedProjectionHash,
       routeHash,
       ...item.publication,
@@ -410,13 +412,13 @@ export function normalizeRecordedFmpCollection(
         provider: FMP_PROVIDER,
         recordId: candidate.providerRecordId,
         revisionId: candidate.providerRevisionId,
-        artifactHash: candidate.primaryArtifactHash,
+        artifactHash: item.selectedProjectionHash,
       },
       payload: {
         issuerCik: candidate.issuerCik,
         fiscalPeriod: candidate.fiscalPeriod,
         sourceKind: candidate.sourceKind,
-        artifactHash: candidate.primaryArtifactHash,
+        artifactHash: item.selectedProjectionHash,
         publishedAtMs: candidate.publishedAtMs,
         timestampConfidence: candidate.timestampConfidence,
         originalTimestamp: candidate.originalTimestamp,

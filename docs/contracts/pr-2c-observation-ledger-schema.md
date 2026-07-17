@@ -140,6 +140,12 @@ fields must equal those recomputations; `sob1_` uses the sorted unique raw-link 
 Capture and selection identities equal their normalization ancestor. Any mismatch is
 `observation.derived-identity-mismatch`.
 
+Within an execution bundle, the exact key
+`{provider,source,providerRecordId,providerRevisionId}` binds one projection digest,
+evidence-bundle hash, source-version identity, and revision-family identity. Exact redelivery is
+valid; changing any bound value is `observation.revision-conflict`, independent of fixture order.
+Different providers or different provider revisions remain independent.
+
 ## Exact discriminated fact union
 
 ```ts
@@ -174,6 +180,12 @@ mapping facts and require `asOfMs` at least the received/retrieved time.
 market-reference purposes.
 Failure legality is closed by the transition table below; raw exception text is forbidden.
 
+Every raw link reconciles to its exact committed -> verified -> normalization chain. Its
+`vaultObservationHash`, artifact digest, and size equal the commit; verified IDs/digest and both
+verified sizes equal the same evidence. One acquisition cannot commit conflicting vault/hash/
+digest/size tuples, and one vault observation ID cannot appear with multiple hashes, digests, or
+sizes.
+
 ## Exact direct-parent transition matrix
 
 The clock-basis parent rule above is additive to the causal parents in this table. No other direct
@@ -207,7 +219,12 @@ parent. No other nullability combination is valid. Acquisition/source/digest/ver
 equal their parents. Request failure forbids a
 later commit; store/read failure forbids normalization; ignored/quarantined forbids capture. A
 clock regression entry is appended after the already-stored regressing entry and never repairs a
-same-session monotonic regression, which fails `observation.clock-basis-invalid`.
+same-session monotonic regression, which fails `observation.clock-basis-invalid`. Immutable bundle
+order determines each wall regression within a non-null basis. It requires exactly one matching
+`clock.regression` fact: the fact's parents and IDs are the prior/regressing entries, its times equal
+their wall stamps, its own clock equals the regressing stamp, and its exact boolean monotonic flag
+equals their monotonic evidence. Missing, duplicate, fabricated, reordered, mismatched-time,
+mismatched-basis, or null-clock claims fail `observation.clock-regression-invalid`.
 
 ## Bundle validation and bounds
 
@@ -234,7 +251,8 @@ has no request facts. Original clock-basis declarations/stamps are re-emitted un
 normalization preserves projection/source/version/observation identities and parents the new
 same-execution verifications. A capture-basis replay also re-emits its original capture fact after
 normalization with original stored-event fields. Selection facts and market join keys therefore
-remain stable; ledger entry IDs differ because execution ID differs. Original entry IDs are
-evidence values only, never causal parents.
+remain stable; ledger entry IDs differ because execution ID differs. Replay remaps causal parents,
+`priorEntryId`, and `regressingEntryId` to those new entry IDs while preserving wall times and
+monotonic evidence. Original entry IDs are evidence values only, never causal parents.
 Pagination uses immutable storage sequence plus entry-ID reconciliation. Golden tests cover the
 entry preimage and every clock, parent, failure-stage, nullability, exact-bound, and one-over case.

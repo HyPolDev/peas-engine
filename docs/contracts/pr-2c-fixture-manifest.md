@@ -19,12 +19,8 @@ type RecordedMirrorFixtureManifestV1 = Readonly<{
   route: FmpRecordedRouteV1 | NvidiaRecordedRouteV1;
   retrievedMembers: readonly RetrievedFixtureMemberV1[];
   derivedProofs: readonly DerivedProjectionProofV1[];
-  expected: RecordedMirrorExpectedV1;
-  provenance: {
-    classification: "synthetic" | "redistribution-approved";
-    note: string;
-    approvalReference: string | null;
-  };
+  expected: RecordedFmpExpectedV1 | NvidiaFixtureExpectedV1;
+  provenance: RecordedFixtureProvenanceV1;
 }>;
 ```
 
@@ -112,7 +108,24 @@ quarantines. Route hashes and mapping versions are transcript evidence.
 ## Expected output
 
 ```ts
-type RecordedMirrorExpectedV1 = Readonly<{
+type RecordedFmpExpectedV1 = Readonly<{
+  status: "emitted" | "ignored" | "quarantined";
+  reasonCode: string | null;
+  limitKind: string | null;
+  recordId: string | null;
+  revisionId: string | null;
+  rawArtifactHash: string | null;
+  primaryArtifactHash: string | null;
+  selectedProjectionHash: string | null;
+  routeHash: string | null;
+  candidateHash: string | null;
+  eventDraftHash: string | null;
+  publishedAtMs: number | null;
+  timestampConfidence: "provider" | "unknown" | null;
+  originalTimestamp: string | null;
+}>;
+
+type NvidiaFixtureExpectedV1 = Readonly<{
   status: "emitted" | "ignored" | "quarantined";
   reasonCode: string | null;
   limitKind: string | null;
@@ -131,16 +144,31 @@ type RecordedMirrorExpectedV1 = Readonly<{
   candidateHash: string | null;
   eventDraftHash: string | null;
 }>;
+
+type RecordedFixtureProvenanceV1 = Readonly<{
+  classification: "synthetic" | "redistribution-approved";
+  note: string;
+  approvalReference: string | null;
+}>;
 ```
 
 Emitted requires every identity/hash/route field and an exact schema-V1 EventDraft mapping.
 Ignored/quarantined has no candidate or draft. Missing provider time may emit null/unknown. A
 malformed present provider time quarantines.
 
+FMP `expected` and `provenance` are exact inert bounded objects before any body can emit. Missing,
+extra, inherited, accessor, symbol, proxy, sparse, cyclic, and over-limit values reject. Synthetic
+provenance requires a null approval reference; redistribution-approved requires a bounded non-null
+reference. The loader reconciles actual status/reason/limit, raw and semantic hashes, identities,
+publication fields, candidate hash, and EventDraft hash to `expected` atomically. Any difference is
+`fmp.bundle-hash-mismatch` and emits no candidate or draft.
+
 The domain candidate/draft excludes path, URL/GUID/query/fragment, credentials, arbitrary headers,
 observation/retrieval identity, page/limit/acquisition variant, sibling order, and clock. Raw
-artifact digest remains the V1 primary provenance, so byte-different parent artifacts may change
-revision and EventDraft identity even if selected semantic projection identity is unchanged.
+artifact digests remain immutable evidence/ledger provenance only. For FMP and NVIDIA the
+candidate/EventDraft primary is the selected semantic projection hash; byte-different URL-, query-,
+fragment-, comment-, canonical-, GUID-, or other nonsemantic raw changes preserve record/revision,
+candidate, EventDraft, and evidence-bundle identity.
 
 Candidate hash is `H("peas/recorded-press-release-candidate/v1",candidate)` and EventDraft hash is
 `H("peas/recorded-press-release-event-draft/v1",validateEventDraft(draft))`.
@@ -170,21 +198,23 @@ are normative in ADR 0008.
 
 ## Synthetic provenance
 
-`synthetic` requires original prose, fictitious FMP companies, invalid domains, and no copied
-provider headline/body/image/media. `redistribution-approved` requires a durable non-null approval
-reference. PR 2C contains no real provider body.
+`synthetic` requires original prose, fictitious FMP companies, invalid domains, no copied provider
+headline/body/image/media, and a null approval reference. `redistribution-approved` requires a
+bounded durable non-null approval reference. Every checked-in PR 2C fixture is synthetic and
+contains no real provider body.
 
 ## Matrix
 
-FMP: latest/search, duplicate, correction, null/naive/explicit/malformed time, every exact-field
-mutation, duplicate key, identity collision, parent/projection substitution, semantic order
-invariance, and generated exact/one-over bytes/items/tokens/depth/strings.
+FMP: latest/search, identical/conflicting duplicate order, later correction, null/naive/explicit/
+malformed time, every exact-field mutation, duplicate key, identity collision, parent/projection
+substitution, URL/comment/raw-order invariance, strict expected/provenance hostility, and generated
+exact/one-over bytes/items/tokens/depth/strings.
 
 NVIDIA: valid RSS+HTML, identical/conflicting family, changed visible body, missing-time trap,
 namespace/prefix, CDATA/escaped marker/entities/DTD, category normalization, URL-only changes,
 malformed XML/HTML/title/canonical, chunk/whitespace invariance, and generated exact/one-over
 bytes/items/tokens/depth/attributes/text.
 
-Cross-source: all SEC/FMP/IR arrival orders, before/at/after mirror deadline, equal raw digest with
-SEC non-null versus V1 null bundle, V1 mirror duplicate, byte-different revisions, redelivery/
-conflict, and arrival during an active analysis lease.
+Cross-source: real recorded SEC/FMP/IR loaders, every arrival order, equal and byte-different
+mirrors, corrections/revisions, redelivery/conflict, arrival during an active analysis lease, and
+processor reconstruction at minimum and representative larger page sizes on memory and SQLite.

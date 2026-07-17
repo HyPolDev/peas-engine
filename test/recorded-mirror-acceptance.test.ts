@@ -1,24 +1,47 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import test from "node:test";
 
 import { FMP_FIXTURE_CASES } from "../fixtures/fmp/v1/manifest.js";
 import { NVIDIA_BASELINE_MANIFEST } from "../fixtures/ir/nvidia/v1/manifest.js";
+import { SEC_FIXTURE_CASES, type SecFixtureCase } from "../fixtures/sec/v1/manifest.js";
 import { loadRecordedFmpFixture } from "../src/adapters/fmp/recorded-fmp-fixture.js";
 import { loadRecordedNvidiaFixture } from "../src/adapters/ir/nvidia/recorded-nvidia-fixture.js";
+import { CapturedEventLog } from "../src/adapters/memory/captured-event-log.js";
 import { InMemoryEventLog } from "../src/adapters/memory/event-log.js";
+import { InMemoryProcessingStore } from "../src/adapters/memory/processing-store.js";
+import {
+  type RecordedSecBundleManifest,
+  runRecordedSecPipeline,
+} from "../src/adapters/sec/recorded-sec-pipeline.js";
+import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
+import { SqliteEventLog } from "../src/adapters/sqlite/event-log.js";
+import { SqliteProcessingStore } from "../src/adapters/sqlite/processing-store.js";
+import type {
+  ArtifactObservation,
+  ArtifactStore,
+  VerifiedArtifactRead,
+} from "../src/artifacts/artifact-store.js";
 import { ManualClock } from "../src/core/clock.js";
-import { deriveEventId, type EventDraft, type StoredEvent } from "../src/core/event.js";
+import {
+  deriveEventId,
+  draftFromStored,
+  type EventDraft,
+  type EventLog,
+  type StoredEvent,
+} from "../src/core/event.js";
 import { canonicalHash } from "../src/core/hash.js";
 import { canonicalJson, type JsonObject, type JsonValue } from "../src/core/json.js";
-import type { ReducerContext } from "../src/core/processor.js";
+import { DeterministicProcessor, type ReducerContext } from "../src/core/processor.js";
 import {
   type AnalysisBranch,
   type EarningsClusterConfig,
   EarningsClusterReducer,
   type EarningsClusterState,
 } from "../src/domain/earnings-cluster/reducer.js";
+import { makeManifest } from "./scenario.js";
 
 const reducer = new EarningsClusterReducer();
 const BASE = 1_800_000_000_000;
@@ -39,6 +62,8 @@ const identities = {
   modelId: null,
   datasetId: "recorded-mirror-synthetic-v1",
 } as const;
+const MIGRATIONS = loadMigrations(join(process.cwd(), "migrations"));
+const REPLAY_PAGE_SIZES = [1, 2, 7, 10_000] as const;
 
 function digest(label: string): string {
   return canonicalHash("peas/recorded-mirror-acceptance/v1", { label });
@@ -129,6 +154,136 @@ function recordedSecDraft(): EventDraft {
   };
 }
 
+function secFixture(caseId: string): SecFixtureCase {
+  const fixture = SEC_FIXTURE_CASES.find((candidate) => candidate.caseId === caseId);
+  assert.ok(fixture, `missing SEC fixture ${caseId}`);
+  return fixture;
+}
+
+function recordedSecStore(fixture: SecFixtureCase): ArtifactStore {
+  const persistedProviderId = `prv1_${canonicalHash("peas/artifact-provider-identifier/v1", {
+    value: fixture.provider,
+  })}`;
+  const bytesByDigest = new Map(
+    fixture.members.map((member) => [
+      member.artifactHash,
+      readFileSync(join(process.cwd(), "fixtures", "sec", "v1", member.path)),
+    ]),
+  );
+  const observations = new Map(
+    fixture.members.map((member) => {
+      assert.ok(member.selectedObservation);
+      const observation = {
+        observationId: member.selectedObservationId,
+        attemptId: member.retrievalAttempt.attemptId,
+        artifactDigest: member.artifactHash,
+        provider: persistedProviderId,
+        recordId: fixture.recordId,
+        revisionId: fixture.revisionId,
+        retrievedAtMs: member.selectedObservation.retrievedAtMs,
+        request: {
+          method: "GET",
+          origin: "https://fixture.invalid",
+          pathHash: member.retrievalAttempt.requestIdentityHash,
+          routeLabel: "recorded-sec-fixture",
+          identityHash: member.retrievalAttempt.requestIdentityHash,
+        },
+        response: member.response,
+        observationHash: member.selectedObservation.observationHash,
+      } as unknown as ArtifactObservation;
+      return [member.selectedObservationId, observation] as const;
+    }),
+  );
+  return {
+    async getObservation(id) {
+      return observations.get(id);
+    },
+    async read(digestValue): Promise<VerifiedArtifactRead> {
+      const bytes = bytesByDigest.get(digestValue);
+      if (bytes === undefined) throw new Error("missing recorded SEC artifact");
+      return {
+        artifact: {
+          digest: digestValue,
+          algorithm: "sha256",
+          sizeBytes: bytes.byteLength,
+          committedAtMs: fixture.asOfMs,
+          provenance: "retrieval",
+        },
+        stream: Readable.from([bytes]),
+      };
+    },
+    async stat(digestValue) {
+      const bytes = bytesByDigest.get(digestValue);
+      return bytes === undefined
+        ? undefined
+        : {
+            digest: digestValue,
+            algorithm: "sha256",
+            sizeBytes: bytes.byteLength,
+            committedAtMs: fixture.asOfMs,
+            provenance: "retrieval",
+          };
+    },
+    async store() {
+      throw new Error("recorded SEC acceptance store is read-only");
+    },
+    async getAttempt() {
+      throw new Error("recorded SEC acceptance store has no attempt lookup");
+    },
+    async readObservations() {
+      throw new Error("recorded SEC acceptance store has no observation scan");
+    },
+    async reconcile() {
+      throw new Error("recorded SEC acceptance store does not reconcile");
+    },
+  };
+}
+
+function recordedSecManifest(fixture: SecFixtureCase): RecordedSecBundleManifest {
+  return {
+    asOfMs: fixture.asOfMs,
+    provider: fixture.provider,
+    source: fixture.source,
+    recordId: fixture.recordId,
+    revisionId: fixture.revisionId,
+    sourceKind: fixture.sourceKind,
+    accession: fixture.accession,
+    subjectCik: fixture.subjectCik,
+    fiscalPeriod: fixture.fiscalPeriod,
+    primaryArtifactHash: fixture.expectedPrimaryArtifactHash,
+    evidenceBundleHash: fixture.expected.evidenceBundleHash,
+    members: fixture.presentationOrder.map((index) => {
+      const member = fixture.members[index];
+      assert.ok(member);
+      return {
+        role: member.role,
+        memberKey: member.memberKey,
+        artifactHash: member.artifactHash,
+        selectedObservationId: member.selectedObservationId,
+      };
+    }),
+  };
+}
+
+async function recordedSecPipelineDraft(): Promise<EventDraft> {
+  const fixture = secFixture("valid-item-202");
+  assert.ok(fixture.expected.evidenceBundleHash);
+  const log = new InMemoryEventLog({ clock: new ManualClock(BASE) });
+  const result = await runRecordedSecPipeline({
+    artifactStore: recordedSecStore(fixture),
+    eventLog: log,
+    manifest: recordedSecManifest(fixture),
+  });
+  assert.equal(result.status, "emitted");
+  if (result.status !== "emitted") throw new Error("recorded SEC pipeline did not emit");
+  assert.equal(result.capture.disposition, "appended");
+  assert.equal(
+    result.normalization.draft.payload["evidenceBundleHash"],
+    fixture.expected.evidenceBundleHash,
+  );
+  return result.normalization.draft;
+}
+
 async function recordedProviderDrafts(): Promise<Readonly<{ fmp: EventDraft; ir: EventDraft }>> {
   const fmpManifest = FMP_FIXTURE_CASES.find(
     (fixture) => fixture.caseId === "latest-explicit-time",
@@ -156,6 +311,114 @@ function routeRecordedDraftToSecFixture(draft: EventDraft): EventDraft {
     correlationId: SUBJECT,
     payload: { ...draft.payload, issuerCik: CIK, fiscalPeriod: PERIOD },
   };
+}
+
+async function readAllEvents(
+  eventLog: EventLog,
+  pageSize: number,
+): Promise<readonly StoredEvent[]> {
+  const events: StoredEvent[] = [];
+  let position = "0";
+  for (;;) {
+    const page = await eventLog.readAfter(position, pageSize);
+    events.push(...page.events);
+    position = page.nextPosition;
+    if (!page.hasMore) return events;
+  }
+}
+
+function stateFromSnapshot(
+  snapshot: Awaited<
+    ReturnType<DeterministicProcessor<EarningsClusterState, EarningsClusterConfig>["snapshot"]>
+  >,
+): EarningsClusterState {
+  const aggregate = snapshot.aggregates[0];
+  assert.ok(aggregate);
+  return aggregate.state;
+}
+
+async function captureRecordedPermutation(
+  drafts: Readonly<{ sec: EventDraft; fmp: EventDraft; ir: EventDraft; correction: EventDraft }>,
+  order: readonly ("sec" | "fmp" | "ir")[],
+  runId: string,
+): Promise<
+  Readonly<{
+    events: readonly StoredEvent[];
+    snapshot: Awaited<
+      ReturnType<DeterministicProcessor<EarningsClusterState, EarningsClusterConfig>["snapshot"]>
+    >;
+  }>
+> {
+  const clock = new ManualClock(BASE);
+  const eventLog = new InMemoryEventLog({ clock });
+  const store = new InMemoryProcessingStore<EarningsClusterState>(eventLog);
+  const processor = new DeterministicProcessor({
+    reducer: new EarningsClusterReducer(),
+    store,
+    eventLog,
+    manifest: makeManifest(runId),
+  });
+  const append = async (draft: EventDraft): Promise<StoredEvent> => {
+    const captured = await eventLog.append(draft);
+    if (captured.disposition === "appended") await processor.process(captured.event);
+    return captured.event;
+  };
+
+  await append(drafts[order[0] as "sec" | "fmp" | "ir"]);
+  const firstState = stateFromSnapshot(await processor.snapshot(1));
+  const firstBranch = cluster(firstState).analysisBranches[0];
+  assert.ok(firstBranch);
+  clock.advanceBy(1);
+  await append(draftFromStored(leaseEvent(firstState, firstBranch, 2)));
+  const leasedSnapshot = await processor.snapshot(1);
+  assert.ok(
+    leasedSnapshot.outputs.some(
+      (output) =>
+        output.category === "decision" && output.body["type"] === "earnings.analysis.leased",
+    ),
+  );
+
+  for (const key of order.slice(1)) {
+    clock.advanceBy(1);
+    await append(drafts[key]);
+  }
+  const redelivery = await eventLog.append(drafts[order[0] as "sec" | "fmp" | "ir"]);
+  assert.equal(redelivery.disposition, "redelivery");
+
+  const identicalMirror: EventDraft = {
+    ...drafts.fmp,
+    source: "peas-recorded:cross-source-identical-mirror-test-v1",
+    provider: {
+      ...drafts.fmp.provider,
+      provider: "recorded-identical-mirror",
+      recordId: `mirror:${drafts.fmp.provider.recordId}`,
+    },
+    payload: { ...drafts.fmp.payload, sourceKind: "issuer_release" },
+  };
+  clock.advanceBy(1);
+  await append(identicalMirror);
+  clock.advanceBy(1);
+  await append(drafts.correction);
+
+  const beforeTimer = stateFromSnapshot(await processor.snapshot(2));
+  const timer = timerEvent(beforeTimer, 100);
+  clock.advanceTo(timer.occurredAtMs as number);
+  await append(draftFromStored(timer));
+
+  const snapshot = await processor.snapshot(7);
+  const finalState = stateFromSnapshot(snapshot);
+  assert.equal(cluster(finalState).analysisBranches[0]?.inputSources.length, 1);
+  assert.equal(cluster(finalState).analysisBranches[0]?.expectedAttempt, 1);
+  assert.equal(cluster(finalState).analysisBranches[0]?.expectedFencingToken, 1);
+  assert.ok(cluster(finalState).analysisBranches.some((branch) => branch.inputSources.length > 1));
+  assert.ok(
+    snapshot.outputs.some(
+      (output) =>
+        output.category === "decision" &&
+        output.body["type"] === "earnings.source.mirror-duplicate",
+    ),
+  );
+  return { events: await readAllEvents(eventLog, 10_000), snapshot };
 }
 
 function initialize(event: StoredEvent): EarningsClusterState {
@@ -431,4 +694,99 @@ test("an arrival during an active analysis lease creates a new immutable branch"
   assert.equal(original.inputSources.length, 1);
   assert.equal(incremental.inputSources.length, 2);
   assert.notEqual(original.inputBundleHash, incremental.inputBundleHash);
+});
+
+test("real recorded cross-source capture replays identically across pages and stores", async () => {
+  const [recorded, sec] = await Promise.all([recordedProviderDrafts(), recordedSecPipelineDraft()]);
+  const correctionManifest = FMP_FIXTURE_CASES.find(
+    (fixture) => fixture.caseId === "byte-different-correction",
+  );
+  assert.ok(correctionManifest);
+  const correction = await loadRecordedFmpFixture({
+    fixtureRoot: join(process.cwd(), "fixtures", "fmp", "v1"),
+    manifest: correctionManifest,
+  });
+  assert.equal(correction.status, "emitted");
+  if (correction.status !== "emitted") throw new Error("recorded FMP correction did not emit");
+
+  const drafts = {
+    sec: routeRecordedDraftToSecFixture(sec),
+    fmp: routeRecordedDraftToSecFixture(recorded.fmp),
+    ir: routeRecordedDraftToSecFixture(recorded.ir),
+    correction: routeRecordedDraftToSecFixture(correction.draft),
+  } as const;
+  assert.notEqual(drafts.fmp.provider.artifactHash, drafts.ir.provider.artifactHash);
+  assert.notEqual(drafts.fmp.provider.revisionId, drafts.correction.provider.revisionId);
+  assert.equal(typeof drafts.sec.payload["evidenceBundleHash"], "string");
+  assert.equal("evidenceBundleHash" in drafts.fmp.payload, false);
+  assert.equal("evidenceBundleHash" in drafts.ir.payload, false);
+
+  const permutations = [
+    ["sec", "fmp", "ir"],
+    ["sec", "ir", "fmp"],
+    ["fmp", "sec", "ir"],
+    ["fmp", "ir", "sec"],
+    ["ir", "sec", "fmp"],
+    ["ir", "fmp", "sec"],
+  ] as const;
+  const sourceSets: string[] = [];
+  for (const [permutationIndex, order] of permutations.entries()) {
+    const runId = `recorded-mirror-permutation-${permutationIndex}`;
+    const captured = await captureRecordedPermutation(drafts, order, runId);
+    assert.equal(captured.events.length, 7);
+    sourceSets.push(canonicalSourceSet(stateFromSnapshot(captured.snapshot)));
+
+    for (const pageSize of REPLAY_PAGE_SIZES) {
+      const replayLog = new CapturedEventLog(captured.events);
+      const replayStore = new InMemoryProcessingStore<EarningsClusterState>(replayLog);
+      const replay = new DeterministicProcessor({
+        reducer: new EarningsClusterReducer(),
+        store: replayStore,
+        eventLog: replayLog,
+        manifest: makeManifest(runId),
+      });
+      await replay.processAvailable(pageSize);
+      assert.equal(
+        canonicalJson((await readAllEvents(replayLog, pageSize)) as unknown as JsonValue),
+        canonicalJson(captured.events as unknown as JsonValue),
+      );
+      assert.equal(
+        canonicalJson((await replay.snapshot(pageSize)) as unknown as JsonValue),
+        canonicalJson(captured.snapshot as unknown as JsonValue),
+      );
+
+      const database = openSqliteDatabase(":memory:", MIGRATIONS);
+      try {
+        const sqliteClock = new ManualClock(captured.events[0]?.receivedAtMs ?? BASE);
+        const sqliteLog = new SqliteEventLog(database, { clock: sqliteClock });
+        for (const event of captured.events) {
+          sqliteClock.advanceTo(event.receivedAtMs);
+          const appended = await sqliteLog.append(draftFromStored(event));
+          assert.equal(appended.disposition, "appended");
+          assert.equal(
+            canonicalJson(appended.event as unknown as JsonValue),
+            canonicalJson(event as unknown as JsonValue),
+          );
+        }
+        const sqliteProcessor = new DeterministicProcessor({
+          reducer: new EarningsClusterReducer(),
+          store: new SqliteProcessingStore<EarningsClusterState>(database),
+          eventLog: sqliteLog,
+          manifest: makeManifest(runId),
+        });
+        await sqliteProcessor.processAvailable(pageSize);
+        assert.equal(
+          canonicalJson((await readAllEvents(sqliteLog, pageSize)) as unknown as JsonValue),
+          canonicalJson(captured.events as unknown as JsonValue),
+        );
+        assert.equal(
+          canonicalJson((await sqliteProcessor.snapshot(pageSize)) as unknown as JsonValue),
+          canonicalJson(captured.snapshot as unknown as JsonValue),
+        );
+      } finally {
+        database.close();
+      }
+    }
+  }
+  assert.equal(new Set(sourceSets).size, 1);
 });
