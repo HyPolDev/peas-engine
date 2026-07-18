@@ -38,10 +38,11 @@ Do not maintain task state independently in Linear, Notion, and GitHub.
   verified selected-observation loading, pure deterministic normalization, schema-V2 evidence
   provenance, trusted capture, and byte-identical live-style/replay processing in memory and
   SQLite. Historical RC.2 vectors and frozen kernel ports remain unchanged.
-- PR 2C is under repair on `dev/pr-2c-recorded-mirrors`. Its earlier implementation verdict was
-  superseded by findings against head `9aa6a404a3098e0a6d99c7ed7ab38aa8e965fe13`; the repaired,
-  fully validated head requires a fresh independent review for recorded FMP, NVIDIA Newsroom RSS,
-  cross-source replay, and the observation ledger.
+- PR 2C is review-ready on `dev/pr-2c-recorded-mirrors`. The repaired implementation head
+  `9b1a32a5e7992c7d98ac3bde8b79b032de76168e` received a fresh independent `GO` with no actionable
+  findings after the revoked-proxy repair. The complete offline suite passed 289 tests with zero
+  failures and four documented skips; Linux passed and the initially flaky Windows artifact-vault
+  check passed unchanged on rerun. This documentation-only follow-up records that final evidence.
 - No live SEC HTTP, FMP, issuer-IR, calendar, market-data, LLM, brokerage, or trading adapter exists.
 - The next product slice is explicitly read-only: no LLM dependency, no orders, no brokerage, and
   no portfolio mutation.
@@ -91,14 +92,13 @@ invariant.
 
 ## Immediate sequence
 
-Current checkpoint: PR 2B is merged as pull request #3. PR 2C's prior implementation decision was
-superseded by audit findings. Repairs must pass the complete offline validation matrix, be pushed to
-the existing pull request, and receive fresh independent review before merge review.
+Current checkpoint: PR 2B is merged as pull request #3. PR 2C's repaired implementation head passed
+the complete offline validation matrix and received a fresh independent `GO`. The remaining gates
+are this documentation-only evidence update, green CI on the resulting head, and human merge review.
 
-1. Validate and push the repaired PR 2C head; do not add live reads or merge it from this gate.
-2. Request fresh independent review of recorded FMP/NVIDIA identity, observation-ledger, replay,
-   fixture safety, and SEC compatibility evidence.
-3. Merge PR 2C only through the separate human review workflow after that review.
+1. Land the documentation-only PR 2C evidence update and keep required CI green.
+2. Mark pull request #4 ready for review and request human approval.
+3. Merge PR 2C only through the separate human review workflow; do not add live reads to it.
 4. Enable live read-only SEC/FMP/IR capture plus calendar prewarming and raw artifact retention.
 5. Run a restart/reconciliation and completeness drill, then begin the 100-200 cluster observation
    run before adding LLM extraction or trade simulation.

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "project": "PEAS Engine",
-  "lastReviewed": "2026-07-17",
+  "lastReviewed": "2026-07-18",
   "operatingModel": {
     "execution": "GitHub Issues/Projects",
     "specification": "Repository docs, ADRs, fixtures, and evidence",
@@ -15,7 +15,7 @@
     "mainCommit": "41f19b83e104857ed32b45fa5838c8199f5467ab",
     "release": "v0.2.0-kernel-rc.2",
     "focus": "PR 2C recorded FMP and NVIDIA IR contract-and-fixture gate",
-    "nextGate": "Complete validation, push repaired head, and request fresh independent review"
+    "nextGate": "Green CI on the documentation-only final-GO update, then human merge review of pull request #4"
   },
   "stages": [
     {
@@ -115,11 +115,15 @@
             "docs/contracts/pr-2c-fixture-manifest.md",
             "docs/contracts/pr-2c-acceptance-matrix.md",
             "docs/goals/pr-2c-contract-review.md",
+            "docs/audit/pr-2c-no-go-finding-matrix.json",
             "fixtures/fmp/v1/manifest.ts",
             "fixtures/ir/nvidia/v1/manifest.ts",
             "test/fmp-recorded-contract.test.ts",
             "test/nvidia-ir-recorded-contract.test.ts",
-            "test/recorded-mirror-acceptance.test.ts"
+            "test/recorded-mirror-acceptance.test.ts",
+            "https://github.com/HyPolDev/peas-engine/pull/4",
+            "https://github.com/HyPolDev/peas-engine/actions/runs/29640667768",
+            "audited-head@9b1a32a5e7992c7d98ac3bde8b79b032de76168e"
           ]
         },
         {
@@ -151,7 +155,9 @@
             "docs/adr/0009-observation-telemetry-and-clock-contract.md",
             "docs/contracts/pr-2c-observation-ledger-schema.md",
             "src/providers/observation-ledger.ts",
-            "test/observation-ledger-contract.test.ts"
+            "test/observation-ledger-contract.test.ts",
+            "docs/audit/pr-2c-no-go-finding-matrix.json",
+            "audited-head@9b1a32a5e7992c7d98ac3bde8b79b032de76168e"
           ]
         },
         {
