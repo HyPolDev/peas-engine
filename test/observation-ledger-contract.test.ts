@@ -9,9 +9,12 @@ import {
   createIssuerMapping,
   createObservationLedgerEntry,
   deriveAcquisitionObservationId,
+  deriveClockBasisId,
+  deriveIssuerMappingId,
   deriveMarketReferenceJoinKey,
   deriveProjectionDigest,
   deriveProjectionId,
+  deriveRawEvidenceSetHash,
   deriveRevisionFamilyIdentity,
   deriveSourceObservationId,
   deriveSourceRecordIdentity,
@@ -43,6 +46,11 @@ const nullClock = { clockBasisId: null, wallTimeMs: null, monotonicTimeUs: null 
 
 function digest(label: string): string {
   return canonicalHash("peas/observation-ledger-contract-test/v1", { label });
+}
+
+function rejectsLedger(reasonCode: string): (error: unknown) => boolean {
+  return (error) =>
+    error instanceof ObservationLedgerContractError && error.reasonCode === reasonCode;
 }
 
 function add(
@@ -592,6 +600,129 @@ test("unknown facts and extra clock declarations fail closed", () => {
     () => validateObservationLedgerBundle([primaryBasis, nullClockWithBasisParent]),
     /observation\.clock-basis-invalid/u,
   );
+});
+
+test("ledger rejects coercible identity fields and hostile containers before identity derivation", () => {
+  const acquisition = {
+    provider: "nvidia-ir",
+    retrievalAttemptId: "attempt",
+    sanitizedRequestIdentityHash: digest("coercion"),
+    routeLabel: "rss",
+  } as const;
+  assert.doesNotThrow(() => deriveAcquisitionObservationId(acquisition));
+  for (const hostile of [[digest("coercion")], 1, true, {}, null] as const) {
+    assert.throws(
+      () =>
+        deriveAcquisitionObservationId({
+          ...acquisition,
+          sanitizedRequestIdentityHash: hostile,
+        } as never),
+      rejectsLedger("observation.entry-invalid"),
+    );
+  }
+  assert.throws(
+    () =>
+      createIssuerMapping({
+        issuerCik: 1_234_567_890 as never,
+        symbols: [["NVDA"]] as never,
+        selectedSymbol: "NVDA",
+        mappingAuthority: "fixture",
+        mappingVersion: "v1",
+        effectiveFromMs: null,
+        effectiveToMs: null,
+      }),
+    rejectsLedger("observation.issuer-mapping-invalid"),
+  );
+
+  const basisPreimage = {
+    wallClock: "recorded-fixture",
+    synchronization: "not-applicable",
+    maximumErrorMs: null,
+    monotonicClock: "none",
+    monotonicSessionId: null,
+  } as const;
+  assert.doesNotThrow(() => deriveClockBasisId(basisPreimage));
+  assert.doesNotThrow(() =>
+    deriveIssuerMappingId({
+      issuerCik: "0001045810",
+      symbols: ["NVDA"],
+      selectedSymbol: "NVDA",
+      mappingAuthority: "fixture",
+      mappingVersion: "v1",
+      effectiveFromMs: null,
+      effectiveToMs: null,
+    }),
+  );
+  assert.doesNotThrow(() =>
+    deriveRawEvidenceSetHash([
+      {
+        role: "rss",
+        acquisitionObservationId: deriveAcquisitionObservationId(acquisition),
+        vaultObservationId: digest("vault"),
+        vaultObservationHash: digest("vault-hash"),
+        artifactDigest: digest("artifact"),
+        sizeBytes: 1,
+      },
+    ]),
+  );
+
+  const safe = recordedLedger();
+  let proxyTouched = false;
+  const proxyBundle = new Proxy(safe, {
+    get() {
+      proxyTouched = true;
+      throw new Error("proxy trap must not run");
+    },
+  });
+  const cyclic: unknown[] = [];
+  cyclic.push(cyclic);
+  const sparse = new Array<ObservationLedgerEntryV1>(1);
+  const customPrototype = Object.setPrototypeOf([...safe], { inherited() {} });
+  const accessor = [] as ObservationLedgerEntryV1[];
+  Object.defineProperty(accessor, "0", {
+    enumerable: true,
+    get() {
+      throw new Error("getter must not run");
+    },
+  });
+  Object.defineProperty(accessor, "length", { value: 1 });
+  for (const hostile of ["", null, {}, proxyBundle, cyclic, sparse, customPrototype, accessor]) {
+    assert.throws(
+      () => validateObservationLedgerBundle(hostile as never),
+      rejectsLedger("observation.entry-invalid"),
+    );
+  }
+  assert.equal(proxyTouched, false);
+});
+
+test("ledger clock error values and public basis constructors are runtime-closed", () => {
+  const base = {
+    wallClock: "system-utc",
+    synchronization: "verified-bound",
+    maximumErrorMs: 0,
+    monotonicClock: "none",
+    monotonicSessionId: null,
+  } as const;
+  assert.doesNotThrow(() => createClockBasis(base));
+  for (const value of [null, -1, 1.5, "1", true, {}, []] as const) {
+    assert.throws(
+      () => createClockBasis({ ...base, maximumErrorMs: value } as never),
+      rejectsLedger("observation.clock-basis-invalid"),
+    );
+  }
+  for (const synchronization of ["operator-asserted", "unspecified", "not-applicable"] as const) {
+    const wallClock = synchronization === "not-applicable" ? "recorded-fixture" : "system-utc";
+    assert.doesNotThrow(() =>
+      createClockBasis({ ...base, wallClock, synchronization, maximumErrorMs: null }),
+    );
+    for (const value of [0, -1, 1.5, "bad", true, {}, []] as const) {
+      assert.throws(
+        () =>
+          createClockBasis({ ...base, wallClock, synchronization, maximumErrorMs: value } as never),
+        rejectsLedger("observation.clock-basis-invalid"),
+      );
+    }
+  }
 });
 
 test("clock regression closure is exact, deterministic, and replay-safe", () => {
@@ -1636,8 +1767,11 @@ test("every declared ledger resource dimension has an exact and one-over executa
   const pageLedger = recordedLedger();
   assert.equal(paginateObservationLedger(pageLedger, 1).length, pageLedger.length);
   assert.equal(paginateObservationLedger(pageLedger, 10_000).length, 1);
-  assert.throws(() => paginateObservationLedger(pageLedger, 0), /Page size/u);
-  assert.throws(() => paginateObservationLedger(pageLedger, 10_001), /Page size/u);
+  assert.throws(() => paginateObservationLedger(pageLedger, 0), /observation\.page-size-invalid/u);
+  assert.throws(
+    () => paginateObservationLedger(pageLedger, 10_001),
+    /observation\.page-size-invalid/u,
+  );
 
   const oversizedBundle = Array.from({ length: 4_096 }, (_, index) => ({
     ...(pageLedger[0] as ObservationLedgerEntryV1),
@@ -1651,4 +1785,153 @@ test("every declared ledger resource dimension has an exact and one-over executa
     () => validateObservationLedgerBundle(oversizedBundle),
     /observation\.bundle-limit-exceeded/u,
   );
+});
+
+test("ledger byte, timestamp, cross-execution, and clock-parent boundary probes reach the public validator", () => {
+  const ledger = recordedLedger();
+  const normalized = ledger[4] as ObservationLedgerEntryV1;
+  assert.ok(normalized.facts.kind === "normalization.emitted");
+  const normalizedFacts = normalized.facts;
+  const exactPublicationTime: Extract<
+    ObservationLedgerFactsV1,
+    { kind: "normalization.emitted" }
+  >["publicationTime"] = {
+    publishedAtMs: WALL_TIME - 1_000,
+    timestampConfidence: "provider",
+    originalTimestamp: "t".repeat(256),
+  };
+  const exactTimestamp = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: EXECUTION,
+    parentEntryIds: normalized.parentEntryIds,
+    clock: normalized.clock,
+    facts: {
+      ...normalizedFacts,
+      publicationTime: exactPublicationTime,
+    },
+  });
+  assert.equal(
+    (exactTimestamp.facts as Extract<ObservationLedgerFactsV1, { kind: "normalization.emitted" }>)
+      .publicationTime.originalTimestamp?.length,
+    256,
+  );
+  assert.throws(
+    () =>
+      createObservationLedgerEntry({
+        schemaVersion: 1,
+        executionId: EXECUTION,
+        parentEntryIds: normalized.parentEntryIds,
+        clock: normalized.clock,
+        facts: {
+          ...normalizedFacts,
+          publicationTime: {
+            ...exactPublicationTime,
+            originalTimestamp: "t".repeat(257),
+          },
+        },
+      }),
+    rejectsLedger("observation.entry-invalid"),
+  );
+
+  const basis = ledger[0] as ObservationLedgerEntryV1;
+  const acquisition = ledger[1] as ObservationLedgerEntryV1;
+  const noBasisParent = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: EXECUTION,
+    parentEntryIds: [],
+    clock: acquisition.clock,
+    facts: acquisition.facts,
+  });
+  assert.throws(
+    () => validateObservationLedgerBundle([basis, noBasisParent]),
+    rejectsLedger("observation.clock-basis-invalid"),
+  );
+  const crossExecution = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: "other-execution",
+    parentEntryIds: [basis.entryId],
+    clock: acquisition.clock,
+    facts: acquisition.facts,
+  });
+  assert.throws(
+    () => validateObservationLedgerBundle([...ledger, crossExecution]),
+    rejectsLedger("observation.parent-transition-invalid"),
+  );
+
+  const limit = OBSERVATION_LEDGER_BUNDLE_MAX_BYTES;
+  const boundary = Array.from({ length: OBSERVATION_LEDGER_MAX_ENTRIES }, () => ({
+    a: "a".repeat(4_000),
+    b: "b".repeat(4_000),
+    c: "c".repeat(4_000),
+    d: "d".repeat(4_000),
+    e: "",
+  }));
+  let remaining =
+    limit - Buffer.byteLength(canonicalJson(boundary as unknown as JsonValue), "utf8");
+  for (const member of boundary) {
+    if (remaining <= 0) break;
+    const fill = Math.min(4_000, remaining);
+    member.e = "e".repeat(fill);
+    remaining -= fill;
+  }
+  assert.equal(Buffer.byteLength(canonicalJson(boundary as unknown as JsonValue), "utf8"), limit);
+  assert.throws(
+    () => validateObservationLedgerBundle(boundary as never),
+    rejectsLedger("observation.entry-invalid"),
+  );
+  const oneOver = boundary.map((member, index) =>
+    index === 0 ? { ...member, e: `${member.e}x` } : member,
+  );
+  assert.equal(
+    Buffer.byteLength(canonicalJson(oneOver as unknown as JsonValue), "utf8"),
+    limit + 1,
+  );
+  assert.throws(
+    () => validateObservationLedgerBundle(oneOver as never),
+    rejectsLedger("observation.bundle-limit-exceeded"),
+  );
+});
+
+test("ledger request and redelivery fact transitions have executable positive controls", () => {
+  const ledger = recordedLedger();
+  const basis = ledger[0] as ObservationLedgerEntryV1;
+  const acquisition = ledger[1] as ObservationLedgerEntryV1;
+  assert.ok(acquisition.facts.kind === "acquisition.declared");
+  const started = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: EXECUTION,
+    parentEntryIds: [basis.entryId, acquisition.entryId].sort(),
+    clock: acquisition.clock,
+    facts: {
+      kind: "request.started",
+      acquisitionObservationId: acquisition.facts.acquisitionObservationId,
+    },
+  });
+  const succeeded = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: EXECUTION,
+    parentEntryIds: [basis.entryId, started.entryId].sort(),
+    clock: acquisition.clock,
+    facts: {
+      kind: "request.succeeded",
+      acquisitionObservationId: acquisition.facts.acquisitionObservationId,
+      safeResponseMetadataHash: digest("response-metadata"),
+    },
+  });
+  assert.doesNotThrow(() =>
+    validateObservationLedgerBundle([basis, acquisition, started, succeeded]),
+  );
+
+  const normalized = ledger[4] as ObservationLedgerEntryV1;
+  const capture = ledger[5] as ObservationLedgerEntryV1;
+  assert.ok(normalized.facts.kind === "normalization.emitted");
+  assert.ok(capture.facts.kind === "capture.appended");
+  const redelivered = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: EXECUTION,
+    parentEntryIds: [basis.entryId, normalized.entryId].sort(),
+    clock: capture.clock,
+    facts: { ...capture.facts, kind: "capture.redelivered", position: capture.facts.position + 1 },
+  });
+  assert.doesNotThrow(() => validateObservationLedgerBundle([...ledger, redelivered]));
 });

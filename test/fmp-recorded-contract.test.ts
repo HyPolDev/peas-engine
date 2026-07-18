@@ -268,6 +268,61 @@ test("missing or naive time never falls back to retrieval time", async () => {
   assert.equal(result.draft.payload.originalTimestamp, null);
 });
 
+test("FMP quarantines malformed naive calendar time and preserves valid leap-day unknown time", () => {
+  const item = {
+    symbol: "SYNX",
+    publishedDate: "2028-02-29 23:59:59",
+    title: "Synthetic Naive Calendar Results",
+    text: "Original fictional body.",
+    site: null,
+    image: null,
+    url: null,
+  };
+  const leapDay = normalizedSelf([item]);
+  assert.equal(leapDay.status, "emitted");
+  if (leapDay.status === "emitted") {
+    assert.equal(leapDay.candidate.publishedAtMs, null);
+    assert.equal(leapDay.candidate.timestampConfidence, "unknown");
+  }
+  for (const publishedDate of [
+    "2026-02-29 12:00:00",
+    "2026-04-31 12:00:00",
+    "2026-05-07 24:00:00",
+    "2026-05-07 12:60:00",
+    "2026-05-07 12:00:60",
+  ]) {
+    const rejected = normalizeRecordedFmpCollection({
+      bytes: Buffer.from(JSON.stringify([{ ...item, publishedDate }])),
+      selector: ZERO_SELECTOR,
+      route: ROUTE,
+    });
+    assert.equal(rejected.status, "quarantined", publishedDate);
+    assert.equal(rejected.reasonCode, "fmp.timestamp-invalid", publishedDate);
+  }
+});
+
+test("FMP ASCII whitespace normalization preserves Unicode whitespace distinctions", () => {
+  const item = {
+    symbol: "SYNX",
+    publishedDate: "2026-05-07T16:30:00Z",
+    title: "Synthetic Whitespace Results",
+    text: "alpha beta",
+    site: null,
+    image: null,
+    url: null,
+  };
+  const ascii = normalizedSelf([item]);
+  const unicode = normalizedSelf([{ ...item, text: "alpha\u00a0beta" }]);
+  assert.equal(ascii.status, "emitted");
+  assert.equal(unicode.status, "emitted");
+  if (ascii.status !== "emitted" || unicode.status !== "emitted") return;
+  assert.equal(ascii.projection.text, "alpha beta");
+  assert.equal(unicode.projection.text, "alpha\u00a0beta");
+  assert.notEqual(ascii.selectedProjectionHash, unicode.selectedProjectionHash);
+  assert.notEqual(ascii.revisionId, unicode.revisionId);
+  assert.notEqual(ascii.eventDraftHash, unicode.eventDraftHash);
+});
+
 test("malformed input, duplicate keys, invalid time, digest mismatch, and bounds fail closed", async () => {
   const malformed = await load(emitted("malformed-json"));
   assert.equal(malformed.status, "quarantined");

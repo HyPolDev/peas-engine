@@ -10,6 +10,7 @@ import {
   type NvidiaFixtureManifestV1,
   type NvidiaRetrievedMemberV1,
 } from "../src/adapters/ir/nvidia/recorded-nvidia-fixture.js";
+import { canonicalJson, type JsonValue } from "../src/core/json.js";
 import { NVIDIA_IR_LIMITS } from "../src/providers/ir/nvidia/contracts.js";
 import {
   assertNvidiaDeclaredLimit,
@@ -231,6 +232,23 @@ test("duplicate GUIDs collapse only when retained RSS semantics are identical", 
     assert.equal(rejected.reasonCode, "ir.duplicate-guid-conflict");
 });
 
+test("record-family ambiguity is reached through a real RSS feed", async () => {
+  const baseline = (await fixture("baseline.rss")).toString("utf8");
+  const item = /<item>[\s\S]*<\/item>/u.exec(baseline)?.[0];
+  assert.ok(item);
+  const conflictingFamily = item
+    .replaceAll("synthetic-fiscal-2030-q1", "synthetic-fiscal-2030-q1-correction")
+    .replace("Entirely synthetic release.", "Conflicting retained RSS projection.");
+  const result = normalizeRecordedNvidiaIr({
+    rssBytes: bytes(baseline.replace("</channel>", `${conflictingFamily}</channel>`)),
+    releaseHtmlBytes: await fixture("baseline.html"),
+    selectionKey: KEY,
+  });
+  assert.equal(result.status, "quarantined");
+  if (result.status === "quarantined")
+    assert.equal(result.reasonCode, "ir.record-family-ambiguous");
+});
+
 test("URL, XML, HTML, canonical, and time failures have stable reasons", async () => {
   assert.equal(parseNvidiaReference(`${KEY}?source=rss#release`), KEY);
   assert.throws(() => parseNvidiaReference("https://NVIDIANEWS.nvidia.com/news/x"), {
@@ -273,7 +291,51 @@ test("URL, XML, HTML, canonical, and time failures have stable reasons", async (
   }
 });
 
-test("member limit is exact and the adapter cannot initiate network effects", async () => {
+test("NVIDIA URL policy rejects hostile RSS, canonical, and og:url references", async () => {
+  const rss = (await fixture("baseline.rss")).toString("utf8");
+  const html = (await fixture("baseline.html")).toString("utf8");
+  for (const forbidden of [
+    "https://other.invalid/news/synthetic-fiscal-2030-q1",
+    "https://nvidianews.nvidia.com:443/news/synthetic-fiscal-2030-q1",
+    "https://user:pass@nvidianews.nvidia.com/news/synthetic-fiscal-2030-q1",
+    "https://nvidianews.nvidia.com/news/synthetic%2dfiscal-2030-q1",
+    "https://nvidianews.nvidia.com\\news\\synthetic-fiscal-2030-q1",
+    "https://nvidianews.nvidia.com//news/synthetic-fiscal-2030-q1",
+    "https://nvidianews.nvidia.com/news/../synthetic-fiscal-2030-q1",
+    "https://nvidianews.nvidia.com/news/synthetïc-fiscal-2030-q1",
+  ]) {
+    const result = normalizeRecordedNvidiaIr({
+      rssBytes: bytes(rss.replaceAll(KEY, forbidden)),
+      releaseHtmlBytes: bytes(html),
+      selectionKey: KEY,
+    });
+    assert.equal(result.status, "quarantined", forbidden);
+    if (result.status === "quarantined")
+      assert.equal(result.reasonCode, "ir.link-invalid", forbidden);
+  }
+  const queryFragment = normalizeRecordedNvidiaIr({
+    rssBytes: bytes(rss.replace("?source=rss#release", "?query=accepted#fragment")),
+    releaseHtmlBytes: bytes(html.replace("?view=full", "?query=accepted#fragment")),
+    selectionKey: `${KEY}?query=accepted#fragment`,
+  });
+  assert.equal(queryFragment.status, "emitted");
+  for (const [attribute, value] of [
+    ["href", "https://other.invalid/news/synthetic-fiscal-2030-q1"],
+    ["content", "https://nvidianews.nvidia.com:443/news/synthetic-fiscal-2030-q1"],
+  ] as const) {
+    const result = normalizeRecordedNvidiaIr({
+      rssBytes: bytes(rss),
+      releaseHtmlBytes: bytes(
+        html.replace(new RegExp(`${attribute}="[^"]+"`, "u"), `${attribute}="${value}"`),
+      ),
+      selectionKey: KEY,
+    });
+    assert.equal(result.status, "quarantined", attribute);
+    if (result.status === "quarantined") assert.equal(result.reasonCode, "ir.canonical-conflict");
+  }
+});
+
+test("NVIDIA validates member types and bounds before any raw member digest", async () => {
   assert.doesNotThrow(() =>
     assertNvidiaRecordedMemberBounds(
       new Uint8Array(NVIDIA_IR_LIMITS.memberBytes),
@@ -288,6 +350,38 @@ test("member limit is exact and the adapter cannot initiate network effects", as
       ),
     { message: "ir.member-limit-exceeded" },
   );
+  const html = await fixture("baseline.html");
+  for (const hostile of [null, "rss", {}, []]) {
+    for (const [rssBytes, releaseHtmlBytes] of [
+      [hostile, html],
+      [await fixture("baseline.rss"), hostile],
+    ]) {
+      const result = normalizeRecordedNvidiaIr({
+        rssBytes,
+        releaseHtmlBytes,
+        selectionKey: KEY,
+      } as unknown as Parameters<typeof normalizeRecordedNvidiaIr>[0]);
+      assert.equal(result.status, "quarantined");
+      if (result.status === "quarantined") {
+        assert.equal(result.reasonCode, "ir.bundle-invalid");
+        assert.equal(result.transcript.rssArtifactHash, "0".repeat(64));
+        assert.equal(result.transcript.releaseHtmlArtifactHash, "0".repeat(64));
+      }
+    }
+  }
+  const oversizedInputs: readonly (readonly [Uint8Array, Uint8Array])[] = [
+    [new Uint8Array(NVIDIA_IR_LIMITS.memberBytes + 1), html],
+    [await fixture("baseline.rss"), new Uint8Array(NVIDIA_IR_LIMITS.memberBytes + 1)],
+  ];
+  for (const [rssBytes, releaseHtmlBytes] of oversizedInputs) {
+    const oversized = normalizeRecordedNvidiaIr({ rssBytes, releaseHtmlBytes, selectionKey: KEY });
+    assert.equal(oversized.status, "quarantined");
+    if (oversized.status === "quarantined") {
+      assert.equal(oversized.reasonCode, "ir.member-limit-exceeded");
+      assert.equal(oversized.transcript.rssArtifactHash, "0".repeat(64));
+      assert.equal(oversized.transcript.releaseHtmlArtifactHash, "0".repeat(64));
+    }
+  }
   let calls = 0;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (() => {
@@ -306,6 +400,102 @@ test("member limit is exact and the adapter cannot initiate network effects", as
     assert.equal(calls, 0);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("RSS and visible-release projection ceilings are enforced before projection hashes", async () => {
+  const baselineRss = (await fixture("baseline.rss")).toString("utf8");
+  const baselineHtml = (await fixture("baseline.html")).toString("utf8");
+  const rssWithDescription = (description: string): Uint8Array =>
+    bytes(
+      baselineRss.replace(
+        "<description>Entirely synthetic release.</description>",
+        `<description>${description}</description>`,
+      ),
+    );
+  const releaseWithBodyText = (bodyText: string): Uint8Array =>
+    bytes(baselineHtml.replace("All prose in this fixture is original.", bodyText));
+  const emptyRss = normalizeRecordedNvidiaIr({
+    rssBytes: rssWithDescription(""),
+    releaseHtmlBytes: bytes(baselineHtml),
+    selectionKey: KEY,
+  });
+  const oneRss = normalizeRecordedNvidiaIr({
+    rssBytes: rssWithDescription("x"),
+    releaseHtmlBytes: bytes(baselineHtml),
+    selectionKey: KEY,
+  });
+  assert.equal(emptyRss.status, "emitted");
+  assert.equal(oneRss.status, "emitted");
+  if (emptyRss.status !== "emitted" || oneRss.status !== "emitted") return;
+  const oneRssBytes = Buffer.byteLength(
+    canonicalJson(oneRss.projections.rssItem as unknown as JsonValue),
+    "utf8",
+  );
+  const rssExactLength = NVIDIA_IR_LIMITS.projectionBytes - oneRssBytes + 1;
+  const rssExact = normalizeRecordedNvidiaIr({
+    rssBytes: rssWithDescription("x".repeat(rssExactLength)),
+    releaseHtmlBytes: bytes(baselineHtml),
+    selectionKey: KEY,
+  });
+  assert.equal(rssExact.status, "emitted");
+  if (rssExact.status !== "emitted") return;
+  assert.equal(
+    Buffer.byteLength(canonicalJson(rssExact.projections.rssItem as unknown as JsonValue), "utf8"),
+    NVIDIA_IR_LIMITS.projectionBytes,
+  );
+  const rssOver = normalizeRecordedNvidiaIr({
+    rssBytes: rssWithDescription("x".repeat(rssExactLength + 1)),
+    releaseHtmlBytes: bytes(baselineHtml),
+    selectionKey: KEY,
+  });
+  assert.equal(rssOver.status, "quarantined");
+  if (rssOver.status === "quarantined") {
+    assert.equal(rssOver.reasonCode, "ir.parser-limit-exceeded");
+    assert.equal(rssOver.transcript.limitKind, "extracted-text-bytes");
+  }
+
+  const emptyRelease = normalizeRecordedNvidiaIr({
+    rssBytes: bytes(baselineRss),
+    releaseHtmlBytes: releaseWithBodyText(""),
+    selectionKey: KEY,
+  });
+  const oneRelease = normalizeRecordedNvidiaIr({
+    rssBytes: bytes(baselineRss),
+    releaseHtmlBytes: releaseWithBodyText("x"),
+    selectionKey: KEY,
+  });
+  assert.equal(emptyRelease.status, "emitted");
+  assert.equal(oneRelease.status, "emitted");
+  if (emptyRelease.status !== "emitted" || oneRelease.status !== "emitted") return;
+  const oneReleaseBytes = Buffer.byteLength(
+    canonicalJson(oneRelease.projections.releaseVisible as unknown as JsonValue),
+    "utf8",
+  );
+  const releaseExactLength = NVIDIA_IR_LIMITS.projectionBytes - oneReleaseBytes + 1;
+  const releaseExact = normalizeRecordedNvidiaIr({
+    rssBytes: bytes(baselineRss),
+    releaseHtmlBytes: releaseWithBodyText("x".repeat(releaseExactLength)),
+    selectionKey: KEY,
+  });
+  assert.equal(releaseExact.status, "emitted");
+  if (releaseExact.status !== "emitted") return;
+  assert.equal(
+    Buffer.byteLength(
+      canonicalJson(releaseExact.projections.releaseVisible as unknown as JsonValue),
+      "utf8",
+    ),
+    NVIDIA_IR_LIMITS.projectionBytes,
+  );
+  const releaseOver = normalizeRecordedNvidiaIr({
+    rssBytes: bytes(baselineRss),
+    releaseHtmlBytes: releaseWithBodyText("x".repeat(releaseExactLength + 1)),
+    selectionKey: KEY,
+  });
+  assert.equal(releaseOver.status, "quarantined");
+  if (releaseOver.status === "quarantined") {
+    assert.equal(releaseOver.reasonCode, "ir.parser-limit-exceeded");
+    assert.equal(releaseOver.transcript.limitKind, "extracted-text-bytes");
   }
 });
 

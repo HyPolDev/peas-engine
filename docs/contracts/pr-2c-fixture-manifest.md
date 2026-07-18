@@ -84,11 +84,15 @@ type DerivedProjectionProofV1 = Readonly<{
 }>;
 ```
 
-FMP has one retrieved collection and one derived selected-item proof. NVIDIA has retrieved feed and
-release HTML plus derived RSS-item and visible-release proofs. A derived proof has no path,
+FMP has one retrieved collection and one derived selected-item proof only when the outcome emits.
+Ignored and quarantined FMP outcomes have no derived proof. NVIDIA has retrieved feed and release
+HTML plus exactly two unique derived proofs: one `ir.rss-item` and one `ir.release-visible`. A
+derived proof has no path,
 observation, selected observation, retrieval time, or `ArtifactStore` operation. Tests must reject
 any attempt to give it one. Each projection is independently recomputed from fully consumed
-verified parent bytes and exact selector/policy.
+verified parent bytes and exact selector/policy. Loaders compare supplied and recomputed proof maps
+in both directions; a missing, duplicate, extra, parent-, policy-, hash-, or size-substituted role
+is a stable bundle-hash mismatch. Terminal/failure transcripts carry no declared projection hash.
 
 Retrieved members canonicalize by role/digest. Each selected observation exists, is unique, has
 the declared provider/digest, and satisfies retrieval `<= asOfMs` unless the case intentionally

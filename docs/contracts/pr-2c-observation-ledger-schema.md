@@ -3,7 +3,11 @@
 This file closes the executable shapes and transitions summarized by ADR 0009. Every object is
 exact inert JSON: unknown, inherited, accessor, symbol, sparse, proxy, duplicate, non-finite, and
 unsafe-integer values reject. Hash strings are lowercase 64-hex unless a prefixed identity is
-specified. Canonical JSON is RFC 8785 after these validations.
+specified. Every public ledger constructor, validator, pagination/replay helper, and identity
+derivation first snapshots an own-data, dense, bounded JSON value before property access,
+canonicalization, hashing, spreading, iteration, or recursive traversal. Non-array bundle inputs
+and hostile containers fail with a stable `observation.*` reason; canonical JSON is RFC 8785 only
+after these validations.
 
 ## Envelope, clock, and identity
 
@@ -51,7 +55,8 @@ resorted copy fails the vector.
 
 Basis is null iff both time fields are null. Monotonic time implies wall time and basis.
 `monotonicClock:"none"` requires a null session; `process-monotonic-us` requires a non-null session.
-`maximumErrorMs` is non-null iff synchronization is `verified-bound`. Recorded/replayed bases
+`maximumErrorMs` is a non-negative safe integer exactly when synchronization is `verified-bound`;
+it is exactly null for `operator-asserted`, `unspecified`, and `not-applicable`. Recorded/replayed bases
 require `not-applicable`; system UTC permits only `verified-bound`, `operator-asserted`, or
 `unspecified`. A basis declaration has an all-null clock. Every other entry with non-null
 `clockBasisId` has the matching earlier `clock-basis.declared` entry as one additional direct

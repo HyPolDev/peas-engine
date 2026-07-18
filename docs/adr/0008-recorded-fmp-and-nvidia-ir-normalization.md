@@ -145,8 +145,10 @@ symbol, ten-digit CIK, and `YYYY-Q1..Q4|FY`. Route hash uses
 
 Explicit time grammar is `YYYY-MM-DDTHH:mm:ss[.1-3](Z|+/-HH:MM)`; naive grammar uses a space and no
 offset. Both are ASCII Gregorian years 1970-9999, no leap seconds, valid clock, no surrounding
-space. Offset is at most 14:00. Explicit converts to safe epoch/provider confidence; valid naive
-and null remain null/unknown; any other non-null value is timestamp-invalid. No timezone,
+space. Naive values undergo the same Gregorian/calendar/clock validation as explicit values before
+they map to null/unknown; malformed present naive values are `fmp.timestamp-invalid`. Offset is at
+most 14:00. Explicit converts to safe epoch/provider confidence; valid naive and null remain
+null/unknown; any other non-null value is timestamp-invalid. No timezone,
 geography, locale, or retrieval inference exists.
 
 FMP has one retrieved `fmp.collection-json` member and one separate derived
@@ -291,6 +293,11 @@ entity implementation is `entities@8.0.0`. XML uses exactly `{xmlMode:true,decod
 lowerCaseTags:false,lowerCaseAttributeNames:false,recognizeSelfClosing:true}`. HTML uses exactly
 `{xmlMode:false,decodeEntities:true,lowerCaseTags:true,lowerCaseAttributeNames:true,
 recognizeSelfClosing:false}`. No DOM/tree adapter or browser parser participates.
+
+The public normalizer first requires both members to be supported `Uint8Array` values, applies the
+individual and aggregate member ceilings, and only then computes a raw digest, decodes, or parses.
+Each completed RSS-item and release-visible projection is measured as canonical UTF-8 JSON and must
+fit the 4 MiB projection ceiling before its component hash is formed.
 
 Each raw document and decoded RSS-content fragment starts a fresh parser with an empty element
 stack; content is a top-level fragment with no synthetic context element. The ordered streaming

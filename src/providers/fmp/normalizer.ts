@@ -42,10 +42,11 @@ const ITEM_FIELDS = Object.freeze([
 ]);
 const EXPLICIT_TIME =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/u;
-const NAIVE_TIME = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,3})?$/u;
+const NAIVE_TIME = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/u;
 const HTML_COMMENT = /<!--[\s\S]*?-->/gu;
-const URL_TOKEN = /\bhttps?:\/\/[^\s<>"'`]+/giu;
-const SEMANTIC_SPACE = /\s+/gu;
+const URL_TOKEN = /\bhttps?:\/\/[^\t\n\f\r <>"'`]+/giu;
+const ASCII_EDGE = /^[\t\n\f\r ]+|[\t\n\f\r ]+$/gu;
+const ASCII_SPACE = /[\t\n\f\r ]+/gu;
 
 type FmpItem = Readonly<{
   symbol: string;
@@ -131,8 +132,44 @@ function semanticText(value: string): string {
   return value
     .replace(HTML_COMMENT, " ")
     .replace(URL_TOKEN, " ")
-    .replace(SEMANTIC_SPACE, " ")
-    .trim();
+    .replace(ASCII_SPACE, " ")
+    .replace(ASCII_EDGE, "");
+}
+
+function validateCalendarClock(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  second: number,
+  milliseconds: number,
+): number {
+  if (
+    year < 1970 ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31 ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59
+  ) {
+    throw new NormalizeFailure("fmp.timestamp-invalid");
+  }
+  const local = Date.UTC(year, month - 1, day, hour, minute, second, milliseconds);
+  const check = new Date(local);
+  if (
+    check.getUTCFullYear() !== year ||
+    check.getUTCMonth() !== month - 1 ||
+    check.getUTCDate() !== day ||
+    check.getUTCHours() !== hour ||
+    check.getUTCMinutes() !== minute ||
+    check.getUTCSeconds() !== second
+  ) {
+    throw new NormalizeFailure("fmp.timestamp-invalid");
+  }
+  return local;
 }
 
 function parseItem(value: JsonValue): FmpItem {
@@ -167,7 +204,24 @@ function parseItem(value: JsonValue): FmpItem {
 }
 
 function publication(value: string | null): Publication {
-  if (value === null || NAIVE_TIME.test(value)) {
+  if (value === null) {
+    return freeze({
+      publishedAtMs: null,
+      timestampConfidence: "unknown",
+      originalTimestamp: null,
+    });
+  }
+  const naive = NAIVE_TIME.exec(value);
+  if (naive !== null) {
+    validateCalendarClock(
+      Number(naive[1]),
+      Number(naive[2]),
+      Number(naive[3]),
+      Number(naive[4]),
+      Number(naive[5]),
+      Number(naive[6]),
+      Number((naive[7] ?? "").padEnd(3, "0")),
+    );
     return freeze({
       publishedAtMs: null,
       timestampConfidence: "unknown",
@@ -184,31 +238,8 @@ function publication(value: string | null): Publication {
   const second = Number(match[6]);
   const milliseconds = Number((match[7] ?? "").padEnd(3, "0"));
   const zone = match[8];
-  if (
-    year < 1970 ||
-    month < 1 ||
-    month > 12 ||
-    day < 1 ||
-    day > 31 ||
-    hour > 23 ||
-    minute > 59 ||
-    second > 59 ||
-    zone === undefined
-  ) {
-    throw new NormalizeFailure("fmp.timestamp-invalid");
-  }
-  const local = Date.UTC(year, month - 1, day, hour, minute, second, milliseconds);
-  const check = new Date(local);
-  if (
-    check.getUTCFullYear() !== year ||
-    check.getUTCMonth() !== month - 1 ||
-    check.getUTCDate() !== day ||
-    check.getUTCHours() !== hour ||
-    check.getUTCMinutes() !== minute ||
-    check.getUTCSeconds() !== second
-  ) {
-    throw new NormalizeFailure("fmp.timestamp-invalid");
-  }
+  if (zone === undefined) throw new NormalizeFailure("fmp.timestamp-invalid");
+  const local = validateCalendarClock(year, month, day, hour, minute, second, milliseconds);
   let offset = 0;
   if (zone !== "Z") {
     const zoneHour = Number(zone.slice(1, 3));

@@ -71,6 +71,7 @@ const DROPPED = new Set([
 ]);
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const UNAVAILABLE_ARTIFACT_HASH = "0".repeat(64);
 
 function digest(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
@@ -269,6 +270,7 @@ function hasClass(node: Node, className: string): boolean {
 
 export function parseNvidiaReference(value: string): string {
   if (
+    typeof value !== "string" ||
     Buffer.byteLength(value, "utf8") > NVIDIA_IR_LIMITS.referenceBytes ||
     !/^[!-~]+$/u.test(value) ||
     value.includes("\\") ||
@@ -383,6 +385,10 @@ function parseRss(
   const selectionKeys = new Map<string, string>();
   for (const item of items) {
     const parsed = parseRssItem(item, rss.attributes["xmlns:media"] !== undefined, chunkSize);
+    assertNvidiaDeclaredLimit(
+      "projection-bytes",
+      Buffer.byteLength(canonicalJson(parsed.projection as unknown as JsonValue), "utf8"),
+    );
     const projectionHash = canonicalHash(
       "peas/nvidia-ir-rss-item-projection/v1",
       parsed.projection as unknown as JsonValue,
@@ -666,15 +672,24 @@ export function normalizeRecordedNvidiaIr(
   input: NvidiaRecordedInput,
   options: ParseOptions = {},
 ): NvidiaNormalizationResult {
-  const rssArtifactHash = digest(input.rssBytes);
-  const releaseHtmlArtifactHash = digest(input.releaseHtmlBytes);
+  let rssArtifactHash = UNAVAILABLE_ARTIFACT_HASH;
+  let releaseHtmlArtifactHash = UNAVAILABLE_ARTIFACT_HASH;
   const hashes: {
     -readonly [K in keyof NvidiaNormalizationTranscript]?: NvidiaNormalizationTranscript[K];
   } = {};
   try {
-    assertNvidiaRecordedMemberBounds(input.rssBytes, input.releaseHtmlBytes);
-    const selectionKey = parseNvidiaReference(input.selectionKey);
-    const rss = parseRss(decode(input.rssBytes), selectionKey, options.rssChunkSize);
+    if (input === null || typeof input !== "object" || Array.isArray(input)) {
+      throw new NvidiaContractError("ir.bundle-invalid");
+    }
+    const { rssBytes, releaseHtmlBytes, selectionKey: rawSelectionKey } = input;
+    if (!(rssBytes instanceof Uint8Array) || !(releaseHtmlBytes instanceof Uint8Array)) {
+      throw new NvidiaContractError("ir.bundle-invalid");
+    }
+    assertNvidiaRecordedMemberBounds(rssBytes, releaseHtmlBytes);
+    rssArtifactHash = digest(rssBytes);
+    releaseHtmlArtifactHash = digest(releaseHtmlBytes);
+    const selectionKey = parseNvidiaReference(rawSelectionKey);
+    const rss = parseRss(decode(rssBytes), selectionKey, options.rssChunkSize);
     hashes.rssItemProjectionHash = canonicalHash(
       "peas/nvidia-ir-rss-item-projection/v1",
       rss.projection as unknown as JsonValue,
@@ -696,7 +711,7 @@ export function normalizeRecordedNvidiaIr(
       };
     }
     const release = parseRelease(
-      decode(input.releaseHtmlBytes),
+      decode(releaseHtmlBytes),
       selectionKey,
       rss.projection.title,
       options.htmlChunkSize,

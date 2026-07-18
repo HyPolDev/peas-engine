@@ -23,7 +23,7 @@ or event.
 | quarantined | `fmp.string-limit-exceeded` | A fixed field bound is exceeded |
 | quarantined | `fmp.unsupported-encoding` | Input is not permitted fatal UTF-8 |
 | quarantined | `fmp.malformed-json` | Syntax, duplicate key, or inert-object policy fails |
-| quarantined | `fmp.timestamp-invalid` | An explicit-offset candidate is malformed/out of range |
+| quarantined | `fmp.timestamp-invalid` | Any present explicit or naive candidate is malformed or out of Gregorian/calendar/clock range |
 
 FMP `limitKind`: `json-tokens`, `json-depth`, `object-keys`, or `decoded-string-bytes`.
 
@@ -69,7 +69,8 @@ IR `limitKind`: `xml-tokens`, `xml-depth`, `xml-attributes`, `html-tokens`, `htm
 `observation.verified-byte-count-mismatch`, `observation.normalization-ignored`,
 `observation.normalization-quarantined`, `observation.capture-conflict`,
 `observation.selection-invalid`, `observation.selection-future`,
-`observation.fact-limit-exceeded`, and `observation.entry-limit-exceeded`.
+`observation.fact-limit-exceeded`, `observation.entry-limit-exceeded`, and
+`observation.page-size-invalid`.
 
 `observation.publication-time-unknown` is informational and does not itself quarantine a valid
 provider item.

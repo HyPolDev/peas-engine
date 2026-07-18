@@ -1,4 +1,5 @@
 import { canonicalHash } from "../core/hash.js";
+import { types as utilityTypes } from "node:util";
 import {
   assertJsonWithinLimits,
   canonicalJson,
@@ -48,6 +49,20 @@ export const OBSERVATION_LEDGER_ENTRY_LIMITS = Object.freeze({
   maxObjectKeys: 64,
   maxStringBytes: 4 * 1024,
   maxCanonicalBytes: OBSERVATION_LEDGER_ENTRY_MAX_BYTES,
+}) satisfies JsonLimits;
+
+/**
+ * The bundle boundary is deliberately separate from the per-entry JSON limit.  In particular,
+ * it is the only place a 4,096-member array is allowed.  All values are inspected through own
+ * data descriptors before any schema code, canonicalization, hashing, spreading, or iteration.
+ */
+const OBSERVATION_LEDGER_BUNDLE_LIMITS = Object.freeze({
+  maxDepth: OBSERVATION_LEDGER_ENTRY_LIMITS.maxDepth + 1,
+  maxNodes: OBSERVATION_LEDGER_MAX_ENTRIES * OBSERVATION_LEDGER_ENTRY_LIMITS.maxNodes + 1,
+  maxArrayLength: OBSERVATION_LEDGER_MAX_ENTRIES,
+  maxObjectKeys: OBSERVATION_LEDGER_ENTRY_LIMITS.maxObjectKeys,
+  maxStringBytes: OBSERVATION_LEDGER_ENTRY_LIMITS.maxStringBytes,
+  maxCanonicalBytes: OBSERVATION_LEDGER_BUNDLE_MAX_BYTES,
 }) satisfies JsonLimits;
 
 export type ClockBasisV1 = Readonly<{
@@ -283,8 +298,182 @@ function fail(reasonCode: string): never {
   throw new ObservationLedgerContractError(reasonCode);
 }
 
+class LedgerInputLimitError extends Error {}
+
+const LEDGER_ARRAY_PROTOTYPE = Array.prototype;
+const LEDGER_OBJECT_PROTOTYPE = Object.prototype;
+
+function ledgerInputError(reasonCode: string, limitReasonCode: string, error: unknown): never {
+  if (error instanceof LedgerInputLimitError || error instanceof RangeError) {
+    fail(limitReasonCode);
+  }
+  fail(reasonCode);
+}
+
+/**
+ * Walk untrusted values without property reads.  This complements the shared JSON validator by
+ * rejecting custom Array prototypes (which otherwise can supply executable inherited methods).
+ * It also gives every ledger public API one inert, bounded input gate before it touches a caller
+ * value.  Only own enumerable data properties are admitted.
+ */
+function assertInertLedgerJson(value: unknown, limits: JsonLimits): void {
+  type Frame = Readonly<{ value: unknown; depth: number; leaving?: boolean }>;
+  const frames: Frame[] = [{ value, depth: 1 }];
+  const active = new Set<object>();
+  let nodes = 0;
+
+  while (frames.length > 0) {
+    const frame = frames.pop();
+    if (frame === undefined) break;
+    if (frame.leaving) {
+      active.delete(frame.value as object);
+      continue;
+    }
+    nodes += 1;
+    if (nodes > limits.maxNodes || frame.depth > limits.maxDepth) {
+      throw new LedgerInputLimitError();
+    }
+    if (frame.value === null) continue;
+    if (typeof frame.value === "string") {
+      if (Buffer.byteLength(frame.value, "utf8") > limits.maxStringBytes) {
+        throw new LedgerInputLimitError();
+      }
+      continue;
+    }
+    if (typeof frame.value === "boolean") continue;
+    if (typeof frame.value === "number") {
+      if (!Number.isSafeInteger(frame.value) || Object.is(frame.value, -0)) {
+        throw new TypeError("ledger JSON numbers must be safe integers");
+      }
+      continue;
+    }
+    if (typeof frame.value !== "object") {
+      throw new TypeError("ledger input must be JSON");
+    }
+
+    const container = frame.value;
+    if (utilityTypes.isProxy(container) || active.has(container)) {
+      throw new TypeError("ledger input must be inert JSON");
+    }
+    active.add(container);
+    frames.push({ value: container, depth: frame.depth, leaving: true });
+
+    if (Array.isArray(container)) {
+      if (Object.getPrototypeOf(container) !== LEDGER_ARRAY_PROTOTYPE) {
+        throw new TypeError("ledger arrays must have the intrinsic prototype");
+      }
+      const lengthDescriptor = Object.getOwnPropertyDescriptor(container, "length");
+      if (
+        lengthDescriptor === undefined ||
+        !("value" in lengthDescriptor) ||
+        typeof lengthDescriptor.value !== "number" ||
+        !Number.isSafeInteger(lengthDescriptor.value) ||
+        lengthDescriptor.value < 0
+      ) {
+        throw new TypeError("ledger arrays require an own dense length");
+      }
+      const length = lengthDescriptor.value;
+      if (length > limits.maxArrayLength) throw new LedgerInputLimitError();
+      const keys = Reflect.ownKeys(container);
+      let indexes = 0;
+      for (const key of keys) {
+        if (key === "length") continue;
+        if (typeof key !== "string" || !/^(?:0|[1-9]\d*)$/u.test(key)) {
+          throw new TypeError("ledger arrays cannot contain extra or symbol properties");
+        }
+        const index = Number(key);
+        if (!Number.isSafeInteger(index) || index >= length) {
+          throw new TypeError("ledger arrays must be dense");
+        }
+        const descriptor = Object.getOwnPropertyDescriptor(container, key);
+        if (
+          descriptor === undefined ||
+          !("value" in descriptor) ||
+          descriptor.enumerable !== true
+        ) {
+          throw new TypeError("ledger arrays require own enumerable data members");
+        }
+        indexes += 1;
+        frames.push({ value: descriptor.value, depth: frame.depth + 1 });
+      }
+      if (indexes !== length) throw new TypeError("ledger arrays must be dense");
+      continue;
+    }
+
+    const prototype = Object.getPrototypeOf(container);
+    if (prototype !== LEDGER_OBJECT_PROTOTYPE && prototype !== null) {
+      throw new TypeError("ledger objects must be plain");
+    }
+    const keys = Reflect.ownKeys(container);
+    if (keys.length > limits.maxObjectKeys) throw new LedgerInputLimitError();
+    for (const key of keys) {
+      if (typeof key !== "string" || key === "__proto__") {
+        throw new TypeError("ledger objects cannot contain unsupported keys");
+      }
+      if (Buffer.byteLength(key, "utf8") > limits.maxStringBytes) {
+        throw new LedgerInputLimitError();
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(container, key);
+      if (descriptor === undefined || !("value" in descriptor) || descriptor.enumerable !== true) {
+        throw new TypeError("ledger objects require own enumerable data members");
+      }
+      frames.push({ value: descriptor.value, depth: frame.depth + 1 });
+    }
+  }
+}
+
+function snapshotLedgerInput<T>(
+  value: T,
+  limits: JsonLimits,
+  reasonCode: string,
+  limitReasonCode: string,
+): T {
+  try {
+    assertInertLedgerJson(value, limits);
+    assertJsonWithinLimits(value, limits, "$.observationLedger");
+    // The preflight above has already rejected executable containers; cloning now creates a
+    // detached JSON value without ever consulting caller-owned properties again.
+    return cloneJson(value as JsonValue) as T;
+  } catch (error) {
+    return ledgerInputError(reasonCode, limitReasonCode, error);
+  }
+}
+
+function snapshotLedgerRecord<T>(
+  value: T,
+  reasonCode = "observation.entry-invalid",
+  limitReasonCode = "observation.entry-limit-exceeded",
+): T {
+  const snapshot = snapshotLedgerInput(
+    value,
+    OBSERVATION_LEDGER_ENTRY_LIMITS,
+    reasonCode,
+    limitReasonCode,
+  );
+  if (snapshot === null || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    fail("observation.entry-invalid");
+  }
+  return snapshot;
+}
+
+function snapshotLedgerArray<T>(value: T): T {
+  const snapshot = snapshotLedgerInput(
+    value,
+    OBSERVATION_LEDGER_ENTRY_LIMITS,
+    "observation.entry-invalid",
+    "observation.entry-limit-exceeded",
+  );
+  if (!Array.isArray(snapshot)) fail("observation.entry-invalid");
+  return snapshot;
+}
+
 function asJson(value: unknown): JsonValue {
-  return value as JsonValue;
+  return snapshotLedgerInput(
+    value,
+    OBSERVATION_LEDGER_ENTRY_LIMITS,
+    "observation.entry-invalid",
+    "observation.entry-limit-exceeded",
+  ) as JsonValue;
 }
 
 function safeInteger(value: unknown, nullable = false): value is number | null {
@@ -299,7 +488,18 @@ function boundedIdentifier(value: unknown): value is string {
   );
 }
 
+function matches(value: unknown, expression: RegExp): value is string {
+  return typeof value === "string" && expression.test(value);
+}
+
+function hash(value: unknown): value is string {
+  return matches(value, HASH);
+}
+
 function exactKeys(value: object, keys: readonly string[]): void {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    fail("observation.entry-invalid");
+  }
   const actual = Object.keys(value).sort();
   const expected = [...keys].sort();
   if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
@@ -312,23 +512,31 @@ function sortedUnique(values: readonly string[]): boolean {
 }
 
 export function deriveClockBasisId(value: Omit<ClockBasisV1, "clockBasisId">): string {
-  return `clk1_${canonicalHash(OBSERVATION_CLOCK_BASIS_DOMAIN, asJson(value))}`;
+  const input = snapshotLedgerRecord(value, "observation.clock-basis-invalid");
+  validateClockBasisPreimage(input);
+  return `clk1_${canonicalHash(OBSERVATION_CLOCK_BASIS_DOMAIN, asJson(input))}`;
 }
 
 export function createClockBasis(value: Omit<ClockBasisV1, "clockBasisId">): ClockBasisV1 {
-  const basis: ClockBasisV1 = { ...value, clockBasisId: deriveClockBasisId(value) };
+  const input = snapshotLedgerRecord(value, "observation.clock-basis-invalid");
+  validateClockBasisPreimage(input);
+  const basis: ClockBasisV1 = { ...input, clockBasisId: deriveClockBasisId(input) };
   validateClockBasis(basis);
   return Object.freeze(basis);
 }
 
 export function deriveIssuerMappingId(value: Omit<IssuerMappingV1, "issuerMappingId">): string {
-  return `imap1_${canonicalHash(OBSERVATION_ISSUER_MAPPING_DOMAIN, asJson(value))}`;
+  const input = snapshotLedgerRecord(value, "observation.issuer-mapping-invalid");
+  validateIssuerMappingPreimage(input);
+  return `imap1_${canonicalHash(OBSERVATION_ISSUER_MAPPING_DOMAIN, asJson(input))}`;
 }
 
 export function createIssuerMapping(
   value: Omit<IssuerMappingV1, "issuerMappingId">,
 ): IssuerMappingV1 {
-  const mapping: IssuerMappingV1 = { ...value, issuerMappingId: deriveIssuerMappingId(value) };
+  const input = snapshotLedgerRecord(value, "observation.issuer-mapping-invalid");
+  validateIssuerMappingPreimage(input);
+  const mapping: IssuerMappingV1 = { ...input, issuerMappingId: deriveIssuerMappingId(input) };
   validateIssuerMapping(mapping);
   return Object.freeze(mapping);
 }
@@ -339,15 +547,32 @@ export function deriveAcquisitionObservationId(value: {
   sanitizedRequestIdentityHash: string;
   routeLabel: string;
 }): string {
-  return `aob1_${canonicalHash(OBSERVATION_ACQUISITION_DOMAIN, asJson(value))}`;
+  const input = snapshotLedgerRecord(value);
+  exactKeys(input, [
+    "provider",
+    "retrievalAttemptId",
+    "sanitizedRequestIdentityHash",
+    "routeLabel",
+  ]);
+  if (
+    !boundedIdentifier(input.provider) ||
+    !boundedIdentifier(input.retrievalAttemptId) ||
+    !hash(input.sanitizedRequestIdentityHash) ||
+    !boundedIdentifier(input.routeLabel)
+  ) {
+    fail("observation.entry-invalid");
+  }
+  return `aob1_${canonicalHash(OBSERVATION_ACQUISITION_DOMAIN, asJson(input))}`;
 }
 
 export function deriveProjectionDigest(canonicalProjection: JsonValue): string {
-  return canonicalHash(OBSERVATION_PROJECTION_DIGEST_DOMAIN, canonicalProjection);
+  return canonicalHash(OBSERVATION_PROJECTION_DIGEST_DOMAIN, asJson(canonicalProjection));
 }
 
 export function deriveRawEvidenceSetHash(rawArtifactLinks: readonly RawArtifactLinkV1[]): string {
-  const members = rawArtifactLinks
+  const links = snapshotLedgerArray(rawArtifactLinks) as readonly RawArtifactLinkV1[];
+  validateRawArtifactLinks(links);
+  const members = links
     .map((link) => ({ role: link.role, artifactDigest: link.artifactDigest }))
     .sort((left, right) =>
       left.role === right.role
@@ -369,11 +594,25 @@ export function deriveProjectionId(value: {
   rawArtifactLinks: readonly RawArtifactLinkV1[];
   projectionDigest: string;
 }): string {
+  const input = snapshotLedgerRecord(value);
+  exactKeys(input, [
+    "loaderIdentity",
+    "normalizerIdentity",
+    "rawArtifactLinks",
+    "projectionDigest",
+  ]);
+  if (
+    !boundedIdentifier(input.loaderIdentity) ||
+    !boundedIdentifier(input.normalizerIdentity) ||
+    !hash(input.projectionDigest)
+  ) {
+    fail("observation.entry-invalid");
+  }
   return `prj1_${canonicalHash(OBSERVATION_PROJECTION_DOMAIN, {
-    loaderIdentity: value.loaderIdentity,
-    normalizerIdentity: value.normalizerIdentity,
-    rawEvidenceSetHash: deriveRawEvidenceSetHash(value.rawArtifactLinks),
-    projectionDigest: value.projectionDigest,
+    loaderIdentity: input.loaderIdentity,
+    normalizerIdentity: input.normalizerIdentity,
+    rawEvidenceSetHash: deriveRawEvidenceSetHash(input.rawArtifactLinks),
+    projectionDigest: input.projectionDigest,
   })}`;
 }
 
@@ -382,7 +621,16 @@ export function deriveSourceRecordIdentity(value: {
   source: string;
   providerRecordId: string;
 }): string {
-  return `src1_${canonicalHash(OBSERVATION_SOURCE_RECORD_DOMAIN, value)}`;
+  const input = snapshotLedgerRecord(value);
+  exactKeys(input, ["provider", "source", "providerRecordId"]);
+  if (
+    !boundedIdentifier(input.provider) ||
+    !boundedIdentifier(input.source) ||
+    !boundedIdentifier(input.providerRecordId)
+  ) {
+    fail("observation.entry-invalid");
+  }
+  return `src1_${canonicalHash(OBSERVATION_SOURCE_RECORD_DOMAIN, input)}`;
 }
 
 export function deriveSourceVersionIdentity(value: {
@@ -391,7 +639,23 @@ export function deriveSourceVersionIdentity(value: {
   projectionDigest: string;
   evidenceBundleHash: string | null;
 }): string {
-  return `svr1_${canonicalHash(OBSERVATION_SOURCE_VERSION_DOMAIN, value)}`;
+  const input = snapshotLedgerRecord(value);
+  exactKeys(input, [
+    "sourceRecordIdentity",
+    "providerRevisionId",
+    "projectionDigest",
+    "evidenceBundleHash",
+  ]);
+  if (
+    typeof input.sourceRecordIdentity !== "string" ||
+    !matches(input.sourceRecordIdentity, /^src1_[0-9a-f]{64}$/u) ||
+    !boundedIdentifier(input.providerRevisionId) ||
+    !hash(input.projectionDigest) ||
+    (input.evidenceBundleHash !== null && !hash(input.evidenceBundleHash))
+  ) {
+    fail("observation.entry-invalid");
+  }
+  return `svr1_${canonicalHash(OBSERVATION_SOURCE_VERSION_DOMAIN, input)}`;
 }
 
 export function deriveRevisionFamilyIdentity(value: {
@@ -399,7 +663,16 @@ export function deriveRevisionFamilyIdentity(value: {
   source: string;
   providerStableRecordFamily: string;
 }): string {
-  return `rvf1_${canonicalHash(OBSERVATION_REVISION_FAMILY_DOMAIN, value)}`;
+  const input = snapshotLedgerRecord(value);
+  exactKeys(input, ["provider", "source", "providerStableRecordFamily"]);
+  if (
+    !boundedIdentifier(input.provider) ||
+    !boundedIdentifier(input.source) ||
+    !boundedIdentifier(input.providerStableRecordFamily)
+  ) {
+    fail("observation.entry-invalid");
+  }
+  return `rvf1_${canonicalHash(OBSERVATION_REVISION_FAMILY_DOMAIN, input)}`;
 }
 
 export function deriveSourceObservationId(value: {
@@ -407,12 +680,22 @@ export function deriveSourceObservationId(value: {
   projectionId: string;
   rawArtifactLinks: readonly RawArtifactLinkV1[];
 }): string {
+  const input = snapshotLedgerRecord(value);
+  exactKeys(input, ["sourceVersionIdentity", "projectionId", "rawArtifactLinks"]);
+  if (
+    !matches(input.sourceVersionIdentity, /^svr1_[0-9a-f]{64}$/u) ||
+    !matches(input.projectionId, /^prj1_[0-9a-f]{64}$/u)
+  ) {
+    fail("observation.entry-invalid");
+  }
+  const links = snapshotLedgerArray(input.rawArtifactLinks) as readonly RawArtifactLinkV1[];
+  validateRawArtifactLinks(links);
   const sortedUniqueAcquisitionObservationIds = [
-    ...new Set(value.rawArtifactLinks.map((link) => link.acquisitionObservationId)),
+    ...new Set(links.map((link) => link.acquisitionObservationId)),
   ].sort();
   return `sob1_${canonicalHash(OBSERVATION_SOURCE_OBSERVATION_DOMAIN, {
-    sourceVersionIdentity: value.sourceVersionIdentity,
-    projectionId: value.projectionId,
+    sourceVersionIdentity: input.sourceVersionIdentity,
+    projectionId: input.projectionId,
     sortedUniqueAcquisitionObservationIds,
   })}`;
 }
@@ -424,7 +707,63 @@ export function deriveMarketReferenceJoinKey(value: {
   selectedSourceVersionIdentity: string;
   trustedObservationBasis: TrustedObservationBasisV1;
 }): string {
-  return `mrj1_${canonicalHash(OBSERVATION_MARKET_JOIN_DOMAIN, value)}`;
+  const input = snapshotLedgerRecord(value);
+  exactKeys(input, [
+    "subject",
+    "issuerMappingId",
+    "selectedSourceObservationId",
+    "selectedSourceVersionIdentity",
+    "trustedObservationBasis",
+  ]);
+  if (
+    !boundedIdentifier(input.subject) ||
+    !matches(input.issuerMappingId, /^imap1_[0-9a-f]{64}$/u) ||
+    !matches(input.selectedSourceObservationId, /^sob1_[0-9a-f]{64}$/u) ||
+    !matches(input.selectedSourceVersionIdentity, /^svr1_[0-9a-f]{64}$/u)
+  ) {
+    fail("observation.entry-invalid");
+  }
+  validateTrustedObservationBasis(input.trustedObservationBasis);
+  return `mrj1_${canonicalHash(OBSERVATION_MARKET_JOIN_DOMAIN, asJson(input))}`;
+}
+
+function validateTrustedObservationBasis(value: TrustedObservationBasisV1): void {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    fail("observation.entry-invalid");
+  }
+  if (value.basisKind === "capture") {
+    exactKeys(value, ["basisKind", "eventId", "receivedAtMs", "logicalAtMs", "clockBasisId"]);
+    if (
+      !hash(value.eventId) ||
+      !safeInteger(value.receivedAtMs) ||
+      !safeInteger(value.logicalAtMs) ||
+      !matches(value.clockBasisId, CLOCK_ID)
+    ) {
+      fail("observation.entry-invalid");
+    }
+    return;
+  }
+  if (value.basisKind === "retrieval") {
+    exactKeys(value, [
+      "basisKind",
+      "role",
+      "acquisitionObservationId",
+      "vaultObservationId",
+      "retrievedAtMs",
+      "clockBasisId",
+    ]);
+    if (
+      !boundedIdentifier(value.role) ||
+      !matches(value.acquisitionObservationId, /^aob1_[0-9a-f]{64}$/u) ||
+      !hash(value.vaultObservationId) ||
+      !safeInteger(value.retrievedAtMs) ||
+      !matches(value.clockBasisId, CLOCK_ID)
+    ) {
+      fail("observation.entry-invalid");
+    }
+    return;
+  }
+  fail("observation.entry-invalid");
 }
 
 function validateClockBasis(value: ClockBasisV1): void {
@@ -437,11 +776,14 @@ function validateClockBasis(value: ClockBasisV1): void {
     "monotonicSessionId",
   ]);
   if (
-    !CLOCK_ID.test(value.clockBasisId) ||
+    !matches(value.clockBasisId, CLOCK_ID) ||
+    typeof value.wallClock !== "string" ||
     !["system-utc", "recorded-fixture", "replayed-original"].includes(value.wallClock) ||
+    typeof value.synchronization !== "string" ||
     !["verified-bound", "operator-asserted", "unspecified", "not-applicable"].includes(
       value.synchronization,
     ) ||
+    typeof value.monotonicClock !== "string" ||
     !["process-monotonic-us", "none"].includes(value.monotonicClock)
   ) {
     fail("observation.clock-basis-invalid");
@@ -461,16 +803,60 @@ function validateClockBasis(value: ClockBasisV1): void {
   if (recorded !== (value.synchronization === "not-applicable")) {
     fail("observation.clock-basis-invalid");
   }
-  if (
-    (value.synchronization === "verified-bound") !==
-    (safeInteger(value.maximumErrorMs) && value.maximumErrorMs !== null)
-  ) {
+  if (value.synchronization === "verified-bound") {
+    if (!safeInteger(value.maximumErrorMs) || value.maximumErrorMs === null) {
+      fail("observation.clock-basis-invalid");
+    }
+  } else if (value.maximumErrorMs !== null) {
     fail("observation.clock-basis-invalid");
   }
   if (
     (value.monotonicClock === "none" && value.monotonicSessionId !== null) ||
     (value.monotonicClock === "process-monotonic-us" &&
       !boundedIdentifier(value.monotonicSessionId))
+  ) {
+    fail("observation.clock-basis-invalid");
+  }
+}
+
+function validateClockBasisPreimage(value: Omit<ClockBasisV1, "clockBasisId">): void {
+  exactKeys(value, [
+    "wallClock",
+    "synchronization",
+    "maximumErrorMs",
+    "monotonicClock",
+    "monotonicSessionId",
+  ]);
+  const candidate = { ...value, clockBasisId: "clk1_placeholder" } as ClockBasisV1;
+  // Validation below deliberately checks only field semantics; the placeholder is never hashed.
+  if (
+    typeof candidate.wallClock !== "string" ||
+    !["system-utc", "recorded-fixture", "replayed-original"].includes(candidate.wallClock) ||
+    typeof candidate.synchronization !== "string" ||
+    !["verified-bound", "operator-asserted", "unspecified", "not-applicable"].includes(
+      candidate.synchronization,
+    ) ||
+    typeof candidate.monotonicClock !== "string" ||
+    !["process-monotonic-us", "none"].includes(candidate.monotonicClock)
+  ) {
+    fail("observation.clock-basis-invalid");
+  }
+  const recorded =
+    candidate.wallClock === "recorded-fixture" || candidate.wallClock === "replayed-original";
+  if (recorded !== (candidate.synchronization === "not-applicable")) {
+    fail("observation.clock-basis-invalid");
+  }
+  if (candidate.synchronization === "verified-bound") {
+    if (!safeInteger(candidate.maximumErrorMs) || candidate.maximumErrorMs === null) {
+      fail("observation.clock-basis-invalid");
+    }
+  } else if (candidate.maximumErrorMs !== null) {
+    fail("observation.clock-basis-invalid");
+  }
+  if (
+    (candidate.monotonicClock === "none" && candidate.monotonicSessionId !== null) ||
+    (candidate.monotonicClock === "process-monotonic-us" &&
+      !boundedIdentifier(candidate.monotonicSessionId))
   ) {
     fail("observation.clock-basis-invalid");
   }
@@ -487,10 +873,16 @@ function validateIssuerMapping(value: IssuerMappingV1): void {
     "effectiveFromMs",
     "effectiveToMs",
   ]);
-  if (!CIK.test(value.issuerCik) || value.symbols.length < 1 || value.symbols.length > 8) {
+  if (
+    !matches(value.issuerCik, CIK) ||
+    !Array.isArray(value.symbols) ||
+    value.symbols.length < 1 ||
+    value.symbols.length > 8 ||
+    value.symbols.some((symbol) => typeof symbol !== "string")
+  ) {
     fail("observation.issuer-mapping-invalid");
   }
-  if (!sortedUnique(value.symbols) || value.symbols.some((symbol) => !SYMBOL.test(symbol))) {
+  if (!sortedUnique(value.symbols) || value.symbols.some((symbol) => !matches(symbol, SYMBOL))) {
     fail("observation.issuer-mapping-invalid");
   }
   if (value.selectedSymbol !== null && !value.symbols.includes(value.selectedSymbol)) {
@@ -513,6 +905,40 @@ function validateIssuerMapping(value: IssuerMappingV1): void {
   }
 }
 
+function validateIssuerMappingPreimage(value: Omit<IssuerMappingV1, "issuerMappingId">): void {
+  exactKeys(value, [
+    "issuerCik",
+    "symbols",
+    "selectedSymbol",
+    "mappingAuthority",
+    "mappingVersion",
+    "effectiveFromMs",
+    "effectiveToMs",
+  ]);
+  const candidate = { ...value, issuerMappingId: "imap1_placeholder" } as IssuerMappingV1;
+  if (
+    !matches(candidate.issuerCik, CIK) ||
+    !Array.isArray(candidate.symbols) ||
+    candidate.symbols.length < 1 ||
+    candidate.symbols.length > OBSERVATION_LEDGER_MAX_SYMBOLS ||
+    candidate.symbols.some((symbol) => typeof symbol !== "string") ||
+    !sortedUnique(candidate.symbols) ||
+    candidate.symbols.some((symbol) => !matches(symbol, SYMBOL)) ||
+    (candidate.selectedSymbol !== null &&
+      (typeof candidate.selectedSymbol !== "string" ||
+        !candidate.symbols.includes(candidate.selectedSymbol))) ||
+    !boundedIdentifier(candidate.mappingAuthority) ||
+    !boundedIdentifier(candidate.mappingVersion) ||
+    !safeInteger(candidate.effectiveFromMs, true) ||
+    !safeInteger(candidate.effectiveToMs, true) ||
+    (candidate.effectiveFromMs !== null &&
+      candidate.effectiveToMs !== null &&
+      candidate.effectiveFromMs >= candidate.effectiveToMs)
+  ) {
+    fail("observation.issuer-mapping-invalid");
+  }
+}
+
 function validateClockStamp(value: ClockStampV1): void {
   exactKeys(value, ["clockBasisId", "wallTimeMs", "monotonicTimeUs"]);
   if (value.clockBasisId === null) {
@@ -522,7 +948,7 @@ function validateClockStamp(value: ClockStampV1): void {
     return;
   }
   if (
-    !CLOCK_ID.test(value.clockBasisId) ||
+    !matches(value.clockBasisId, CLOCK_ID) ||
     !safeInteger(value.wallTimeMs) ||
     !safeInteger(value.monotonicTimeUs, true)
   ) {
@@ -539,6 +965,7 @@ function compareRawLinks(left: RawArtifactLinkV1, right: RawArtifactLinkV1): num
 }
 
 function validateRawArtifactLinks(value: readonly RawArtifactLinkV1[]): void {
+  if (!Array.isArray(value)) fail("observation.entry-invalid");
   if (value.length < 1 || value.length > 16) fail("observation.entry-invalid");
   const roles = new Set<string>();
   for (const [index, link] of value.entries()) {
@@ -552,10 +979,10 @@ function validateRawArtifactLinks(value: readonly RawArtifactLinkV1[]): void {
     ]);
     if (
       !boundedIdentifier(link.role) ||
-      !/^aob1_[0-9a-f]{64}$/u.test(link.acquisitionObservationId) ||
-      !HASH.test(link.vaultObservationId) ||
-      !HASH.test(link.vaultObservationHash) ||
-      !HASH.test(link.artifactDigest) ||
+      !matches(link.acquisitionObservationId, /^aob1_[0-9a-f]{64}$/u) ||
+      !hash(link.vaultObservationId) ||
+      !hash(link.vaultObservationHash) ||
+      !hash(link.artifactDigest) ||
       !safeInteger(link.sizeBytes) ||
       roles.has(link.role) ||
       (index > 0 && compareRawLinks(value[index - 1] as RawArtifactLinkV1, link) >= 0)
@@ -582,6 +1009,9 @@ function validatePublicationTime(value: PublicationTimeV1): void {
     (value.timestampConfidence === "exact" || value.timestampConfidence === "provider") &&
     (typeof value.originalTimestamp !== "string" || value.originalTimestamp.length === 0)
   ) {
+    fail("observation.entry-invalid");
+  }
+  if (value.originalTimestamp !== null && typeof value.originalTimestamp !== "string") {
     fail("observation.entry-invalid");
   }
   if (
@@ -638,7 +1068,7 @@ function validateSourceIdentity(
     value.sourceVersionIdentity !== sourceVersionIdentity ||
     value.revisionFamilyIdentity !== revisionFamilyIdentity ||
     (value.supersedesSourceVersionIdentity !== null &&
-      !/^svr1_[0-9a-f]{64}$/u.test(value.supersedesSourceVersionIdentity))
+      !matches(value.supersedesSourceVersionIdentity, /^svr1_[0-9a-f]{64}$/u))
   ) {
     fail("observation.derived-identity-mismatch");
   }
@@ -653,8 +1083,8 @@ function validateNormalizationCommon(value: {
   validateRawArtifactLinks(value.rawArtifactLinks);
   if (
     !boundedIdentifier(value.loaderIdentity) ||
-    !HASH.test(value.selectionHash) ||
-    !HASH.test(value.loaderTranscriptHash)
+    !hash(value.selectionHash) ||
+    !hash(value.loaderTranscriptHash)
   ) {
     fail("observation.entry-invalid");
   }
@@ -679,7 +1109,7 @@ function validateFacts(value: ObservationLedgerFactsV1): void {
       if (
         !boundedIdentifier(value.provider) ||
         !boundedIdentifier(value.retrievalAttemptId) ||
-        !HASH.test(value.sanitizedRequestIdentityHash) ||
+        !hash(value.sanitizedRequestIdentityHash) ||
         !boundedIdentifier(value.routeLabel)
       ) {
         fail("observation.entry-invalid");
@@ -701,7 +1131,7 @@ function validateFacts(value: ObservationLedgerFactsV1): void {
       return;
     case "request.succeeded":
       exactKeys(value, ["kind", "acquisitionObservationId", "safeResponseMetadataHash"]);
-      if (!HASH.test(value.safeResponseMetadataHash)) fail("observation.entry-invalid");
+      if (!hash(value.safeResponseMetadataHash)) fail("observation.entry-invalid");
       return;
     case "artifact.committed":
       exactKeys(value, [
@@ -715,9 +1145,9 @@ function validateFacts(value: ObservationLedgerFactsV1): void {
         "retrievedAtMs",
       ]);
       if (
-        !HASH.test(value.vaultObservationId) ||
-        !HASH.test(value.vaultObservationHash) ||
-        !HASH.test(value.artifactDigest) ||
+        !hash(value.vaultObservationId) ||
+        !hash(value.vaultObservationHash) ||
+        !hash(value.artifactDigest) ||
         !safeInteger(value.sizeBytes) ||
         !safeInteger(value.retrievedAtMs, true) ||
         !["live", "recorded", "replay"].includes(value.acquisitionMode)
@@ -735,8 +1165,8 @@ function validateFacts(value: ObservationLedgerFactsV1): void {
         "consumedSizeBytes",
       ]);
       if (
-        !HASH.test(value.vaultObservationId) ||
-        !HASH.test(value.artifactDigest) ||
+        !hash(value.vaultObservationId) ||
+        !hash(value.artifactDigest) ||
         !safeInteger(value.metadataSizeBytes) ||
         value.metadataSizeBytes !== value.consumedSizeBytes
       ) {
@@ -769,15 +1199,15 @@ function validateFacts(value: ObservationLedgerFactsV1): void {
       validatePublicationTime(value.publicationTime);
       validateNormalizationCommon(value);
       if (
-        !HASH.test(value.projectionDigest) ||
+        !hash(value.projectionDigest) ||
         !boundedIdentifier(value.subject) ||
         !boundedIdentifier(value.fiscalPeriod) ||
-        (value.evidenceBundleHash !== null && !HASH.test(value.evidenceBundleHash)) ||
-        !HASH.test(value.primaryArtifactHash) ||
+        (value.evidenceBundleHash !== null && !hash(value.evidenceBundleHash)) ||
+        !hash(value.primaryArtifactHash) ||
         !["raw-artifact", "derived-projection"].includes(value.primaryArtifactKind) ||
         !boundedIdentifier(value.normalizerIdentity) ||
-        !HASH.test(value.normalizerTranscriptHash) ||
-        !HASH.test(value.eventDraftHash) ||
+        !hash(value.normalizerTranscriptHash) ||
+        !hash(value.eventDraftHash) ||
         (value.primaryArtifactKind === "raw-artifact" &&
           value.rawArtifactLinks.filter((link) => link.artifactDigest === value.primaryArtifactHash)
             .length !== 1) ||
@@ -791,7 +1221,12 @@ function validateFacts(value: ObservationLedgerFactsV1): void {
         value.projectionDigest,
         value.evidenceBundleHash,
       );
-      const projectionId = deriveProjectionId(value);
+      const projectionId = deriveProjectionId({
+        loaderIdentity: value.loaderIdentity,
+        normalizerIdentity: value.normalizerIdentity,
+        rawArtifactLinks: value.rawArtifactLinks,
+        projectionDigest: value.projectionDigest,
+      });
       const sourceObservationId = deriveSourceObservationId({
         sourceVersionIdentity: value.sourceIdentity.sourceVersionIdentity,
         projectionId,
@@ -819,7 +1254,7 @@ function validateFacts(value: ObservationLedgerFactsV1): void {
       validateNormalizationCommon(value);
       if (
         !boundedIdentifier(value.normalizerIdentity) ||
-        !HASH.test(value.normalizerTranscriptHash) ||
+        !hash(value.normalizerTranscriptHash) ||
         !boundedIdentifier(value.reasonCode)
       ) {
         fail("observation.entry-invalid");
@@ -840,7 +1275,7 @@ function validateFacts(value: ObservationLedgerFactsV1): void {
       if (
         (value.normalizerIdentity === null) !== (value.normalizerTranscriptHash === null) ||
         (value.normalizerIdentity !== null && !boundedIdentifier(value.normalizerIdentity)) ||
-        (value.normalizerTranscriptHash !== null && !HASH.test(value.normalizerTranscriptHash)) ||
+        (value.normalizerTranscriptHash !== null && !hash(value.normalizerTranscriptHash)) ||
         !boundedIdentifier(value.reasonCode)
       ) {
         fail("observation.entry-invalid");
@@ -859,8 +1294,8 @@ function validateFacts(value: ObservationLedgerFactsV1): void {
         "logicalAtMs",
       ]);
       if (
-        !HASH.test(value.eventId) ||
-        !HASH.test(value.eventHash) ||
+        !hash(value.eventId) ||
+        !hash(value.eventHash) ||
         !safeInteger(value.position) ||
         value.position < 1 ||
         !safeInteger(value.receivedAtMs) ||
@@ -884,10 +1319,17 @@ function validateFacts(value: ObservationLedgerFactsV1): void {
         "marketReferenceJoinKey",
       ]);
       if (
+        value.trustedObservationBasis === null ||
+        typeof value.trustedObservationBasis !== "object" ||
+        Array.isArray(value.trustedObservationBasis)
+      ) {
+        fail("observation.entry-invalid");
+      }
+      if (
         !safeInteger(value.asOfMs) ||
-        !/^sob1_[0-9a-f]{64}$/u.test(value.selectedSourceObservationId) ||
-        !/^svr1_[0-9a-f]{64}$/u.test(value.selectedSourceVersionIdentity) ||
-        !/^imap1_[0-9a-f]{64}$/u.test(value.issuerMappingId) ||
+        !matches(value.selectedSourceObservationId, /^sob1_[0-9a-f]{64}$/u) ||
+        !matches(value.selectedSourceVersionIdentity, /^svr1_[0-9a-f]{64}$/u) ||
+        !matches(value.issuerMappingId, /^imap1_[0-9a-f]{64}$/u) ||
         !boundedIdentifier(value.subject) ||
         !["cluster-first-observation", "analysis-branch-input", "market-reference-anchor"].includes(
           value.purpose,
@@ -909,10 +1351,10 @@ function validateFacts(value: ObservationLedgerFactsV1): void {
           "clockBasisId",
         ]);
         if (
-          !HASH.test(value.trustedObservationBasis.eventId) ||
+          !hash(value.trustedObservationBasis.eventId) ||
           !safeInteger(value.trustedObservationBasis.receivedAtMs) ||
           !safeInteger(value.trustedObservationBasis.logicalAtMs) ||
-          !CLOCK_ID.test(value.trustedObservationBasis.clockBasisId) ||
+          !matches(value.trustedObservationBasis.clockBasisId, CLOCK_ID) ||
           value.asOfMs < value.trustedObservationBasis.receivedAtMs
         ) {
           fail("observation.entry-invalid");
@@ -928,10 +1370,13 @@ function validateFacts(value: ObservationLedgerFactsV1): void {
         ]);
         if (
           !boundedIdentifier(value.trustedObservationBasis.role) ||
-          !/^aob1_[0-9a-f]{64}$/u.test(value.trustedObservationBasis.acquisitionObservationId) ||
-          !HASH.test(value.trustedObservationBasis.vaultObservationId) ||
+          !matches(
+            value.trustedObservationBasis.acquisitionObservationId,
+            /^aob1_[0-9a-f]{64}$/u,
+          ) ||
+          !hash(value.trustedObservationBasis.vaultObservationId) ||
           !safeInteger(value.trustedObservationBasis.retrievedAtMs) ||
-          !CLOCK_ID.test(value.trustedObservationBasis.clockBasisId) ||
+          !matches(value.trustedObservationBasis.clockBasisId, CLOCK_ID) ||
           value.asOfMs < value.trustedObservationBasis.retrievedAtMs
         ) {
           fail("observation.entry-invalid");
@@ -966,7 +1411,7 @@ function validateFacts(value: ObservationLedgerFactsV1): void {
       ]);
       if (
         !boundedIdentifier(value.reasonCode) ||
-        (value.detailHash !== null && !HASH.test(value.detailHash))
+        (value.detailHash !== null && !hash(value.detailHash))
       ) {
         fail("observation.entry-invalid");
       }
@@ -981,8 +1426,8 @@ function validateFacts(value: ObservationLedgerFactsV1): void {
         "monotonicOrderPreserved",
       ]);
       if (
-        !ENTRY_ID.test(value.priorEntryId) ||
-        !ENTRY_ID.test(value.regressingEntryId) ||
+        !matches(value.priorEntryId, ENTRY_ID) ||
+        !matches(value.regressingEntryId, ENTRY_ID) ||
         !safeInteger(value.priorWallTimeMs) ||
         !safeInteger(value.currentWallTimeMs) ||
         typeof value.monotonicOrderPreserved !== "boolean" ||
@@ -1009,24 +1454,32 @@ function entryPreimage(value: ObservationLedgerEntryInputV1): JsonObject {
 export function createObservationLedgerEntry(
   value: ObservationLedgerEntryInputV1,
 ): ObservationLedgerEntryV1 {
-  try {
-    assertJsonWithinLimits(value, OBSERVATION_LEDGER_ENTRY_LIMITS, "$.observationLedgerEntry");
-  } catch {
-    fail("observation.entry-limit-exceeded");
-  }
-  exactKeys(value, ["schemaVersion", "executionId", "parentEntryIds", "clock", "facts"]);
+  const input = snapshotLedgerRecord(value) as ObservationLedgerEntryInputV1;
+  exactKeys(input, ["schemaVersion", "executionId", "parentEntryIds", "clock", "facts"]);
   if (
-    value.schemaVersion !== 1 ||
-    !boundedIdentifier(value.executionId) ||
-    value.parentEntryIds.length > OBSERVATION_LEDGER_MAX_PARENTS ||
-    !sortedUnique(value.parentEntryIds) ||
-    value.parentEntryIds.some((parent) => !ENTRY_ID.test(parent))
+    input.schemaVersion !== 1 ||
+    !boundedIdentifier(input.executionId) ||
+    !Array.isArray(input.parentEntryIds) ||
+    input.parentEntryIds.length > OBSERVATION_LEDGER_MAX_PARENTS ||
+    input.parentEntryIds.some((parent) => typeof parent !== "string") ||
+    !sortedUnique(input.parentEntryIds) ||
+    input.parentEntryIds.some((parent) => !matches(parent, ENTRY_ID))
   ) {
     fail("observation.entry-invalid");
   }
-  validateClockStamp(value.clock);
-  validateFacts(value.facts);
-  const preimage = entryPreimage(value);
+  if (
+    input.clock === null ||
+    typeof input.clock !== "object" ||
+    Array.isArray(input.clock) ||
+    input.facts === null ||
+    typeof input.facts !== "object" ||
+    Array.isArray(input.facts)
+  ) {
+    fail("observation.entry-invalid");
+  }
+  validateClockStamp(input.clock);
+  validateFacts(input.facts);
+  const preimage = entryPreimage(input);
   const entryHash = canonicalHash(OBSERVATION_LEDGER_ENTRY_DOMAIN, preimage);
   const entry = {
     ...cloneJson(preimage),
@@ -1316,8 +1769,16 @@ function validateParentTransition(
 export function validateObservationLedgerBundle(
   values: readonly ObservationLedgerEntryV1[],
 ): readonly ObservationLedgerEntryV1[] {
-  if (values.length > OBSERVATION_LEDGER_MAX_ENTRIES) fail("observation.bundle-limit-exceeded");
-  const totalBytes = Buffer.byteLength(canonicalJson(values as unknown as JsonValue), "utf8");
+  const bundle = snapshotLedgerInput(
+    values,
+    OBSERVATION_LEDGER_BUNDLE_LIMITS,
+    "observation.entry-invalid",
+    "observation.bundle-limit-exceeded",
+  );
+  if (!Array.isArray(bundle)) fail("observation.entry-invalid");
+  const entries = bundle as readonly ObservationLedgerEntryV1[];
+  if (entries.length > OBSERVATION_LEDGER_MAX_ENTRIES) fail("observation.bundle-limit-exceeded");
+  const totalBytes = Buffer.byteLength(canonicalJson(entries as unknown as JsonValue), "utf8");
   if (totalBytes > OBSERVATION_LEDGER_BUNDLE_MAX_BYTES) fail("observation.bundle-limit-exceeded");
   const byId = new Map<string, ObservationLedgerEntryV1>();
   const depths = new Map<string, number>();
@@ -1336,7 +1797,10 @@ export function validateObservationLedgerBundle(
   const providerRevisions = new Map<string, string>();
   let edges = 0;
   let executionId: string | null = null;
-  for (const candidate of values) {
+  for (const candidate of entries) {
+    if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
+      fail("observation.entry-invalid");
+    }
     const { entryId: _, entryHash: __, ...input } = candidate;
     const entry = createObservationLedgerEntry(input);
     if (entry.entryId !== candidate.entryId || entry.entryHash !== candidate.entryHash) {
@@ -1534,7 +1998,7 @@ export function validateObservationLedgerBundle(
   ) {
     fail("observation.clock-regression-invalid");
   }
-  return Object.freeze([...values]);
+  return Object.freeze([...entries]);
 }
 
 export function paginateObservationLedger(
@@ -1546,12 +2010,12 @@ export function paginateObservationLedger(
     pageSize < OBSERVATION_LEDGER_PAGE_SIZE_MIN ||
     pageSize > OBSERVATION_LEDGER_PAGE_SIZE_MAX
   ) {
-    throw new RangeError("Page size must be an integer from 1 through 10,000");
+    fail("observation.page-size-invalid");
   }
-  validateObservationLedgerBundle(entries);
+  const validated = validateObservationLedgerBundle(entries);
   const pages: ObservationLedgerEntryV1[][] = [];
-  for (let index = 0; index < entries.length; index += pageSize) {
-    pages.push(entries.slice(index, index + pageSize));
+  for (let index = 0; index < validated.length; index += pageSize) {
+    pages.push(validated.slice(index, index + pageSize));
   }
   return Object.freeze(pages.map((page) => Object.freeze(page)));
 }
@@ -1560,11 +2024,11 @@ export function replayRecordedObservationLedger(
   entries: readonly ObservationLedgerEntryV1[],
   executionId: string,
 ): readonly ObservationLedgerEntryV1[] {
-  validateObservationLedgerBundle(entries);
+  const validated = validateObservationLedgerBundle(entries);
   if (!boundedIdentifier(executionId)) fail("observation.entry-invalid");
   const mapped = new Map<string, string>();
   const replayed: ObservationLedgerEntryV1[] = [];
-  for (const original of entries) {
+  for (const original of validated) {
     if (original.facts.kind === "request.started" || original.facts.kind === "request.succeeded") {
       fail("observation.replay-incompatible");
     }
@@ -1602,6 +2066,6 @@ export function replayRecordedObservationLedger(
 export function observationLedgerSemanticProjection(
   entries: readonly ObservationLedgerEntryV1[],
 ): JsonValue {
-  validateObservationLedgerBundle(entries);
-  return entries.map((entry) => ({ clock: entry.clock, facts: entry.facts })) as JsonValue;
+  const validated = validateObservationLedgerBundle(entries);
+  return validated.map((entry) => ({ clock: entry.clock, facts: entry.facts })) as JsonValue;
 }

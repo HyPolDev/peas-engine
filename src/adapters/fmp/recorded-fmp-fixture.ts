@@ -302,6 +302,12 @@ function detachManifest(value: RecordedFmpFixtureManifestV1): RecordedFmpFixture
       }
     }
     validateExpected(manifest.expected);
+    if (
+      (manifest.expected.status === "emitted" && manifest.derivedProofs.length !== 1) ||
+      (manifest.expected.status !== "emitted" && manifest.derivedProofs.length !== 0)
+    ) {
+      throw new FixtureFailure("fmp.bundle-hash-mismatch");
+    }
     validateProvenance(manifest.provenance);
     const member = manifest.retrievedMembers[0];
     exact(member as unknown as JsonObject, MEMBER_FIELDS);
@@ -523,7 +529,9 @@ export async function loadRecordedFmpFixture(
     selectedObservationId: member.selectedObservationId,
     observationHash: member.observation.observationHash,
     artifactHash: member.artifactHash,
-    projectionHash: manifest.derivedProofs[0]?.projectionHash ?? null,
+    // A manifest claim is not transcript evidence. It becomes transcript evidence only
+    // after the selected projection is recomputed from the verified member bytes.
+    projectionHash: null,
   } as const;
   let bytes: Buffer;
   try {
@@ -556,11 +564,16 @@ export async function loadRecordedFmpFixture(
     ) {
       return failed("fmp.bundle-hash-mismatch", baseContext);
     }
-  } else if (result.status !== "quarantined" && manifest.derivedProofs.length !== 1) {
+  } else if (manifest.derivedProofs.length !== 0) {
     return failed("fmp.bundle-hash-mismatch", baseContext);
   }
   if (!expectedMatches(manifest.expected, result)) {
     return failed("fmp.bundle-hash-mismatch", baseContext);
   }
-  return withTranscript(result, baseContext);
+  return withTranscript(
+    result,
+    result.status === "emitted"
+      ? { ...baseContext, projectionHash: result.selectedProjectionHash }
+      : baseContext,
+  );
 }

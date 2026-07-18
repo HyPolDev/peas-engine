@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 1,
+  "status": "blocking",
+  "reviewedHead": "08516734f02280bb29c9ec374273ba3ec4236e56",
+  "base": "41f19b83e104857ed32b45fa5838c8199f5467ab",
+  "auditReport": {
+    "attachmentSha256": "ade0f51cadb96080ba3fb551816ef9517dbc75046378eb61bede7836ab625af0",
+    "title": "NO_GO: provider and ledger boundary closure"
+  },
+  "baseline": {
+    "command": "npm.cmd test",
+    "head": "08516734f02280bb29c9ec374273ba3ec4236e56",
+    "exitCode": 0,
+    "passed": 276,
+    "failed": 0,
+    "skipped": 4,
+    "durationMs": 287565.5114,
+    "interpretation": "The reviewed head passes its existing suite; this matrix requires new hostile closure evidence."
+  },
+  "findings": [
+    {
+      "id": 1,
+      "owner": "A. Ledger boundary",
+      "publicEntrypoints": [
+        "validateObservationLedgerBundle",
+        "createObservationLedgerEntry",
+        "createIssuerMapping",
+        "ledger identity derivation exports"
+      ],
+      "stableExpectedReason": "observation.entry-invalid",
+      "positiveControl": "primitive hashes, CIK, identifiers, and dense symbol strings derive the pinned identities",
+      "hostileRegression": "coercible array/number/boolean/object hash, CIK, and symbol values reject before regex or hashing",
+      "exactAndOneOver": "each primitive field accepts its documented maximum and rejects one UTF-8 byte over"
+    },
+    {
+      "id": 2,
+      "owner": "A. Ledger boundary",
+      "publicEntrypoints": [
+        "validateObservationLedgerBundle",
+        "createObservationLedgerEntry",
+        "createClockBasis",
+        "createIssuerMapping",
+        "ledger identity derivation exports"
+      ],
+      "stableExpectedReason": "observation.entry-invalid",
+      "positiveControl": "a dense inert bundle validates without invoking caller behavior",
+      "hostileRegression": "non-array, sparse/custom-prototype arrays, inherited/accessor/symbol/cyclic/proxy inputs reject without raw runtime errors",
+      "exactAndOneOver": "bundle bytes, nodes, keys, array items, and depth accept exact limits and reject one-over before canonicalization"
+    },
+    {
+      "id": 3,
+      "owner": "A. Ledger boundary",
+      "publicEntrypoints": ["createClockBasis", "validateObservationLedgerBundle"],
+      "stableExpectedReason": "observation.clock-basis-invalid",
+      "positiveControl": "verified-bound accepts a non-negative safe integer; all other synchronization modes accept only null",
+      "hostileRegression": "negative, float, string, boolean, object, and array maximumErrorMs values reject for every synchronization mode",
+      "exactAndOneOver": "maximumErrorMs accepts 0 and Number.MAX_SAFE_INTEGER, rejects -1 and unsafe-integer one-over"
+    },
+    {
+      "id": 4,
+      "owner": "C. Fixture/provenance closure",
+      "publicEntrypoints": ["loadRecordedNvidiaFixture", "NVIDIA fixture validateManifest"],
+      "stableExpectedReason": "ir.bundle-hash-mismatch",
+      "positiveControl": "one RSS-item proof and one release-visible proof recomputed from verified parents emit",
+      "hostileRegression": "duplicate, missing, substituted parent/policy/hash/size proof roles quarantine atomically",
+      "exactAndOneOver": "exactly two unique required roles accept; one missing or one additional proof rejects"
+    },
+    {
+      "id": 5,
+      "owner": "B. Provider correctness",
+      "publicEntrypoints": ["normalizeRecordedFmpCollection", "loadRecordedFmpFixture"],
+      "stableExpectedReason": "fmp.timestamp-invalid",
+      "positiveControl": "Gregorian-valid naive timestamps emit null/unknown without retrieval-time fallback",
+      "hostileRegression": "invalid naive date, clock, and leap-day values quarantine",
+      "exactAndOneOver": "timestamp field accepts 128 bytes and rejects 129 bytes through real FMP input"
+    },
+    {
+      "id": 6,
+      "owner": "B. Provider correctness",
+      "publicEntrypoints": ["normalizeRecordedNvidiaIr", "loadRecordedNvidiaFixture"],
+      "stableExpectedReason": "ir.parser-limit-exceeded",
+      "positiveControl": "actual RSS and visible-release projections at 4 MiB emit before projection hashing",
+      "hostileRegression": "actual RSS and visible-release projection inputs at 4 MiB + 1 quarantine before hashes/candidate output",
+      "exactAndOneOver": "4,194,304 canonical projection bytes accept; 4,194,305 reject"
+    },
+    {
+      "id": 7,
+      "owner": "D. Test matrix and integration",
+      "publicEntrypoints": [
+        "recorded FMP/NVIDIA loaders and normalizers",
+        "validateObservationLedgerBundle"
+      ],
+      "stableExpectedReason": "provider-specific documented reason/limitKind",
+      "positiveControl": "each documented parser, loader, manifest, proof, projection, bundle, transcript, and URL rule reaches its real public path",
+      "hostileRegression": "one-over and malformed URL/proof/parser inputs return no partial candidate, draft, or transcript output",
+      "exactAndOneOver": "every documented numeric limit has a real exact and one-over vector"
+    },
+    {
+      "id": 8,
+      "owner": "C. Fixture/provenance closure",
+      "publicEntrypoints": ["loadRecordedFmpFixture", "FMP fixture transcript formation"],
+      "stableExpectedReason": "fmp.bundle-hash-mismatch",
+      "positiveControl": "emitted fixture contains exactly one recomputed selected-item proof; terminal outcomes follow the documented proof policy",
+      "hostileRegression": "quarantined malformed fixture with invented proof rejects before transcript formation",
+      "exactAndOneOver": "one emitted proof accepts; zero/two emitted proofs and one terminal fabricated proof reject"
+    },
+    {
+      "id": 9,
+      "owner": "B. Provider correctness",
+      "publicEntrypoints": ["normalizeRecordedNvidiaIr"],
+      "stableExpectedReason": "ir.bundle-invalid",
+      "positiveControl": "valid Uint8Array members within individual and aggregate limits normalize deterministically",
+      "hostileRegression": "null/object/string/oversized RSS or HTML members quarantine before digesting or parsing",
+      "exactAndOneOver": "per-member and aggregate byte ceilings accept exact bytes and reject one-over through the real normalizer"
+    },
+    {
+      "id": 10,
+      "owner": "B. Provider correctness",
+      "publicEntrypoints": ["deriveFmpItemIdentity", "normalizeRecordedFmpCollection"],
+      "stableExpectedReason": "fmp.item-invalid",
+      "positiveControl": "ASCII whitespace canonicalizes as ADR 0008 specifies",
+      "hostileRegression": "NBSP and other Unicode whitespace remain semantically distinct from ASCII whitespace",
+      "exactAndOneOver": "semantic text accepts documented byte maximum and rejects one byte over without Unicode coercion"
+    },
+    {
+      "id": 11,
+      "owner": "A. Ledger boundary",
+      "publicEntrypoints": [
+        "validateObservationLedgerBundle",
+        "paginateObservationLedger",
+        "replayObservationLedger"
+      ],
+      "stableExpectedReason": "observation.bundle-limit-exceeded",
+      "positiveControl": "every fact kind and parent transition, including redelivery, validates at exact dimensions",
+      "hostileRegression": "cross-execution parents and missing/extra clock-basis parents reject with stable observation reasons",
+      "exactAndOneOver": "64 MiB/64 MiB+1 bundle bytes, 256/257 timestamp bytes, and all declared resource dimensions are executable"
+    }
+  ]
+}

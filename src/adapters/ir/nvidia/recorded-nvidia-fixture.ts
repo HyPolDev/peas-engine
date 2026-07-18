@@ -208,7 +208,6 @@ function validateManifest(value: NvidiaFixtureManifestV1): NvidiaFixtureManifest
       !Number.isSafeInteger(manifest.asOfMs) ||
       manifest.asOfMs < 0 ||
       manifest.retrievedMembers.length !== 2 ||
-      manifest.derivedProofs.length !== 2 ||
       manifest.selector.selectionKey.length > 2_048 ||
       manifest.route.classificationPolicy !== "nvidia-financial-results-title-v1" ||
       manifest.route.issuerCik !== "0001045810" ||
@@ -219,6 +218,7 @@ function validateManifest(value: NvidiaFixtureManifestV1): NvidiaFixtureManifest
       manifest.provenance.approvalReference !== null
     )
       throw new LoaderFailure("ir.bundle-invalid");
+    if (manifest.derivedProofs.length !== 2) throw new LoaderFailure("ir.bundle-hash-mismatch");
     const roles = new Set<string>();
     const observationIds = new Set<string>();
     for (const member of manifest.retrievedMembers) {
@@ -244,6 +244,7 @@ function validateManifest(value: NvidiaFixtureManifestV1): NvidiaFixtureManifest
       roles.add(member.role);
       observationIds.add(member.selectedObservationId);
     }
+    const proofRoles = new Set<string>();
     for (const proof of manifest.derivedProofs) {
       exact(proof, PROOF_FIELDS, "ir.bundle-invalid");
       const expectedPolicy =
@@ -256,6 +257,7 @@ function validateManifest(value: NvidiaFixtureManifestV1): NvidiaFixtureManifest
       if (
         proof.kind !== "derived-projection" ||
         expectedPolicy === null ||
+        proofRoles.has(proof.role) ||
         proof.policy !== expectedPolicy ||
         proof.parentArtifactHash !==
           manifest.retrievedMembers.find((member) => member.role === parentRole)?.artifactHash ||
@@ -264,8 +266,15 @@ function validateManifest(value: NvidiaFixtureManifestV1): NvidiaFixtureManifest
         proof.projectionSizeBytes < 0
       )
         throw new LoaderFailure("ir.bundle-hash-mismatch");
+      proofRoles.add(proof.role);
       assertNvidiaDeclaredLimit("projection-bytes", proof.projectionSizeBytes);
     }
+    if (
+      proofRoles.size !== 2 ||
+      !proofRoles.has("ir.rss-item") ||
+      !proofRoles.has("ir.release-visible")
+    )
+      throw new LoaderFailure("ir.bundle-hash-mismatch");
     return manifest;
   } catch (error) {
     if (error instanceof LoaderFailure) throw error;
@@ -315,7 +324,9 @@ function finish(
     caseId,
     observationIds: members.map((member) => member.selectedObservationId),
     artifactHashes: members.map((member) => member.artifactHash),
-    projectionHashes: proofs.map((proof) => proof.projectionHash),
+    projectionHashes: [...proofs]
+      .sort((left, right) => left.role.localeCompare(right.role))
+      .map((proof) => proof.projectionHash),
     status,
     reasonCode,
   };
@@ -399,11 +410,15 @@ export async function loadRecordedNvidiaFixture(
       selectionKey: manifest.selector.selectionKey,
     });
     if (result.status === "emitted") {
-      const actual = new Map([
+      const rssProjectionHash = result.transcript.rssItemProjectionHash;
+      const releaseProjectionHash = result.transcript.releaseVisibleProjectionHash;
+      if (rssProjectionHash === null || releaseProjectionHash === null)
+        throw new LoaderFailure("ir.bundle-hash-mismatch");
+      const actual = new Map<NvidiaDerivedProofV1["role"], { hash: string; size: number }>([
         [
           "ir.rss-item",
           {
-            hash: result.transcript.rssItemProjectionHash,
+            hash: rssProjectionHash,
             size: Buffer.byteLength(
               canonicalJson(result.projections.rssItem as unknown as JsonValue),
               "utf8",
@@ -413,7 +428,7 @@ export async function loadRecordedNvidiaFixture(
         [
           "ir.release-visible",
           {
-            hash: result.transcript.releaseVisibleProjectionHash,
+            hash: releaseProjectionHash,
             size: Buffer.byteLength(
               canonicalJson(result.projections.releaseVisible as unknown as JsonValue),
               "utf8",
@@ -421,25 +436,43 @@ export async function loadRecordedNvidiaFixture(
           },
         ],
       ]);
+      const supplied = new Map<NvidiaDerivedProofV1["role"], { hash: string; size: number }>(
+        manifest.derivedProofs.map((proof) => [
+          proof.role,
+          { hash: proof.projectionHash, size: proof.projectionSizeBytes },
+        ]),
+      );
       if (
-        manifest.derivedProofs.some(
-          (proof) =>
-            actual.get(proof.role)?.hash !== proof.projectionHash ||
-            actual.get(proof.role)?.size !== proof.projectionSizeBytes,
+        actual.size !== supplied.size ||
+        [...actual].some(
+          ([role, projection]) =>
+            supplied.get(role)?.hash !== projection.hash ||
+            supplied.get(role)?.size !== projection.size,
+        ) ||
+        [...supplied].some(
+          ([role, projection]) =>
+            actual.get(role)?.hash !== projection.hash ||
+            actual.get(role)?.size !== projection.size,
         )
       )
         throw new LoaderFailure("ir.bundle-hash-mismatch");
+      const recomputedProofs: NvidiaDerivedProofV1[] = [];
+      for (const proof of manifest.derivedProofs) {
+        const projection = actual.get(proof.role);
+        if (projection === undefined) throw new LoaderFailure("ir.bundle-hash-mismatch");
+        recomputedProofs.push({
+          ...proof,
+          projectionHash: projection.hash,
+          projectionSizeBytes: projection.size,
+        });
+      }
+      if (!expectedMatches(manifest, result)) throw new LoaderFailure("ir.bundle-hash-mismatch");
+      return finish(manifest.caseId, manifest.retrievedMembers, recomputedProofs, result, null);
     }
     if (!expectedMatches(manifest, result)) throw new LoaderFailure("ir.bundle-hash-mismatch");
-    return finish(
-      manifest.caseId,
-      manifest.retrievedMembers,
-      manifest.derivedProofs,
-      result,
-      result.status === "emitted" ? null : result.reasonCode,
-    );
+    return finish(manifest.caseId, manifest.retrievedMembers, [], result, result.reasonCode);
   } catch (error) {
     const reason = error instanceof LoaderFailure ? error.reasonCode : "ir.artifact-read-failed";
-    return finish(manifest.caseId, manifest.retrievedMembers, manifest.derivedProofs, null, reason);
+    return finish(manifest.caseId, manifest.retrievedMembers, [], null, reason);
   }
 }
