@@ -149,7 +149,7 @@
         "nvidia": "ir.bundle-invalid"
       },
       "positiveControl": "ordinary exact plain inputs emit byte-for-byte identically after a one-time detached byte snapshot",
-      "hostileRegression": "outer and nested accessor/proxy/inherited/symbol/sparse/custom-prototype containers execute zero traps and emit no candidate, draft, transcript identity, or partial result",
+      "hostileRegression": "outer and nested active or revoked accessor/proxy/inherited/symbol/sparse/custom-prototype containers execute zero traps and emit no candidate, draft, transcript identity, or partial result",
       "exactAndOneOver": "FMP 10 MiB and NVIDIA 10 MiB-per-member/20 MiB-bundle byte ceilings retain real exact and one-over coverage after copying"
     }
   ]

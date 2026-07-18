@@ -461,6 +461,40 @@ test("NVIDIA public normalizer rejects hostile containers before any caller trap
       throw new Error("byte proxy trap must not run");
     },
   });
+  let revokedProxyCalls = 0;
+  const revokedOuter = Proxy.revocable(input, {
+    get() {
+      revokedProxyCalls += 1;
+      throw new Error("revoked outer get trap must not run");
+    },
+    ownKeys() {
+      revokedProxyCalls += 1;
+      throw new Error("revoked outer ownKeys trap must not run");
+    },
+    getOwnPropertyDescriptor() {
+      revokedProxyCalls += 1;
+      throw new Error("revoked outer descriptor trap must not run");
+    },
+  });
+  revokedOuter.revoke();
+
+  const assertBoundaryQuarantine = (
+    result: ReturnType<typeof normalizeRecordedNvidiaIr>,
+    name: string,
+  ): void => {
+    assert.equal(result.status, "quarantined", name);
+    if (result.status !== "quarantined") return;
+    assert.equal(result.reasonCode, "ir.bundle-invalid", name);
+    assert.equal("candidate" in result, false, name);
+    assert.equal("draft" in result, false, name);
+    assert.equal(result.transcript.rssArtifactHash, "0".repeat(64), name);
+    assert.equal(result.transcript.releaseHtmlArtifactHash, "0".repeat(64), name);
+    assert.equal(result.transcript.rssItemProjectionHash, null, name);
+    assert.equal(result.transcript.releaseVisibleProjectionHash, null, name);
+    assert.equal(result.transcript.selectedProjectionHash, null, name);
+    assert.equal(result.transcript.candidateHash, null, name);
+    assert.equal(result.transcript.eventDraftHash, null, name);
+  };
 
   const hostileInputs: readonly [string, unknown][] = [
     ["accessor outer", accessorOuter],
@@ -473,21 +507,13 @@ test("NVIDIA public normalizer rejects hostile containers before any caller trap
     ["custom outer prototype", customPrototypeOuter],
     ["proxy byte member", { ...input, rssBytes: byteProxy }],
     ["non-byte member", { ...input, releaseHtmlBytes: {} }],
+    ["revoked outer proxy", revokedOuter.proxy],
   ];
   for (const [name, hostile] of hostileInputs) {
     const result = normalizeRecordedNvidiaIr(
       hostile as Parameters<typeof normalizeRecordedNvidiaIr>[0],
     );
-    assert.equal(result.status, "quarantined", name);
-    if (result.status !== "quarantined") continue;
-    assert.equal(result.reasonCode, "ir.bundle-invalid", name);
-    assert.equal(result.transcript.rssArtifactHash, "0".repeat(64), name);
-    assert.equal(result.transcript.releaseHtmlArtifactHash, "0".repeat(64), name);
-    assert.equal(result.transcript.rssItemProjectionHash, null, name);
-    assert.equal(result.transcript.releaseVisibleProjectionHash, null, name);
-    assert.equal(result.transcript.selectedProjectionHash, null, name);
-    assert.equal(result.transcript.candidateHash, null, name);
-    assert.equal(result.transcript.eventDraftHash, null, name);
+    assertBoundaryQuarantine(result, name);
   }
 
   const accessorOptions = {};
@@ -519,6 +545,24 @@ test("NVIDIA public normalizer rejects hostile containers before any caller trap
   Object.defineProperty(symbolOptions, Symbol("hostile"), { enumerable: true, value: true });
   const cyclicOptions: Record<string, unknown> = {};
   cyclicOptions["self"] = cyclicOptions;
+  const revokedOptions = Proxy.revocable(
+    {},
+    {
+      get() {
+        revokedProxyCalls += 1;
+        throw new Error("revoked option get trap must not run");
+      },
+      ownKeys() {
+        revokedProxyCalls += 1;
+        throw new Error("revoked option ownKeys trap must not run");
+      },
+      getOwnPropertyDescriptor() {
+        revokedProxyCalls += 1;
+        throw new Error("revoked option descriptor trap must not run");
+      },
+    },
+  );
+  revokedOptions.revoke();
   const hostileOptions: readonly [string, unknown][] = [
     ["accessor parser option", accessorOptions],
     ["proxy parser option", proxyOptions],
@@ -528,16 +572,15 @@ test("NVIDIA public normalizer rejects hostile containers before any caller trap
     ["custom parser option prototype", Object.setPrototypeOf({}, { hostile: true })],
     ["sparse parser option", new Array(1)],
     ["cyclic parser option", cyclicOptions],
+    ["revoked parser option proxy", revokedOptions.proxy],
   ];
   for (const [name, hostile] of hostileOptions) {
     const result = normalizeRecordedNvidiaIr(input, hostile as never);
-    assert.equal(result.status, "quarantined", name);
-    if (result.status !== "quarantined") continue;
-    assert.equal(result.reasonCode, "ir.bundle-invalid", name);
-    assert.equal(result.transcript.candidateHash, null, name);
+    assertBoundaryQuarantine(result, name);
   }
   assert.equal(accessorCalls, 0);
   assert.equal(proxyCalls, 0);
+  assert.equal(revokedProxyCalls, 0);
 });
 
 test("RSS and visible-release projection ceilings are enforced before projection hashes", async () => {

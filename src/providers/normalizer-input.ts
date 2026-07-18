@@ -48,9 +48,15 @@ export function snapshotExactNormalizerInput(
   requiredKeys: readonly string[],
   optionalKeys: readonly string[] = [],
 ): Readonly<Record<string, unknown>> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) fail();
-  if (utilityTypes.isProxy(value)) fail();
   try {
+    if (
+      value === null ||
+      typeof value !== "object" ||
+      utilityTypes.isProxy(value) ||
+      Array.isArray(value)
+    ) {
+      fail();
+    }
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null) fail();
     const keys = Reflect.ownKeys(value);
