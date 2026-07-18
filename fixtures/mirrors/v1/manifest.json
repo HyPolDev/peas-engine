@@ -1,0 +1,29 @@
+{
+  "fixtureContract": "peas-recorded-mirrors-synthetic-v1",
+  "redistribution": "CC0-1.0 synthetic data; no provider response bytes",
+  "issuerCik": "0000123456",
+  "symbol": "NVDA",
+  "fiscalPeriod": "2026-Q1",
+  "cases": [
+    {
+      "caseId": "fmp-ir-identical-primary",
+      "providers": ["financial-modeling-prep", "nvidia-ir"],
+      "expectation": "distinct observations sharing one primary artifact digest"
+    },
+    {
+      "caseId": "fmp-ir-byte-different",
+      "providers": ["financial-modeling-prep", "nvidia-ir"],
+      "expectation": "distinct observations and a new analysis input set"
+    },
+    {
+      "caseId": "provider-revision",
+      "providers": ["financial-modeling-prep"],
+      "expectation": "same record family with deterministic new revision identity"
+    },
+    {
+      "caseId": "sec-v2-versus-legacy-mirror",
+      "providers": ["sec-edgar", "financial-modeling-prep"],
+      "expectation": "primary-byte equality alone does not collapse schema-v2 evidence into schema-v1"
+    }
+  ]
+}

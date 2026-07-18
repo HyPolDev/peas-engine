@@ -33,13 +33,17 @@ Do not maintain task state independently in Linear, Notion, and GitHub.
 - ADR 0007 is accepted after independent review. It freezes PR 2B evidence membership, selected
   observation loading, SEC semantics, parser/decoder policy, compatibility, limits, reason codes,
   and non-live effect isolation without changing frozen ports.
-- PR 2B now implements and independently audits the recorded SEC path: synthetic raw fixtures,
+- PR 2B merged as pull request #3 at `41f19b83e104857ed32b45fa5838c8199f5467ab`. It implements
+  and independently audits the recorded SEC path: synthetic raw fixtures,
   verified selected-observation loading, pure deterministic normalization, schema-V2 evidence
   provenance, trusted capture, and byte-identical live-style/replay processing in memory and
   SQLite. Historical RC.2 vectors and frozen kernel ports remain unchanged.
-- No live SEC HTTP, FMP, issuer-IR, calendar, market-data, LLM, brokerage, or trading adapter exists
-  yet. After PR 2B review and merge, the next implementation unit is PR 2C recorded FMP and
-  issuer-IR mirrors; observation telemetry is defined before any live reads.
+- PR 2C is review-ready on `dev/pr-2c-recorded-mirrors`. The repaired implementation head
+  `9b1a32a5e7992c7d98ac3bde8b79b032de76168e` received a fresh independent `GO` with no actionable
+  findings after the revoked-proxy repair. The complete offline suite passed 289 tests with zero
+  failures and four documented skips; Linux passed and the initially flaky Windows artifact-vault
+  check passed unchanged on rerun. This documentation-only follow-up records that final evidence.
+- No live SEC HTTP, FMP, issuer-IR, calendar, market-data, LLM, brokerage, or trading adapter exists.
 - The next product slice is explicitly read-only: no LLM dependency, no orders, no brokerage, and
   no portfolio mutation.
 
@@ -88,16 +92,13 @@ invariant.
 
 ## Immediate sequence
 
-Current checkpoint: PR 2B is open as pull request #3. Windows, Ubuntu, and the 10k scale gate are
-green; the remaining gate is an independent external audit followed by explicit merge approval.
+Current checkpoint: PR 2B is merged as pull request #3. PR 2C's repaired implementation head passed
+the complete offline validation matrix and received a fresh independent `GO`. The remaining gates
+are this documentation-only evidence update, green CI on the resulting head, and human merge review.
 
-1. Obtain the external audit verdict and merge PR 2B only if no unresolved blocker or high-severity
-   finding remains. Do not begin live reads inside PR 2B.
-2. Add PR 2C recorded FMP/issuer-IR mirrors and arrival-permutation tests against the accepted PR 2B
-   evidence and replay contracts.
-3. Define observation telemetry before live reads: source publication time, request start/end,
-   artifact retrieval, normalization, trusted capture, clock basis, issuer/symbol mapping, and
-   duplicate/revision identity.
+1. Land the documentation-only PR 2C evidence update and keep required CI green.
+2. Mark pull request #4 ready for review and request human approval.
+3. Merge PR 2C only through the separate human review workflow; do not add live reads to it.
 4. Enable live read-only SEC/FMP/IR capture plus calendar prewarming and raw artifact retention.
 5. Run a restart/reconciliation and completeness drill, then begin the 100-200 cluster observation
    run before adding LLM extraction or trade simulation.

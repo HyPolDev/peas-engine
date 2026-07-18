@@ -7,7 +7,9 @@
       "!!dist",
       "!!node_modules",
       "!!coverage",
-      "!!fixtures/sec/v1/bodies"
+      "!!fixtures/sec/v1/bodies",
+      "!!fixtures/fmp/v1/bodies",
+      "!!fixtures/ir/nvidia/v1/bodies"
     ]
   },
   "formatter": {
