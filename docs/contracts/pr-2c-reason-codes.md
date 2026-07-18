@@ -10,7 +10,7 @@ or event.
 | --- | --- | --- |
 | ignored | `fmp.not-earnings-related` | Valid item is outside the frozen classifier |
 | ignored | `fmp.issuer-unmapped` | Explicit symbol/CIK mapping is absent |
-| quarantined | `fmp.response-invalid` | Acquisition variant or top-level shape is invalid |
+| quarantined | `fmp.response-invalid` | Acquisition variant or public outer/nested normalizer input is not exact inert data |
 | quarantined | `fmp.item-invalid` | Closed item field/type contract is invalid |
 | quarantined | `fmp.identity-invalid` | Symbol or record/revision identity cannot be formed |
 | quarantined | `fmp.duplicate-conflict` | Same logical record/revision conflicts |
@@ -33,7 +33,7 @@ FMP `limitKind`: `json-tokens`, `json-depth`, `object-keys`, or `decoded-string-
 | --- | --- | --- |
 | ignored | `ir.not-financial-results` | Valid item is outside the frozen classifier |
 | ignored | `ir.fiscal-period-ambiguous` | Synthetic mapping/structured focus is absent or conflicts |
-| quarantined | `ir.bundle-invalid` | Membership/primary/projection contract is invalid |
+| quarantined | `ir.bundle-invalid` | Membership/primary/projection or public input/parser-options contract is invalid |
 | quarantined | `ir.bundle-hash-mismatch` | Declared projection/evidence hash disagrees |
 | quarantined | `ir.observation-invalid` | Selected observation absent, reused, future, wrong-provider, or digest-mismatched |
 | quarantined | `ir.artifact-read-failed` | Verified bytes cannot be completely read |

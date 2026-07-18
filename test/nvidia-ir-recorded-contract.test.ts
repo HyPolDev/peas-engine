@@ -403,6 +403,143 @@ test("NVIDIA validates member types and bounds before any raw member digest", as
   }
 });
 
+test("NVIDIA public normalizer rejects hostile containers before any caller trap can execute", async () => {
+  const input = {
+    rssBytes: new Uint8Array(await fixture("baseline.rss")),
+    releaseHtmlBytes: new Uint8Array(await fixture("baseline.html")),
+    selectionKey: KEY,
+  };
+  const baseline = normalizeRecordedNvidiaIr(input);
+  assert.equal(baseline.status, "emitted");
+  assert.deepEqual(
+    normalizeRecordedNvidiaIr(
+      {
+        rssBytes: new Uint8Array(input.rssBytes),
+        releaseHtmlBytes: new Uint8Array(input.releaseHtmlBytes),
+        selectionKey: KEY,
+      },
+      { rssChunkSize: 1, htmlChunkSize: 7 },
+    ),
+    baseline,
+  );
+
+  let accessorCalls = 0;
+  const accessorOuter = {};
+  for (const [key, value] of Object.entries(input)) {
+    Object.defineProperty(accessorOuter, key, {
+      enumerable: true,
+      get() {
+        accessorCalls += 1;
+        return value;
+      },
+    });
+  }
+  let proxyCalls = 0;
+  const proxyOuter = new Proxy(input, {
+    get() {
+      proxyCalls += 1;
+      throw new Error("outer get trap must not run");
+    },
+    ownKeys() {
+      proxyCalls += 1;
+      throw new Error("outer ownKeys trap must not run");
+    },
+    getOwnPropertyDescriptor() {
+      proxyCalls += 1;
+      throw new Error("outer descriptor trap must not run");
+    },
+  });
+  const inheritedOuter = Object.create(input);
+  const symbolOuter = { ...input };
+  Object.defineProperty(symbolOuter, Symbol("hostile"), { enumerable: true, value: true });
+  const nonEnumerableOuter = { ...input };
+  Object.defineProperty(nonEnumerableOuter, "selectionKey", { enumerable: false, value: KEY });
+  const customPrototypeOuter = Object.setPrototypeOf({ ...input }, { hostile: true });
+  const byteProxy = new Proxy(new Uint8Array(input.rssBytes), {
+    get() {
+      proxyCalls += 1;
+      throw new Error("byte proxy trap must not run");
+    },
+  });
+
+  const hostileInputs: readonly [string, unknown][] = [
+    ["accessor outer", accessorOuter],
+    ["proxy outer", proxyOuter],
+    ["inherited outer", inheritedOuter],
+    ["missing outer field", { rssBytes: input.rssBytes, selectionKey: KEY }],
+    ["extra outer field", { ...input, unexpected: true }],
+    ["symbol outer field", symbolOuter],
+    ["non-enumerable outer field", nonEnumerableOuter],
+    ["custom outer prototype", customPrototypeOuter],
+    ["proxy byte member", { ...input, rssBytes: byteProxy }],
+    ["non-byte member", { ...input, releaseHtmlBytes: {} }],
+  ];
+  for (const [name, hostile] of hostileInputs) {
+    const result = normalizeRecordedNvidiaIr(
+      hostile as Parameters<typeof normalizeRecordedNvidiaIr>[0],
+    );
+    assert.equal(result.status, "quarantined", name);
+    if (result.status !== "quarantined") continue;
+    assert.equal(result.reasonCode, "ir.bundle-invalid", name);
+    assert.equal(result.transcript.rssArtifactHash, "0".repeat(64), name);
+    assert.equal(result.transcript.releaseHtmlArtifactHash, "0".repeat(64), name);
+    assert.equal(result.transcript.rssItemProjectionHash, null, name);
+    assert.equal(result.transcript.releaseVisibleProjectionHash, null, name);
+    assert.equal(result.transcript.selectedProjectionHash, null, name);
+    assert.equal(result.transcript.candidateHash, null, name);
+    assert.equal(result.transcript.eventDraftHash, null, name);
+  }
+
+  const accessorOptions = {};
+  Object.defineProperty(accessorOptions, "rssChunkSize", {
+    enumerable: true,
+    get() {
+      accessorCalls += 1;
+      throw new Error("parser option getter must not run");
+    },
+  });
+  const proxyOptions = new Proxy(
+    {},
+    {
+      get() {
+        proxyCalls += 1;
+        throw new Error("parser option get trap must not run");
+      },
+      ownKeys() {
+        proxyCalls += 1;
+        throw new Error("parser option ownKeys trap must not run");
+      },
+      getOwnPropertyDescriptor() {
+        proxyCalls += 1;
+        throw new Error("parser option descriptor trap must not run");
+      },
+    },
+  );
+  const symbolOptions = {};
+  Object.defineProperty(symbolOptions, Symbol("hostile"), { enumerable: true, value: true });
+  const cyclicOptions: Record<string, unknown> = {};
+  cyclicOptions["self"] = cyclicOptions;
+  const hostileOptions: readonly [string, unknown][] = [
+    ["accessor parser option", accessorOptions],
+    ["proxy parser option", proxyOptions],
+    ["inherited parser option", Object.create({ rssChunkSize: 1 })],
+    ["extra parser option", { unexpected: true }],
+    ["symbol parser option", symbolOptions],
+    ["custom parser option prototype", Object.setPrototypeOf({}, { hostile: true })],
+    ["sparse parser option", new Array(1)],
+    ["cyclic parser option", cyclicOptions],
+  ];
+  for (const [name, hostile] of hostileOptions) {
+    const result = normalizeRecordedNvidiaIr(input, hostile as never);
+    assert.equal(result.status, "quarantined", name);
+    if (result.status !== "quarantined") continue;
+    assert.equal(result.reasonCode, "ir.bundle-invalid", name);
+    assert.equal(result.transcript.candidateHash, null, name);
+  }
+  assert.equal(accessorCalls, 0);
+  assert.equal(proxyCalls, 0);
+});
+
 test("RSS and visible-release projection ceilings are enforced before projection hashes", async () => {
   const baselineRss = (await fixture("baseline.rss")).toString("utf8");
   const baselineHtml = (await fixture("baseline.html")).toString("utf8");

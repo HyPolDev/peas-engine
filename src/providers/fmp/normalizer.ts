@@ -5,9 +5,17 @@ import { canonicalHash } from "../../core/hash.js";
 import {
   deepFreezeJson,
   inertJsonSnapshot,
+  type JsonLimits,
   type JsonObject,
   type JsonValue,
 } from "../../core/json.js";
+import {
+  ProviderNormalizerInputError,
+  ProviderNormalizerInputLimitError,
+  snapshotExactNormalizerInput,
+  snapshotNestedNormalizerJson,
+  snapshotNormalizerBytes,
+} from "../normalizer-input.js";
 import {
   FMP_MAX_ITEMS,
   FMP_MAX_RESPONSE_BYTES,
@@ -47,6 +55,14 @@ const HTML_COMMENT = /<!--[\s\S]*?-->/gu;
 const URL_TOKEN = /\bhttps?:\/\/[^\t\n\f\r <>"'`]+/giu;
 const ASCII_EDGE = /^[\t\n\f\r ]+|[\t\n\f\r ]+$/gu;
 const ASCII_SPACE = /[\t\n\f\r ]+/gu;
+const FMP_NORMALIZER_NESTED_LIMITS: JsonLimits = Object.freeze({
+  maxDepth: 8,
+  maxNodes: 32,
+  maxArrayLength: 8,
+  maxObjectKeys: 8,
+  maxStringBytes: 512,
+  maxCanonicalBytes: 4 * 1024,
+});
 
 type FmpItem = Readonly<{
   symbol: string;
@@ -383,6 +399,26 @@ function selector(value: FmpSelectorV1): FmpSelectorV1 {
   return freeze(snapshot);
 }
 
+function snapshotFmpNormalizerInput(input: unknown): Readonly<{
+  bytes: Uint8Array;
+  selector: FmpSelectorV1;
+  route: FmpRecordedRouteV1;
+}> {
+  const outer = snapshotExactNormalizerInput(input, ["bytes", "selector", "route"]);
+  return Object.freeze({
+    bytes: snapshotNormalizerBytes(outer["bytes"], FMP_MAX_RESPONSE_BYTES),
+    selector: selector(
+      snapshotNestedNormalizerJson<FmpSelectorV1>(outer["selector"], FMP_NORMALIZER_NESTED_LIMITS),
+    ),
+    route: validateRoute(
+      snapshotNestedNormalizerJson<FmpRecordedRouteV1>(
+        outer["route"],
+        FMP_NORMALIZER_NESTED_LIMITS,
+      ),
+    ),
+  });
+}
+
 export function normalizeRecordedFmpCollection(
   input: Readonly<{
     bytes: Uint8Array;
@@ -392,13 +428,12 @@ export function normalizeRecordedFmpCollection(
 ): FmpNormalizationResult {
   let primaryArtifactHash: string | null = null;
   try {
-    if (input.bytes instanceof Uint8Array && input.bytes.byteLength <= FMP_MAX_RESPONSE_BYTES) {
-      primaryArtifactHash = createHash("sha256").update(input.bytes).digest("hex");
-    }
-    const inspected = inspectRecordedFmpCollection(input.bytes);
+    const normalizedInput = snapshotFmpNormalizerInput(input);
+    primaryArtifactHash = createHash("sha256").update(normalizedInput.bytes).digest("hex");
+    const inspected = inspectRecordedFmpCollection(normalizedInput.bytes);
     primaryArtifactHash = inspected.primaryArtifactHash;
-    const selected = selector(input.selector);
-    const route = validateRoute(input.route);
+    const selected = normalizedInput.selector;
+    const route = normalizedInput.route;
     const family = inspected.items.filter((item) => item.recordId === selected.recordId);
     if (family.length < 1) throw new NormalizeFailure("fmp.item-invalid");
     const distinct = new Map(family.map((item) => [item.selectedProjectionHash, item]));
@@ -473,6 +508,12 @@ export function normalizeRecordedFmpCollection(
   } catch (error) {
     if (error instanceof NormalizeFailure) {
       return quarantine(error.reasonCode, error.limitKind, primaryArtifactHash);
+    }
+    if (error instanceof ProviderNormalizerInputLimitError) {
+      return quarantine("fmp.response-byte-limit-exceeded", null, null);
+    }
+    if (error instanceof ProviderNormalizerInputError) {
+      return quarantine("fmp.response-invalid", null, null);
     }
     return quarantine("fmp.response-invalid", null, primaryArtifactHash);
   }

@@ -7,6 +7,12 @@ import { type EventDraft, validateEventDraft } from "../../../core/event.js";
 import { canonicalHash } from "../../../core/hash.js";
 import { canonicalJson, type JsonValue } from "../../../core/json.js";
 import {
+  ProviderNormalizerInputError,
+  ProviderNormalizerInputLimitError,
+  snapshotExactNormalizerInput,
+  snapshotNormalizerBytes,
+} from "../../normalizer-input.js";
+import {
   NVIDIA_IR_LIMITS,
   NVIDIA_IR_PROVIDER,
   NVIDIA_IR_SOURCE,
@@ -29,6 +35,10 @@ import {
 type Node = { name: string; attributes: Record<string, string>; children: (Node | string)[] };
 type ParseKind = "xml" | "html";
 type ParseOptions = Readonly<{ rssChunkSize?: number; htmlChunkSize?: number }>;
+type DetachedParseOptions = Readonly<{
+  rssChunkSize: number | undefined;
+  htmlChunkSize: number | undefined;
+}>;
 
 const ASCII_EDGE = /^[\t\n\r ]+|[\t\n\r ]+$/gu;
 const ASCII_RUN = /[\t\n\f\r ]+/gu;
@@ -72,6 +82,48 @@ const DROPPED = new Set([
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const UNAVAILABLE_ARTIFACT_HASH = "0".repeat(64);
+
+function snapshotNvidiaChunkSize(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value <= 0 ||
+    value > NVIDIA_IR_LIMITS.memberBytes
+  ) {
+    throw new ProviderNormalizerInputError();
+  }
+  return value;
+}
+
+function snapshotNvidiaParseOptions(value: unknown): DetachedParseOptions {
+  const options = snapshotExactNormalizerInput(value, [], ["rssChunkSize", "htmlChunkSize"]);
+  return Object.freeze({
+    rssChunkSize: snapshotNvidiaChunkSize(options["rssChunkSize"]),
+    htmlChunkSize: snapshotNvidiaChunkSize(options["htmlChunkSize"]),
+  });
+}
+
+function snapshotNvidiaNormalizerInput(input: unknown): Readonly<{
+  rssBytes: Uint8Array;
+  releaseHtmlBytes: Uint8Array;
+  selectionKey: string;
+}> {
+  const outer = snapshotExactNormalizerInput(input, [
+    "rssBytes",
+    "releaseHtmlBytes",
+    "selectionKey",
+  ]);
+  if (typeof outer["selectionKey"] !== "string") throw new ProviderNormalizerInputError();
+  return Object.freeze({
+    rssBytes: snapshotNormalizerBytes(outer["rssBytes"], NVIDIA_IR_LIMITS.memberBytes),
+    releaseHtmlBytes: snapshotNormalizerBytes(
+      outer["releaseHtmlBytes"],
+      NVIDIA_IR_LIMITS.memberBytes,
+    ),
+    selectionKey: parseNvidiaReference(outer["selectionKey"]),
+  });
+}
 
 function digest(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
@@ -678,18 +730,14 @@ export function normalizeRecordedNvidiaIr(
     -readonly [K in keyof NvidiaNormalizationTranscript]?: NvidiaNormalizationTranscript[K];
   } = {};
   try {
-    if (input === null || typeof input !== "object" || Array.isArray(input)) {
-      throw new NvidiaContractError("ir.bundle-invalid");
-    }
-    const { rssBytes, releaseHtmlBytes, selectionKey: rawSelectionKey } = input;
-    if (!(rssBytes instanceof Uint8Array) || !(releaseHtmlBytes instanceof Uint8Array)) {
-      throw new NvidiaContractError("ir.bundle-invalid");
-    }
+    const normalizedInput = snapshotNvidiaNormalizerInput(input);
+    const normalizedOptions = snapshotNvidiaParseOptions(options);
+    const { rssBytes, releaseHtmlBytes, selectionKey: rawSelectionKey } = normalizedInput;
     assertNvidiaRecordedMemberBounds(rssBytes, releaseHtmlBytes);
     rssArtifactHash = digest(rssBytes);
     releaseHtmlArtifactHash = digest(releaseHtmlBytes);
-    const selectionKey = parseNvidiaReference(rawSelectionKey);
-    const rss = parseRss(decode(rssBytes), selectionKey, options.rssChunkSize);
+    const selectionKey = rawSelectionKey;
+    const rss = parseRss(decode(rssBytes), selectionKey, normalizedOptions.rssChunkSize);
     hashes.rssItemProjectionHash = canonicalHash(
       "peas/nvidia-ir-rss-item-projection/v1",
       rss.projection as unknown as JsonValue,
@@ -714,7 +762,7 @@ export function normalizeRecordedNvidiaIr(
       decode(releaseHtmlBytes),
       selectionKey,
       rss.projection.title,
-      options.htmlChunkSize,
+      normalizedOptions.htmlChunkSize,
     );
     hashes.releaseVisibleProjectionHash = canonicalHash(
       "peas/nvidia-ir-release-visible-projection/v1",
@@ -816,10 +864,27 @@ export function normalizeRecordedNvidiaIr(
       ),
     };
   } catch (error) {
+    if (error instanceof ProviderNormalizerInputLimitError) {
+      const contract = new NvidiaContractError("ir.member-limit-exceeded");
+      return {
+        status: "quarantined",
+        reasonCode: contract.reasonCode,
+        transcript: transcript(
+          "quarantined",
+          contract.reasonCode,
+          contract.limitKind,
+          rssArtifactHash,
+          releaseHtmlArtifactHash,
+          hashes,
+        ),
+      };
+    }
     const contract =
       error instanceof NvidiaContractError
         ? error
-        : new NvidiaContractError("ir.release-malformed");
+        : error instanceof ProviderNormalizerInputError
+          ? new NvidiaContractError("ir.bundle-invalid")
+          : new NvidiaContractError("ir.release-malformed");
     return {
       status: "quarantined",
       reasonCode: contract.reasonCode,

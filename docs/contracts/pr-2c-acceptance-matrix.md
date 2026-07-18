@@ -6,14 +6,14 @@
 | FMP order/page | Item/object order, declared page size, and replay page size do not change canonical item output | FMP fixture agent |
 | FMP corrections | Same record tuple plus changed semantic title/body has a new deterministic revision | FMP fixture agent |
 | FMP time | Explicit and naive Gregorian-valid time rules are real-input tested; null/valid naive remain null/unknown and every malformed present timestamp quarantines | FMP fixture agent |
-| FMP malformed/bounds | JSON syntax, duplicate key, shape, encoding, ASCII-only semantic whitespace, and every real exact/one-over parser/loader bound fail with stable reasons | FMP fixture agent |
+| FMP malformed/bounds | Exact inert public input/selector/route and one-time detached bytes reject hostile outer/nested accessors, proxies, inherited/symbol/sparse/custom containers with zero traps; JSON syntax, duplicate key, shape, encoding, ASCII-only semantic whitespace, and every real exact/one-over parser/loader bound fail with stable reasons | FMP fixture agent |
 | NVIDIA feed/item | Synthetic RSS selection and HTML canonical key produce one detached candidate | NVIDIA fixture agent |
 | NVIDIA duplicates | Identical duplicate item collapses; conflicting duplicate item quarantines independent of order | NVIDIA fixture agent |
 | NVIDIA revisions | Same non-URL family plus changed retained projection yields a new revision; intra-feed conflict quarantines | NVIDIA fixture agent |
 | NVIDIA time | Item GMT time converts; channel/mod/page/retrieval times never substitute missing item time | NVIDIA fixture agent |
 | NVIDIA links | Every GUID/permalink/link/canonical/og/query/fragment/host/port/userinfo permutation follows the exact selection-key policy; no link is followed | NVIDIA fixture agent |
 | URL/comment-only raw change | Semantic projection, revision, candidate, EventDraft, and evidence-bundle identity stay equal while raw provenance may differ | Both fixture agents |
-| NVIDIA malformed/bounds | Member runtime type/bytes gate before hashes; XML DTD/entity/syntax, HTML/canonical, encoding, actual RSS/release projection ceilings, and every real exact/one-over bound have stable reasons | NVIDIA fixture agent |
+| NVIDIA malformed/bounds | Exact inert public input and parser-options objects plus one-time detached member bytes reject hostile outer/nested accessors, proxies, inherited/symbol/sparse/custom containers with zero traps before hashes; XML DTD/entity/syntax, HTML/canonical, encoding, actual RSS/release projection ceilings, and every real exact/one-over bound have stable reasons | NVIDIA fixture agent |
 | Projection proof | Selected projection independently recomputes from verified parent artifact; FMP terminal outcomes have no proof and NVIDIA has exactly one proof for each required role | Both fixture agents |
 | Fixture safety | Paths remain inside root; all bodies are synthetic; no secrets, live URLs, copied bodies, or network access | Both fixture agents |
 | SEC/FMP/IR permutations | Every arrival order is accepted as captured business order and fixture presentation order is irrelevant | Cross-source agent |

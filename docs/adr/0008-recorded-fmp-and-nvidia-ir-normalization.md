@@ -96,6 +96,13 @@ and any mapping inequality reject before hashing.
 
 ## FMP recorded-synthetic dialect
 
+The public FMP normalizer input is an exact inert own-data object with only `bytes`, `selector`,
+and `route`. Before any member read, hash, parse, or validation, it rejects proxies, accessors,
+symbols, inherited/custom-prototype/non-enumerable/extra fields, cycles, and out-of-bound nested
+JSON. Accepted bytes are copied once into a detached `Uint8Array`; accepted selector and route are
+bounded inert snapshots. Hostile input is `fmp.response-invalid` with no partial candidate, draft,
+or identity.
+
 The top level is an array of exact seven-field items: `symbol`, nullable `publishedDate`, `title`,
 `text`, nullable `site`, nullable `image`, and nullable `url`. Unknown/missing/inherited/accessor/
 symbol/sparse/proxy/duplicate keys reject. Symbol/title/text are non-empty. Historical `date` is no
@@ -294,8 +301,13 @@ lowerCaseTags:false,lowerCaseAttributeNames:false,recognizeSelfClosing:true}`. H
 `{xmlMode:false,decodeEntities:true,lowerCaseTags:true,lowerCaseAttributeNames:true,
 recognizeSelfClosing:false}`. No DOM/tree adapter or browser parser participates.
 
-The public normalizer first requires both members to be supported `Uint8Array` values, applies the
-individual and aggregate member ceilings, and only then computes a raw digest, decodes, or parses.
+The public NVIDIA normalizer input is an exact inert own-data object with only `rssBytes`,
+`releaseHtmlBytes`, and `selectionKey`; parser options are likewise exact inert own-data with only
+optional bounded chunk sizes. Proxies, accessors, symbols, inherited/custom-prototype/
+non-enumerable/extra fields, cycles, and invalid nested values reject as `ir.bundle-invalid` before
+any caller member is read. Both accepted byte members are copied once into detached `Uint8Array`
+instances. The normalizer then applies individual and aggregate member ceilings before a raw
+digest, decode, or parse.
 Each completed RSS-item and release-visible projection is measured as canonical UTF-8 JSON and must
 fit the 4 MiB projection ceiling before its component hash is formed.
 

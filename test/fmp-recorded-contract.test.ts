@@ -402,6 +402,133 @@ test("malformed input, duplicate keys, invalid time, digest mismatch, and bounds
   );
 });
 
+test("FMP public normalizer rejects hostile containers before any caller trap can execute", async () => {
+  const sourceBytes = await bytesFor(emitted("latest-explicit-time"));
+  const inspected = inspectRecordedFmpCollection(sourceBytes);
+  const selected = inspected.items[0];
+  assert.ok(selected);
+  const input = {
+    bytes: new Uint8Array(sourceBytes),
+    selector: { recordId: selected.recordId, revisionId: selected.revisionId },
+    route: ROUTE,
+  };
+  const baseline = normalizeRecordedFmpCollection(input);
+  assert.equal(baseline.status, "emitted");
+  assert.deepEqual(
+    normalizeRecordedFmpCollection({
+      bytes: new Uint8Array(sourceBytes),
+      selector: { ...input.selector },
+      route: { ...ROUTE, issuerMapping: { ...ROUTE.issuerMapping } },
+    }),
+    baseline,
+  );
+
+  let accessorCalls = 0;
+  const accessorOuter = {};
+  for (const [key, value] of Object.entries(input)) {
+    Object.defineProperty(accessorOuter, key, {
+      enumerable: true,
+      get() {
+        accessorCalls += 1;
+        return value;
+      },
+    });
+  }
+  let proxyCalls = 0;
+  const proxyOuter = new Proxy(input, {
+    get() {
+      proxyCalls += 1;
+      throw new Error("outer get trap must not run");
+    },
+    ownKeys() {
+      proxyCalls += 1;
+      throw new Error("outer ownKeys trap must not run");
+    },
+    getOwnPropertyDescriptor() {
+      proxyCalls += 1;
+      throw new Error("outer descriptor trap must not run");
+    },
+  });
+  const inheritedOuter = Object.create(input);
+  const symbolOuter = { ...input };
+  Object.defineProperty(symbolOuter, Symbol("hostile"), { enumerable: true, value: true });
+  const nonEnumerableOuter = { ...input };
+  Object.defineProperty(nonEnumerableOuter, "route", { enumerable: false, value: input.route });
+  const customPrototypeOuter = Object.setPrototypeOf({ ...input }, { hostile: true });
+  const selectorAccessor = {};
+  Object.defineProperty(selectorAccessor, "recordId", {
+    enumerable: true,
+    get() {
+      accessorCalls += 1;
+      throw new Error("nested selector getter must not run");
+    },
+  });
+  Object.defineProperty(selectorAccessor, "revisionId", {
+    enumerable: true,
+    value: input.selector.revisionId,
+  });
+  const routeProxy = new Proxy(ROUTE, {
+    get() {
+      proxyCalls += 1;
+      throw new Error("nested route proxy trap must not run");
+    },
+  });
+  const mappingAccessor = { ...ROUTE, issuerMapping: {} } as Record<string, unknown>;
+  Object.defineProperty(mappingAccessor["issuerMapping"] as object, "issuerCik", {
+    enumerable: true,
+    get() {
+      accessorCalls += 1;
+      throw new Error("nested mapping getter must not run");
+    },
+  });
+  const sparseSelector = new Array(1);
+  const inheritedSelector = Object.create(input.selector);
+  const symbolRoute = { ...ROUTE };
+  Object.defineProperty(symbolRoute, Symbol("hostile"), { enumerable: true, value: true });
+  const customRoute = Object.setPrototypeOf({ ...ROUTE }, { hostile: true });
+  const cyclicRoute: Record<string, unknown> = { ...ROUTE };
+  cyclicRoute["self"] = cyclicRoute;
+  const byteProxy = new Proxy(new Uint8Array(sourceBytes), {
+    get() {
+      proxyCalls += 1;
+      throw new Error("byte proxy trap must not run");
+    },
+  });
+
+  const hostileCases: readonly [string, unknown][] = [
+    ["accessor outer", accessorOuter],
+    ["proxy outer", proxyOuter],
+    ["inherited outer", inheritedOuter],
+    ["missing outer field", { bytes: input.bytes, selector: input.selector }],
+    ["extra outer field", { ...input, unexpected: true }],
+    ["symbol outer field", symbolOuter],
+    ["non-enumerable outer field", nonEnumerableOuter],
+    ["custom outer prototype", customPrototypeOuter],
+    ["accessor selector", { ...input, selector: selectorAccessor }],
+    ["proxy route", { ...input, route: routeProxy }],
+    ["accessor route mapping", { ...input, route: mappingAccessor }],
+    ["sparse selector", { ...input, selector: sparseSelector }],
+    ["inherited selector", { ...input, selector: inheritedSelector }],
+    ["symbol route", { ...input, route: symbolRoute }],
+    ["custom route prototype", { ...input, route: customRoute }],
+    ["cyclic route", { ...input, route: cyclicRoute }],
+    ["proxy byte member", { ...input, bytes: byteProxy }],
+    ["non-byte member", { ...input, bytes: {} }],
+  ];
+  for (const [name, hostile] of hostileCases) {
+    const result = normalizeRecordedFmpCollection(
+      hostile as Parameters<typeof normalizeRecordedFmpCollection>[0],
+    );
+    assert.equal(result.status, "quarantined", name);
+    assert.equal(result.reasonCode, "fmp.response-invalid", name);
+    assert.equal(result.primaryArtifactHash, null, name);
+    assert.equal(result.candidate, null, name);
+    assert.equal(result.draft, null, name);
+  }
+  assert.equal(accessorCalls, 0);
+  assert.equal(proxyCalls, 0);
+});
+
 test("full recorded evidence, projection proof, and path confinement fail closed", async () => {
   const fixture = emitted("latest-explicit-time");
   const member = fixture.retrievedMembers[0];

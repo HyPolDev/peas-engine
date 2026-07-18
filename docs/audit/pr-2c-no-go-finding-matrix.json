@@ -7,6 +7,11 @@
     "attachmentSha256": "ade0f51cadb96080ba3fb551816ef9517dbc75046378eb61bede7836ab625af0",
     "title": "NO_GO: provider and ledger boundary closure"
   },
+  "followUpAudit": {
+    "auditedHead": "9d45e56b66d4c992c801c3421730c14fa793d507",
+    "attachmentSha256": "1b504d9c35c137a91835c077ea25a069d47b100edb67037b7b9326d0e14ebb8b",
+    "title": "NO_GO: public provider normalizer input boundary"
+  },
   "baseline": {
     "command": "npm.cmd test",
     "head": "08516734f02280bb29c9ec374273ba3ec4236e56",
@@ -134,6 +139,18 @@
       "positiveControl": "every fact kind and parent transition, including redelivery, validates at exact dimensions",
       "hostileRegression": "cross-execution parents and missing/extra clock-basis parents reject with stable observation reasons",
       "exactAndOneOver": "64 MiB/64 MiB+1 bundle bytes, 256/257 timestamp bytes, and all declared resource dimensions are executable"
+    },
+    {
+      "id": 12,
+      "owner": "Provider boundary hardening",
+      "publicEntrypoints": ["normalizeRecordedFmpCollection", "normalizeRecordedNvidiaIr"],
+      "stableExpectedReason": {
+        "fmp": "fmp.response-invalid",
+        "nvidia": "ir.bundle-invalid"
+      },
+      "positiveControl": "ordinary exact plain inputs emit byte-for-byte identically after a one-time detached byte snapshot",
+      "hostileRegression": "outer and nested accessor/proxy/inherited/symbol/sparse/custom-prototype containers execute zero traps and emit no candidate, draft, transcript identity, or partial result",
+      "exactAndOneOver": "FMP 10 MiB and NVIDIA 10 MiB-per-member/20 MiB-bundle byte ceilings retain real exact and one-over coverage after copying"
     }
   ]
 }
