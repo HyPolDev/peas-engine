@@ -38,11 +38,10 @@ Do not maintain task state independently in Linear, Notion, and GitHub.
   verified selected-observation loading, pure deterministic normalization, schema-V2 evidence
   provenance, trusted capture, and byte-identical live-style/replay processing in memory and
   SQLite. Historical RC.2 vectors and frozen kernel ports remain unchanged.
-- PR 2C is review-ready on `dev/pr-2c-recorded-mirrors`. The repaired implementation head
-  `9b1a32a5e7992c7d98ac3bde8b79b032de76168e` received a fresh independent `GO` with no actionable
-  findings after the revoked-proxy repair. The complete offline suite passed 289 tests with zero
-  failures and four documented skips; Linux passed and the initially flaky Windows artifact-vault
-  check passed unchanged on rerun. This documentation-only follow-up records that final evidence.
+- PR 2C merged as pull request #4 at `73b4d0b5f85f04f66315bdb6b43edd187381e600` after the repaired
+  implementation head `9b1a32a5e7992c7d98ac3bde8b79b032de76168e` received a fresh
+  independent `GO`. It supplies the recorded FMP/NVIDIA IR contract gate, cross-source mirror
+  acceptance tests, and the provider-neutral observation ledger required by live read-only work.
 - No live SEC HTTP, FMP, issuer-IR, calendar, market-data, LLM, brokerage, or trading adapter exists.
 - The next product slice is explicitly read-only: no LLM dependency, no orders, no brokerage, and
   no portfolio mutation.
@@ -52,7 +51,7 @@ Do not maintain task state independently in Linear, Notion, and GitHub.
 | Stage | Outcome | Exit gate |
 | --- | --- | --- |
 | P0 Foundation - complete | Deterministic kernel, durable artifacts, bounded ingress, replay evidence | RC.2 and PR 2A gates are satisfied |
-| P1 Forward read-only slice - in progress | Recorded SEC path, recorded FMP/IR mirrors, live reads, calendar prewarming, observation telemetry, and raw capture | A readiness drill proves complete provenance, restart recovery, replay equivalence, and zero dispatchable financial effects |
+| P1 Forward read-only slice - in progress | Live SEC/FMP/IR capture, calendar prewarming, and a zero-incremental-cost delayed market-reference path | A readiness drill proves complete provenance, frozen market joins, restart recovery, replay equivalence, and zero dispatchable financial effects |
 | P2 Observation run | 100–200 forward earnings clusters with latency, missing-event, duplicate, revision, and first-observation price-movement measurements | Dataset has source-level provenance and a reproducible measurement report |
 | P3 Context snapshots | Prospective FMP estimates, regular/aftermarket market data, sector/SPY abnormal movement, session, halt, and first-tradable-quote state | Every decision input is timestamped, versioned, and replayable |
 | P4 Decision packets | Deterministic numbers first; evidence-backed language/guidance extraction second; explicit setup/no-trade classification | Packets are reproducible, source-linked, and safe to compare in replay |
@@ -90,22 +89,107 @@ Use these statuses: `blocked`, `ready`, `in-progress`, `review`, `done`, and `ga
 small task per PR whenever the task changes a contract, migration, provider boundary, or safety
 invariant.
 
-## Immediate sequence
+## Zero-incremental-cost path to event validation
 
-Current checkpoint: PR 2B is merged as pull request #3. PR 2C's repaired implementation head passed
-the complete offline validation matrix and received a fresh independent `GO`. The remaining gates
-are this documentation-only evidence update, green CI on the resulting head, and human merge review.
+Current checkpoint: PR 2B and PR 2C are merged as pull requests #3 and #4. No new market-data spend
+is authorized before the first event-validation study. Existing FMP Premium access may be used as a
+secondary comparison source. The provisional primary reference is Alpaca Basic delayed SIP history
+if written terms permit private durable retention, deterministic replay, internal research, and
+publication of derived aggregate results. IBKR, paid Alpaca, FMP Ultimate, Databento, Massive, and
+any other new subscription remain deferred until the study justifies additional spend.
 
-1. Land the documentation-only PR 2C evidence update and keep required CI green.
-2. Mark pull request #4 ready for review and request human approval.
-3. Merge PR 2C only through the separate human review workflow; do not add live reads to it.
-4. Enable live read-only SEC/FMP/IR capture plus calendar prewarming and raw artifact retention.
-5. Run a restart/reconciliation and completeness drill, then begin the 100-200 cluster observation
-   run before adding LLM extraction or trade simulation.
+This choice does not delay live read-only provider capture. Market-reference contract work and live
+SEC/FMP/NVIDIA acquisition proceed in parallel. The recorded market contract, a permitted frozen
+historical reference, and the readiness drill block P2 collection; an IBKR live witness does not.
 
-The later full market-snapshot stage remains separate, but the observation run must either capture
-a minimal timestamped market reference or bind a licensed historical intraday dataset before data
-collection begins. Otherwise the first-observation price-movement metric cannot be reproduced.
+### Step 1 - freeze the study and market-reference contract
+
+Create ADR 0010 before market-provider implementation. It must define:
+
+- first trusted PEAS observation as the primary observation anchor and its clock-basis requirements;
+- prior-close movement, release-gap movement, and residual movement at +1, +5, and +30 minutes;
+- NBBO midpoint as the preferred quote measure and last eligible trade as a separately labeled
+  measure, never a silent substitute;
+- regular and extended-hours session rules, staleness ceilings, halts, crossed quotes, corrections,
+  missing windows, symbol changes, and issuer/instrument mapping;
+- independent market-source, artifact, observation, and revision identities joined through
+  `marketReferenceJoinKey` without changing event identity or frozen kernel ports;
+- byte, item, page, request, time-window, retry, and retained-artifact bounds; and
+- a licensing boundary that keeps raw provider bytes private and permits only synthetic fixtures in
+  Git.
+
+In parallel, freeze the 100-200-cluster universe, sampling strata, no-trade controls, exclusions,
+minimum evidence completeness, and success/failure thresholds. The study must not choose thresholds
+after inspecting outcomes.
+
+### Step 2 - close the zero-cost entitlement and retention gate
+
+Obtain written answers for Alpaca Basic covering durable private retention, offline replay, internal
+non-display research, retention after account closure, and publication of derived latency/return
+statistics. Verify the account exposes the delayed SIP quote/trade history and extended-hours fields
+required by ADR 0010 without enabling a paid plan.
+
+Record the existing FMP Premium endpoints and entitlements that are actually available. FMP remains
+a secondary discrepancy check, not a silent replacement for missing SIP evidence.
+
+If Alpaca does not permit the required use, stop the adapter at the recorded boundary and make an
+explicit human decision. The no-spend fallback is a clearly labeled provisional FMP-only validation
+dataset with a lower evidence grade; no paid provider is selected automatically.
+
+### Step 3 - land recorded market-reference contracts first
+
+Add synthetic SIP-style quote, trade, and bar manifests plus executable contract tests for exact
+and one-over bounds, regular/extended sessions, duplicates, corrections, stale/crossed quotes,
+halts, missing windows, symbol remaps, malformed payloads, and oversized pages. Tests must prove
+identical normalized output and selected references across fixture order, retrieval order, restart,
+and replay page size. No test contacts a provider.
+
+### Step 4 - build live source capture and delayed market acquisition in parallel
+
+Implement live read-only capture in the existing order: SEC, FMP, then the NVIDIA issuer-IR
+allowlist, with calendar prewarming and durable raw artifacts. Separately implement the Alpaca
+delayed historical adapter behind the recorded contract:
+
+```text
+bounded acquisition -> private raw artifact -> verified read -> pure market normalization
+  -> deterministic reference selection -> marketReferenceJoinKey
+```
+
+Retrieval waits until the SIP window is available, but reference selection uses exchange event
+timestamps around the immutable PEAS observation anchor. Credentials, URLs, arbitrary headers,
+prices, and retrieval telemetry do not enter earnings-event identity. Add a hard configuration that
+prevents paid-plan activation or a non-zero provider budget before the validation decision.
+
+### Step 5 - run the integrated readiness drill
+
+Exercise at least one complete scheduled window and prove restart/reconciliation, missed-window
+backfill, duplicate delivery, corrections, clock regression handling, quota enforcement, provider
+unavailability, deterministic replay, raw-artifact verification, and stable missing-reference reason
+codes. Recompute selected market references from frozen artifacts and compare memory/SQLite results.
+The deployment must expose no broker/order surface and create zero dispatchable financial effects.
+
+### Step 6 - collect and freeze the forward dataset
+
+Collect 100-200 forward earnings clusters using the precommitted universe and strata. Every cluster
+must retain source-level provenance, publication and PEAS observation clocks, raw artifact digests,
+duplicate/revision relationships, the frozen market-reference join, and eligibility/no-trade
+snapshot. A cluster with unavailable or unusable market evidence remains in the denominator with a
+stable reason code; it is not silently dropped.
+
+Freeze a dataset version, manifest, code SHA, configuration digest, provider/entitlement snapshot,
+and completeness report before calculating study conclusions.
+
+### Step 7 - complete the event-validation study
+
+Report source coverage, missingness, duplicates, revisions, publication-to-observation latency,
+movement already present at first observation, and residual +1/+5/+30-minute movement. Separate
+regular from extended-hours events, trusted from inferred publication times, quote from trade
+measures, and complete from degraded market references. Include sensitivity checks for staleness,
+outliers, provider disagreement, and missing-data treatment.
+
+The decision gate asks whether the event/source system shows enough measurable, reproducible value
+to justify the next investment. Only after that review may the roadmap authorize an IBKR prospective
+witness, a paid consolidated feed, FMP Ultimate, Databento, or later LLM/trading work.
 
 The board should be updated when a gate, dependency, or acceptance criterion changes—not on every
 small coding step. The PR and test evidence remain the detailed execution log.

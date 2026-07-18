@@ -10,12 +10,12 @@
   },
   "current": {
     "stage": "P1",
-    "status": "review",
-    "branch": "dev/pr-2c-recorded-mirrors",
-    "mainCommit": "41f19b83e104857ed32b45fa5838c8199f5467ab",
+    "status": "in-progress",
+    "branch": "dev/market-reference-roadmap",
+    "mainCommit": "73b4d0b5f85f04f66315bdb6b43edd187381e600",
     "release": "v0.2.0-kernel-rc.2",
-    "focus": "PR 2C recorded FMP and NVIDIA IR contract-and-fixture gate",
-    "nextGate": "Green CI on the documentation-only final-GO update, then human merge review of pull request #4"
+    "focus": "Zero-incremental-cost live capture and reproducible delayed market-reference path",
+    "nextGate": "Accept ADR 0010, freeze the event-study design, and confirm Alpaca Basic retention and derived-use permission"
   },
   "stages": [
     {
@@ -106,7 +106,7 @@
         {
           "id": "P1-02",
           "title": "Recorded FMP and issuer-IR mirrors",
-          "status": "review",
+          "status": "done",
           "owner": "dev/pr-2c-recorded-mirrors",
           "dependsOn": ["P1-01"],
           "acceptance": "Arrival permutations, mirrors, corrections, inferred times, and redelivery are replay-tested.",
@@ -123,7 +123,8 @@
             "test/recorded-mirror-acceptance.test.ts",
             "https://github.com/HyPolDev/peas-engine/pull/4",
             "https://github.com/HyPolDev/peas-engine/actions/runs/29640667768",
-            "audited-head@9b1a32a5e7992c7d98ac3bde8b79b032de76168e"
+            "audited-head@9b1a32a5e7992c7d98ac3bde8b79b032de76168e",
+            "main@73b4d0b5f85f04f66315bdb6b43edd187381e600"
           ]
         },
         {
@@ -147,7 +148,7 @@
         {
           "id": "P1-05",
           "title": "Observation telemetry and clock contract",
-          "status": "review",
+          "status": "done",
           "owner": "integration-owner",
           "dependsOn": ["P1-01"],
           "acceptance": "Publication, request, retrieval, normalization, and capture times plus clock basis, issuer/symbol mapping, duplicate identity, and revision identity are joinable and replay-auditable.",
@@ -157,16 +158,53 @@
             "src/providers/observation-ledger.ts",
             "test/observation-ledger-contract.test.ts",
             "docs/audit/pr-2c-no-go-finding-matrix.json",
-            "audited-head@9b1a32a5e7992c7d98ac3bde8b79b032de76168e"
+            "audited-head@9b1a32a5e7992c7d98ac3bde8b79b032de76168e",
+            "main@73b4d0b5f85f04f66315bdb6b43edd187381e600"
           ]
+        },
+        {
+          "id": "P1-07",
+          "title": "Market-reference and event-study contract",
+          "status": "ready",
+          "owner": "integration-owner",
+          "dependsOn": ["P1-02", "P1-05"],
+          "acceptance": "ADR 0010 freezes observation anchors, prior-close/release-gap/residual movement metrics, quote/trade and session rules, deterministic market identity and joins, corrections, missing-data reason codes, resource bounds, licensing, and the precommitted 100-200-cluster study design without changing frozen kernel ports.",
+          "evidence": []
+        },
+        {
+          "id": "P1-08",
+          "title": "Recorded market-reference contract gate",
+          "status": "planned",
+          "owner": "agent",
+          "dependsOn": ["P1-07"],
+          "acceptance": "Synthetic SIP-style quote/trade/bar fixtures cover sessions, duplicates, corrections, stale/crossed quotes, halts, missing windows, symbol remaps, malformed input, and exact/one-over bounds; normalized references are invariant to order, restart, and replay page size with no network access.",
+          "evidence": []
+        },
+        {
+          "id": "P1-09",
+          "title": "Zero-cost provider entitlement and retention gate",
+          "status": "ready",
+          "owner": "human-owner",
+          "dependsOn": ["P1-07"],
+          "acceptance": "Written Alpaca Basic permission and account evidence cover delayed SIP access, private durable retention, offline replay, internal non-display research, post-account retention, and publication of derived aggregate results; otherwise an explicit human decision records the lower-grade FMP-only fallback without authorizing spend.",
+          "evidence": []
+        },
+        {
+          "id": "P1-10",
+          "title": "Delayed historical market-reference adapter",
+          "status": "planned",
+          "owner": "agent",
+          "dependsOn": ["P1-08", "P1-09"],
+          "acceptance": "A bounded no-new-spend adapter stores private raw artifacts, verifies reads, normalizes market facts, deterministically selects references around the PR 2C observation anchor, and emits marketReferenceJoinKey or a stable missing reason while paid-plan activation is disabled.",
+          "evidence": []
         },
         {
           "id": "P1-06",
           "title": "Forward-run readiness drill",
           "status": "planned",
           "owner": "integration-owner",
-          "dependsOn": ["P1-03", "P1-04", "P1-05"],
-          "acceptance": "A sustained read-only dry run survives restart and reconciliation, exports complete telemetry, respects quotas, and creates zero dispatchable financial effects.",
+          "dependsOn": ["P1-03", "P1-04", "P1-05", "P1-10"],
+          "acceptance": "A sustained read-only dry run survives restart, reconciliation, missed-window backfill, provider corrections, and clock regression; exports complete telemetry; recomputes identical frozen market references in memory and SQLite; respects quotas; records stable missing reasons; and creates zero dispatchable financial effects.",
           "evidence": []
         }
       ]
@@ -175,7 +213,7 @@
       "id": "P2",
       "name": "Forward observation run",
       "status": "planned",
-      "goal": "Collect 100-200 forward clusters and quantify source quality and first-observation latency.",
+      "goal": "Collect and freeze 100-200 precommitted forward clusters, then validate source quality, first-observation latency, and reproducible event-time price movement before authorizing new data spend.",
       "tasks": [
         {
           "id": "P2-01",
@@ -183,16 +221,25 @@
           "status": "planned",
           "owner": "agent",
           "dependsOn": ["P1-06"],
-          "acceptance": "Every cluster has source timestamps, raw artifact identities, duplicates, revisions, and missing-event accounting.",
+          "acceptance": "Every precommitted cluster has source timestamps, raw artifact identities, duplicates, revisions, eligibility/no-trade state, and a frozen marketReferenceJoinKey or stable missing-reference reason; missing cases remain in the denominator.",
           "evidence": []
         },
         {
           "id": "P2-02",
-          "title": "Latency and movement report",
+          "title": "Freeze observation-study dataset",
           "status": "planned",
           "owner": "research-owner",
           "dependsOn": ["P2-01"],
-          "acceptance": "Report measures source latency, missing events, duplicates, revisions, and price movement already observed at first source arrival using a reproducible timestamped market reference.",
+          "acceptance": "A versioned manifest binds the dataset, code SHA, configuration digest, provider entitlement snapshot, artifact/reference identities, sampling strata, exclusions, and completeness report before conclusions are calculated.",
+          "evidence": []
+        },
+        {
+          "id": "P2-03",
+          "title": "Event-validation study",
+          "status": "planned",
+          "owner": "research-owner",
+          "dependsOn": ["P2-02"],
+          "acceptance": "The reproducible report measures coverage, missingness, duplicates, revisions, publication-to-observation latency, prior-close and release-gap movement at first observation, residual +1/+5/+30-minute movement, and sensitivity to sessions, timestamp trust, quote/trade choice, staleness, outliers, provider disagreement, and missing-data treatment.",
           "evidence": []
         }
       ]
