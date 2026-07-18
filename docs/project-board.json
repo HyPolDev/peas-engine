@@ -169,7 +169,7 @@
           "owner": "integration-owner",
           "dependsOn": ["P1-02", "P1-05"],
           "acceptance": "ADR 0010 freezes observation anchors, prior-close/release-gap/residual movement metrics, quote/trade and session rules, deterministic market identity and joins, corrections, missing-data reason codes, resource bounds, licensing, and the precommitted 100-200-cluster study design without changing frozen kernel ports.",
-          "evidence": []
+          "evidence": ["docs/agent-prompts/adr-0010-market-reference.md"]
         },
         {
           "id": "P1-08",

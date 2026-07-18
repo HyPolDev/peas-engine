@@ -102,6 +102,28 @@ This choice does not delay live read-only provider capture. Market-reference con
 SEC/FMP/NVIDIA acquisition proceed in parallel. The recorded market contract, a permitted frozen
 historical reference, and the readiness drill block P2 collection; an IBKR live witness does not.
 
+### Fast-track scheduling judgment
+
+Treat one day as an evidence-producing delivery box, not as an unconditional calendar promise. The
+first three steps can move at roughly one box per focused day because they are contract, research,
+and recorded-fixture work. Step 4 contains several adapters and needs parallel ownership plus an
+integration pass. Step 5 must include a real scheduled observation window, so its elapsed time also
+depends on the earnings calendar and provider availability.
+
+| Delivery box | Fastest credible effort | Exit evidence | Main timing risk |
+| --- | --- | --- | --- |
+| 1. ADR 0010 and frozen study design | 1 focused day plus independent review | Accepted ADR, metric/reason-code tables, study manifest contract, review `GO` | A metric or timestamp decision changes the contract |
+| 2. Zero-cost entitlement and retention | 2-4 engineering hours; external response time is unbounded | Written permission/account evidence or explicit FMP-only fallback decision | Provider legal/support response time |
+| 3. Recorded market-reference gate | 1-2 focused days after ADR `GO` | Synthetic fixtures, exact/one-over tests, replay/order invariance, independent `GO` | Corrections, quote conditions, or bounds expose contract gaps |
+| 4. Live sources plus delayed reference adapter | 2-4 focused days with non-overlapping parallel owners | SEC, FMP, NVIDIA and delayed reference paths integrated behind recorded contracts | Rate limits, authentication, provider variance, restart integration |
+| 5. Integrated readiness drill | 1 setup day plus one complete scheduled window | Restart/reconciliation, backfill, deterministic replay, completeness and zero-effects evidence | No suitable event window or an external provider outage |
+
+A strong team can therefore finish the engineering portion in approximately five to eight focused
+working days. Five calendar days is an aggressive best case: it assumes ADR review closes quickly,
+Alpaca answers immediately, implementation runs in parallel, and a suitable live event window is
+available. The project manager may compress handoffs but must not merge a gate merely to preserve
+the schedule.
+
 ### Step 1 - freeze the study and market-reference contract
 
 Create ADR 0010 before market-provider implementation. It must define:
@@ -121,6 +143,9 @@ Create ADR 0010 before market-provider implementation. It must define:
 In parallel, freeze the 100-200-cluster universe, sampling strata, no-trade controls, exclusions,
 minimum evidence completeness, and success/failure thresholds. The study must not choose thresholds
 after inspecting outcomes.
+
+The copy-ready manager assignment for this gate is
+[`docs/agent-prompts/adr-0010-market-reference.md`](agent-prompts/adr-0010-market-reference.md).
 
 ### Step 2 - close the zero-cost entitlement and retention gate
 
