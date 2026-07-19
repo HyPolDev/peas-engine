@@ -9,7 +9,8 @@
       "!!coverage",
       "!!fixtures/sec/v1/bodies",
       "!!fixtures/fmp/v1/bodies",
-      "!!fixtures/ir/nvidia/v1/bodies"
+      "!!fixtures/ir/nvidia/v1/bodies",
+      "!!docs/research/candidates/no-trade-v0.1/no-trade-blueprint.html"
     ]
   },
   "formatter": {
