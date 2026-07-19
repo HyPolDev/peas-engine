@@ -1,14 +1,21 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import test from "node:test";
 
-import { NVIDIA_BASELINE_MANIFEST } from "../fixtures/ir/nvidia/v1/manifest.js";
+import {
+  NVIDIA_BASELINE_MANIFEST,
+  NVIDIA_FIXTURE_SEEDS,
+  type NvidiaFixtureSeedMemberV1,
+} from "../fixtures/ir/nvidia/v1/manifest.js";
 import {
   loadRecordedNvidiaFixture,
   type NvidiaDerivedProofV1,
-  type NvidiaFixtureManifestV1,
-  type NvidiaRetrievedMemberV1,
+  type NvidiaFixtureManifestV2,
+  type NvidiaRetrievedMemberV2,
 } from "../src/adapters/ir/nvidia/recorded-nvidia-fixture.js";
 import { canonicalJson, type JsonValue } from "../src/core/json.js";
 import { NVIDIA_IR_LIMITS } from "../src/providers/ir/nvidia/contracts.js";
@@ -18,18 +25,29 @@ import {
   normalizeRecordedNvidiaIr,
   parseNvidiaReference,
 } from "../src/providers/ir/nvidia/normalizer.js";
+import {
+  fixtureObservation,
+  recordedFixtureArtifactStore,
+} from "./recorded-fixture-artifact-store.js";
 
 const ROOT = path.join(process.cwd(), "fixtures", "ir", "nvidia", "v1", "bodies");
 const FIXTURE_ROOT = path.dirname(ROOT);
 const KEY = "https://nvidianews.nvidia.com/news/synthetic-fiscal-2030-q1";
 const bytes = (value: string): Uint8Array => Buffer.from(value, "utf8");
 const fixture = (name: string): Promise<Buffer> => readFile(path.join(ROOT, name));
+type MutableNvidiaManifest = Omit<NvidiaFixtureManifestV2, "retrievedMembers" | "derivedProofs"> & {
+  retrievedMembers: NvidiaRetrievedMemberV2[];
+  derivedProofs: NvidiaDerivedProofV1[];
+};
+const loadNvidia = (manifest: NvidiaFixtureManifestV2 = NVIDIA_BASELINE_MANIFEST) =>
+  loadRecordedNvidiaFixture(
+    recordedFixtureArtifactStore(FIXTURE_ROOT, NVIDIA_FIXTURE_SEEDS).store,
+    manifest,
+  );
 
 test("offline loader verifies the full recorded manifest before normalization", async () => {
-  const loaded = await loadRecordedNvidiaFixture({
-    fixtureRoot: FIXTURE_ROOT,
-    manifest: NVIDIA_BASELINE_MANIFEST,
-  });
+  const authority = recordedFixtureArtifactStore(FIXTURE_ROOT, NVIDIA_FIXTURE_SEEDS);
+  const loaded = await loadRecordedNvidiaFixture(authority.store, NVIDIA_BASELINE_MANIFEST);
   assert.equal(loaded.status, "emitted");
   assert.equal(loaded.reasonCode, null);
   assert.equal(loaded.transcript.observationIds.length, 2);
@@ -43,23 +61,397 @@ test("offline loader verifies the full recorded manifest before normalization", 
   const originalProof = badProof.derivedProofs[0];
   assert.ok(originalProof);
   badProof.derivedProofs[0] = { ...originalProof, projectionHash: "0".repeat(64) };
-  const proofFailure = await loadRecordedNvidiaFixture({
-    fixtureRoot: FIXTURE_ROOT,
-    manifest: badProof as unknown as NvidiaFixtureManifestV1,
-  });
+  const proofFailure = await loadNvidia(badProof as unknown as NvidiaFixtureManifestV2);
   assert.equal(proofFailure.reasonCode, "ir.bundle-hash-mismatch");
 
-  const escaping = structuredClone(NVIDIA_BASELINE_MANIFEST) as unknown as {
-    retrievedMembers: NvidiaRetrievedMemberV1[];
-  };
-  const originalMember = escaping.retrievedMembers[0];
-  assert.ok(originalMember);
-  escaping.retrievedMembers[0] = { ...originalMember, path: "../baseline.rss" };
-  const pathFailure = await loadRecordedNvidiaFixture({
-    fixtureRoot: FIXTURE_ROOT,
-    manifest: escaping as unknown as NvidiaFixtureManifestV1,
+  assert.equal(authority.counters.observationCalls.size, 2);
+  assert.equal(authority.counters.readCalls.size, 2);
+  assert.equal(loaded.transcript.observationHashes.length, 2);
+  for (const member of NVIDIA_BASELINE_MANIFEST.retrievedMembers) {
+    assert.equal(authority.counters.observationCalls.get(member.selectedObservationId), 1);
+    assert.equal(authority.counters.readCalls.get(member.artifactHash), 1);
+  }
+});
+
+test("NVIDIA rejects missing or forged authoritative observations before artifact reads", async () => {
+  const mutations = [
+    (observation: ReturnType<typeof fixtureObservation>) => ({
+      ...observation,
+      observationId: "0".repeat(64),
+    }),
+    (observation: ReturnType<typeof fixtureObservation>) => ({
+      ...observation,
+      observationHash: "0".repeat(64),
+    }),
+    (observation: ReturnType<typeof fixtureObservation>) => ({
+      ...observation,
+      artifactDigest: "0".repeat(64),
+    }),
+    (observation: ReturnType<typeof fixtureObservation>) => ({
+      ...observation,
+      provider: "prv1_invalid" as typeof observation.provider,
+    }),
+    (observation: ReturnType<typeof fixtureObservation>) => ({
+      ...observation,
+      retrievedAtMs: NVIDIA_BASELINE_MANIFEST.asOfMs + 1,
+    }),
+  ];
+  for (const mutation of mutations) {
+    const authority = recordedFixtureArtifactStore(FIXTURE_ROOT, NVIDIA_FIXTURE_SEEDS, {
+      observation: mutation,
+    });
+    const result = await loadRecordedNvidiaFixture(authority.store, NVIDIA_BASELINE_MANIFEST);
+    assert.equal(result.reasonCode, "ir.observation-invalid");
+    assert.equal(authority.counters.observationCalls.size, 2);
+    assert.deepEqual([...authority.counters.observationCalls.values()], [1, 1]);
+    assert.equal(authority.counters.readCalls.size, 0);
+    assert.deepEqual(result.transcript.artifactHashes, []);
+  }
+  const missingAuthority = recordedFixtureArtifactStore(FIXTURE_ROOT, NVIDIA_FIXTURE_SEEDS, {
+    observation: () => null,
   });
-  assert.equal(pathFailure.reasonCode, "ir.artifact-read-failed");
+  const missing = await loadRecordedNvidiaFixture(missingAuthority.store, NVIDIA_BASELINE_MANIFEST);
+  assert.equal(missing.reasonCode, "ir.observation-invalid");
+  assert.equal(missingAuthority.counters.observationCalls.size, 2);
+  assert.deepEqual([...missingAuthority.counters.observationCalls.values()], [1, 1]);
+  assert.equal(missingAuthority.counters.readCalls.size, 0);
+});
+
+test("NVIDIA loader enforces exact and one-over member and aggregate byte declarations", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "peas-nvidia-bounded-loader-"));
+  try {
+    await mkdir(path.join(root, "bodies"));
+    const exactRssBytes = Buffer.alloc(NVIDIA_IR_LIMITS.memberBytes, 0x20);
+    const exactHtmlBytes = Buffer.alloc(NVIDIA_IR_LIMITS.memberBytes, 0x21);
+    const exactRssHash = createHash("sha256").update(exactRssBytes).digest("hex");
+    const exactHtmlHash = createHash("sha256").update(exactHtmlBytes).digest("hex");
+    await Promise.all([
+      writeFile(path.join(root, "bodies", "exact.rss"), exactRssBytes),
+      writeFile(path.join(root, "bodies", "exact.html"), exactHtmlBytes),
+    ]);
+    const exactSeeds: readonly NvidiaFixtureSeedMemberV1[] = NVIDIA_FIXTURE_SEEDS.map((seed) => ({
+      ...seed,
+      path: seed.role === "ir.rss-feed" ? "bodies/exact.rss" : "bodies/exact.html",
+      artifactHash: seed.role === "ir.rss-feed" ? exactRssHash : exactHtmlHash,
+      sizeBytes: NVIDIA_IR_LIMITS.memberBytes,
+      attempt: { ...seed.attempt, attemptId: `nvidia-exact-${seed.role}` },
+      response: { ...seed.response, declaredContentLength: NVIDIA_IR_LIMITS.memberBytes },
+    }));
+    const manifest = structuredClone(NVIDIA_BASELINE_MANIFEST) as unknown as MutableNvidiaManifest;
+    manifest.retrievedMembers = manifest.retrievedMembers.map((member) => {
+      const seed = exactSeeds.find((candidate) => candidate.role === member.role);
+      assert.ok(seed);
+      return {
+        ...member,
+        artifactHash: seed.artifactHash,
+        sizeBytes: NVIDIA_IR_LIMITS.memberBytes,
+        selectedObservationId: fixtureObservation(seed).observationId,
+      };
+    });
+    manifest.derivedProofs = manifest.derivedProofs.map((proof) => ({
+      ...proof,
+      parentArtifactHash: proof.role === "ir.rss-item" ? exactRssHash : exactHtmlHash,
+    }));
+    const exactAuthority = recordedFixtureArtifactStore(root, exactSeeds);
+    const exact = await loadRecordedNvidiaFixture(
+      exactAuthority.store,
+      manifest as unknown as NvidiaFixtureManifestV2,
+    );
+    assert.equal(exact.reasonCode, "ir.bundle-hash-mismatch");
+    assert.deepEqual(exact.transcript.artifactHashes, [exactRssHash, exactHtmlHash]);
+    assert.equal(
+      exactAuthority.counters.streamedBytes.get(exactRssHash),
+      NVIDIA_IR_LIMITS.memberBytes,
+    );
+    assert.equal(
+      exactAuthority.counters.streamedBytes.get(exactHtmlHash),
+      NVIDIA_IR_LIMITS.memberBytes,
+    );
+
+    for (const memberIndex of [0, 1]) {
+      const perMemberOver = structuredClone(manifest);
+      const target = perMemberOver.retrievedMembers[memberIndex];
+      const sibling = perMemberOver.retrievedMembers[memberIndex === 0 ? 1 : 0];
+      assert.ok(target);
+      assert.ok(sibling);
+      perMemberOver.retrievedMembers[memberIndex] = {
+        ...target,
+        sizeBytes: NVIDIA_IR_LIMITS.memberBytes + 1,
+      };
+      perMemberOver.retrievedMembers[memberIndex === 0 ? 1 : 0] = {
+        ...sibling,
+        sizeBytes: 0,
+      };
+      const authority = recordedFixtureArtifactStore(root, exactSeeds);
+      const rejected = await loadRecordedNvidiaFixture(
+        authority.store,
+        perMemberOver as unknown as NvidiaFixtureManifestV2,
+      );
+      assert.equal(rejected.reasonCode, "ir.member-limit-exceeded", String(memberIndex));
+      assert.deepEqual(rejected.transcript.artifactHashes, [], String(memberIndex));
+      assert.equal(authority.counters.observationCalls.size, 0);
+      assert.equal(authority.counters.readCalls.size, 0);
+    }
+
+    const aggregateOver = structuredClone(manifest);
+    const first = aggregateOver.retrievedMembers[0];
+    const second = aggregateOver.retrievedMembers[1];
+    assert.ok(first);
+    assert.ok(second);
+    aggregateOver.retrievedMembers = [
+      { ...first, sizeBytes: NVIDIA_IR_LIMITS.memberBytes },
+      { ...second, sizeBytes: NVIDIA_IR_LIMITS.memberBytes + 1 },
+    ];
+    const aggregateAuthority = recordedFixtureArtifactStore(root, exactSeeds);
+    const aggregateRejected = await loadRecordedNvidiaFixture(
+      aggregateAuthority.store,
+      aggregateOver as unknown as NvidiaFixtureManifestV2,
+    );
+    assert.equal(aggregateRejected.reasonCode, "ir.bundle-byte-limit-exceeded");
+    assert.deepEqual(aggregateRejected.transcript.artifactHashes, []);
+    assert.equal(aggregateAuthority.counters.observationCalls.size, 0);
+    assert.equal(aggregateAuthority.counters.readCalls.size, 0);
+
+    const actualOverBytes = Buffer.alloc(NVIDIA_IR_LIMITS.memberBytes + 1, 0x22);
+    const actualOverHash = createHash("sha256").update(actualOverBytes).digest("hex");
+    await writeFile(path.join(root, "bodies", "actual-over.rss"), actualOverBytes);
+    const actualOverSeeds = exactSeeds.map((seed) =>
+      seed.role === "ir.rss-feed"
+        ? {
+            ...seed,
+            path: "bodies/actual-over.rss",
+            artifactHash: actualOverHash,
+            sizeBytes: NVIDIA_IR_LIMITS.memberBytes + 1,
+            attempt: { ...seed.attempt, attemptId: "nvidia-actual-over-rss" },
+            response: {
+              ...seed.response,
+              declaredContentLength: NVIDIA_IR_LIMITS.memberBytes + 1,
+            },
+          }
+        : seed,
+    );
+    const actualOverManifest = structuredClone(manifest) as MutableNvidiaManifest;
+    const actualOverRssIndex = actualOverManifest.retrievedMembers.findIndex(
+      (member) => member.role === "ir.rss-feed",
+    );
+    const actualOverRss = actualOverManifest.retrievedMembers[actualOverRssIndex];
+    const actualOverSeed = actualOverSeeds.find((seed) => seed.role === "ir.rss-feed");
+    assert.ok(actualOverRss);
+    assert.ok(actualOverSeed);
+    actualOverManifest.retrievedMembers[actualOverRssIndex] = {
+      ...actualOverRss,
+      artifactHash: actualOverHash,
+      selectedObservationId: fixtureObservation(actualOverSeed).observationId,
+    };
+    const rssProofIndex = actualOverManifest.derivedProofs.findIndex(
+      (proof) => proof.role === "ir.rss-item",
+    );
+    const rssProof = actualOverManifest.derivedProofs[rssProofIndex];
+    assert.ok(rssProof);
+    actualOverManifest.derivedProofs[rssProofIndex] = {
+      ...rssProof,
+      parentArtifactHash: actualOverHash,
+    };
+    const actualOverAuthority = recordedFixtureArtifactStore(root, actualOverSeeds);
+    const actualOver = await loadRecordedNvidiaFixture(
+      actualOverAuthority.store,
+      actualOverManifest,
+    );
+    assert.equal(actualOver.reasonCode, "ir.member-limit-exceeded");
+    assert.equal(actualOverAuthority.counters.streamedBytes.get(actualOverHash) ?? 0, 0);
+
+    const growthAuthority = recordedFixtureArtifactStore(root, exactSeeds, {
+      stream: (_absolutePath, seed) =>
+        seed.role === "ir.rss-feed"
+          ? Readable.from([exactRssBytes, Buffer.from("x")])
+          : Readable.from([exactHtmlBytes]),
+    });
+    const growth = await loadRecordedNvidiaFixture(growthAuthority.store, manifest);
+    assert.equal(growth.reasonCode, "ir.bundle-hash-mismatch");
+
+    const replacementAuthority = recordedFixtureArtifactStore(root, exactSeeds, {
+      stream: (_absolutePath, seed) =>
+        seed.role === "ir.rss-feed"
+          ? Readable.from([Buffer.alloc(NVIDIA_IR_LIMITS.memberBytes, 0x22)])
+          : Readable.from([exactHtmlBytes]),
+    });
+    const replacement = await loadRecordedNvidiaFixture(replacementAuthority.store, manifest);
+    assert.equal(replacement.reasonCode, "ir.bundle-hash-mismatch");
+    assert.equal(
+      replacementAuthority.counters.streamedBytes.get(exactRssHash),
+      NVIDIA_IR_LIMITS.memberBytes,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("NVIDIA exact-shape hostile manifest fields fail before any body read", async () => {
+  const base = NVIDIA_BASELINE_MANIFEST;
+  const [rss, release] = base.retrievedMembers;
+  assert.ok(rss);
+  assert.ok(release);
+  const withRss = (patch: object): unknown => ({
+    ...base,
+    retrievedMembers: [{ ...rss, ...patch }, release],
+  });
+  const expectedCases: readonly [string, object][] = [
+    ["status", { status: "other" }],
+    ["reasonCode", { reasonCode: "other" }],
+    ["limitKind iff", { limitKind: "xml-depth" }],
+    ["recordId", { recordId: 7 }],
+    ["revisionId", { revisionId: 7 }],
+    ["issuerCik", { issuerCik: 7 }],
+    ["symbol", { symbol: "OTHER" }],
+    ["fiscalPeriod", { fiscalPeriod: 7 }],
+    ["sourceKind", { sourceKind: "other" }],
+    ["publishedAtMs", { publishedAtMs: -1 }],
+    ["timestampConfidence", { timestampConfidence: "other" }],
+    ["originalTimestamp", { originalTimestamp: 7 }],
+    ["primaryArtifactHash", { primaryArtifactHash: null }],
+    ["selectedProjectionHash", { selectedProjectionHash: null }],
+    ["routeHash", { routeHash: null }],
+    ["candidateHash", { candidateHash: null }],
+    ["eventDraftHash", { eventDraftHash: null }],
+  ];
+  const terminalExpected = {
+    status: "quarantined",
+    reasonCode: "ir.release-malformed",
+    limitKind: null,
+    recordId: null,
+    revisionId: null,
+    issuerCik: null,
+    symbol: null,
+    fiscalPeriod: null,
+    sourceKind: null,
+    publishedAtMs: null,
+    timestampConfidence: null,
+    originalTimestamp: null,
+    primaryArtifactHash: null,
+    selectedProjectionHash: null,
+    routeHash: null,
+    candidateHash: null,
+    eventDraftHash: null,
+  } as const;
+  const invalidTerminalCases = [
+    "recordId",
+    "revisionId",
+    "issuerCik",
+    "symbol",
+    "fiscalPeriod",
+    "sourceKind",
+    "publishedAtMs",
+    "timestampConfidence",
+    "originalTimestamp",
+    "primaryArtifactHash",
+    "selectedProjectionHash",
+    "routeHash",
+    "candidateHash",
+    "eventDraftHash",
+  ].map(
+    (field) =>
+      [
+        `terminal expected ${field}`,
+        {
+          ...base,
+          expected: {
+            ...terminalExpected,
+            [field]: (base.expected as unknown as Record<string, unknown>)[field],
+          },
+        },
+      ] as [string, unknown],
+  );
+  const cases: [string, unknown][] = [
+    ["schemaVersion", { ...base, schemaVersion: 1 }],
+    ["caseId", { ...base, caseId: 7 }],
+    ["provider", { ...base, provider: "other" }],
+    ["source", { ...base, source: "other" }],
+    ["acquisitionVariant", { ...base, acquisitionVariant: "live" }],
+    ["asOfMs", { ...base, asOfMs: -1 }],
+    ["selector type", { ...base, selector: { selectionKey: 7 } }],
+    ["selector empty", { ...base, selector: { selectionKey: "" } }],
+    ["selector UTF-8", { ...base, selector: { selectionKey: "é".repeat(1_025) } }],
+    ["selector noncanonical", { ...base, selector: { selectionKey: `${KEY}?query=1` } }],
+    ["route policy", { ...base, route: { ...base.route, classificationPolicy: "other" } }],
+    ["route issuer", { ...base, route: { ...base.route, issuerCik: "0000000000" } }],
+    ["route symbol", { ...base, route: { ...base.route, symbol: "OTHER" } }],
+    ["route authority", { ...base, route: { ...base.route, mappingAuthority: "other" } }],
+    ["route version", { ...base, route: { ...base.route, mappingVersion: "other" } }],
+    ["member kind", withRss({ kind: "derived" })],
+    ["member role", withRss({ role: "other" })],
+    ["member unexpected path", withRss({ path: "body" })],
+    ["member artifact hash", withRss({ artifactHash: 7 })],
+    ["member size", withRss({ sizeBytes: -1 })],
+    ["member selected observation", withRss({ selectedObservationId: 7 })],
+    ["member unexpected observation", withRss({ observation: {} })],
+    [
+      "provenance classification",
+      { ...base, provenance: { ...base.provenance, classification: "other" } },
+    ],
+    ["provenance note type", { ...base, provenance: { ...base.provenance, note: 7 } }],
+    ["provenance note empty", { ...base, provenance: { ...base.provenance, note: "" } }],
+    [
+      "provenance note UTF-8",
+      { ...base, provenance: { ...base.provenance, note: "é".repeat(2_049) } },
+    ],
+    [
+      "provenance approval",
+      { ...base, provenance: { ...base.provenance, approvalReference: "unapproved" } },
+    ],
+    [
+      "redistribution approval required",
+      {
+        ...base,
+        provenance: {
+          ...base.provenance,
+          classification: "redistribution-approved",
+          approvalReference: null,
+        },
+      },
+    ],
+    [
+      "redistribution approval type",
+      {
+        ...base,
+        provenance: {
+          ...base.provenance,
+          classification: "redistribution-approved",
+          approvalReference: 7,
+        },
+      },
+    ],
+    [
+      "redistribution approval UTF-8",
+      {
+        ...base,
+        provenance: {
+          ...base.provenance,
+          classification: "redistribution-approved",
+          approvalReference: "é".repeat(257),
+        },
+      },
+    ],
+    ...expectedCases.map(
+      ([name, patch]) =>
+        [`expected ${name}`, { ...base, expected: { ...base.expected, ...patch } }] as [
+          string,
+          unknown,
+        ],
+    ),
+    ...invalidTerminalCases,
+  ];
+  for (const [name, manifest] of cases) {
+    const authority = recordedFixtureArtifactStore(FIXTURE_ROOT, NVIDIA_FIXTURE_SEEDS);
+    const result = await loadRecordedNvidiaFixture(
+      authority.store,
+      manifest as NvidiaFixtureManifestV2,
+    );
+    assert.equal(result.status, "quarantined", name);
+    assert.deepEqual(result.transcript.artifactHashes, [], name);
+    assert.equal(result.normalization, null, name);
+    assert.equal(authority.counters.observationCalls.size, 0, name);
+    assert.equal(authority.counters.readCalls.size, 0, name);
+  }
 });
 
 test("RSS plus release emits one deterministic candidate and draft across parser chunks", async () => {

@@ -176,11 +176,13 @@ normalizer fields are both null or both non-null. Market join is non-null iff pu
 `market-reference-anchor`; it equals `"mrj1_" + H("peas/market-reference-join/v1",
 {subject,issuerMappingId,selectedSourceObservationId,selectedSourceVersionIdentity,
 trustedObservationBasis})`. It is a future join surface only and performs no market-data work.
-Capture basis values equal the capture parent. Retrieval basis identifies exactly one primary raw
-link: its IDs/role equal that link, `retrievedAtMs` equals the corresponding commit fact, and
-`clockBasisId` equals that commit entry's non-null clock basis. Retrieval selection is forbidden
-when commit retrieval time or basis is null. Both variants equal normalization source/subject/
-mapping facts and require `asOfMs` at least the received/retrieved time.
+Capture basis values equal the capture parent. Retrieval basis identifies exactly one selected raw
+link, independently of the normalization's raw-artifact or derived-projection domain primary: its
+IDs/role equal that link, `retrievedAtMs` equals the corresponding commit fact, and `clockBasisId`
+equals that commit entry's non-null clock basis. The selected verification and commit reconcile the
+link's acquisition ID, vault observation ID/hash, artifact digest, and size. Retrieval selection is
+forbidden when commit retrieval time or basis is null. Both variants equal normalization source/
+subject/mapping facts and require `asOfMs` at least the received/retrieved time.
 `branchId` is non-null exactly for `analysis-branch-input`; it is null for cluster-first and
 market-reference purposes.
 Failure legality is closed by the transition table below; raw exception text is forbidden.

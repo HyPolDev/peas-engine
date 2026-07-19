@@ -70,8 +70,18 @@ function add(
   return entry;
 }
 
-function recordedLedger(acquisitionSuffix = ""): readonly ObservationLedgerEntryV1[] {
+function recordedLedger(
+  acquisitionSuffix = "",
+  provider: "nvidia-ir" | "financial-modeling-prep" = "nvidia-ir",
+): readonly ObservationLedgerEntryV1[] {
   const entries: ObservationLedgerEntryV1[] = [];
+  const isFmp = provider === "financial-modeling-prep";
+  const rawArtifactDigest = digest(isFmp ? "raw-fmp-calendar" : "raw-rss");
+  const rawRole = isFmp ? "fmp.earnings-calendar" : "nvidia-ir.rss";
+  const vaultObservationId = digest(isFmp ? "fmp-vault-observation" : "vault-observation");
+  const vaultObservationHash = digest(
+    isFmp ? "fmp-vault-observation-hash" : "vault-observation-hash",
+  );
   const basis = createClockBasis({
     wallClock: "recorded-fixture",
     synchronization: "not-applicable",
@@ -87,10 +97,10 @@ function recordedLedger(acquisitionSuffix = ""): readonly ObservationLedgerEntry
   );
   const clock = { clockBasisId: basis.clockBasisId, wallTimeMs: WALL_TIME, monotonicTimeUs: null };
   const acquisitionPreimage = {
-    provider: "nvidia-ir",
+    provider,
     retrievalAttemptId: `recorded-attempt-1${acquisitionSuffix}`,
     sanitizedRequestIdentityHash: digest("request"),
-    routeLabel: "nvidia-ir-recorded-rss",
+    routeLabel: isFmp ? "fmp-recorded-latest" : "nvidia-ir-recorded-rss",
   } as const;
   const acquisitionObservationId = deriveAcquisitionObservationId(acquisitionPreimage);
   const acquisition = add(
@@ -108,9 +118,9 @@ function recordedLedger(acquisitionSuffix = ""): readonly ObservationLedgerEntry
     {
       kind: "artifact.committed",
       acquisitionObservationId,
-      vaultObservationId: digest("vault-observation"),
-      vaultObservationHash: digest("vault-observation-hash"),
-      artifactDigest: digest("raw-rss"),
+      vaultObservationId,
+      vaultObservationHash,
+      artifactDigest: rawArtifactDigest,
       sizeBytes: 321,
       acquisitionMode: "recorded",
       retrievedAtMs: WALL_TIME,
@@ -123,8 +133,8 @@ function recordedLedger(acquisitionSuffix = ""): readonly ObservationLedgerEntry
     {
       kind: "artifact.verified",
       acquisitionObservationId,
-      vaultObservationId: digest("vault-observation"),
-      artifactDigest: digest("raw-rss"),
+      vaultObservationId,
+      artifactDigest: rawArtifactDigest,
       metadataSizeBytes: 321,
       consumedSizeBytes: 321,
     },
@@ -142,27 +152,30 @@ function recordedLedger(acquisitionSuffix = ""): readonly ObservationLedgerEntry
   });
   const rawArtifactLinks = [
     {
-      role: "nvidia-ir.rss",
+      role: rawRole,
       acquisitionObservationId,
-      vaultObservationId: digest("vault-observation"),
-      vaultObservationHash: digest("vault-observation-hash"),
-      artifactDigest: digest("raw-rss"),
+      vaultObservationId,
+      vaultObservationHash,
+      artifactDigest: rawArtifactDigest,
       sizeBytes: 321,
     },
   ] as const;
-  const loaderIdentity = "nvidia-ir-recorded-loader-v1";
-  const normalizerIdentity = "nvidia-ir-normalizer-v1";
-  const projectionDigest = deriveProjectionDigest({ title: "Synthetic NVIDIA release" });
+  const loaderIdentity = isFmp ? "fmp-recorded-loader-v1" : "nvidia-ir-recorded-loader-v1";
+  const normalizerIdentity = isFmp ? "fmp-normalizer-v1" : "nvidia-ir-normalizer-v1";
+  const projectionDigest = deriveProjectionDigest({
+    title: isFmp ? "Synthetic FMP release" : "Synthetic NVIDIA release",
+  });
   const projectionId = deriveProjectionId({
     loaderIdentity,
     normalizerIdentity,
     rawArtifactLinks,
     projectionDigest,
   });
-  const provider = "nvidia-ir";
-  const source = "peas-recorded:nvidia-newsroom-press-release-synthetic-v1";
-  const providerRecordId = "nvidia-ir:synthetic-release";
-  const providerRevisionId = digest("raw-rss");
+  const source = isFmp
+    ? "peas-recorded:fmp-earnings-calendar-synthetic-v1"
+    : "peas-recorded:nvidia-newsroom-press-release-synthetic-v1";
+  const providerRecordId = isFmp ? "fmp:synthetic-earnings-release" : "nvidia-ir:synthetic-release";
+  const providerRevisionId = rawArtifactDigest;
   const sourceRecordIdentity = deriveSourceRecordIdentity({ provider, source, providerRecordId });
   const sourceVersionIdentity = deriveSourceVersionIdentity({
     sourceRecordIdentity,
@@ -190,7 +203,7 @@ function recordedLedger(acquisitionSuffix = ""): readonly ObservationLedgerEntry
       sourceIdentity: {
         provider,
         source,
-        sourceKind: "issuer_release",
+        sourceKind: isFmp ? "fmp_release" : "issuer_release",
         providerRecordId,
         providerRevisionId,
         sourceRecordIdentity,
@@ -207,8 +220,8 @@ function recordedLedger(acquisitionSuffix = ""): readonly ObservationLedgerEntry
       subject: "earnings:0001045810:2026-Q1",
       fiscalPeriod: "2026-Q1",
       evidenceBundleHash: null,
-      primaryArtifactHash: digest("raw-rss"),
-      primaryArtifactKind: "raw-artifact",
+      primaryArtifactHash: projectionDigest,
+      primaryArtifactKind: "derived-projection",
       rawArtifactLinks,
       loaderIdentity,
       selectionHash: digest("selection"),
@@ -236,6 +249,97 @@ function recordedLedger(acquisitionSuffix = ""): readonly ObservationLedgerEntry
     clock,
   );
   return validateObservationLedgerBundle(entries);
+}
+
+function marketReferenceSelection(
+  ledger: readonly ObservationLedgerEntryV1[],
+  selectionBasis: "capture" | "retrieval",
+): ObservationLedgerEntryV1 {
+  const basis = ledger.find((entry) => entry.facts.kind === "clock-basis.declared");
+  const committed = ledger.find((entry) => entry.facts.kind === "artifact.committed");
+  const verified = ledger.find((entry) => entry.facts.kind === "artifact.verified");
+  const normalized = ledger.find((entry) => entry.facts.kind === "normalization.emitted");
+  const capture = ledger.find(
+    (entry) =>
+      entry.facts.kind === "capture.appended" || entry.facts.kind === "capture.redelivered",
+  );
+  assert.ok(basis?.facts.kind === "clock-basis.declared");
+  assert.ok(committed?.facts.kind === "artifact.committed");
+  assert.ok(verified?.facts.kind === "artifact.verified");
+  assert.ok(normalized?.facts.kind === "normalization.emitted");
+  assert.ok(capture?.facts.kind === "capture.appended");
+  assert.equal(normalized.facts.primaryArtifactKind, "derived-projection");
+  assert.equal(normalized.facts.primaryArtifactHash, normalized.facts.projectionDigest);
+  const common = {
+    kind: "selection.recorded" as const,
+    purpose: "market-reference-anchor" as const,
+    selectedSourceObservationId: normalized.facts.sourceObservationId,
+    selectedSourceVersionIdentity: normalized.facts.sourceIdentity.sourceVersionIdentity,
+    subject: normalized.facts.subject,
+    issuerMappingId: normalized.facts.issuerMapping.issuerMappingId,
+    asOfMs: WALL_TIME,
+    branchId: null,
+  };
+  const joinCommon = {
+    subject: common.subject,
+    issuerMappingId: common.issuerMappingId,
+    selectedSourceObservationId: common.selectedSourceObservationId,
+    selectedSourceVersionIdentity: common.selectedSourceVersionIdentity,
+  };
+
+  if (selectionBasis === "capture") {
+    assert.ok(capture.clock.clockBasisId !== null);
+    const trustedObservationBasis = {
+      basisKind: "capture" as const,
+      eventId: capture.facts.eventId,
+      receivedAtMs: capture.facts.receivedAtMs,
+      logicalAtMs: capture.facts.logicalAtMs,
+      clockBasisId: capture.clock.clockBasisId,
+    };
+    return createObservationLedgerEntry({
+      schemaVersion: 1,
+      executionId: EXECUTION,
+      parentEntryIds: [basis.entryId, capture.entryId].sort(),
+      clock: capture.clock,
+      facts: {
+        ...common,
+        selectionBasis,
+        trustedObservationBasis,
+        marketReferenceJoinKey: deriveMarketReferenceJoinKey({
+          ...joinCommon,
+          trustedObservationBasis,
+        }),
+      },
+    });
+  }
+
+  const link = normalized.facts.rawArtifactLinks[0];
+  assert.ok(link);
+  assert.ok(committed.facts.retrievedAtMs !== null);
+  assert.ok(committed.clock.clockBasisId !== null);
+  const trustedObservationBasis = {
+    basisKind: "retrieval" as const,
+    role: link.role,
+    acquisitionObservationId: link.acquisitionObservationId,
+    vaultObservationId: link.vaultObservationId,
+    retrievedAtMs: committed.facts.retrievedAtMs,
+    clockBasisId: committed.clock.clockBasisId,
+  };
+  return createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: EXECUTION,
+    parentEntryIds: [basis.entryId, normalized.entryId, verified.entryId].sort(),
+    clock: committed.clock,
+    facts: {
+      ...common,
+      selectionBasis,
+      trustedObservationBasis,
+      marketReferenceJoinKey: deriveMarketReferenceJoinKey({
+        ...joinCommon,
+        trustedObservationBasis,
+      }),
+    },
+  });
 }
 
 function edgeBoundaryLedger(overByOne: boolean): readonly ObservationLedgerEntryV1[] {
@@ -464,6 +568,10 @@ function rewriteNormalization(
     facts: {
       ...entry.facts,
       projectionDigest,
+      primaryArtifactHash:
+        entry.facts.primaryArtifactKind === "derived-projection"
+          ? projectionDigest
+          : entry.facts.primaryArtifactHash,
       projectionId,
       sourceObservationId,
       sourceIdentity,
@@ -963,7 +1071,7 @@ test("recorded replay preserves semantic identities and page-size reconstruction
   }
 });
 
-test("raw links bind the exact committed vault observation evidence", () => {
+test("raw links bind the exact committed acquisition, vault observation, digest, and size", () => {
   const ledger = recordedLedger();
   const committed = ledger[2] as ObservationLedgerEntryV1;
   const normalization = ledger[4] as ObservationLedgerEntryV1;
@@ -987,15 +1095,21 @@ test("raw links bind the exact committed vault observation evidence", () => {
     ],
   );
 
-  const substituted = rewriteNormalization(normalization, {
-    rawArtifactLinks: [
-      { ...link, vaultObservationHash: digest("substituted-vault-observation-hash") },
-    ],
-  });
-  assert.throws(
-    () => validateObservationLedgerBundle([...ledger.slice(0, 4), substituted]),
-    /observation\.parent-transition-invalid/u,
-  );
+  for (const substitutedLink of [
+    { ...link, acquisitionObservationId: `aob1_${digest("substituted-acquisition")}` },
+    { ...link, vaultObservationId: digest("substituted-vault-observation") },
+    { ...link, vaultObservationHash: digest("substituted-vault-observation-hash") },
+    { ...link, artifactDigest: digest("substituted-artifact-digest") },
+    { ...link, sizeBytes: link.sizeBytes + 1 },
+  ]) {
+    const substituted = rewriteNormalization(normalization, {
+      rawArtifactLinks: [substitutedLink],
+    });
+    assert.throws(
+      () => validateObservationLedgerBundle([...ledger.slice(0, 4), substituted]),
+      /observation\.parent-transition-invalid/u,
+    );
+  }
 
   const redelivery = recordedLedger("-vault-conflict");
   const secondAcquisition = redelivery[1] as ObservationLedgerEntryV1;
@@ -1297,6 +1411,138 @@ test("clock bases and trusted market selections enforce their closed cartesian c
       }),
     /observation\.derived-identity-mismatch/u,
   );
+});
+
+test("derived-projection NVIDIA and FMP primaries support capture and exact raw retrieval bases", () => {
+  for (const provider of ["nvidia-ir", "financial-modeling-prep"] as const) {
+    const ledger = recordedLedger(`-${provider}-derived-primary`, provider);
+    const normalized = ledger.find((entry) => entry.facts.kind === "normalization.emitted");
+    assert.ok(normalized?.facts.kind === "normalization.emitted");
+    assert.equal(normalized.facts.primaryArtifactKind, "derived-projection");
+    assert.equal(normalized.facts.primaryArtifactHash, normalized.facts.projectionDigest);
+    assert.notEqual(
+      normalized.facts.primaryArtifactHash,
+      normalized.facts.rawArtifactLinks[0]?.artifactDigest,
+    );
+
+    for (const selectionBasis of ["capture", "retrieval"] as const) {
+      const selection = marketReferenceSelection(ledger, selectionBasis);
+      assert.doesNotThrow(() => validateObservationLedgerBundle([...ledger, selection]));
+      assert.equal(selection.facts.kind, "selection.recorded");
+      if (selection.facts.kind !== "selection.recorded") continue;
+      assert.equal(selection.facts.selectionBasis, selectionBasis);
+      assert.equal(selection.facts.trustedObservationBasis.basisKind, selectionBasis);
+    }
+  }
+});
+
+test("retrieval basis rejects forged raw identities and an unrelated verification parent", () => {
+  const ledger = recordedLedger("-retrieval-hostile");
+  const selection = marketReferenceSelection(ledger, "retrieval");
+  assert.ok(selection.facts.kind === "selection.recorded");
+  assert.ok(selection.facts.trustedObservationBasis.basisKind === "retrieval");
+  const facts = selection.facts;
+  const trusted = facts.trustedObservationBasis;
+  const joinCommon = {
+    subject: facts.subject,
+    issuerMappingId: facts.issuerMappingId,
+    selectedSourceObservationId: facts.selectedSourceObservationId,
+    selectedSourceVersionIdentity: facts.selectedSourceVersionIdentity,
+  };
+  for (const hostileBasis of [
+    { ...trusted, role: "forged.raw-role" },
+    { ...trusted, acquisitionObservationId: `aob1_${digest("forged-acquisition")}` },
+    { ...trusted, vaultObservationId: digest("forged-vault-observation") },
+  ]) {
+    const hostile = createObservationLedgerEntry({
+      schemaVersion: 1,
+      executionId: selection.executionId,
+      parentEntryIds: selection.parentEntryIds,
+      clock: selection.clock,
+      facts: {
+        ...facts,
+        trustedObservationBasis: hostileBasis,
+        marketReferenceJoinKey: deriveMarketReferenceJoinKey({
+          ...joinCommon,
+          trustedObservationBasis: hostileBasis,
+        }),
+      },
+    });
+    assert.throws(
+      () => validateObservationLedgerBundle([...ledger, hostile]),
+      /observation\.parent-transition-invalid/u,
+    );
+  }
+
+  const unrelatedLedger = recordedLedger("-unrelated-verification");
+  const basis = ledger[0] as ObservationLedgerEntryV1;
+  const normalized = ledger.find((entry) => entry.facts.kind === "normalization.emitted");
+  const unrelatedVerified = unrelatedLedger.find(
+    (entry) => entry.facts.kind === "artifact.verified",
+  );
+  assert.ok(normalized?.facts.kind === "normalization.emitted");
+  assert.ok(unrelatedVerified?.facts.kind === "artifact.verified");
+  const unrelatedParentSelection = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: selection.executionId,
+    parentEntryIds: [basis.entryId, normalized.entryId, unrelatedVerified.entryId].sort(),
+    clock: selection.clock,
+    facts,
+  });
+  assert.throws(
+    () =>
+      validateObservationLedgerBundle([
+        basis,
+        ...ledger.slice(1),
+        ...unrelatedLedger.slice(1),
+        unrelatedParentSelection,
+      ]),
+    /observation\.parent-transition-invalid/u,
+  );
+});
+
+test("derived retrieval selections remain stable across provider order, replay, and page size", () => {
+  const nvidiaLedger = recordedLedger("-stable-nvidia", "nvidia-ir");
+  const fmpLedger = recordedLedger("-stable-fmp", "financial-modeling-prep");
+  const basis = nvidiaLedger[0] as ObservationLedgerEntryV1;
+  assert.equal(basis.entryId, fmpLedger[0]?.entryId);
+  const nvidiaSelection = marketReferenceSelection(nvidiaLedger, "retrieval");
+  const fmpSelection = marketReferenceSelection(fmpLedger, "retrieval");
+  const nvidiaCohort = [...nvidiaLedger.slice(1), nvidiaSelection];
+  const fmpCohort = [...fmpLedger.slice(1), fmpSelection];
+  const orders = [
+    [basis, ...nvidiaCohort, ...fmpCohort],
+    [basis, ...fmpCohort, ...nvidiaCohort],
+  ] as const;
+  const selectionProjection = (entries: readonly ObservationLedgerEntryV1[]): string =>
+    canonicalJson(
+      entries
+        .filter((entry) => entry.facts.kind === "selection.recorded")
+        .map((entry) => entry.facts)
+        .sort((left, right) => {
+          if (left.kind !== "selection.recorded" || right.kind !== "selection.recorded") return 0;
+          return left.selectedSourceObservationId < right.selectedSourceObservationId ? -1 : 1;
+        }) as unknown as JsonValue,
+    );
+
+  const stableSelections = selectionProjection(validateObservationLedgerBundle(orders[0]));
+  assert.equal(selectionProjection(validateObservationLedgerBundle(orders[1])), stableSelections);
+  for (const [index, order] of orders.entries()) {
+    const validated = validateObservationLedgerBundle(order);
+    for (const pageSize of [1, 2, 5, 10_000]) {
+      assert.equal(
+        canonicalJson(
+          paginateObservationLedger(validated, pageSize).flat() as unknown as JsonValue,
+        ),
+        canonicalJson(validated as unknown as JsonValue),
+      );
+    }
+    const replayed = replayRecordedObservationLedger(
+      validated,
+      `derived-retrieval-replay-${index}`,
+    );
+    assert.equal(selectionProjection(replayed), stableSelections);
+  }
 });
 
 test("representative exact and one-over entry, parent, depth, and bundle bounds fail closed", () => {

@@ -18,9 +18,13 @@ record/revision ID, or global coverage guarantee. Its source is therefore
 iPressroom-generated NVIDIA feed; its source is
 `peas-recorded:nvidia-newsroom-press-release-synthetic-v1` and is not a reusable Q4 or live schema.
 
-Only raw provider-shaped members are retrieval artifacts with selected observations. Derived item
-projections have no path, observation, retrieval time, or `ArtifactStore` call and cannot
-masquerade as retrieved artifacts. Transcripts bind raw parent digest, observation, selector,
+Only raw provider-shaped members are retrieval artifacts with selected observations. The closed
+fixture-manifest V2 member is only `{kind,role,artifactHash,sizeBytes,selectedObservationId}`;
+filesystem paths and acquisition preimages exist only in test seed descriptors used to populate an
+`ArtifactStore`. Production loaders receive an existing `ArtifactStore` and may neither reconstruct
+observations from a manifest nor discover evidence by path or history scan. Derived item projections
+have no path, observation, retrieval time, or `ArtifactStore` call and cannot masquerade as
+retrieved artifacts. Transcripts bind raw parent digest, authoritative observation, selector,
 projection policy/digest, route, and outcome.
 
 ## Candidate and existing V1 mapping
@@ -159,13 +163,23 @@ null/unknown; any other non-null value is timestamp-invalid. No timezone,
 geography, locale, or retrieval inference exists.
 
 FMP has one retrieved `fmp.collection-json` member and one separate derived
-`fmp.press-release-item` proof. The loader performs one observation lookup/read. Projection is
-recomputed from fully consumed parent bytes. The loader outcome retains the raw collection digest
-as immutable provenance; the candidate and EventDraft primary artifact is the selected semantic
-projection hash. Raw-only byte differences, including URLs, queries, fragments, comments, object
-order, siblings, and replay paging, cannot change record/revision/candidate/EventDraft identity.
-They may change evidence/ledger acquisition provenance. A semantic correction changes projection,
-revision, and EventDraft deterministically.
+`fmp.press-release-item` proof. For the declared `selectedObservationId`, the loader performs
+exactly one `ArtifactStore.getObservation` and, only after that observation passes, exactly one
+`ArtifactStore.read(artifactHash)`. It recomputes the observation ID and observation hash from the
+complete returned `ArtifactObservation`; requires the persisted FMP provider identifier, declared
+artifact digest, and `retrievedAtMs <= asOfMs`; and rejects missing, forged, or inconsistent
+authority as `fmp.observation-invalid` before a body read. The verified read metadata must declare
+SHA-256, the same digest, and the declared bounded size. The stream is then fully consumed under
+the declared ceiling, its actual byte count and SHA-256 are recomputed, and underrun, overrun,
+growth/replacement, or digest substitution fails closed. The loader never calls attempt-history or
+enumeration APIs and never stats or opens a manifest path.
+
+Projection is recomputed from those fully consumed parent bytes. The loader outcome retains the raw
+collection digest as immutable provenance; the candidate and EventDraft primary artifact is the
+selected semantic projection hash. Raw-only byte differences, including URLs, queries, fragments,
+comments, object order, siblings, and replay paging, cannot change
+record/revision/candidate/EventDraft identity. They may change evidence/ledger acquisition
+provenance. A semantic correction changes projection, revision, and EventDraft deterministically.
 
 ## NVIDIA recorded-synthetic dialect
 
@@ -341,11 +355,23 @@ in order without wrapper tokens. Thus URL/style-only markup changes are non-sema
 text/structure changes revise.
 
 NVIDIA has retrieved `ir.rss-feed` and `ir.release-html` members plus derived `ir.rss-item` and
-`ir.release-visible` proofs. Each raw member has one verified observation; derived proofs have none.
+`ir.release-visible` proofs. For each raw member, the loader performs exactly one
+`ArtifactStore.getObservation(selectedObservationId)` and validates both authoritative observations
+before any body read. It recomputes each observation ID/hash; requires the persisted NVIDIA provider
+identifier, matching artifact digest, and `retrievedAtMs <= asOfMs`; and rejects missing, forged,
+duplicate, or inconsistent authority as `ir.observation-invalid`. It then performs exactly one
+`ArtifactStore.read(artifactHash)` per raw member. Each verified read must declare SHA-256, the same
+digest, and the declared bounded size. Both streams are fully consumed under the 10 MiB member and
+20 MiB aggregate ceilings while actual sizes and digests are recomputed; underrun, overrun,
+growth/replacement, or substitution fails closed. The loader never calls attempt-history or
+enumeration APIs and never stats or opens a manifest path. Derived proofs have no observation or
+store operation.
+
 Both raw digests remain immutable evidence/ledger provenance; neither enters domain identity. The
 selected composite projection hash is the candidate/EventDraft primary. Classification accepts
-only exact NVIDIA financial-results titles: first/second/third quarter -> Q1/Q2/Q3; fourth quarter and fiscal year -> FY, years
-2000-9999. Nonmatch is ignored; RSS/H1 mismatch quarantines; issuer is fixed CIK/symbol.
+only exact NVIDIA financial-results titles: first/second/third quarter -> Q1/Q2/Q3; fourth quarter
+and fiscal year -> FY, years 2000-9999. Nonmatch is ignored; RSS/H1 mismatch quarantines; issuer is
+fixed CIK/symbol.
 
 GUID is an empty-namespace XML element with the sole empty-namespace attribute
 `isPermaLink="true"`; attribute and value comparison is case-sensitive. GUID text and link must

@@ -1,13 +1,15 @@
 # PR 2C fixture manifest specification
 
-All FMP and NVIDIA bodies are minimal original synthetic data. Paths are loader instructions only.
-Large exact/one-over cases are generated in tests.
+All FMP and NVIDIA bodies are minimal original synthetic data. Production loader manifests contain
+neither filesystem paths nor acquisition/observation preimages. Test-only seed descriptors carry
+those values solely to populate an existing `ArtifactStore`. Large exact/one-over cases are
+generated in tests.
 
 ## Closed manifest
 
 ```ts
-type RecordedMirrorFixtureManifestV1 = Readonly<{
-  schemaVersion: 1;
+type RecordedMirrorFixtureManifestV2 = Readonly<{
+  schemaVersion: 2;
   caseId: string;
   provider: "financial-modeling-prep" | "nvidia-ir";
   source:
@@ -17,7 +19,7 @@ type RecordedMirrorFixtureManifestV1 = Readonly<{
   asOfMs: number;
   selector: FmpSelectorV1 | NvidiaSelectorV1;
   route: FmpRecordedRouteV1 | NvidiaRecordedRouteV1;
-  retrievedMembers: readonly RetrievedFixtureMemberV1[];
+  retrievedMembers: readonly RetrievedFixtureMemberV2[];
   derivedProofs: readonly DerivedProjectionProofV1[];
   expected: RecordedFmpExpectedV1 | NvidiaFixtureExpectedV1;
   provenance: RecordedFixtureProvenanceV1;
@@ -59,19 +61,12 @@ period derived by the ADR 0008 title grammar.
 ## Retrieved members cannot be derived proofs
 
 ```ts
-type RetrievedFixtureMemberV1 = Readonly<{
+type RetrievedFixtureMemberV2 = Readonly<{
   kind: "retrieved";
   role: "fmp.collection-json" | "ir.rss-feed" | "ir.release-html";
-  path: string;
   artifactHash: string;
   sizeBytes: number;
   selectedObservationId: string;
-  observation: {
-    provider: "financial-modeling-prep" | "nvidia-ir";
-    artifactDigest: string;
-    retrievedAtMs: number;
-    observationHash: string;
-  };
 }>;
 
 type DerivedProjectionProofV1 = Readonly<{
@@ -87,18 +82,30 @@ type DerivedProjectionProofV1 = Readonly<{
 FMP has one retrieved collection and one derived selected-item proof only when the outcome emits.
 Ignored and quarantined FMP outcomes have no derived proof. NVIDIA has retrieved feed and release
 HTML plus exactly two unique derived proofs: one `ir.rss-item` and one `ir.release-visible`. A
-derived proof has no path,
-observation, selected observation, retrieval time, or `ArtifactStore` operation. Tests must reject
-any attempt to give it one. Each projection is independently recomputed from fully consumed
+derived proof has no path, observation, selected observation, retrieval time, or `ArtifactStore`
+operation. Tests must reject any attempt to give it one. Each projection is independently
+recomputed from fully consumed
 verified parent bytes and exact selector/policy. Loaders compare supplied and recomputed proof maps
 in both directions; a missing, duplicate, extra, parent-, policy-, hash-, or size-substituted role
 is a stable bundle-hash mismatch. Terminal/failure transcripts carry no declared projection hash.
 
-Retrieved members canonicalize by role/digest. Each selected observation exists, is unique, has
-the declared provider/digest, and satisfies retrieval `<= asOfMs` unless the case intentionally
-expects observation-invalid. Selection never scans history. Verified size/body/digest and
-observation evidence agree. Paths resolve below the provider root and cannot escape through
-absolute/traversal/link/junction/reparse paths.
+Retrieved members canonicalize by role/digest. Each loader receives the `ArtifactStore` as an
+argument. For every raw member it performs exactly one
+`getObservation(selectedObservationId)`—never a history scan—and validates the complete returned
+`ArtifactObservation` before any body read. Validation recomputes both observation ID and
+observation hash, requires the persisted provider identifier and declared artifact digest, enforces
+`retrievedAtMs <= asOfMs`, and rejects missing, duplicate, forged, or inconsistent authority with
+the stable provider observation-invalid reason. Invalid observation authority performs no
+`ArtifactStore.read`.
+
+After every required observation is valid, the loader performs exactly one
+`ArtifactStore.read(artifactHash)` per raw member. Verified metadata must use SHA-256 and match the
+declared digest and bounded size. The loader fully consumes each stream under the declared member
+and aggregate ceilings, recomputes actual byte count and SHA-256, and fails closed for underrun,
+overrun, replacement/growth during read, or digest substitution. A rejected observation or rejected
+read metadata consumes zero body bytes. Production loaders do not stat, open, or resolve manifest
+paths and do not call any other store operation. Filesystem paths, request/response preimages, and
+retrieval attempts are test-only seed data outside the closed production manifest.
 
 ## Routing and classification
 
@@ -196,9 +203,11 @@ Candidate hash is `H("peas/recorded-press-release-candidate/v1",candidate)` and 
 | Candidate/transcript | 256 KiB | 256 KiB |
 
 Every maximum has exact and one-over generated coverage; zero/empty behavior follows the closed
-schemas. Collection/fixture selectors are exact record/revision IDs for FMP and an exact bounded
-canonical NVIDIA selection key for RSS. NVIDIA title and URL grammars and both timestamp grammars
-are normative in ADR 0008.
+schemas. Resource coverage includes an actual over-limit file despite an in-limit declaration,
+growth/replacement during the read, and counters proving that rejected observation authority or
+verified metadata reads no body bytes. Collection/fixture selectors are exact record/revision IDs
+for FMP and an exact bounded canonical NVIDIA selection key for RSS. NVIDIA title and URL grammars
+and both timestamp grammars are normative in ADR 0008.
 
 ## Synthetic provenance
 
@@ -211,13 +220,16 @@ contains no real provider body.
 
 FMP: latest/search, identical/conflicting duplicate order, later correction, null/naive/explicit/
 malformed time, every exact-field mutation, duplicate key, identity collision, parent/projection
-substitution, URL/comment/raw-order invariance, strict expected/provenance hostility, and generated
-exact/one-over bytes/items/tokens/depth/strings.
+substitution, URL/comment/raw-order invariance, strict expected/provenance hostility, authoritative
+observation absence/forgery/substitution, exactly one lookup/read, actual over-limit and growing
+streams, no-body-read rejection, and generated exact/one-over bytes/items/tokens/depth/strings.
 
 NVIDIA: valid RSS+HTML, identical/conflicting family, changed visible body, missing-time trap,
 namespace/prefix, CDATA/escaped marker/entities/DTD, category normalization, URL-only changes,
-malformed XML/HTML/title/canonical, chunk/whitespace invariance, and generated exact/one-over
-bytes/items/tokens/depth/attributes/text.
+malformed XML/HTML/title/canonical, chunk/whitespace invariance, authoritative observation
+absence/forgery/substitution, exactly one lookup/read per member, actual over-limit and growing
+streams, no-body-read rejection, and generated exact/one-over bytes/items/tokens/depth/attributes/
+text.
 
 Cross-source: real recorded SEC/FMP/IR loaders, every arrival order, equal and byte-different
 mirrors, corrections/revisions, redelivery/conflict, arrival during an active analysis lease, and

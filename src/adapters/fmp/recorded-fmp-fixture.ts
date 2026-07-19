@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
-import { lstat, readFile, realpath } from "node:fs/promises";
-import path from "node:path";
 
+import type {
+  ArtifactObservation,
+  ArtifactStore,
+  VerifiedArtifactRead,
+} from "../../artifacts/artifact-store.js";
+import { deriveObservationId } from "../../artifacts/identity.js";
+import { validateHttpResponseMetadata } from "../../artifacts/validation.js";
 import { canonicalHash } from "../../core/hash.js";
 import {
   assertJsonWithinLimits,
@@ -13,6 +18,7 @@ import {
 } from "../../core/json.js";
 import {
   FMP_MAX_DECODED_BYTES,
+  FMP_MAX_RESPONSE_BYTES,
   FMP_MAX_TRANSCRIPT_BYTES,
   FMP_PROVIDER,
   FMP_REASON_CODES,
@@ -27,8 +33,22 @@ import {
 import { normalizeRecordedFmpCollection } from "../../providers/fmp/normalizer.js";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
-const LOADER_ID = "fmp-recorded-fixture-loader-v1";
-const TRANSCRIPT_DOMAIN = "peas/fmp-recorded-fixture-transcript/v1";
+const PERSISTED_ATTEMPT_ID = /^att1_[a-f0-9]{64}$/u;
+const PERSISTED_RECORD_ID = /^rec1_[a-f0-9]{64}$/u;
+const PERSISTED_REVISION_ID = /^rev1_[a-f0-9]{64}$/u;
+const OBSERVATION_JSON_LIMITS = Object.freeze({
+  maxDepth: 3,
+  maxNodes: 64,
+  maxArrayLength: 1,
+  maxObjectKeys: 16,
+  maxStringBytes: 8_192,
+  maxCanonicalBytes: 65_536,
+});
+const LOADER_ID = "fmp-recorded-fixture-loader-v2";
+const TRANSCRIPT_DOMAIN = "peas/fmp-recorded-fixture-transcript/v2";
+const FMP_PERSISTED_PROVIDER_ID = `prv1_${canonicalHash("peas/artifact-provider-identifier/v1", {
+  value: FMP_PROVIDER,
+})}`;
 const MANIFEST_FIELDS = Object.freeze([
   "acquisitionVariant",
   "asOfMs",
@@ -46,17 +66,37 @@ const MANIFEST_FIELDS = Object.freeze([
 const MEMBER_FIELDS = Object.freeze([
   "artifactHash",
   "kind",
-  "observation",
-  "path",
   "role",
   "selectedObservationId",
   "sizeBytes",
 ]);
-const OBSERVATION_FIELDS = Object.freeze([
+const ARTIFACT_OBSERVATION_FIELDS = Object.freeze([
   "artifactDigest",
+  "attemptId",
   "observationHash",
+  "observationId",
   "provider",
+  "recordId",
+  "request",
+  "response",
   "retrievedAtMs",
+  "revisionId",
+]);
+const REQUEST_FIELDS = Object.freeze([
+  "identityHash",
+  "method",
+  "origin",
+  "pathHash",
+  "routeLabel",
+]);
+const RESPONSE_FIELDS = Object.freeze([
+  "contentEncoding",
+  "declaredContentLength",
+  "etag",
+  "lastModified",
+  "mediaType",
+  "statusCode",
+  "transportDecoded",
 ]);
 const PROOF_FIELDS = Object.freeze([
   "kind",
@@ -92,21 +132,12 @@ const EXPECTED_FIELDS = Object.freeze([
 ]);
 const PROVENANCE_FIELDS = Object.freeze(["approvalReference", "classification", "note"]);
 
-export type RecordedFmpObservationV1 = Readonly<{
-  provider: typeof FMP_PROVIDER;
-  artifactDigest: string;
-  retrievedAtMs: number;
-  observationHash: string;
-}>;
-
-export type RecordedFmpRetrievedMemberV1 = Readonly<{
+export type RecordedFmpRetrievedMemberV2 = Readonly<{
   kind: "retrieved";
   role: "fmp.collection-json";
-  path: string;
   artifactHash: string;
   sizeBytes: number;
   selectedObservationId: string;
-  observation: RecordedFmpObservationV1;
 }>;
 
 export type RecordedFmpDerivedProofV1 = Readonly<{
@@ -141,8 +172,8 @@ export type RecordedFmpProvenanceV1 = Readonly<{
   approvalReference: string | null;
 }>;
 
-export type RecordedFmpFixtureManifestV1 = Readonly<{
-  schemaVersion: 1;
+export type RecordedFmpFixtureManifestV2 = Readonly<{
+  schemaVersion: 2;
   caseId: string;
   provider: typeof FMP_PROVIDER;
   source: typeof FMP_RECORDED_SOURCE;
@@ -150,13 +181,13 @@ export type RecordedFmpFixtureManifestV1 = Readonly<{
   asOfMs: number;
   selector: FmpSelectorV1;
   route: FmpRecordedRouteV1;
-  retrievedMembers: readonly [RecordedFmpRetrievedMemberV1];
+  retrievedMembers: readonly [RecordedFmpRetrievedMemberV2];
   derivedProofs: readonly RecordedFmpDerivedProofV1[];
   expected: RecordedFmpExpectedV1;
   provenance: RecordedFmpProvenanceV1;
 }>;
 
-export type FmpLoaderTranscriptV1 = Readonly<{
+export type FmpLoaderTranscriptV2 = Readonly<{
   loader: typeof LOADER_ID;
   caseId: string;
   asOfMs: number;
@@ -170,7 +201,7 @@ export type FmpLoaderTranscriptV1 = Readonly<{
 
 export type RecordedFmpFixtureLoadResult = FmpNormalizationResult &
   Readonly<{
-    transcript: FmpLoaderTranscriptV1;
+    transcript: FmpLoaderTranscriptV2;
     transcriptHash: string;
   }>;
 
@@ -190,6 +221,38 @@ function exact(value: JsonObject, fields: readonly string[]): void {
   const expected = [...fields].sort();
   if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) {
     throw new FixtureFailure("fmp.bundle-hash-mismatch");
+  }
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === "string" && SHA256.test(value);
+}
+
+function validRequestIdentity(request: ArtifactObservation["request"]): boolean {
+  try {
+    const origin = new URL(request.origin);
+    return (
+      /^[A-Z]{1,32}$/u.test(request.method) &&
+      request.origin.length <= 2_048 &&
+      /^https?:$/u.test(origin.protocol) &&
+      origin.username === "" &&
+      origin.password === "" &&
+      origin.pathname === "/" &&
+      origin.search === "" &&
+      origin.hash === "" &&
+      origin.origin === request.origin &&
+      isSha256(request.pathHash) &&
+      /^[a-z0-9][a-z0-9._:-]{0,127}$/u.test(request.routeLabel) &&
+      request.identityHash ===
+        canonicalHash("peas/artifact-request-identity/v1", {
+          method: request.method,
+          origin: request.origin,
+          pathHash: request.pathHash,
+          routeLabel: request.routeLabel,
+        })
+    );
+  } catch {
+    return false;
   }
 }
 
@@ -216,7 +279,7 @@ function withTranscript(
     ...context,
     status: result.status,
     reasonCode: result.reasonCode,
-  }) as FmpLoaderTranscriptV1;
+  }) as FmpLoaderTranscriptV2;
   const serialized = Buffer.from(canonicalJson(transcript as unknown as JsonValue), "utf8");
   assertFmpTranscriptBytesWithinLimit(serialized);
   return freeze({
@@ -243,7 +306,7 @@ function failed(
   );
 }
 
-function detachManifest(value: RecordedFmpFixtureManifestV1): RecordedFmpFixtureManifestV1 {
+function detachManifest(value: RecordedFmpFixtureManifestV2): RecordedFmpFixtureManifestV2 {
   try {
     assertJsonWithinLimits(value, {
       maxDepth: 8,
@@ -255,14 +318,14 @@ function detachManifest(value: RecordedFmpFixtureManifestV1): RecordedFmpFixture
     });
     const manifest = inertJsonSnapshot(
       value as unknown as JsonValue,
-    ) as RecordedFmpFixtureManifestV1;
+    ) as RecordedFmpFixtureManifestV2;
     exact(manifest as unknown as JsonObject, MANIFEST_FIELDS);
     exact(manifest.selector as unknown as JsonObject, SELECTOR_FIELDS);
     exact(manifest.route as unknown as JsonObject, ROUTE_FIELDS);
     exact(manifest.expected as unknown as JsonObject, EXPECTED_FIELDS);
     exact(manifest.provenance as unknown as JsonObject, PROVENANCE_FIELDS);
     if (
-      manifest.schemaVersion !== 1 ||
+      manifest.schemaVersion !== 2 ||
       manifest.provider !== FMP_PROVIDER ||
       manifest.source !== FMP_RECORDED_SOURCE ||
       (manifest.acquisitionVariant !== "latest" && manifest.acquisitionVariant !== "search") ||
@@ -278,7 +341,9 @@ function detachManifest(value: RecordedFmpFixtureManifestV1): RecordedFmpFixture
       throw new FixtureFailure("fmp.bundle-hash-mismatch");
     }
     if (
+      typeof manifest.selector.recordId !== "string" ||
       !/^fmp-recorded-synthetic:[a-f0-9]{64}$/u.test(manifest.selector.recordId) ||
+      typeof manifest.selector.revisionId !== "string" ||
       !/^sha256:[a-f0-9]{64}$/u.test(manifest.selector.revisionId) ||
       (manifest.route.classification !== "earnings-release" &&
         manifest.route.classification !== "not-earnings-release") ||
@@ -294,8 +359,11 @@ function detachManifest(value: RecordedFmpFixtureManifestV1): RecordedFmpFixture
     if (manifest.route.issuerMapping !== null) {
       exact(manifest.route.issuerMapping as unknown as JsonObject, ISSUER_MAPPING_FIELDS);
       if (
+        typeof manifest.route.issuerMapping.issuerCik !== "string" ||
         !/^\d{10}$/u.test(manifest.route.issuerMapping.issuerCik) ||
+        typeof manifest.route.issuerMapping.symbol !== "string" ||
         !/^[A-Z0-9][A-Z0-9.-]{0,31}$/u.test(manifest.route.issuerMapping.symbol) ||
+        typeof manifest.route.issuerMapping.fiscalPeriod !== "string" ||
         !/^\d{4}-(?:Q[1-4]|FY)$/u.test(manifest.route.issuerMapping.fiscalPeriod)
       ) {
         throw new FixtureFailure("fmp.bundle-hash-mismatch");
@@ -311,25 +379,18 @@ function detachManifest(value: RecordedFmpFixtureManifestV1): RecordedFmpFixture
     validateProvenance(manifest.provenance);
     const member = manifest.retrievedMembers[0];
     exact(member as unknown as JsonObject, MEMBER_FIELDS);
-    exact(member.observation as unknown as JsonObject, OBSERVATION_FIELDS);
     if (
       member.kind !== "retrieved" ||
       member.role !== "fmp.collection-json" ||
-      typeof member.path !== "string" ||
-      member.path.length < 1 ||
-      member.path.length > 512 ||
-      !SHA256.test(member.artifactHash) ||
+      !isSha256(member.artifactHash) ||
       !Number.isSafeInteger(member.sizeBytes) ||
       member.sizeBytes < 0 ||
-      !SHA256.test(member.selectedObservationId) ||
-      member.observation.provider !== FMP_PROVIDER ||
-      member.observation.artifactDigest !== member.artifactHash ||
-      !Number.isSafeInteger(member.observation.retrievedAtMs) ||
-      member.observation.retrievedAtMs < 0 ||
-      member.observation.retrievedAtMs > manifest.asOfMs ||
-      !SHA256.test(member.observation.observationHash)
+      !isSha256(member.selectedObservationId)
     ) {
       throw new FixtureFailure("fmp.observation-invalid");
+    }
+    if (member.sizeBytes > FMP_MAX_RESPONSE_BYTES) {
+      throw new FixtureFailure("fmp.response-byte-limit-exceeded");
     }
     for (const proof of manifest.derivedProofs) {
       exact(proof as unknown as JsonObject, PROOF_FIELDS);
@@ -338,7 +399,7 @@ function detachManifest(value: RecordedFmpFixtureManifestV1): RecordedFmpFixture
         proof.role !== "fmp.press-release-item" ||
         proof.parentArtifactHash !== member.artifactHash ||
         proof.policy !== FMP_RECORDED_DIALECT ||
-        !SHA256.test(proof.projectionHash) ||
+        !isSha256(proof.projectionHash) ||
         !Number.isSafeInteger(proof.projectionSizeBytes) ||
         proof.projectionSizeBytes < 0 ||
         proof.projectionSizeBytes > FMP_MAX_DECODED_BYTES
@@ -353,8 +414,8 @@ function detachManifest(value: RecordedFmpFixtureManifestV1): RecordedFmpFixture
   }
 }
 
-function nullableHash(value: string | null): boolean {
-  return value === null || SHA256.test(value);
+function nullableHash(value: unknown): boolean {
+  return value === null || isSha256(value);
 }
 
 function validateExpected(expected: RecordedFmpExpectedV1): void {
@@ -367,6 +428,9 @@ function validateExpected(expected: RecordedFmpExpectedV1): void {
       !["json-tokens", "json-depth", "object-keys", "decoded-string-bytes"].includes(
         expected.limitKind,
       )) ||
+    (expected.limitKind !== null) !==
+      (expected.reasonCode === "fmp.parse-limit-exceeded" ||
+        (expected.reasonCode === "fmp.item-invalid" && expected.limitKind === "object-keys")) ||
     !nullableHash(expected.rawArtifactHash) ||
     !nullableHash(expected.primaryArtifactHash) ||
     !nullableHash(expected.selectedProjectionHash) ||
@@ -378,6 +442,7 @@ function validateExpected(expected: RecordedFmpExpectedV1): void {
     !["provider", "unknown", null].includes(expected.timestampConfidence) ||
     (expected.originalTimestamp !== null &&
       (typeof expected.originalTimestamp !== "string" ||
+        expected.originalTimestamp.length < 1 ||
         Buffer.byteLength(expected.originalTimestamp, "utf8") > 128))
   ) {
     throw new FixtureFailure("fmp.bundle-hash-mismatch");
@@ -464,52 +529,115 @@ function expectedMatches(expected: RecordedFmpExpectedV1, result: FmpNormalizati
   );
 }
 
-function insideRoot(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return (
-    relative !== "" &&
-    relative !== ".." &&
-    !relative.startsWith(`..${path.sep}`) &&
-    !path.isAbsolute(relative)
-  );
-}
-
-async function confinedFixturePath(root: string, relativePath: string): Promise<string> {
-  if (
-    path.isAbsolute(relativePath) ||
-    path.win32.isAbsolute(relativePath) ||
-    path.posix.isAbsolute(relativePath) ||
-    relativePath.includes("\\")
-  ) {
-    throw new FixtureFailure("fmp.artifact-read-failed");
-  }
-  const parts = relativePath.split("/");
-  if (parts.some((part) => part === "" || part === "." || part === "..")) {
-    throw new FixtureFailure("fmp.artifact-read-failed");
-  }
-  const rootReal = await realpath(root);
-  let current = rootReal;
-  for (const part of parts) {
-    current = path.join(current, part);
-    const stats = await lstat(current);
-    if (stats.isSymbolicLink()) throw new FixtureFailure("fmp.artifact-read-failed");
-    const currentReal = await realpath(current);
-    if (!insideRoot(rootReal, currentReal)) throw new FixtureFailure("fmp.artifact-read-failed");
-    current = currentReal;
-  }
-  return current;
-}
-
-/** Reads only a path-confined recorded member and verifies its full manifest evidence. */
-export async function loadRecordedFmpFixture(
-  options: Readonly<{
-    fixtureRoot: string;
-    manifest: RecordedFmpFixtureManifestV1;
-  }>,
-): Promise<RecordedFmpFixtureLoadResult> {
-  let manifest: RecordedFmpFixtureManifestV1;
+function validateArtifactObservation(
+  value: ArtifactObservation | undefined,
+  member: RecordedFmpRetrievedMemberV2,
+  asOfMs: number,
+): ArtifactObservation {
   try {
-    manifest = detachManifest(options.manifest);
+    if (value === undefined) throw new FixtureFailure("fmp.observation-invalid");
+    assertJsonWithinLimits(value, OBSERVATION_JSON_LIMITS, "$.artifactObservation");
+    const observation = inertJsonSnapshot(value as unknown as JsonValue) as ArtifactObservation;
+    exact(observation as unknown as JsonObject, ARTIFACT_OBSERVATION_FIELDS);
+    exact(observation.request as unknown as JsonObject, REQUEST_FIELDS);
+    exact(observation.response as unknown as JsonObject, RESPONSE_FIELDS);
+    if (
+      observation.observationId !== member.selectedObservationId ||
+      observation.provider !== FMP_PERSISTED_PROVIDER_ID ||
+      observation.artifactDigest !== member.artifactHash ||
+      !PERSISTED_ATTEMPT_ID.test(observation.attemptId) ||
+      !PERSISTED_RECORD_ID.test(observation.recordId) ||
+      !PERSISTED_REVISION_ID.test(observation.revisionId) ||
+      !validRequestIdentity(observation.request) ||
+      !Number.isSafeInteger(observation.retrievedAtMs) ||
+      observation.retrievedAtMs < 0 ||
+      observation.retrievedAtMs > asOfMs ||
+      !isSha256(observation.observationHash)
+    ) {
+      throw new FixtureFailure("fmp.observation-invalid");
+    }
+    validateHttpResponseMetadata(observation.response);
+    const expectedId = deriveObservationId(
+      {
+        attemptId: observation.attemptId,
+        provider: observation.provider,
+        recordId: observation.recordId,
+        revisionId: observation.revisionId,
+        startedAtMs: 0,
+        request: observation.request,
+      },
+      observation.artifactDigest,
+      observation.response,
+    );
+    const { observationHash: _hash, ...preimage } = observation;
+    const expectedHash = canonicalHash(
+      "peas/artifact-observation/v1",
+      preimage as unknown as JsonValue,
+    );
+    if (observation.observationId !== expectedId || observation.observationHash !== expectedHash) {
+      throw new FixtureFailure("fmp.observation-invalid");
+    }
+    return observation;
+  } catch (error) {
+    if (error instanceof FixtureFailure) throw error;
+    throw new FixtureFailure("fmp.observation-invalid");
+  }
+}
+
+async function readBoundedFmpMember(
+  store: ArtifactStore,
+  member: RecordedFmpRetrievedMemberV2,
+): Promise<Buffer> {
+  let verified: VerifiedArtifactRead;
+  try {
+    verified = await store.read(member.artifactHash);
+  } catch {
+    throw new FixtureFailure("fmp.artifact-read-failed");
+  }
+  if (verified.artifact.sizeBytes > FMP_MAX_RESPONSE_BYTES) {
+    verified.stream.destroy();
+    throw new FixtureFailure("fmp.response-byte-limit-exceeded");
+  }
+  if (
+    verified.artifact.digest !== member.artifactHash ||
+    verified.artifact.algorithm !== "sha256" ||
+    verified.artifact.sizeBytes !== member.sizeBytes
+  ) {
+    verified.stream.destroy();
+    throw new FixtureFailure("fmp.bundle-hash-mismatch");
+  }
+  const bytes = Buffer.allocUnsafe(member.sizeBytes);
+  const hash = createHash("sha256");
+  let consumed = 0;
+  try {
+    for await (const chunk of verified.stream) {
+      if (!(chunk instanceof Uint8Array)) throw new Error("artifact stream emitted non-bytes");
+      if (chunk.byteLength > member.sizeBytes - consumed) {
+        throw new FixtureFailure("fmp.bundle-hash-mismatch");
+      }
+      bytes.set(chunk, consumed);
+      hash.update(chunk);
+      consumed += chunk.byteLength;
+    }
+  } catch (error) {
+    verified.stream.destroy();
+    if (error instanceof FixtureFailure) throw error;
+    throw new FixtureFailure("fmp.artifact-read-failed");
+  }
+  if (consumed !== member.sizeBytes || hash.digest("hex") !== member.artifactHash) {
+    throw new FixtureFailure("fmp.bundle-hash-mismatch");
+  }
+  return bytes;
+}
+
+/** Resolves one authoritative observation and fully consumes its verified artifact. */
+export async function loadRecordedFmpFixture(
+  store: ArtifactStore,
+  value: RecordedFmpFixtureManifestV2,
+): Promise<RecordedFmpFixtureLoadResult> {
+  let manifest: RecordedFmpFixtureManifestV2;
+  try {
+    manifest = detachManifest(value);
   } catch (error) {
     const reasonCode =
       error instanceof FixtureFailure ? error.reasonCode : "fmp.bundle-hash-mismatch";
@@ -523,11 +651,28 @@ export async function loadRecordedFmpFixture(
     });
   }
   const member = manifest.retrievedMembers[0];
+  let observation: ArtifactObservation;
+  try {
+    observation = validateArtifactObservation(
+      await store.getObservation(member.selectedObservationId),
+      member,
+      manifest.asOfMs,
+    );
+  } catch {
+    return failed("fmp.observation-invalid", {
+      caseId: manifest.caseId,
+      asOfMs: manifest.asOfMs,
+      selectedObservationId: member.selectedObservationId,
+      observationHash: null,
+      artifactHash: null,
+      projectionHash: null,
+    });
+  }
   const baseContext = {
     caseId: manifest.caseId,
     asOfMs: manifest.asOfMs,
     selectedObservationId: member.selectedObservationId,
-    observationHash: member.observation.observationHash,
+    observationHash: observation.observationHash,
     artifactHash: member.artifactHash,
     // A manifest claim is not transcript evidence. It becomes transcript evidence only
     // after the selected projection is recomputed from the verified member bytes.
@@ -535,9 +680,12 @@ export async function loadRecordedFmpFixture(
   } as const;
   let bytes: Buffer;
   try {
-    bytes = await readFile(await confinedFixturePath(options.fixtureRoot, member.path));
-  } catch {
-    return failed("fmp.artifact-read-failed", baseContext);
+    bytes = await readBoundedFmpMember(store, member);
+  } catch (error) {
+    return failed(
+      error instanceof FixtureFailure ? error.reasonCode : "fmp.artifact-read-failed",
+      baseContext,
+    );
   }
   if (
     bytes.byteLength !== member.sizeBytes ||
