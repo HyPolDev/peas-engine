@@ -361,11 +361,16 @@ before any body read. It recomputes each observation ID/hash; requires the persi
 identifier, matching artifact digest, and `retrievedAtMs <= asOfMs`; and rejects missing, forged,
 duplicate, or inconsistent authority as `ir.observation-invalid`. It then performs exactly one
 `ArtifactStore.read(artifactHash)` per raw member. Each verified read must declare SHA-256, the same
-digest, and the declared bounded size. Both streams are fully consumed under the 10 MiB member and
-20 MiB aggregate ceilings while actual sizes and digests are recomputed; underrun, overrun,
-growth/replacement, or substitution fails closed. The loader never calls attempt-history or
-enumeration APIs and never stats or opens a manifest path. Derived proofs have no observation or
-store operation.
+digest, and the declared bounded size. The loader first acquires both verified reads exactly once
+without consuming either stream, settles both acquisition calls, and validates the complete
+metadata set plus member and aggregate bounds. Any acquisition or metadata failure destroys every
+acquired stream and crosses a bounded cancellation-settlement barrier before returning; no sibling
+stream may start or remain active. Only after that atomic metadata gate passes are the streams
+consumed sequentially under the 10 MiB member and 20 MiB aggregate ceilings while actual sizes and
+digests are recomputed. Any consumption failure likewise cancels and settles all streams before
+return. Underrun, overrun, growth/replacement, or substitution fails closed. The loader never calls
+attempt-history or enumeration APIs and never stats or opens a manifest path. Derived proofs have
+no observation or store operation.
 
 Both raw digests remain immutable evidence/ledger provenance; neither enters domain identity. The
 selected composite projection hash is the candidate/EventDraft primary. Classification accepts

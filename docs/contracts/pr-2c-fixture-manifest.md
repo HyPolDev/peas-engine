@@ -100,12 +100,17 @@ the stable provider observation-invalid reason. Invalid observation authority pe
 
 After every required observation is valid, the loader performs exactly one
 `ArtifactStore.read(artifactHash)` per raw member. Verified metadata must use SHA-256 and match the
-declared digest and bounded size. The loader fully consumes each stream under the declared member
-and aggregate ceilings, recomputes actual byte count and SHA-256, and fails closed for underrun,
-overrun, replacement/growth during read, or digest substitution. A rejected observation or rejected
-read metadata consumes zero body bytes. Production loaders do not stat, open, or resolve manifest
-paths and do not call any other store operation. Filesystem paths, request/response preimages, and
-retrieval attempts are test-only seed data outside the closed production manifest.
+declared digest and bounded size. A multi-member loader first acquires every read exactly once and
+settles every acquisition call without consuming a stream. It validates the complete metadata set
+and aggregate bounds atomically. Any acquisition or metadata failure destroys every acquired stream
+and crosses a bounded cancellation-settlement barrier before return, so no sibling body starts,
+survives the return, or emits later activity. Only after that gate passes does the loader consume
+the streams sequentially, recompute actual byte count and SHA-256, and fail closed for underrun,
+overrun, replacement/growth during read, or digest substitution. A consumption failure also cancels
+and settles all acquired streams before return. A rejected observation or rejected read metadata
+consumes zero body bytes. Production loaders do not stat, open, or resolve manifest paths and do not
+call any other store operation. Filesystem paths, request/response preimages, and retrieval attempts
+are test-only seed data outside the closed production manifest.
 
 ## Routing and classification
 
@@ -228,8 +233,9 @@ NVIDIA: valid RSS+HTML, identical/conflicting family, changed visible body, miss
 namespace/prefix, CDATA/escaped marker/entities/DTD, category normalization, URL-only changes,
 malformed XML/HTML/title/canonical, chunk/whitespace invariance, authoritative observation
 absence/forgery/substitution, exactly one lookup/read per member, actual over-limit and growing
-streams, no-body-read rejection, and generated exact/one-over bytes/items/tokens/depth/attributes/
-text.
+streams, same-length replacement, atomic two-member metadata failure for both roles, post-return
+inactivity, symmetric thrown-read cleanup, no raw-error leakage, no-body-read rejection, and
+generated exact/one-over bytes/items/tokens/depth/attributes/text.
 
 Cross-source: real recorded SEC/FMP/IR loaders, every arrival order, equal and byte-different
 mirrors, corrections/revisions, redelivery/conflict, arrival during an active analysis lease, and

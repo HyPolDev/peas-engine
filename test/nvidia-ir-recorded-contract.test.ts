@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
+import { setImmediate as drainEventLoop, setTimeout as delay } from "node:timers/promises";
 
 import {
   NVIDIA_BASELINE_MANIFEST,
@@ -115,6 +116,98 @@ test("NVIDIA rejects missing or forged authoritative observations before artifac
   assert.equal(missingAuthority.counters.observationCalls.size, 2);
   assert.deepEqual([...missingAuthority.counters.observationCalls.values()], [1, 1]);
   assert.equal(missingAuthority.counters.readCalls.size, 0);
+});
+
+test("NVIDIA metadata gate cancels and settles both acquired streams before returning", async () => {
+  for (const invalidRole of ["ir.rss-feed", "ir.release-html"] as const) {
+    for (const failure of ["invalid", "over-limit"] as const) {
+      const authority = recordedFixtureArtifactStore(FIXTURE_ROOT, NVIDIA_FIXTURE_SEEDS, {
+        metadataSize: (actualSize, seed) => {
+          if (seed.role !== invalidRole) return actualSize;
+          return failure === "over-limit" ? NVIDIA_IR_LIMITS.memberBytes + 1 : actualSize + 1;
+        },
+      });
+      const result = await loadRecordedNvidiaFixture(authority.store, NVIDIA_BASELINE_MANIFEST);
+      assert.equal(
+        result.reasonCode,
+        failure === "over-limit" ? "ir.member-limit-exceeded" : "ir.bundle-hash-mismatch",
+        `${invalidRole}:${failure}`,
+      );
+      assert.equal(result.normalization, null);
+      assert.deepEqual(result.transcript.projectionHashes, []);
+      assert.equal(authority.counters.observationCalls.size, 2);
+      assert.equal(authority.counters.readCalls.size, 2);
+      for (const member of NVIDIA_BASELINE_MANIFEST.retrievedMembers) {
+        assert.equal(authority.counters.observationCalls.get(member.selectedObservationId), 1);
+        assert.equal(authority.counters.readCalls.get(member.artifactHash), 1);
+        assert.equal(authority.counters.streamStarts.get(member.artifactHash) ?? 0, 0);
+        assert.equal(authority.counters.streamSettles.get(member.artifactHash) ?? 0, 0);
+        assert.equal(authority.counters.streamCloses.get(member.artifactHash), 1);
+        assert.equal(authority.counters.streamedBytes.get(member.artifactHash) ?? 0, 0);
+      }
+      const activityAtReturn = {
+        streamStarts: [...authority.counters.streamStarts],
+        streamSettles: [...authority.counters.streamSettles],
+        streamCloses: [...authority.counters.streamCloses],
+        streamedBytes: [...authority.counters.streamedBytes],
+      };
+      await drainEventLoop();
+      await delay(10);
+      assert.deepEqual(
+        {
+          streamStarts: [...authority.counters.streamStarts],
+          streamSettles: [...authority.counters.streamSettles],
+          streamCloses: [...authority.counters.streamCloses],
+          streamedBytes: [...authority.counters.streamedBytes],
+        },
+        activityAtReturn,
+        `${invalidRole}:${failure}:post-return activity`,
+      );
+    }
+  }
+
+  for (const failedRole of ["ir.rss-feed", "ir.release-html"] as const) {
+    const authority = recordedFixtureArtifactStore(FIXTURE_ROOT, NVIDIA_FIXTURE_SEEDS, {
+      readError: (seed) =>
+        seed.role === failedRole ? new Error("raw-provider-body-sentinel") : null,
+    });
+    const result = await loadRecordedNvidiaFixture(authority.store, NVIDIA_BASELINE_MANIFEST);
+    assert.equal(result.reasonCode, "ir.artifact-read-failed", failedRole);
+    assert.equal(result.normalization, null);
+    assert.deepEqual(result.transcript.projectionHashes, []);
+    assert.equal(JSON.stringify(result).includes("raw-provider-body-sentinel"), false);
+    assert.equal(authority.counters.observationCalls.size, 2);
+    assert.equal(authority.counters.readCalls.size, 2);
+    for (const member of NVIDIA_BASELINE_MANIFEST.retrievedMembers) {
+      assert.equal(authority.counters.observationCalls.get(member.selectedObservationId), 1);
+      assert.equal(authority.counters.readCalls.get(member.artifactHash), 1);
+      assert.equal(authority.counters.streamStarts.get(member.artifactHash) ?? 0, 0);
+      assert.equal(authority.counters.streamSettles.get(member.artifactHash) ?? 0, 0);
+      assert.equal(
+        authority.counters.streamCloses.get(member.artifactHash) ?? 0,
+        member.role === failedRole ? 0 : 1,
+      );
+      assert.equal(authority.counters.streamedBytes.get(member.artifactHash) ?? 0, 0);
+    }
+    const activityAtReturn = {
+      streamStarts: [...authority.counters.streamStarts],
+      streamSettles: [...authority.counters.streamSettles],
+      streamCloses: [...authority.counters.streamCloses],
+      streamedBytes: [...authority.counters.streamedBytes],
+    };
+    await drainEventLoop();
+    await delay(10);
+    assert.deepEqual(
+      {
+        streamStarts: [...authority.counters.streamStarts],
+        streamSettles: [...authority.counters.streamSettles],
+        streamCloses: [...authority.counters.streamCloses],
+        streamedBytes: [...authority.counters.streamedBytes],
+      },
+      activityAtReturn,
+      `${failedRole}:post-return activity`,
+    );
+  }
 });
 
 test("NVIDIA loader enforces exact and one-over member and aggregate byte declarations", async () => {

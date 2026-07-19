@@ -532,28 +532,109 @@ function validateArtifactObservation(
     throw new LoaderFailure("ir.observation-invalid");
   }
 }
-async function readBoundedNvidiaMember(
+type AcquiredNvidiaMember = Readonly<{
+  member: NvidiaRetrievedMemberV2;
+  verified: VerifiedArtifactRead;
+}>;
+
+function settleDestroyedStream(stream: VerifiedArtifactRead["stream"]): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const swallowError = (): void => {};
+    const onError = (): void => complete();
+    const complete = (): void => {
+      if (settled) return;
+      settled = true;
+      clearImmediate(fallback);
+      stream.off("close", complete);
+      stream.off("end", complete);
+      stream.off("error", onError);
+      resolve();
+    };
+    stream.once("close", complete);
+    stream.once("end", complete);
+    stream.on("error", swallowError);
+    stream.once("error", onError);
+    const fallback = setImmediate(complete);
+    try {
+      stream.destroy();
+    } catch {
+      complete();
+    }
+  });
+}
+
+async function cancelAcquiredNvidiaMembers(
+  acquired: readonly AcquiredNvidiaMember[],
+): Promise<void> {
+  await Promise.allSettled(acquired.map(({ verified }) => settleDestroyedStream(verified.stream)));
+}
+
+function nvidiaMetadataFailure(
+  acquired: readonly AcquiredNvidiaMember[],
+): NvidiaIrReasonCode | null {
+  let actualBundleBytes = 0;
+  let memberLimit = false;
+  let bundleLimit = false;
+  let metadataMismatch = false;
+  for (const { member, verified } of acquired) {
+    const sizeBytes = verified.artifact.sizeBytes;
+    if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
+      metadataMismatch = true;
+      continue;
+    }
+    if (sizeBytes > NVIDIA_IR_LIMITS.memberBytes) memberLimit = true;
+    actualBundleBytes += sizeBytes;
+    if (!Number.isSafeInteger(actualBundleBytes)) bundleLimit = true;
+    if (
+      verified.artifact.digest !== member.artifactHash ||
+      verified.artifact.algorithm !== "sha256" ||
+      sizeBytes !== member.sizeBytes
+    ) {
+      metadataMismatch = true;
+    }
+  }
+  if (memberLimit) return "ir.member-limit-exceeded";
+  if (bundleLimit || actualBundleBytes > NVIDIA_IR_LIMITS.bundleBytes)
+    return "ir.bundle-byte-limit-exceeded";
+  return metadataMismatch ? "ir.bundle-hash-mismatch" : null;
+}
+
+async function acquireNvidiaMembers(
   store: ArtifactStore,
-  member: NvidiaRetrievedMemberV2,
-): Promise<Buffer> {
-  let verified: VerifiedArtifactRead;
-  try {
-    verified = await store.read(member.artifactHash);
-  } catch {
+  members: readonly NvidiaRetrievedMemberV2[],
+): Promise<readonly AcquiredNvidiaMember[]> {
+  const settled = await Promise.allSettled(
+    members.map(async (member) => ({
+      member,
+      verified: await store.read(member.artifactHash),
+    })),
+  );
+  const acquired = settled.flatMap((result) =>
+    result.status === "fulfilled" ? [result.value] : [],
+  );
+  if (settled.some((result) => result.status === "rejected")) {
+    await cancelAcquiredNvidiaMembers(acquired);
     throw new LoaderFailure("ir.artifact-read-failed");
   }
-  if (verified.artifact.sizeBytes > NVIDIA_IR_LIMITS.memberBytes) {
-    verified.stream.destroy();
-    throw new LoaderFailure("ir.member-limit-exceeded");
+  let metadataFailure: NvidiaIrReasonCode | null;
+  try {
+    metadataFailure = nvidiaMetadataFailure(acquired);
+  } catch {
+    await cancelAcquiredNvidiaMembers(acquired);
+    throw new LoaderFailure("ir.artifact-read-failed");
   }
-  if (
-    verified.artifact.digest !== member.artifactHash ||
-    verified.artifact.algorithm !== "sha256" ||
-    verified.artifact.sizeBytes !== member.sizeBytes
-  ) {
-    verified.stream.destroy();
-    throw new LoaderFailure("ir.bundle-hash-mismatch");
+  if (metadataFailure !== null) {
+    await cancelAcquiredNvidiaMembers(acquired);
+    throw new LoaderFailure(metadataFailure);
   }
+  return acquired;
+}
+
+async function consumeBoundedNvidiaMember({
+  member,
+  verified,
+}: AcquiredNvidiaMember): Promise<Buffer> {
   const bytes = Buffer.allocUnsafe(member.sizeBytes);
   const hash = createHash("sha256");
   let consumed = 0;
@@ -576,6 +657,24 @@ async function readBoundedNvidiaMember(
     throw new LoaderFailure("ir.bundle-hash-mismatch");
   }
   return bytes;
+}
+
+async function consumeNvidiaMembers(
+  acquired: readonly AcquiredNvidiaMember[],
+): Promise<readonly Readonly<{ role: NvidiaRetrievedMemberV2["role"]; bytes: Buffer }>[]> {
+  const loaded: Readonly<{ role: NvidiaRetrievedMemberV2["role"]; bytes: Buffer }>[] = [];
+  try {
+    for (const entry of acquired) {
+      loaded.push({
+        role: entry.member.role,
+        bytes: await consumeBoundedNvidiaMember(entry),
+      });
+    }
+    return loaded;
+  } catch (error) {
+    await cancelAcquiredNvidiaMembers(acquired);
+    throw error;
+  }
 }
 function finish(
   caseId: string,
@@ -676,17 +775,8 @@ export async function loadRecordedNvidiaFixture(
     return finish(manifest.caseId, [], [], [], null, "ir.observation-invalid");
   }
   try {
-    const loaded = await Promise.all(
-      manifest.retrievedMembers.map(async (member) => {
-        const bytes = await readBoundedNvidiaMember(store, member);
-        if (
-          bytes.byteLength !== member.sizeBytes ||
-          createHash("sha256").update(bytes).digest("hex") !== member.artifactHash
-        )
-          throw new LoaderFailure("ir.bundle-hash-mismatch");
-        return { role: member.role, bytes };
-      }),
-    );
+    const acquired = await acquireNvidiaMembers(store, manifest.retrievedMembers);
+    const loaded = await consumeNvidiaMembers(acquired);
     const rssBytes = loaded.find((entry) => entry.role === "ir.rss-feed")?.bytes;
     const releaseHtmlBytes = loaded.find((entry) => entry.role === "ir.release-html")?.bytes;
     if (rssBytes === undefined || releaseHtmlBytes === undefined)

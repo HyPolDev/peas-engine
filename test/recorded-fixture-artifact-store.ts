@@ -28,6 +28,9 @@ export type RecordedFixtureSeedMember = Readonly<{
 export type FixtureStoreCounters = Readonly<{
   observationCalls: Map<string, number>;
   readCalls: Map<string, number>;
+  streamStarts: Map<string, number>;
+  streamSettles: Map<string, number>;
+  streamCloses: Map<string, number>;
   streamedBytes: Map<string, number>;
 }>;
 
@@ -36,6 +39,7 @@ export type FixtureStoreOptions = Readonly<{
     observation: ArtifactObservation,
     seed: RecordedFixtureSeedMember,
   ) => ArtifactObservation | null;
+  readError?: (seed: RecordedFixtureSeedMember) => Error | null;
   metadataSize?: (actualSize: number, seed: RecordedFixtureSeedMember) => number;
   stream?: (absolutePath: string, seed: RecordedFixtureSeedMember) => Readable;
 }>;
@@ -69,6 +73,9 @@ export function recordedFixtureArtifactStore(
 ): Readonly<{ store: ArtifactStore; counters: FixtureStoreCounters }> {
   const observationCalls = new Map<string, number>();
   const readCalls = new Map<string, number>();
+  const streamStarts = new Map<string, number>();
+  const streamSettles = new Map<string, number>();
+  const streamCloses = new Map<string, number>();
   const streamedBytes = new Map<string, number>();
   const byObservationId = new Map(
     seeds.map((seed) => {
@@ -93,6 +100,8 @@ export function recordedFixtureArtifactStore(
       readCalls.set(digest, (readCalls.get(digest) ?? 0) + 1);
       const seed = byDigest.get(digest);
       if (seed === undefined) throw new Error("missing fixture artifact");
+      const readError = options.readError?.(seed);
+      if (readError !== undefined && readError !== null) throw readError;
       const absolutePath = path.resolve(fixtureRoot, ...seed.path.split("/"));
       const relative = path.relative(path.resolve(fixtureRoot), absolutePath);
       if (
@@ -106,6 +115,7 @@ export function recordedFixtureArtifactStore(
       const actual = await stat(absolutePath);
       const stream = Readable.from(
         (async function* instrumentedStream() {
+          streamStarts.set(digest, (streamStarts.get(digest) ?? 0) + 1);
           const source = options.stream?.(absolutePath, seed) ?? createReadStream(absolutePath);
           try {
             for await (const chunk of source) {
@@ -115,9 +125,13 @@ export function recordedFixtureArtifactStore(
             }
           } finally {
             source.destroy();
+            streamSettles.set(digest, (streamSettles.get(digest) ?? 0) + 1);
           }
         })(),
       );
+      stream.once("close", () => {
+        streamCloses.set(digest, (streamCloses.get(digest) ?? 0) + 1);
+      });
       return {
         artifact: {
           digest,
@@ -145,5 +159,15 @@ export function recordedFixtureArtifactStore(
       throw new Error("fixture store does not reconcile");
     },
   };
-  return { store, counters: { observationCalls, readCalls, streamedBytes } };
+  return {
+    store,
+    counters: {
+      observationCalls,
+      readCalls,
+      streamStarts,
+      streamSettles,
+      streamCloses,
+      streamedBytes,
+    },
+  };
 }
