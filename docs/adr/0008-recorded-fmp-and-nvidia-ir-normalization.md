@@ -372,6 +372,13 @@ return. Underrun, overrun, growth/replacement, or substitution fails closed. The
 attempt-history or enumeration APIs and never stats or opens a manifest path. Derived proofs have
 no observation or store operation.
 
+That settlement barrier relies on the trusted `ArtifactStore` postcondition that every returned
+`VerifiedArtifactRead.stream` uses normal close emission: completing its destruction lifecycle after
+`destroy()` produces one observable terminal `close` acknowledgement. `emitClose: false` and any
+other non-acknowledging stream are contract-invalid and unsupported. This is an explicit statement
+of the existing settle-before-return requirement, not an `ArtifactStore` interface change; a timer,
+poll, or event-loop-turn fallback is not a terminal acknowledgement.
+
 Both raw digests remain immutable evidence/ledger provenance; neither enters domain identity. The
 selected composite projection hash is the candidate/EventDraft primary. Classification accepts
 only exact NVIDIA financial-results titles: first/second/third quarter -> Q1/Q2/Q3; fourth quarter

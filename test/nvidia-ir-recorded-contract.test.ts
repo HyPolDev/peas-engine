@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -36,6 +37,56 @@ const FIXTURE_ROOT = path.dirname(ROOT);
 const KEY = "https://nvidianews.nvidia.com/news/synthetic-fiscal-2030-q1";
 const bytes = (value: string): Uint8Array => Buffer.from(value, "utf8");
 const fixture = (name: string): Promise<Buffer> => readFile(path.join(ROOT, name));
+
+class DelayedDestroyReadable extends Readable {
+  readonly #source: Readable;
+  readonly #delayMs: number;
+  readonly #destroyError: Error | null;
+  readonly #onDestroyCallback: () => void;
+  #started = false;
+
+  constructor(
+    source: Readable,
+    options: Readonly<{
+      delayMs: number;
+      destroyError: Error | null;
+      onDestroyCallback: () => void;
+    }>,
+  ) {
+    super();
+    this.#source = source;
+    this.#delayMs = options.delayMs;
+    this.#destroyError = options.destroyError;
+    this.#onDestroyCallback = options.onDestroyCallback;
+  }
+
+  override _read(): void {
+    if (this.#started) {
+      this.#source.resume();
+      return;
+    }
+    this.#started = true;
+    this.#source.on("data", (chunk: Buffer) => {
+      if (!this.push(chunk)) this.#source.pause();
+    });
+    this.#source.once("end", () => this.push(null));
+    this.#source.once("error", (error) => this.destroy(error));
+    this.#source.resume();
+  }
+
+  override _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
+    this.#source.destroy();
+    setTimeout(() => {
+      this.#onDestroyCallback();
+      callback(this.#destroyError ?? error);
+    }, this.#delayMs);
+  }
+}
+
+function incrementCounter(counters: Map<string, number>, key: string): void {
+  counters.set(key, (counters.get(key) ?? 0) + 1);
+}
+
 type MutableNvidiaManifest = Omit<NvidiaFixtureManifestV2, "retrievedMembers" | "derivedProofs"> & {
   retrievedMembers: NvidiaRetrievedMemberV2[];
   derivedProofs: NvidiaDerivedProofV1[];
@@ -121,13 +172,34 @@ test("NVIDIA rejects missing or forged authoritative observations before artifac
 test("NVIDIA metadata gate cancels and settles both acquired streams before returning", async () => {
   for (const invalidRole of ["ir.rss-feed", "ir.release-html"] as const) {
     for (const failure of ["invalid", "over-limit"] as const) {
+      const destroyCallbacks = new Map<string, number>();
       const authority = recordedFixtureArtifactStore(FIXTURE_ROOT, NVIDIA_FIXTURE_SEEDS, {
         metadataSize: (actualSize, seed) => {
           if (seed.role !== invalidRole) return actualSize;
           return failure === "over-limit" ? NVIDIA_IR_LIMITS.memberBytes + 1 : actualSize + 1;
         },
+        verifiedStream: (instrumented, seed) =>
+          new DelayedDestroyReadable(instrumented, {
+            delayMs: 75,
+            destroyError: null,
+            onDestroyCallback: () => incrementCounter(destroyCallbacks, seed.artifactHash),
+          }),
       });
-      const result = await loadRecordedNvidiaFixture(authority.store, NVIDIA_BASELINE_MANIFEST);
+      let returned = false;
+      const loading = loadRecordedNvidiaFixture(authority.store, NVIDIA_BASELINE_MANIFEST).then(
+        (result) => {
+          returned = true;
+          return result;
+        },
+      );
+      await delay(10);
+      assert.equal(returned, false, `${invalidRole}:${failure}:returned before destroy settled`);
+      assert.deepEqual(
+        [...destroyCallbacks],
+        [],
+        `${invalidRole}:${failure}:early destroy callback`,
+      );
+      const result = await loading;
       assert.equal(
         result.reasonCode,
         failure === "over-limit" ? "ir.member-limit-exceeded" : "ir.bundle-hash-mismatch",
@@ -143,21 +215,24 @@ test("NVIDIA metadata gate cancels and settles both acquired streams before retu
         assert.equal(authority.counters.streamStarts.get(member.artifactHash) ?? 0, 0);
         assert.equal(authority.counters.streamSettles.get(member.artifactHash) ?? 0, 0);
         assert.equal(authority.counters.streamCloses.get(member.artifactHash), 1);
+        assert.equal(destroyCallbacks.get(member.artifactHash), 1);
         assert.equal(authority.counters.streamedBytes.get(member.artifactHash) ?? 0, 0);
       }
       const activityAtReturn = {
         streamStarts: [...authority.counters.streamStarts],
         streamSettles: [...authority.counters.streamSettles],
         streamCloses: [...authority.counters.streamCloses],
+        destroyCallbacks: [...destroyCallbacks],
         streamedBytes: [...authority.counters.streamedBytes],
       };
       await drainEventLoop();
-      await delay(10);
+      await delay(100);
       assert.deepEqual(
         {
           streamStarts: [...authority.counters.streamStarts],
           streamSettles: [...authority.counters.streamSettles],
           streamCloses: [...authority.counters.streamCloses],
+          destroyCallbacks: [...destroyCallbacks],
           streamedBytes: [...authority.counters.streamedBytes],
         },
         activityAtReturn,
@@ -167,11 +242,28 @@ test("NVIDIA metadata gate cancels and settles both acquired streams before retu
   }
 
   for (const failedRole of ["ir.rss-feed", "ir.release-html"] as const) {
+    const destroyCallbacks = new Map<string, number>();
     const authority = recordedFixtureArtifactStore(FIXTURE_ROOT, NVIDIA_FIXTURE_SEEDS, {
       readError: (seed) =>
         seed.role === failedRole ? new Error("raw-provider-body-sentinel") : null,
+      verifiedStream: (instrumented, seed) =>
+        new DelayedDestroyReadable(instrumented, {
+          delayMs: 75,
+          destroyError: null,
+          onDestroyCallback: () => incrementCounter(destroyCallbacks, seed.artifactHash),
+        }),
     });
-    const result = await loadRecordedNvidiaFixture(authority.store, NVIDIA_BASELINE_MANIFEST);
+    let returned = false;
+    const loading = loadRecordedNvidiaFixture(authority.store, NVIDIA_BASELINE_MANIFEST).then(
+      (result) => {
+        returned = true;
+        return result;
+      },
+    );
+    await delay(10);
+    assert.equal(returned, false, `${failedRole}:returned before sibling destroy settled`);
+    assert.deepEqual([...destroyCallbacks], [], `${failedRole}:early sibling destroy callback`);
+    const result = await loading;
     assert.equal(result.reasonCode, "ir.artifact-read-failed", failedRole);
     assert.equal(result.normalization, null);
     assert.deepEqual(result.transcript.projectionHashes, []);
@@ -187,26 +279,157 @@ test("NVIDIA metadata gate cancels and settles both acquired streams before retu
         authority.counters.streamCloses.get(member.artifactHash) ?? 0,
         member.role === failedRole ? 0 : 1,
       );
+      assert.equal(
+        destroyCallbacks.get(member.artifactHash) ?? 0,
+        member.role === failedRole ? 0 : 1,
+      );
       assert.equal(authority.counters.streamedBytes.get(member.artifactHash) ?? 0, 0);
     }
     const activityAtReturn = {
       streamStarts: [...authority.counters.streamStarts],
       streamSettles: [...authority.counters.streamSettles],
       streamCloses: [...authority.counters.streamCloses],
+      destroyCallbacks: [...destroyCallbacks],
       streamedBytes: [...authority.counters.streamedBytes],
     };
     await drainEventLoop();
-    await delay(10);
+    await delay(100);
     assert.deepEqual(
       {
+        streamStarts: [...authority.counters.streamStarts],
+        streamSettles: [...authority.counters.streamSettles],
+        streamCloses: [...authority.counters.streamCloses],
+        destroyCallbacks: [...destroyCallbacks],
+        streamedBytes: [...authority.counters.streamedBytes],
+      },
+      activityAtReturn,
+      `${failedRole}:post-return activity`,
+    );
+  }
+});
+
+test("NVIDIA awaits delayed destroy lifecycles for consumption and closed/error edges", async () => {
+  const bodies: ReadonlyMap<string, Buffer> = new Map(
+    await Promise.all(
+      NVIDIA_FIXTURE_SEEDS.map(
+        async (seed) => [seed.role, await readFile(path.join(FIXTURE_ROOT, seed.path))] as const,
+      ),
+    ),
+  );
+
+  for (const failedRole of ["ir.rss-feed", "ir.release-html"] as const) {
+    const destroyCallbacks = new Map<string, number>();
+    const authority = recordedFixtureArtifactStore(FIXTURE_ROOT, NVIDIA_FIXTURE_SEEDS, {
+      stream: (_absolutePath, seed) => {
+        const body = bodies.get(seed.role);
+        assert.ok(body);
+        return Readable.from(seed.role === failedRole ? [body, Buffer.from("x")] : [body]);
+      },
+      verifiedStream: (instrumented, seed) =>
+        new DelayedDestroyReadable(instrumented, {
+          delayMs: 75,
+          destroyError: null,
+          onDestroyCallback: () => incrementCounter(destroyCallbacks, seed.artifactHash),
+        }),
+    });
+    let returned = false;
+    const loading = loadRecordedNvidiaFixture(authority.store, NVIDIA_BASELINE_MANIFEST).then(
+      (result) => {
+        returned = true;
+        return result;
+      },
+    );
+    await delay(10);
+    assert.equal(returned, false, `${failedRole}:returned before consumption cleanup settled`);
+    assert.deepEqual([...destroyCallbacks], [], `${failedRole}:early consumption destroy callback`);
+    const result = await loading;
+    assert.equal(result.reasonCode, "ir.bundle-hash-mismatch", failedRole);
+    assert.equal(result.normalization, null);
+    assert.deepEqual(result.transcript.projectionHashes, []);
+    for (const member of NVIDIA_BASELINE_MANIFEST.retrievedMembers) {
+      assert.equal(authority.counters.readCalls.get(member.artifactHash), 1);
+      assert.equal(authority.counters.streamCloses.get(member.artifactHash), 1);
+      assert.equal(destroyCallbacks.get(member.artifactHash), 1);
+    }
+    const activityAtReturn = {
+      destroyCallbacks: [...destroyCallbacks],
+      streamStarts: [...authority.counters.streamStarts],
+      streamSettles: [...authority.counters.streamSettles],
+      streamCloses: [...authority.counters.streamCloses],
+      streamedBytes: [...authority.counters.streamedBytes],
+    };
+    await delay(100);
+    assert.deepEqual(
+      {
+        destroyCallbacks: [...destroyCallbacks],
         streamStarts: [...authority.counters.streamStarts],
         streamSettles: [...authority.counters.streamSettles],
         streamCloses: [...authority.counters.streamCloses],
         streamedBytes: [...authority.counters.streamedBytes],
       },
       activityAtReturn,
-      `${failedRole}:post-return activity`,
+      `${failedRole}:post-return consumption cleanup`,
     );
+  }
+
+  for (const invalidRole of ["ir.rss-feed", "ir.release-html"] as const) {
+    const destroyCallbacks = new Map<string, number>();
+    const authority = recordedFixtureArtifactStore(FIXTURE_ROOT, NVIDIA_FIXTURE_SEEDS, {
+      metadataSize: (actualSize, seed) => (seed.role === invalidRole ? actualSize + 1 : actualSize),
+      verifiedStream: (instrumented, seed) =>
+        new DelayedDestroyReadable(instrumented, {
+          delayMs: 75,
+          destroyError: new Error("delayed-destroy-sentinel"),
+          onDestroyCallback: () => incrementCounter(destroyCallbacks, seed.artifactHash),
+        }),
+    });
+    let returned = false;
+    const loading = loadRecordedNvidiaFixture(authority.store, NVIDIA_BASELINE_MANIFEST).then(
+      (result) => {
+        returned = true;
+        return result;
+      },
+    );
+    await delay(10);
+    assert.equal(returned, false, `${invalidRole}:returned before erroring destroy settled`);
+    assert.deepEqual([...destroyCallbacks], [], `${invalidRole}:early erroring destroy callback`);
+    const result = await loading;
+    assert.equal(result.reasonCode, "ir.bundle-hash-mismatch", invalidRole);
+    assert.equal(JSON.stringify(result).includes("delayed-destroy-sentinel"), false);
+    for (const member of NVIDIA_BASELINE_MANIFEST.retrievedMembers) {
+      assert.equal(authority.counters.streamCloses.get(member.artifactHash), 1);
+      assert.equal(destroyCallbacks.get(member.artifactHash), 1);
+      assert.equal(authority.counters.streamedBytes.get(member.artifactHash) ?? 0, 0);
+    }
+  }
+
+  const preclosedCallbacks = new Map<string, number>();
+  const preclosedEvents = new Map<string, number>();
+  const preclosedAuthority = recordedFixtureArtifactStore(FIXTURE_ROOT, NVIDIA_FIXTURE_SEEDS, {
+    metadataSize: (actualSize, seed) => (seed.role === "ir.rss-feed" ? actualSize + 1 : actualSize),
+    verifiedStream: async (instrumented, seed) => {
+      const wrapped = new DelayedDestroyReadable(instrumented, {
+        delayMs: 25,
+        destroyError: null,
+        onDestroyCallback: () => incrementCounter(preclosedCallbacks, seed.artifactHash),
+      });
+      wrapped.once("close", () => incrementCounter(preclosedEvents, seed.artifactHash));
+      const closed = once(wrapped, "close");
+      wrapped.destroy();
+      await closed;
+      return wrapped;
+    },
+  });
+  const preclosed = await loadRecordedNvidiaFixture(
+    preclosedAuthority.store,
+    NVIDIA_BASELINE_MANIFEST,
+  );
+  assert.equal(preclosed.reasonCode, "ir.bundle-hash-mismatch");
+  for (const member of NVIDIA_BASELINE_MANIFEST.retrievedMembers) {
+    assert.equal(preclosedCallbacks.get(member.artifactHash), 1);
+    assert.equal(preclosedEvents.get(member.artifactHash), 1);
+    assert.equal(preclosedAuthority.counters.streamStarts.get(member.artifactHash) ?? 0, 0);
+    assert.equal(preclosedAuthority.counters.streamedBytes.get(member.artifactHash) ?? 0, 0);
   }
 });
 

@@ -112,6 +112,14 @@ consumes zero body bytes. Production loaders do not stat, open, or resolve manif
 call any other store operation. Filesystem paths, request/response preimages, and retrieval attempts
 are test-only seed data outside the closed production manifest.
 
+The trusted `ArtifactStore` postcondition required by that cancellation barrier is that every
+`VerifiedArtifactRead.stream` uses normal close emission: after `destroy()`, completion of its
+destruction lifecycle produces one observable terminal `close` acknowledgement. A stream configured
+with `emitClose: false`, or any stream that can finish destruction without that acknowledgement, is
+contract-invalid and unsupported. This makes the already-frozen settle-before-return rule
+observable without changing the `ArtifactStore` interface and without treating a timer, poll, or
+event-loop turn as successful settlement.
+
 ## Routing and classification
 
 FMP route is the exact closed shape from ADR 0008: classification, nullable issuer mapping with

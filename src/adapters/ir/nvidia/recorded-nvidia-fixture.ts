@@ -538,29 +538,25 @@ type AcquiredNvidiaMember = Readonly<{
 }>;
 
 function settleDestroyedStream(stream: VerifiedArtifactRead["stream"]): Promise<void> {
+  if (stream.closed) return Promise.resolve();
   return new Promise((resolve) => {
     let settled = false;
     const swallowError = (): void => {};
-    const onError = (): void => complete();
     const complete = (): void => {
       if (settled) return;
       settled = true;
-      clearImmediate(fallback);
       stream.off("close", complete);
-      stream.off("end", complete);
-      stream.off("error", onError);
+      stream.off("error", swallowError);
       resolve();
     };
     stream.once("close", complete);
-    stream.once("end", complete);
     stream.on("error", swallowError);
-    stream.once("error", onError);
-    const fallback = setImmediate(complete);
     try {
-      stream.destroy();
+      if (!stream.destroyed) stream.destroy();
     } catch {
       complete();
     }
+    if (stream.closed) complete();
   });
 }
 
@@ -670,6 +666,7 @@ async function consumeNvidiaMembers(
         bytes: await consumeBoundedNvidiaMember(entry),
       });
     }
+    await cancelAcquiredNvidiaMembers(acquired);
     return loaded;
   } catch (error) {
     await cancelAcquiredNvidiaMembers(acquired);

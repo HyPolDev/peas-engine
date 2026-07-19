@@ -42,6 +42,10 @@ export type FixtureStoreOptions = Readonly<{
   readError?: (seed: RecordedFixtureSeedMember) => Error | null;
   metadataSize?: (actualSize: number, seed: RecordedFixtureSeedMember) => number;
   stream?: (absolutePath: string, seed: RecordedFixtureSeedMember) => Readable;
+  verifiedStream?: (
+    instrumented: Readable,
+    seed: RecordedFixtureSeedMember,
+  ) => Readable | Promise<Readable>;
 }>;
 
 export function fixtureObservation(seed: RecordedFixtureSeedMember): ArtifactObservation {
@@ -113,7 +117,7 @@ export function recordedFixtureArtifactStore(
         throw new Error("fixture seed escaped its root");
       }
       const actual = await stat(absolutePath);
-      const stream = Readable.from(
+      const instrumented = Readable.from(
         (async function* instrumentedStream() {
           streamStarts.set(digest, (streamStarts.get(digest) ?? 0) + 1);
           const source = options.stream?.(absolutePath, seed) ?? createReadStream(absolutePath);
@@ -129,6 +133,8 @@ export function recordedFixtureArtifactStore(
           }
         })(),
       );
+      const selectedStream = options.verifiedStream?.(instrumented, seed);
+      const stream = selectedStream === undefined ? instrumented : await selectedStream;
       stream.once("close", () => {
         streamCloses.set(digest, (streamCloses.get(digest) ?? 0) + 1);
       });
