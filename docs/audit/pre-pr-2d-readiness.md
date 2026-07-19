@@ -2,7 +2,7 @@
 
 ## Decision
 
-- Status: `BLOCKED_PR2C_REPAIR_AND_REVIEW`
+- Status: `PENDING_INDEPENDENT_READINESS_REVIEW`
 - Reviewed baseline: `origin/main@c51758a1058b86730e19185b98fcd448d9ff533a`
 - Readiness branch: `dev/pre-pr-2d-readiness`
 - Certificate date: `2026-07-19`
@@ -12,17 +12,18 @@
 - P2 collection allowed: `NO`
 - Incremental market-data spending allowed: `NO`
 
-This certificate is deliberately not `GO`. The base, candidate-study disposition, and entitlement
-record are prepared, but the fresh PR 2C audit returned `NO_GO`. Its findings must be repaired, an
-exact repaired SHA must receive fresh independent `GO`, and final readiness validation evidence must
-pass. Do not create `dev/pr-2d-market-reference-contract` until an independent reviewer changes this
-certificate to `GO` against exact committed evidence.
+This certificate is deliberately not `GO`. The PR 2C repair now has an independent implementation
+`GO` for exact SHA `731c2d33285cee8f27d9fe8ff1a2b9a1a29e9e4e`, and that disposition is
+published at `aaabdb416368aa349872bc5f1d6621362f6f3cde`. The combined readiness candidate must
+still complete exact-candidate validation and receive a fresh independent readiness `GO`. Do not
+create `dev/pr-2d-market-reference-contract` until that review changes this certificate to `GO`
+against committed evidence that is merged into the PR 2D base.
 
 ## Baseline and ancestry
 
 | Check | Result | Evidence |
 | --- | --- | --- |
-| Exact readiness base | `PASS` | `HEAD` and `origin/main` were both `c51758a1058b86730e19185b98fcd448d9ff533a` before readiness edits. |
+| Exact readiness base | `PASS` | The isolated readiness effort began from `origin/main@c51758a1058b86730e19185b98fcd448d9ff533a`; later candidate commits do not rewrite that starting identity. |
 | Pull request #4 merge present | `PASS` | `73b4d0b5f85f04f66315bdb6b43edd187381e600` is an ancestor of the readiness base and is the recorded PR #4 merge. |
 | Roadmap commit present | `PASS` | `c51758a1058b86730e19185b98fcd448d9ff533a` is the exact readiness base. |
 | PR 2D local branch absent | `PASS` | No local `dev/pr-2d-market-reference-contract` branch was listed on 2026-07-19. |
@@ -31,12 +32,17 @@ certificate to `GO` against exact committed evidence.
 
 Commit identities in `docs/project-board.json` mean:
 
-- `codeBaselineCommit`: PR 2C merge commit
-  `73b4d0b5f85f04f66315bdb6b43edd187381e600`; and
+- `codeBaselineCommit`: exact independently approved PR 2C repaired implementation
+  `731c2d33285cee8f27d9fe8ff1a2b9a1a29e9e4e`; and
 - `planningBaselineCommit`: roadmap/readiness starting point
   `c51758a1058b86730e19185b98fcd448d9ff533a`.
 
-Neither field claims to be the future merge commit of this readiness work.
+Neither field claims to be the future merge commit of this readiness work. The independent PR 2C
+disposition was added by the documentation-only child commit
+`aaabdb416368aa349872bc5f1d6621362f6f3cde`, whose sole parent is the exact reviewed
+implementation. Merge commit `e42300a42743143db4979d7103a31e9957c48b58` combines that published
+evidence lineage with the readiness package; it is an integration waypoint, not an independently
+reviewed readiness head.
 
 ## Completed readiness evidence
 
@@ -77,36 +83,39 @@ The entitlement record distinguishes historical Alpaca REST `feed=sip`, WebSocke
 original synthetic provider-shaped fixtures. It may not access a provider, account, credential, or
 licensed byte while the gate is pending.
 
-## Pending blockers
+### Completed PR 2C repair and independent disposition
 
-### PR 2C repair and independent disposition
+- Exact independently reviewed implementation:
+  `731c2d33285cee8f27d9fe8ff1a2b9a1a29e9e4e`
+- Binary implementation verdict: `GO`
+- Durable final record: `docs/audit/pr-2c-final-disposition.md`
+- Audit publication head: `aaabdb416368aa349872bc5f1d6621362f6f3cde`
+- Combined readiness integration waypoint: `e42300a42743143db4979d7103a31e9957c48b58`
 
-- Superseded implementation head: `9b1a32a5e7992c7d98ac3bde8b79b032de76168e`
-- Fresh audit verdict for that head: `NO_GO`
-- Historical general audit that must land with the repair:
-  `docs/audit/pr-2c-fresh-audit-9b1a32.md`
-- Historical targeted audit that must land with the repair:
-  `docs/audit/pr-2c-fixture-boundary-audit-9b1a32.md`
-- Required repaired implementation SHA: `PENDING`
-- Required durable final record: `docs/audit/pr-2c-final-disposition.md`
-- Fresh independent reviewer of the exact repaired SHA: `PENDING`
-- Binary repaired-head verdict: `PENDING`
-- Commands, test totals, skips, and platform evidence: `PENDING`
-- Explicit closure or disposition of every general and targeted audit finding: `PENDING`
-- ADR 0008/0009 and PR 2C goal/audit current-status reconciliation: `PENDING`
+The complete supersession chain remains visible and exact-SHA scoped:
 
-The general audit found a derived-projection retrieval-selection defect, unbounded recorded-loader
-reads, and malformed NVIDIA provenance acceptance. The targeted fixture audit additionally requires
-complete terminal expected-value validation and early selector/case/path validation. Accepted ADR
-0008 and the fixture contract already require existing `ArtifactStore` authority for selected
-observations, so agents must implement that ordinary conformance repair without requesting a human
-decision. Weakening or replacing the accepted authority model would require a separate human
-contract decision. Repairs do not supersede either `NO_GO`; only a fresh independent disposition for
-an exact repaired SHA can do so.
+1. The general and fixture-boundary audits rejected
+   `9b1a32a5e7992c7d98ac3bde8b79b032de76168e` in
+   `docs/audit/pr-2c-fresh-audit-9b1a32.md` and
+   `docs/audit/pr-2c-fixture-boundary-audit-9b1a32.md`.
+2. `docs/audit/pr-2c-reaudit-175b75a.md` rejected
+   `175b75a33acaa8a8355c37dc630cbe0ebdc4f852` after confirming the earlier defects were materially
+   repaired, because sibling stream activity could continue after a metadata failure.
+3. `docs/audit/pr-2c-reaudit-43ba575.md` rejected
+   `43ba57539f76d01658a7fe21b06187c724c941ce` after confirming atomic metadata acquisition, because
+   its cancellation fallback could return before delayed destruction closed.
+4. `docs/audit/pr-2c-final-disposition.md` independently approved exact implementation
+   `731c2d33285cee8f27d9fe8ff1a2b9a1a29e9e4e` and explicitly closed every finding above.
+5. Documentation-only commit `aaabdb416368aa349872bc5f1d6621362f6f3cde` publishes that final
+   disposition as the direct child of the reviewed implementation. It does not broaden the `GO` to
+   later code. Merge `e42300a42743143db4979d7103a31e9957c48b58` only combines the approved PR
+   2C lineage with readiness documents.
 
-Do not infer `GO` from roadmap prose, the merge itself, passing repair tests, or a historical agent
-message. The durable independent record must identify the exact repaired SHA, close every finding,
-and state exactly which historical evidence it supersedes.
+The historical `NO_GO` records and their older current-status labels remain evidence for their own
+SHAs. The final disposition is the controlling implementation gate for `731c2d3`; neither its
+publication commit nor the integration merge is a readiness `GO`.
+
+## Pending blocker
 
 ### Readiness validation
 
@@ -171,17 +180,17 @@ is required only if someone proposes weakening or replacing the accepted authori
 An independent readiness reviewer may change this certificate to `GO` only when all of the following
 are true for exact committed SHAs:
 
-1. Both historical PR 2C `NO_GO` reports named above are preserved with the repair.
-2. `docs/audit/pr-2c-final-disposition.md` records an independent binary `GO` for an exact repaired
-   SHA, commands/results, closure of every finding, and an explicit supersession chain.
-3. PR 2C ADR, goal, and audit current-status records agree with that disposition without deleting
-   historical evidence.
-4. The candidate disposition, archive hashes, entitlement record, roadmap, board, and authoritative
+1. The complete PR 2C `NO_GO` and re-audit chain named above remains preserved with the final
+   disposition.
+2. `docs/audit/pr-2c-final-disposition.md` remains an independent binary `GO` for exact repaired
+   SHA `731c2d33285cee8f27d9fe8ff1a2b9a1a29e9e4e`; later code changes require a new disposition.
+3. The candidate disposition, archive hashes, entitlement record, roadmap, board, and authoritative
    PR 2D assignment are internally consistent.
-5. The complete local validation table above is populated and passing.
-6. Required Windows and Linux checks pass on the final readiness PR head.
-7. The independent reviewer records their identity, review date, exact readiness head, exact
+4. The complete local validation table above is populated and passing.
+5. Required Windows and Linux checks pass on the final readiness PR head.
+6. The independent reviewer records their identity, review date, exact readiness head, exact
    file/line findings, and binary verdict below.
+7. The reviewed readiness evidence is merged into the exact base from which PR 2D will branch.
 
 Entitlement may remain `PENDING` when this certificate becomes `GO`, but the certificate must retain
 the explicit P1-10/P2 block and fail-closed provider/fallback policy.

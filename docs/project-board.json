@@ -12,11 +12,13 @@
     "stage": "P1",
     "status": "in-progress",
     "branch": "dev/pre-pr-2d-readiness",
-    "codeBaselineCommit": "73b4d0b5f85f04f66315bdb6b43edd187381e600",
+    "codeBaselineCommit": "731c2d33285cee8f27d9fe8ff1a2b9a1a29e9e4e",
     "planningBaselineCommit": "c51758a1058b86730e19185b98fcd448d9ff533a",
+    "pr2cAuditPublicationCommit": "aaabdb416368aa349872bc5f1d6621362f6f3cde",
+    "readinessIntegrationCommit": "e42300a42743143db4979d7103a31e9957c48b58",
     "release": "v0.2.0-kernel-rc.2",
     "focus": "Pre-PR-2D governance reconciliation and zero-spend recorded market-reference readiness",
-    "nextGate": "Repair the current PR 2C NO_GO findings, obtain fresh independent GO on an exact repaired SHA, and obtain readiness GO; then execute P1-07 and P1-08 while human-owned P1-09 evidence collection continues in parallel"
+    "nextGate": "Validate one exact combined readiness candidate, obtain fresh independent readiness GO, and merge that approved evidence into the PR 2D base; then execute P1-07 and P1-08 while human-owned P1-09 evidence collection continues in parallel"
   },
   "stages": [
     {
@@ -125,7 +127,14 @@
             "https://github.com/HyPolDev/peas-engine/pull/4",
             "https://github.com/HyPolDev/peas-engine/actions/runs/29640667768",
             "audited-head@9b1a32a5e7992c7d98ac3bde8b79b032de76168e",
-            "main@73b4d0b5f85f04f66315bdb6b43edd187381e600"
+            "main@73b4d0b5f85f04f66315bdb6b43edd187381e600",
+            "docs/audit/pr-2c-fresh-audit-9b1a32.md",
+            "docs/audit/pr-2c-fixture-boundary-audit-9b1a32.md",
+            "docs/audit/pr-2c-reaudit-175b75a.md",
+            "docs/audit/pr-2c-reaudit-43ba575.md",
+            "docs/audit/pr-2c-final-disposition.md",
+            "reviewed-repair@731c2d33285cee8f27d9fe8ff1a2b9a1a29e9e4e",
+            "audit-publication@aaabdb416368aa349872bc5f1d6621362f6f3cde"
           ]
         },
         {
@@ -160,7 +169,10 @@
             "test/observation-ledger-contract.test.ts",
             "docs/audit/pr-2c-no-go-finding-matrix.json",
             "audited-head@9b1a32a5e7992c7d98ac3bde8b79b032de76168e",
-            "main@73b4d0b5f85f04f66315bdb6b43edd187381e600"
+            "main@73b4d0b5f85f04f66315bdb6b43edd187381e600",
+            "docs/audit/pr-2c-final-disposition.md",
+            "reviewed-repair@731c2d33285cee8f27d9fe8ff1a2b9a1a29e9e4e",
+            "audit-publication@aaabdb416368aa349872bc5f1d6621362f6f3cde"
           ]
         },
         {
@@ -169,7 +181,7 @@
           "status": "blocked",
           "owner": "integration-owner",
           "dependsOn": ["P1-02", "P1-05"],
-          "blocker": "The PR 2C NO_GO findings must be repaired, an exact repaired SHA must receive fresh independent GO, and docs/audit/pre-pr-2d-readiness.md must then record independent GO",
+          "blocker": "docs/audit/pre-pr-2d-readiness.md must record fresh independent readiness GO for an exact committed candidate, and that approved evidence must be merged into the PR 2D base",
           "acceptance": "ADR 0010 freezes observation anchors, prior-close/release-gap/residual movement metrics, quote/trade and session rules, deterministic market identity and joins, corrections, missing-data reason codes, resource bounds, licensing, and the precommitted 100-200-cluster study design without changing frozen kernel ports.",
           "evidence": [
             "docs/agent-prompts/adr-0010-market-reference.md",

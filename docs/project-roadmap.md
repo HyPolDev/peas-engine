@@ -38,16 +38,21 @@ Do not maintain task state independently in Linear, Notion, and GitHub.
   verified selected-observation loading, pure deterministic normalization, schema-V2 evidence
   provenance, trusted capture, and byte-identical live-style/replay processing in memory and
   SQLite. Historical RC.2 vectors and frozen kernel ports remain unchanged.
-- PR 2C merged as pull request #4 at `73b4d0b5f85f04f66315bdb6b43edd187381e600`. A fresh independent
-  audit of implementation head `9b1a32a5e7992c7d98ac3bde8b79b032de76168e` returned `NO_GO` for a
-  derived-projection retrieval defect and recorded-loader/manifest boundary defects. The historical
-  reports `docs/audit/pr-2c-fresh-audit-9b1a32.md` and
-  `docs/audit/pr-2c-fixture-boundary-audit-9b1a32.md` must land with the repair. PR 2C cannot be used
-  as an accepted PR 2D prerequisite until an exact repaired SHA receives fresh independent `GO`.
-- Planning commit `c51758a1058b86730e19185b98fcd448d9ff533a` records the current P1-07,
-  P1-08, P1-09, P1-10, and P1-06 sequence. The pre-PR-2D readiness certificate is
-  `BLOCKED_PR2C_REPAIR_AND_REVIEW` until the repair, its exact final disposition, and readiness
-  validation evidence are independently accepted.
+- PR 2C originally merged as pull request #4 at
+  `73b4d0b5f85f04f66315bdb6b43edd187381e600`. The preserved audit chain rejected implementation
+  SHAs `9b1a32a5e7992c7d98ac3bde8b79b032de76168e`,
+  `175b75a33acaa8a8355c37dc630cbe0ebdc4f852`, and
+  `43ba57539f76d01658a7fe21b06187c724c941ce`. A fresh independent review then returned `GO` for
+  exact repaired implementation `731c2d33285cee8f27d9fe8ff1a2b9a1a29e9e4e`. Its final disposition
+  is `docs/audit/pr-2c-final-disposition.md`, published by documentation-only child commit
+  `aaabdb416368aa349872bc5f1d6621362f6f3cde` and combined with the readiness package by
+  `e42300a42743143db4979d7103a31e9957c48b58`. The `GO` remains scoped to the reviewed implementation
+  SHA; it is not a readiness verdict.
+- Planning commit `c51758a1058b86730e19185b98fcd448d9ff533a` records the P1-07, P1-08,
+  P1-09, P1-10, and P1-06 sequence. The pre-PR-2D readiness certificate is now
+  `PENDING_INDEPENDENT_READINESS_REVIEW`: the logical next step is complete validation of one exact
+  combined readiness candidate followed by fresh independent review. P1-07 remains blocked until
+  that readiness verdict is `GO` and its evidence is merged into the PR 2D base.
 - The preserved no-trade candidate has disposition `ADOPT_WITH_CHANGES`. It is research input for
   ADR 0010, not an executable policy; later model/trade thresholds remain outside PR 2D.
 - The P1-09 market-data entitlement gate is active with gate state `PENDING`: human attestation and
@@ -103,13 +108,16 @@ invariant.
 
 ## Zero-incremental-cost path to event validation
 
-Current checkpoint: PR 2B and PR 2C are merged as pull requests #3 and #4, and PR 2D cannot start
-until the pre-readiness certificate records `GO`. No new market-data spend is authorized before the
-first event-validation study. Historical Alpaca REST `feed=sip`, WebSocket `v2/delayed_sip`, and
-latest-endpoint `feed=delayed_sip` are separate identities unless written provider evidence proves
-an exact equivalence. Existing FMP Premium is a pending repository assertion and a separately
-labeled lower-evidence discrepancy candidate, not an authorized or SIP-equivalent fallback. Paid
-Alpaca, FMP Ultimate, IBKR, Databento, Massive, and every other new subscription remain deferred.
+Current checkpoint: PR 2B and the original PR 2C are merged as pull requests #3 and #4. The repaired
+PR 2C implementation has exact-SHA independent `GO` and is integrated into the combined readiness
+candidate, but PR 2D cannot start until that candidate passes complete validation, receives a fresh
+independent readiness `GO`, and the approved evidence is merged into the branch base. No new
+market-data spend is authorized before the first event-validation study. Historical Alpaca REST
+`feed=sip`, WebSocket `v2/delayed_sip`, and latest-endpoint `feed=delayed_sip` are separate identities
+unless written provider evidence proves an exact equivalence. Existing FMP Premium is a pending
+repository assertion and a separately labeled lower-evidence discrepancy candidate, not an
+authorized or SIP-equivalent fallback. Paid Alpaca, FMP Ultimate, IBKR, Databento, Massive, and every
+other new subscription remain deferred.
 
 The entitlement delay does not block official-document research, provider-neutral contracts,
 original synthetic fixtures, recorded implementation, or offline tests in PR 2D. It does block the
