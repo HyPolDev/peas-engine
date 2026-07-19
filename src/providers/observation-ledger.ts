@@ -1697,20 +1697,30 @@ function validateParentTransition(
         (candidate) =>
           candidate.role === basis.role &&
           candidate.acquisitionObservationId === basis.acquisitionObservationId &&
-          candidate.vaultObservationId === basis.vaultObservationId &&
-          candidate.artifactDigest === normalizedFacts.primaryArtifactHash,
+          candidate.vaultObservationId === basis.vaultObservationId,
       );
       const verified = parents.find(
         (parent) =>
           parent.facts.kind === "artifact.verified" &&
-          parent.facts.acquisitionObservationId === basis.acquisitionObservationId,
+          link !== undefined &&
+          parent.facts.acquisitionObservationId === link.acquisitionObservationId &&
+          parent.facts.vaultObservationId === link.vaultObservationId &&
+          parent.facts.artifactDigest === link.artifactDigest,
       );
       const commit = verified?.parentEntryIds
         .map((id) => byId.get(id))
         .find((parent) => parent?.facts.kind === "artifact.committed");
       if (
         link === undefined ||
+        verified?.facts.kind !== "artifact.verified" ||
+        verified.facts.metadataSizeBytes !== link.sizeBytes ||
+        verified.facts.consumedSizeBytes !== link.sizeBytes ||
         commit?.facts.kind !== "artifact.committed" ||
+        commit.facts.acquisitionObservationId !== link.acquisitionObservationId ||
+        commit.facts.vaultObservationId !== link.vaultObservationId ||
+        commit.facts.vaultObservationHash !== link.vaultObservationHash ||
+        commit.facts.artifactDigest !== link.artifactDigest ||
+        commit.facts.sizeBytes !== link.sizeBytes ||
         commit.facts.retrievedAtMs === null ||
         commit.facts.retrievedAtMs !== basis.retrievedAtMs ||
         commit.clock.clockBasisId === null ||

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, execFileSync, fork } from "node:child_process";
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import {
   existsSync,
   mkdirSync,
@@ -300,6 +301,24 @@ test("stores entity bytes, separates evidence, deduplicates, and reads verified 
   assert.deepEqual(await consume(verified.stream), bytes);
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.deepEqual(readdirSync(join(root, "artifacts", "snapshots")), []);
+});
+
+test("verified reads acknowledge destroy with one terminal close", async (context) => {
+  const { store } = await harness(context);
+  const stored = await store.store(
+    request("verified-destroy-close", Buffer.from("close contract")),
+  );
+  const verified = await store.read(stored.artifact.digest);
+  let closeCount = 0;
+  verified.stream.on("close", () => {
+    closeCount += 1;
+  });
+  const closed = once(verified.stream, "close");
+  verified.stream.destroy();
+  await closed;
+  assert.equal(verified.stream.destroyed, true);
+  assert.equal(verified.stream.closed, true);
+  assert.equal(closeCount, 1);
 });
 
 test("does not persist raw paths or query secrets", async (context) => {

@@ -4,8 +4,11 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 
-import { FMP_FIXTURE_CASES } from "../fixtures/fmp/v1/manifest.js";
-import { NVIDIA_BASELINE_MANIFEST } from "../fixtures/ir/nvidia/v1/manifest.js";
+import { FMP_FIXTURE_CASES, FMP_FIXTURE_SEEDS } from "../fixtures/fmp/v1/manifest.js";
+import {
+  NVIDIA_BASELINE_MANIFEST,
+  NVIDIA_FIXTURE_SEEDS,
+} from "../fixtures/ir/nvidia/v1/manifest.js";
 import { SEC_FIXTURE_CASES, type SecFixtureCase } from "../fixtures/sec/v1/manifest.js";
 import { loadRecordedFmpFixture } from "../src/adapters/fmp/recorded-fmp-fixture.js";
 import { loadRecordedNvidiaFixture } from "../src/adapters/ir/nvidia/recorded-nvidia-fixture.js";
@@ -42,6 +45,7 @@ import {
   type EarningsClusterState,
 } from "../src/domain/earnings-cluster/reducer.js";
 import { makeManifest } from "./scenario.js";
+import { recordedFixtureArtifactStore } from "./recorded-fixture-artifact-store.js";
 
 const reducer = new EarningsClusterReducer();
 const BASE = 1_800_000_000_000;
@@ -289,15 +293,20 @@ async function recordedProviderDrafts(): Promise<Readonly<{ fmp: EventDraft; ir:
     (fixture) => fixture.caseId === "latest-explicit-time",
   );
   assert.ok(fmpManifest);
+  const fmpSeeds = FMP_FIXTURE_SEEDS.get(fmpManifest.caseId);
+  assert.ok(fmpSeeds);
   const [fmp, ir] = await Promise.all([
-    loadRecordedFmpFixture({
-      fixtureRoot: join(process.cwd(), "fixtures", "fmp", "v1"),
-      manifest: fmpManifest,
-    }),
-    loadRecordedNvidiaFixture({
-      fixtureRoot: join(process.cwd(), "fixtures", "ir", "nvidia", "v1"),
-      manifest: NVIDIA_BASELINE_MANIFEST,
-    }),
+    loadRecordedFmpFixture(
+      recordedFixtureArtifactStore(join(process.cwd(), "fixtures", "fmp", "v1"), fmpSeeds).store,
+      fmpManifest,
+    ),
+    loadRecordedNvidiaFixture(
+      recordedFixtureArtifactStore(
+        join(process.cwd(), "fixtures", "ir", "nvidia", "v1"),
+        NVIDIA_FIXTURE_SEEDS,
+      ).store,
+      NVIDIA_BASELINE_MANIFEST,
+    ),
   ]);
   assert.ok(fmp.status === "emitted");
   assert.ok(ir.status === "emitted" && ir.normalization?.status === "emitted");
@@ -702,10 +711,13 @@ test("real recorded cross-source capture replays identically across pages and st
     (fixture) => fixture.caseId === "byte-different-correction",
   );
   assert.ok(correctionManifest);
-  const correction = await loadRecordedFmpFixture({
-    fixtureRoot: join(process.cwd(), "fixtures", "fmp", "v1"),
-    manifest: correctionManifest,
-  });
+  const correctionSeeds = FMP_FIXTURE_SEEDS.get(correctionManifest.caseId);
+  assert.ok(correctionSeeds);
+  const correction = await loadRecordedFmpFixture(
+    recordedFixtureArtifactStore(join(process.cwd(), "fixtures", "fmp", "v1"), correctionSeeds)
+      .store,
+    correctionManifest,
+  );
   assert.equal(correction.status, "emitted");
   if (correction.status !== "emitted") throw new Error("recorded FMP correction did not emit");
 

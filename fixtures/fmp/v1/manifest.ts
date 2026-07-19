@@ -1,45 +1,51 @@
 import type { FmpRecordedRouteV1, FmpSelectorV1 } from "../../../src/providers/fmp/contracts.js";
+import type { RecordedFmpFixtureManifestV2 } from "../../../src/adapters/fmp/recorded-fmp-fixture.js";
 import type {
-  RecordedFmpExpectedV1,
-  RecordedFmpProvenanceV1,
-} from "../../../src/adapters/fmp/recorded-fmp-fixture.js";
+  RetrievalAttemptDraft,
+  SafeHttpResponseMetadata,
+  SanitizedRequestIdentity,
+} from "../../../src/artifacts/artifact-store.js";
+import { sanitizeRequestIdentity } from "../../../src/artifacts/identity.js";
+import { canonicalHash } from "../../../src/core/hash.js";
 
-export type FmpFixtureCase = Readonly<{
-  schemaVersion: 1;
-  caseId: string;
-  provider: "financial-modeling-prep";
-  source: "peas-recorded:fmp-press-release-synthetic-v1";
-  acquisitionVariant: "latest" | "search";
-  asOfMs: number;
-  selector: FmpSelectorV1;
-  route: FmpRecordedRouteV1;
-  retrievedMembers: readonly [
-    Readonly<{
-      kind: "retrieved";
-      role: "fmp.collection-json";
-      path: string;
-      artifactHash: string;
-      sizeBytes: number;
-      selectedObservationId: string;
-      observation: Readonly<{
-        provider: "financial-modeling-prep";
-        artifactDigest: string;
-        retrievedAtMs: number;
-        observationHash: string;
-      }>;
-    }>,
-  ];
-  derivedProofs: readonly Readonly<{
-    kind: "derived-projection";
-    role: "fmp.press-release-item";
-    parentArtifactHash: string;
-    policy: "peas-fmp-press-release-synthetic-v1";
-    projectionHash: string;
-    projectionSizeBytes: number;
-  }>[];
-  expected: RecordedFmpExpectedV1;
-  provenance: RecordedFmpProvenanceV1;
+export type FmpFixtureCase = RecordedFmpFixtureManifestV2;
+export type FmpFixtureSeedMemberV1 = Readonly<{
+  role: "fmp.collection-json";
+  path: string;
+  artifactHash: string;
+  sizeBytes: number;
+  attempt: RetrievalAttemptDraft;
+  response: SafeHttpResponseMetadata;
+  retrievedAtMs: number;
 }>;
+
+const FMP_FIXTURE_SEED_MAP = new Map<string, readonly [FmpFixtureSeedMemberV1]>();
+export const FMP_FIXTURE_SEEDS: ReadonlyMap<string, readonly [FmpFixtureSeedMemberV1]> =
+  FMP_FIXTURE_SEED_MAP;
+
+const FIXTURE_REQUEST: SanitizedRequestIdentity = sanitizeRequestIdentity({
+  method: "GET",
+  origin: "https://fixture.invalid",
+  path: "/recorded/fmp",
+  routeLabel: "recorded-fmp-fixture",
+});
+
+function persistedId(kind: "attempt" | "provider" | "record" | "revision", value: string): string {
+  const prefix = { attempt: "att1", provider: "prv1", record: "rec1", revision: "rev1" }[kind];
+  return `${prefix}_${canonicalHash(`peas/artifact-${kind}-identifier/v1`, { value })}`;
+}
+
+function selectedObservationId(
+  attempt: RetrievalAttemptDraft,
+  artifactHash: string,
+  response: SafeHttpResponseMetadata,
+): string {
+  return canonicalHash("peas/artifact-observation-id/v1", {
+    attemptId: persistedId("attempt", attempt.attemptId),
+    artifactDigest: artifactHash,
+    response,
+  });
+}
 
 const ROUTE_SYNX = {
   classification: "earnings-release",
@@ -64,8 +70,6 @@ function fixture(
     path: string;
     artifactHash: string;
     sizeBytes: number;
-    observationId: string;
-    observationHash: string;
     selector: FmpSelectorV1;
     route: FmpRecordedRouteV1;
     projectionHash: string | null;
@@ -73,8 +77,37 @@ function fixture(
     expected: FmpFixtureCase["expected"];
   }>,
 ): FmpFixtureCase {
+  const attempt: RetrievalAttemptDraft = {
+    attemptId: `fmp-${input.caseId}`,
+    provider: "financial-modeling-prep",
+    recordId: `fixture-${input.caseId}`,
+    revisionId: "v1",
+    startedAtMs: 1_778_201_998_000,
+    request: FIXTURE_REQUEST,
+  };
+  const response: SafeHttpResponseMetadata = {
+    statusCode: 200,
+    etag: null,
+    lastModified: null,
+    mediaType: "application/json",
+    contentEncoding: null,
+    declaredContentLength: input.sizeBytes,
+    transportDecoded: true,
+  };
+  const observationId = selectedObservationId(attempt, input.artifactHash, response);
+  FMP_FIXTURE_SEED_MAP.set(input.caseId, [
+    {
+      role: "fmp.collection-json",
+      path: input.path,
+      artifactHash: input.artifactHash,
+      sizeBytes: input.sizeBytes,
+      attempt,
+      response,
+      retrievedAtMs: 1_778_201_999_000,
+    },
+  ]);
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     caseId: input.caseId,
     provider: "financial-modeling-prep",
     source: "peas-recorded:fmp-press-release-synthetic-v1",
@@ -86,16 +119,9 @@ function fixture(
       {
         kind: "retrieved",
         role: "fmp.collection-json",
-        path: input.path,
         artifactHash: input.artifactHash,
         sizeBytes: input.sizeBytes,
-        selectedObservationId: input.observationId,
-        observation: {
-          provider: "financial-modeling-prep",
-          artifactDigest: input.artifactHash,
-          retrievedAtMs: 1_778_201_999_000,
-          observationHash: input.observationHash,
-        },
+        selectedObservationId: observationId,
       },
     ],
     derivedProofs:
@@ -127,8 +153,6 @@ export const FMP_FIXTURE_CASES: readonly FmpFixtureCase[] = [
     path: "bodies/latest.json",
     artifactHash: "6440ac3e4e0cff9079ce648e6105bfa7e3438f2223da43694eb0d45b647934b9",
     sizeBytes: 716,
-    observationId: "2a01215585cb422c0f32ad11b39ec51329f4bece5330af242b16cb6ebf53b027",
-    observationHash: "10bc82851455f8bb5604d56846ac892d2f974844d1ea376f6c53183370dbddd0",
     selector: {
       recordId: SYNX_RECORD,
       revisionId: "sha256:981b30ba0401e2e5b0514a3ed7d4b129f812463f87a0282f15e2fa753fa36b63",
@@ -159,8 +183,6 @@ export const FMP_FIXTURE_CASES: readonly FmpFixtureCase[] = [
     path: "bodies/search.json",
     artifactHash: "5bf78d0dc66edb370645e9c4bb37974aaa52752ee6066e05b4c0004865602fe7",
     sizeBytes: 428,
-    observationId: "afa238bc2286d1e43996cd6b22ba8f4815b3584da8a6ba2a888a3230fb07f70f",
-    observationHash: "19e00c9f1b6762d28ee1627bb33af569f5c2a3d4b935e8b93d39c1c18817b352",
     selector: {
       recordId: SYNX_RECORD,
       revisionId: "sha256:981b30ba0401e2e5b0514a3ed7d4b129f812463f87a0282f15e2fa753fa36b63",
@@ -191,8 +213,6 @@ export const FMP_FIXTURE_CASES: readonly FmpFixtureCase[] = [
     path: "bodies/duplicate.json",
     artifactHash: "b56824d52e46429030e38e5dce9fc75da7ef8904d93f59c6be41db5fe2c6a4c2",
     sizeBytes: 853,
-    observationId: "5364239ce6ab4a72b36e896cf8a2c7e03146ce4fee2a79ea8cea59cf3ea9dc36",
-    observationHash: "e531185c16fb0e2eeb435e11cd6b9a2bc3172373b60511d2158853c32f6ae8c8",
     selector: {
       recordId: SYNX_RECORD,
       revisionId: "sha256:981b30ba0401e2e5b0514a3ed7d4b129f812463f87a0282f15e2fa753fa36b63",
@@ -223,8 +243,6 @@ export const FMP_FIXTURE_CASES: readonly FmpFixtureCase[] = [
     path: "bodies/correction.json",
     artifactHash: "a7d4aaf59d17ff03b0d22295ced5ca1eb50b95e4f4e947f7edb032ee44530099",
     sizeBytes: 429,
-    observationId: "6f85eee5eb9e054e18520d508737bed0ddb3fb7740b7aa0836bc8ce8dd94ef23",
-    observationHash: "7133d5c92b53d47b1e6ff767141ac0447e07504c7fc409069b0872547f61bf01",
     selector: {
       recordId: SYNX_RECORD,
       revisionId: "sha256:231e38273a287c32015ba41b7d1f005347c0f1af3a716c3a5cd1278c1e480601",
@@ -255,8 +273,6 @@ export const FMP_FIXTURE_CASES: readonly FmpFixtureCase[] = [
     path: "bodies/missing-time.json",
     artifactHash: "10d10235ed20a089b0f64bc9ecb799a9de79fa3ad4ec6c30bc444433ff8f1daf",
     sizeBytes: 322,
-    observationId: "4d75d9a06d5425daca4977b9e68a3632ad35eca1bdea17dcd03013e6994c50ce",
-    observationHash: "f8e3402c382457d17729644d1861bef62bf4488e0f41f38e1f6be47bd4fcd853",
     selector: {
       recordId:
         "fmp-recorded-synthetic:726b3c842790ac7208d5a4aa968e1b19eb63b2d3e43d572e55ca3dc3457957a9",
@@ -289,8 +305,6 @@ export const FMP_FIXTURE_CASES: readonly FmpFixtureCase[] = [
     path: "bodies/malformed.json",
     artifactHash: "1e7d13a7087d52764e81fbd3a19ddc4465e4f36ff835aa26c292f26f4d296b97",
     sizeBytes: 256,
-    observationId: "aa3f49ff434871e3cc27d74941a24b84f342d9cc41cf6e53da634650351d9307",
-    observationHash: "9c7c6bc8862e861f025b165e1d484fa31f0dde7d617d2bbc7d39238ae095517b",
     selector: {
       recordId: `fmp-recorded-synthetic:${"0".repeat(64)}`,
       revisionId: `sha256:${"0".repeat(64)}`,
@@ -318,7 +332,7 @@ export const FMP_FIXTURE_CASES: readonly FmpFixtureCase[] = [
 ];
 
 export const FMP_FIXTURE_MANIFEST = {
-  version: "recorded-fmp-fixture-contract-v1",
+  version: "recorded-fmp-fixture-contract-v2",
   cases: FMP_FIXTURE_CASES,
   provenance: "synthetic-only",
   liveTransport: false,

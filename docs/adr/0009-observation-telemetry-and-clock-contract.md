@@ -98,9 +98,11 @@ hash, source-version identity, and revision-family identity to remain equal. Any
 order cannot change the result. Different providers and different revisions remain independent.
 
 `domainPrimaryArtifactKind:raw-artifact` requires the primary digest exactly once in raw links.
-`derived-projection` requires primary equal projection digest and never describes it as retrieval.
-PR 2C FMP/NVIDIA drafts use `derived-projection`; raw digests remain evidence/ledger provenance and
-cannot contaminate their domain event identity.
+`derived-projection` requires primary equal projection digest and never describes raw retrieval
+evidence as the domain primary. PR 2C FMP/NVIDIA drafts use `derived-projection`; raw digests remain
+evidence/ledger provenance and cannot contaminate their domain event identity. A retrieval-basis
+selection still identifies one exact raw link for trusted observation timing; that timing anchor
+does not replace or have to equal the normalization's domain primary.
 
 ## Publication, mapping, and clocks
 
@@ -147,13 +149,15 @@ marketReferenceJoinKey = "mrj1_" + H("peas/market-reference-join/v1", {
 ```
 
 A capture basis is `{basisKind:"capture",eventId,receivedAtMs,logicalAtMs,clockBasisId}`. A
-retrieval basis is one identified primary raw artifact `{basisKind:"retrieval",role,
+retrieval basis is one explicitly selected raw artifact `{basisKind:"retrieval",role,
 acquisitionObservationId,vaultObservationId,retrievedAtMs,clockBasisId}`. Retrieval selection
 directly parents both its normalization and selected artifact verification; every basis field
-reconciles to the causal commit/verification chain. Only market-reference selection may have a
-non-null join key. It contains no quote, price, venue, vendor, session, or market implementation.
-A leased branch freezes its source observation/version, event, artifacts, and join key; later
-arrivals cannot mutate them.
+reconciles to that raw link's causal commit/verification chain. Raw-link selection is independent
+of `domainPrimaryArtifactKind`: a derived projection remains the domain primary while its verified
+raw evidence supplies the retrieval time. Only market-reference selection may have a non-null join
+key. It contains no quote, price, venue, vendor, session, or market implementation. A leased branch
+freezes its source observation/version, event, artifacts, and join key; later arrivals cannot mutate
+them.
 
 ## Bounds and replay
 
