@@ -1,77 +1,77 @@
 {
   "schemaVersion": 1,
-  "contractContentCommit": "b6e89fb18755f8ff2ac0f67d046ead043063236e",
+  "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa",
   "entries": [
     {
       "logicalContractId": "peas/adr-0010/v1",
       "repositoryPath": "docs/adr/0010-market-reference-contract.md",
       "documentSha256": "4617e6f985ffd1d96d2e10532dc3cd53cfaa34b5fd557a71cdc6499f9acadf56",
       "gitBlobOid": "3723ef8553fee0e5bae675cfdf357b5c54c108fd",
-      "contractContentCommit": "b6e89fb18755f8ff2ac0f67d046ead043063236e"
+      "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa"
     },
     {
       "logicalContractId": "peas/market-acceptance-matrix/v1",
       "repositoryPath": "docs/contracts/pr-2d-acceptance-matrix.md",
-      "documentSha256": "7c59cc94bb05ff01125ecd273d370cda885294a718ca7751e96b5616dc2931c1",
-      "gitBlobOid": "c50ecdbb700d8c2bc7fcc75805d911cc099d90a1",
-      "contractContentCommit": "b6e89fb18755f8ff2ac0f67d046ead043063236e"
+      "documentSha256": "5339fad9d3c408f7e9514de8bd5c5d738542f3e65d9c597ac8b04d2ce4e2378f",
+      "gitBlobOid": "2c285bcb3e8eb7fcd4fc37997279f9031f1b9d23",
+      "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa"
     },
     {
       "logicalContractId": "peas/market-eligibility/v1",
       "repositoryPath": "docs/contracts/pr-2d-market-eligibility.md",
-      "documentSha256": "5960e106bc7179fc76a2d9bba2433e728ba5824555aa4b67ae6a93810e5d85b6",
-      "gitBlobOid": "e6240567e5ca78de83fc206ff1b2006fe85f0a9f",
-      "contractContentCommit": "b6e89fb18755f8ff2ac0f67d046ead043063236e"
+      "documentSha256": "c816e8ebf81d01ddc08b43c4aef1e25f43160efe31791da11d92cb7de13cabfc",
+      "gitBlobOid": "1ec37ef87b4cffb616aac3437a58ddefa3e342ad",
+      "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa"
     },
     {
       "logicalContractId": "peas/market-fixture-manifest/v1",
       "repositoryPath": "docs/contracts/pr-2d-fixture-manifest.md",
-      "documentSha256": "1f5e03f320cb5e26553f3a9117dc5c22e98d0e7da7d6d737ac390b60c2a6ab15",
-      "gitBlobOid": "7bcdc4af4629dcaff61d08f96aaa0955d6f6a6d1",
-      "contractContentCommit": "b6e89fb18755f8ff2ac0f67d046ead043063236e"
+      "documentSha256": "8360498f2443d00a238aba53dd08c9d05b2c07a1f680d754dda561aaffad2c01",
+      "gitBlobOid": "8c6c2bdc8bf02502a69c27c25518d263137fd760",
+      "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa"
     },
     {
       "logicalContractId": "peas/market-provider-source-identity/v1",
       "repositoryPath": "docs/contracts/pr-2d-provider-source-identity.md",
-      "documentSha256": "d3f5c5b101842dad292a66ce76e956a7fa4cefbf969c84374013faf9ea625a8c",
-      "gitBlobOid": "b077f017dd2d18ddc473ad8719964d0e3290c84c",
-      "contractContentCommit": "b6e89fb18755f8ff2ac0f67d046ead043063236e"
+      "documentSha256": "a04b5587de78a27e7973099ab9bfe504d37f48f3857563f1d41e3e547fe43ba8",
+      "gitBlobOid": "f4e5972f171089325db58e9f09e4e912b458afbf",
+      "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa"
     },
     {
       "logicalContractId": "peas/market-reason-catalog/v1",
       "repositoryPath": "docs/contracts/pr-2d-reason-codes.md",
-      "documentSha256": "170272af636a7e485d0090873e42fed61f113969877ef6d5e6f8b620db9fe630",
-      "gitBlobOid": "dd6c40e4f51293b49b12c906624568ab8e8e42e9",
-      "contractContentCommit": "b6e89fb18755f8ff2ac0f67d046ead043063236e"
+      "documentSha256": "7ca2b41b8560e7b4a0672430209f4c334e9d0bee8779cecdc8d0f65bf26a9efc",
+      "gitBlobOid": "150cb7ed58505978555b51aba60bf1184a86a87d",
+      "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa"
     },
     {
       "logicalContractId": "peas/market-resource-bounds/v1",
       "repositoryPath": "docs/contracts/pr-2d-resource-bounds.md",
-      "documentSha256": "16721887bd573f86a584cdae7ef3174c985c05f0a1a0ee72b9dfb8e721fc6972",
-      "gitBlobOid": "9bf8fab78e3d2aa76769bdfd910d4cb2bd72a7db",
-      "contractContentCommit": "b6e89fb18755f8ff2ac0f67d046ead043063236e"
+      "documentSha256": "b3f8e0f6913adf1512dd534195eb8b49c689f959d7a19efa6ce3a592f6acf9fb",
+      "gitBlobOid": "bc27e37120f406cc09850d4e683496899456792c",
+      "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa"
     },
     {
       "logicalContractId": "peas/market-timestamp-trust/v1",
       "repositoryPath": "docs/contracts/pr-2d-timestamp-trust.md",
       "documentSha256": "694aae0f378952aae5cffc8f169db1202f94b7ee5e0eb94b5b732faf0047fab7",
       "gitBlobOid": "02d53f1c512851b173e2f39fd129daec7fd7d311",
-      "contractContentCommit": "b6e89fb18755f8ff2ac0f67d046ead043063236e"
+      "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa"
     },
     {
       "logicalContractId": "peas/study-freeze-manifest/v1",
       "repositoryPath": "docs/contracts/pr-2d-study-freeze-manifest.md",
-      "documentSha256": "bddfc495ca17d6e151ce8ce04f5cf67205473fdcfdbbe8e9c87a53fced4fa8df",
-      "gitBlobOid": "e4a32930ed2ae2c0ec283f34255567f871476ed8",
-      "contractContentCommit": "b6e89fb18755f8ff2ac0f67d046ead043063236e"
+      "documentSha256": "29b02478582839f77fe8f75d85b79366aab88b836cdc458d088c6ed062016809",
+      "gitBlobOid": "ef841ff43fcc18ee551bfac4c769b74b895a39da",
+      "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa"
     },
     {
       "logicalContractId": "peas/study-reason-catalog/v1",
       "repositoryPath": "docs/contracts/pr-2d-reason-codes.md",
-      "documentSha256": "170272af636a7e485d0090873e42fed61f113969877ef6d5e6f8b620db9fe630",
-      "gitBlobOid": "dd6c40e4f51293b49b12c906624568ab8e8e42e9",
-      "contractContentCommit": "b6e89fb18755f8ff2ac0f67d046ead043063236e"
+      "documentSha256": "7ca2b41b8560e7b4a0672430209f4c334e9d0bee8779cecdc8d0f65bf26a9efc",
+      "gitBlobOid": "150cb7ed58505978555b51aba60bf1184a86a87d",
+      "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa"
     }
   ],
-  "contractAuthorityRegistryId": "car1_33a2b2caacbd33833b91fc3a0fee0fb2adc43c0ee0cd70679c5767431f18b119"
+  "contractAuthorityRegistryId": "car1_ac0a3f089138323edd7a188739c523628219424b75c14baa761122d98d76888e"
 }
