@@ -1,77 +1,77 @@
 {
   "schemaVersion": 1,
-  "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa",
+  "contractContentCommit": "8cdac9efc5b5044acafa088788539dbbb8868ef1",
   "entries": [
     {
       "logicalContractId": "peas/adr-0010/v1",
       "repositoryPath": "docs/adr/0010-market-reference-contract.md",
       "documentSha256": "4617e6f985ffd1d96d2e10532dc3cd53cfaa34b5fd557a71cdc6499f9acadf56",
       "gitBlobOid": "3723ef8553fee0e5bae675cfdf357b5c54c108fd",
-      "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa"
+      "contractContentCommit": "8cdac9efc5b5044acafa088788539dbbb8868ef1"
     },
     {
       "logicalContractId": "peas/market-acceptance-matrix/v1",
       "repositoryPath": "docs/contracts/pr-2d-acceptance-matrix.md",
-      "documentSha256": "5339fad9d3c408f7e9514de8bd5c5d738542f3e65d9c597ac8b04d2ce4e2378f",
-      "gitBlobOid": "2c285bcb3e8eb7fcd4fc37997279f9031f1b9d23",
-      "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa"
+      "documentSha256": "b511b9e2b58dc9c8f29aaab7d3d12860dc50b30ea81a66064d4f3c229750792f",
+      "gitBlobOid": "72b83faac81170d14504a1d4f7ac12bd9f279c61",
+      "contractContentCommit": "8cdac9efc5b5044acafa088788539dbbb8868ef1"
     },
     {
       "logicalContractId": "peas/market-eligibility/v1",
       "repositoryPath": "docs/contracts/pr-2d-market-eligibility.md",
       "documentSha256": "c816e8ebf81d01ddc08b43c4aef1e25f43160efe31791da11d92cb7de13cabfc",
       "gitBlobOid": "1ec37ef87b4cffb616aac3437a58ddefa3e342ad",
-      "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa"
+      "contractContentCommit": "8cdac9efc5b5044acafa088788539dbbb8868ef1"
     },
     {
       "logicalContractId": "peas/market-fixture-manifest/v1",
       "repositoryPath": "docs/contracts/pr-2d-fixture-manifest.md",
-      "documentSha256": "8360498f2443d00a238aba53dd08c9d05b2c07a1f680d754dda561aaffad2c01",
-      "gitBlobOid": "8c6c2bdc8bf02502a69c27c25518d263137fd760",
-      "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa"
+      "documentSha256": "39a53902a2987bdaba9d806bed424e52f2c15d18c51f270e926a9279fe69addd",
+      "gitBlobOid": "c3855d2a4be93b59b9d9a2e36f1e96e22ebc4629",
+      "contractContentCommit": "8cdac9efc5b5044acafa088788539dbbb8868ef1"
     },
     {
       "logicalContractId": "peas/market-provider-source-identity/v1",
       "repositoryPath": "docs/contracts/pr-2d-provider-source-identity.md",
-      "documentSha256": "a04b5587de78a27e7973099ab9bfe504d37f48f3857563f1d41e3e547fe43ba8",
-      "gitBlobOid": "f4e5972f171089325db58e9f09e4e912b458afbf",
-      "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa"
+      "documentSha256": "4ae1746e6075e5c5d9f6a3798c34ab2731e0e4236533f7dbf85fb6e32e43b7f3",
+      "gitBlobOid": "a79257008316d64ab0c145918c294a504d39f934",
+      "contractContentCommit": "8cdac9efc5b5044acafa088788539dbbb8868ef1"
     },
     {
       "logicalContractId": "peas/market-reason-catalog/v1",
       "repositoryPath": "docs/contracts/pr-2d-reason-codes.md",
       "documentSha256": "7ca2b41b8560e7b4a0672430209f4c334e9d0bee8779cecdc8d0f65bf26a9efc",
       "gitBlobOid": "150cb7ed58505978555b51aba60bf1184a86a87d",
-      "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa"
+      "contractContentCommit": "8cdac9efc5b5044acafa088788539dbbb8868ef1"
     },
     {
       "logicalContractId": "peas/market-resource-bounds/v1",
       "repositoryPath": "docs/contracts/pr-2d-resource-bounds.md",
       "documentSha256": "b3f8e0f6913adf1512dd534195eb8b49c689f959d7a19efa6ce3a592f6acf9fb",
       "gitBlobOid": "bc27e37120f406cc09850d4e683496899456792c",
-      "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa"
+      "contractContentCommit": "8cdac9efc5b5044acafa088788539dbbb8868ef1"
     },
     {
       "logicalContractId": "peas/market-timestamp-trust/v1",
       "repositoryPath": "docs/contracts/pr-2d-timestamp-trust.md",
       "documentSha256": "694aae0f378952aae5cffc8f169db1202f94b7ee5e0eb94b5b732faf0047fab7",
       "gitBlobOid": "02d53f1c512851b173e2f39fd129daec7fd7d311",
-      "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa"
+      "contractContentCommit": "8cdac9efc5b5044acafa088788539dbbb8868ef1"
     },
     {
       "logicalContractId": "peas/study-freeze-manifest/v1",
       "repositoryPath": "docs/contracts/pr-2d-study-freeze-manifest.md",
-      "documentSha256": "29b02478582839f77fe8f75d85b79366aab88b836cdc458d088c6ed062016809",
-      "gitBlobOid": "ef841ff43fcc18ee551bfac4c769b74b895a39da",
-      "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa"
+      "documentSha256": "9bf1ddab1de3799566eb2bf334a13dafbf70224f2aa69ba5b297f11335b66311",
+      "gitBlobOid": "40c509e2db9ea16091f89691ca4dd6f7a7684b79",
+      "contractContentCommit": "8cdac9efc5b5044acafa088788539dbbb8868ef1"
     },
     {
       "logicalContractId": "peas/study-reason-catalog/v1",
       "repositoryPath": "docs/contracts/pr-2d-reason-codes.md",
       "documentSha256": "7ca2b41b8560e7b4a0672430209f4c334e9d0bee8779cecdc8d0f65bf26a9efc",
       "gitBlobOid": "150cb7ed58505978555b51aba60bf1184a86a87d",
-      "contractContentCommit": "84ecd6c3fd0ae8280d290ed77763c811675122fa"
+      "contractContentCommit": "8cdac9efc5b5044acafa088788539dbbb8868ef1"
     }
   ],
-  "contractAuthorityRegistryId": "car1_ac0a3f089138323edd7a188739c523628219424b75c14baa761122d98d76888e"
+  "contractAuthorityRegistryId": "car1_c43fc356676cc346fb4d3d1e919c06be3edfe60923f06abb778e1e3bbf17e26b"
 }
