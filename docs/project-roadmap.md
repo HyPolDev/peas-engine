@@ -53,8 +53,9 @@ Do not maintain task state independently in Linear, Notion, and GitHub.
   `8ab07d67b25622dda32408822288c5ed88602b69` received independent `GO` after PR #5 CI run
   [`29970456123`](https://github.com/HyPolDev/peas-engine/actions/runs/29970456123) passed Linux job
   `89091170729`, Windows job `89091170828`, and required 10k-scale job `89092258656`.
-  `R2D-READY-001` is closed. P1-07 is ready on merge: PR 2D may start only after this audit/status
-  publication is merged into `origin/main` and that exact merged base is fetched and verified.
+  `R2D-READY-001` is closed. PR #5 merged as `0377323b5486a8ad3b8e2631d4c8559760893be6`;
+  the isolated PR 2D branch was created from that exact fetched and verified `origin/main` base.
+  P1-07 is in progress and implementation remains locked behind its independent contract `GO`.
 - The preserved no-trade candidate has disposition `ADOPT_WITH_CHANGES`. It is research input for
   ADR 0010, not an executable policy; later model/trade thresholds remain outside PR 2D.
 - The P1-09 market-data entitlement gate is active with gate state `PENDING`: human attestation and
@@ -112,11 +113,12 @@ invariant.
 
 Current checkpoint: PR 2B and the original PR 2C are merged as pull requests #3 and #4. The repaired
 PR 2C implementation has exact-SHA independent `GO`, and combined readiness candidate `8ab07d67`
-has a final independent readiness `GO` with `R2D-READY-001` closed. PR #5 must now merge the audit/
-status publication; PR 2D remains unauthorized until the resulting `origin/main` is fetched and
-verified to contain that evidence. P1-07 is ready on merge, while P1-08 remains sequenced after the
-P1-07 contract `GO`. No new market-data spend is authorized before the first event-validation
-study. Historical Alpaca REST
+has a final independent readiness `GO` with `R2D-READY-001` closed. PR #5 merged as exact PR 2D base
+`0377323b5486a8ad3b8e2631d4c8559760893be6`; that `origin/main` was fetched and verified before the
+isolated branch was created. P1-07 research is complete, the human owner approved durable capture
+as primary with retrieval sensitivity and as-of target selectors, and the proposed ADR/contracts
+now await exact-checkpoint independent review. P1-08 remains sequenced after contract `GO`. No new
+market-data spend is authorized before the first event-validation study. Historical Alpaca REST
 `feed=sip`, WebSocket `v2/delayed_sip`, and latest-endpoint `feed=delayed_sip` are separate identities
 unless written provider evidence proves an exact equivalence. Existing FMP Premium is a pending
 repository assertion and a separately labeled lower-evidence discrepancy candidate, not an
