@@ -1,6 +1,8 @@
 import { assertJsonWithinLimits, canonicalJson, type JsonValue } from "../../core/json.js";
 import { validateCanonicalMarketReason } from "../../providers/market-reference/contracts.js";
 import { validateMarketResultAsOfBasis } from "../../providers/market-reference/identity.js";
+import { capacityHamilton, deriveStudyRankDigest } from "./algorithms.js";
+import { evaluateStudyBound, STUDY_BOUND_IDS, type StudyBoundIdV1 } from "./bounds.js";
 import {
   ACCEPTED_CONTRACT_AUTHORITY_REGISTRY_ID,
   STUDY_COLLECTION_SESSION_COUNT,
@@ -11,10 +13,10 @@ import {
   STUDY_FRAME_CELL_LIMIT,
   STUDY_JSON_LIMITS,
   STUDY_TARGET_CLUSTERS,
-  StudyContractError,
   type StudyCandidateFrameEntryV1,
   type StudyClusterCandidateV1,
   type StudyClusterSelectionV1,
+  StudyContractError,
   type StudyDatasetFreezeV1,
   type StudyDatasetValidationEvidenceV1,
   type StudyDesignV1,
@@ -23,8 +25,6 @@ import {
   type StudyRunPrerequisitesV1,
   type StudyScheduleSourceEvidenceV1,
 } from "./contracts.js";
-import { capacityHamilton, deriveStudyRankDigest } from "./algorithms.js";
-import { evaluateStudyBound, STUDY_BOUND_IDS, type StudyBoundIdV1 } from "./bounds.js";
 import {
   deriveRankSeedHex,
   deriveReleaseClusterKey,
@@ -64,6 +64,144 @@ const STUDY_METRIC_IDS = [
   "residualMovement30m",
   "residualMovement5m",
 ] as const;
+const STUDY_ALGORITHM_KEYS = [
+  "samplingAlgorithmId",
+  "framePolicyId",
+  "scheduleSourcePolicyId",
+  "releaseClusteringPolicyId",
+  "shareClassPolicyId",
+  "sectorRegistryId",
+  "modelFamilyRegistryId",
+  "lanePolicyId",
+  "controlPolicyId",
+  "rankPolicyId",
+  "allocationPolicyId",
+  "studyReasonCatalogId",
+  "studyReasonCatalogDigest",
+  "marketReasonCatalogId",
+  "marketReasonCatalogDigest",
+  "primaryAnchorKind",
+  "primaryAnchorClaim",
+  "mandatorySensitivityAnchorKind",
+  "selectorKind",
+  "releaseOriginSelectorKind",
+  "targetOffsetsNs",
+  "referenceKinds",
+  "viewKinds",
+  "resultStatuses",
+  "quoteAgePolicyId",
+  "sessionPolicyId",
+  "providerPolicyContractId",
+  "bootstrapPolicyId",
+  "holmPolicyId",
+  "gatePolicyId",
+  "targetClusters",
+  "laneTargets",
+  "controlTargets",
+] as const;
+const MOVEMENT_METRIC_KEYS = [
+  "metricId",
+  "metricKind",
+  "priceBasis",
+  "viewKind",
+  "formulaId",
+  "population",
+  "missingTreatment",
+  "canonicalValue",
+  "displayRounding",
+] as const;
+const PROPORTION_METRIC_KEYS = [
+  "metricId",
+  "metricKind",
+  "successPredicateId",
+  "denominator",
+  "missingTreatment",
+] as const;
+const GATE_THRESHOLD_KEYS = [
+  "metricId",
+  "intervalKind",
+  "threshold",
+  "goComparator",
+  "noGoComparator",
+  "otherwise",
+] as const;
+const ACCEPTED_REASON_CATALOG_DIGEST =
+  "7ca2b41b8560e7b4a0672430209f4c334e9d0bee8779cecdc8d0f65bf26a9efc";
+const ACCEPTED_DESIGN_POLICY_IDS = Object.freeze({
+  designVersion: "StudyDesignV1",
+  correctionPolicyId: "peas/market-provider-source-identity/v1",
+  missingPolicyId: "peas/study-freeze-manifest/v1",
+  outlierPolicyId: "peas/study-freeze-manifest/v1",
+  multiplicityPolicyId: "peas/study-freeze-manifest/v1",
+  sensitivityPolicyId: "peas/study-freeze-manifest/v1",
+  boundsPolicyId: "peas/market-resource-bounds/v1",
+  quoteAgePolicyId: "peas/market-eligibility/v1",
+  sessionPolicyId: "peas/market-eligibility/v1",
+  providerPolicyContractId: "peas/market-provider-source-identity/v1",
+} as const);
+const MOVEMENT_FORMULAS = Object.freeze({
+  priorCloseMovementAtFirstObservation: "return-bps-cprev-q0",
+  releaseGapMovement: "return-bps-qpre-q0",
+  residualMovement1m: "return-bps-q0-q1",
+  residualMovement30m: "return-bps-q0-q30",
+  residualMovement5m: "return-bps-q0-q5",
+} as const);
+const READINESS_METRICS = Object.freeze({
+  "E1.complete-primary": {
+    metricKind: "fixed-denominator-proportion",
+    successPredicateId: "trusted-anchor-cprev-q0-q1-q5-q30-recorded-primary-complete",
+    denominator: 180,
+    missingTreatment: "not-success",
+  },
+  "E2.observed-within-15m": {
+    metricKind: "fixed-denominator-proportion",
+    successPredicateId: "latency-upper-ms-lte-900000",
+    denominator: 180,
+    missingTreatment: "not-success",
+  },
+  "E3.informative-residual-5m": {
+    metricKind: "fixed-denominator-proportion",
+    successPredicateId: "abs-q5-minus-q0-gt-sum-half-spreads",
+    denominator: 180,
+    missingTreatment: "not-success",
+  },
+  "E4.deterministic-reproduction": {
+    metricKind: "exact-reproduction-count",
+    successPredicateId: "all-required-variants-byte-identical",
+    denominator: 180,
+    missingTreatment: "failure",
+  },
+} as const);
+const READINESS_GATES = Object.freeze({
+  "E1.complete-primary": {
+    intervalKind: "wilson-two-sided-95",
+    threshold: "0.750000000000000000",
+    goComparator: "lower-gte",
+    noGoComparator: "upper-lt",
+    otherwise: "INCONCLUSIVE",
+  },
+  "E2.observed-within-15m": {
+    intervalKind: "wilson-two-sided-95",
+    threshold: "0.700000000000000000",
+    goComparator: "lower-gte",
+    noGoComparator: "upper-lt",
+    otherwise: "INCONCLUSIVE",
+  },
+  "E3.informative-residual-5m": {
+    intervalKind: "wilson-two-sided-95",
+    threshold: "0.250000000000000000",
+    goComparator: "lower-gte",
+    noGoComparator: "upper-lt",
+    otherwise: "INCONCLUSIVE",
+  },
+  "E4.deterministic-reproduction": {
+    intervalKind: "none",
+    threshold: "180/180",
+    goComparator: "equal",
+    noGoComparator: "not-equal",
+    otherwise: "NO_INCONCLUSIVE_STATE",
+  },
+} as const);
 const STUDY_LANES = ["standard", "specialized", "prospective-control"] as const;
 const STUDY_CONTROLS = [
   "identity-transition",
@@ -431,10 +569,110 @@ function assertExpectedId(actual: unknown, expected: string, path: string): void
   if (actual !== expected) invalid(`${path} does not equal its recomputed identity`);
 }
 
-function metricId(value: JsonValue): string {
-  const record = asRecord(value, "metric");
-  assertString(record["metricId"], "metric.metricId");
-  return record["metricId"];
+function assertExactFieldValues(
+  record: Readonly<Record<string, unknown>>,
+  expected: Readonly<Record<string, unknown>>,
+  path: string,
+): void {
+  for (const [key, expectedValue] of Object.entries(expected)) {
+    if (canonicalJson(record[key] as JsonValue) !== canonicalJson(expectedValue as JsonValue)) {
+      invalid(`${path}.${key} is not the accepted contract value`);
+    }
+  }
+}
+
+function validateStudyMetricDefinition(value: unknown, index: number): string {
+  const path = `design.metricDefinitions[${index}]`;
+  const record = asRecord(value, path);
+  assertString(record["metricId"], `${path}.metricId`);
+  const id = record["metricId"];
+  const readiness = READINESS_METRICS[id as keyof typeof READINESS_METRICS] as
+    | Readonly<Record<string, unknown>>
+    | undefined;
+  if (readiness !== undefined) {
+    assertExactKeys(record, PROPORTION_METRIC_KEYS, path);
+    assertExactFieldValues(record, { metricId: id, ...readiness }, path);
+    return id;
+  }
+  const formula = MOVEMENT_FORMULAS[id as keyof typeof MOVEMENT_FORMULAS] as string | undefined;
+  if (formula === undefined) invalid(`${path}.metricId is not accepted`);
+  assertExactKeys(record, MOVEMENT_METRIC_KEYS, path);
+  assertExactFieldValues(
+    record,
+    {
+      metricId: id,
+      metricKind: "exact-rational-return-bps",
+      priceBasis: "quote-nbbo-midpoint",
+      viewKind: "recorded-primary",
+      formulaId: formula,
+      population: "available-case-with-fixed-180-missing-accounting",
+      missingTreatment: "no-imputation",
+      canonicalValue: "reduced-signed-rational",
+      displayRounding: "half-even-6-decimals",
+    },
+    path,
+  );
+  return id;
+}
+
+function validateStudyGateThreshold(value: unknown, index: number): string {
+  const path = `design.gateThresholds[${index}]`;
+  const record = asRecord(value, path);
+  assertString(record["metricId"], `${path}.metricId`);
+  const id = record["metricId"];
+  const expected = READINESS_GATES[id as keyof typeof READINESS_GATES] as
+    | Readonly<Record<string, unknown>>
+    | undefined;
+  if (expected === undefined) invalid(`${path}.metricId is not accepted`);
+  assertExactKeys(record, GATE_THRESHOLD_KEYS, path);
+  assertExactFieldValues(record, { metricId: id, ...expected }, path);
+  return id;
+}
+
+function validateStudyAlgorithms(value: unknown): void {
+  const algorithms = asRecord(value, "design.algorithms");
+  assertExactKeys(algorithms, STUDY_ALGORITHM_KEYS, "design.algorithms");
+  const requiredAlgorithmConstants: Readonly<Record<string, unknown>> = {
+    samplingAlgorithmId: "peas-study-sampling-v1",
+    framePolicyId: "peas-study-frame-v1",
+    scheduleSourcePolicyId: "peas-study-schedule-source-v1",
+    releaseClusteringPolicyId: "peas-study-release-clustering-v1",
+    shareClassPolicyId: "peas-study-share-class-v1",
+    sectorRegistryId: "peas-study-sec-sic-divisions-v1",
+    modelFamilyRegistryId: "peas-study-model-families-v1",
+    lanePolicyId: "peas-study-lanes-v1",
+    controlPolicyId: "peas-study-controls-v1",
+    rankPolicyId: "peas-study-rank-v1",
+    allocationPolicyId: "peas-study-capacity-hamilton-v1",
+    studyReasonCatalogId: "study-reasons-v1",
+    studyReasonCatalogDigest: ACCEPTED_REASON_CATALOG_DIGEST,
+    marketReasonCatalogId: "market-reasons-v1",
+    marketReasonCatalogDigest: ACCEPTED_REASON_CATALOG_DIGEST,
+    primaryAnchorKind: "capture",
+    primaryAnchorClaim: "operational-durable-peas-knowledge",
+    mandatorySensitivityAnchorKind: "retrieval",
+    selectorKind: "last-eligible-at-or-before-target",
+    releaseOriginSelectorKind: "last-eligible-strictly-before-publication",
+    targetOffsetsNs: ["0", "60000000000", "300000000000", "1800000000000"],
+    referenceKinds: STUDY_REFERENCE_KINDS,
+    viewKinds: STUDY_VIEW_KINDS,
+    resultStatuses: STUDY_RESULT_STATUSES,
+    quoteAgePolicyId: ACCEPTED_DESIGN_POLICY_IDS.quoteAgePolicyId,
+    sessionPolicyId: ACCEPTED_DESIGN_POLICY_IDS.sessionPolicyId,
+    providerPolicyContractId: ACCEPTED_DESIGN_POLICY_IDS.providerPolicyContractId,
+    bootstrapPolicyId: "peas-study-lane-bootstrap-v1",
+    holmPolicyId: "peas-study-holm-24-v1",
+    gatePolicyId: "peas-study-gates-v1",
+    targetClusters: STUDY_TARGET_CLUSTERS,
+    laneTargets: { standard: 120, specialized: 40, prospectiveControl: 20 },
+    controlTargets: {
+      identityTransition: 5,
+      scheduleUncertain: 5,
+      sourceSparse: 5,
+      liquidityTail: 5,
+    },
+  };
+  assertExactFieldValues(algorithms, requiredAlgorithmConstants, "design.algorithms");
 }
 
 export function validateStudyDesign(value: unknown): Readonly<{
@@ -449,7 +687,9 @@ export function validateStudyDesign(value: unknown): Readonly<{
     record["contractAuthorityRegistryId"],
     record["acceptedContractIds"],
   );
-  assertString(record["designVersion"], "design.designVersion");
+  if (record["designVersion"] !== ACCEPTED_DESIGN_POLICY_IDS.designVersion) {
+    invalid("design.designVersion is not accepted");
+  }
   assertPattern(record["analysisCodeDigest"], HEX_64, "design.analysisCodeDigest");
   for (const key of [
     "correctionPolicyId",
@@ -458,46 +698,30 @@ export function validateStudyDesign(value: unknown): Readonly<{
     "multiplicityPolicyId",
     "sensitivityPolicyId",
     "boundsPolicyId",
-  ]) {
-    assertString(record[key], `design.${key}`);
+  ] as const) {
+    if (record[key] !== ACCEPTED_DESIGN_POLICY_IDS[key]) {
+      invalid(`design.${key} is not accepted`);
+    }
   }
   if (!Array.isArray(record["metricDefinitions"]) || record["metricDefinitions"].length !== 9) {
     invalid("design.metricDefinitions must contain exactly nine rows");
   }
-  const metricIds = record["metricDefinitions"].map((row) => metricId(row as JsonValue));
-  if ([...metricIds].sort(compareUtf8).join("\0") !== metricIds.join("\0")) {
-    invalid("design.metricDefinitions must be sorted by metricId");
+  const metricIds = record["metricDefinitions"].map((row, index) =>
+    validateStudyMetricDefinition(row, index),
+  );
+  if (canonicalJson(metricIds) !== canonicalJson(STUDY_METRIC_IDS)) {
+    invalid("design.metricDefinitions must contain the exact sorted nine-metric tuple");
   }
   if (!Array.isArray(record["gateThresholds"]) || record["gateThresholds"].length !== 4) {
     invalid("design.gateThresholds must contain exactly four rows");
   }
-  const gateIds = record["gateThresholds"].map((row) => metricId(row as JsonValue));
-  if ([...gateIds].sort(compareUtf8).join("\0") !== gateIds.join("\0")) {
-    invalid("design.gateThresholds must be sorted by metricId");
+  const gateIds = record["gateThresholds"].map((row, index) =>
+    validateStudyGateThreshold(row, index),
+  );
+  if (canonicalJson(gateIds) !== canonicalJson(STUDY_METRIC_IDS.slice(0, 4))) {
+    invalid("design.gateThresholds must contain the exact sorted E1-E4 tuple");
   }
-  const algorithms = asRecord(record["algorithms"], "design.algorithms");
-  const requiredAlgorithmConstants: Readonly<Record<string, unknown>> = {
-    samplingAlgorithmId: "peas-study-sampling-v1",
-    framePolicyId: "peas-study-frame-v1",
-    scheduleSourcePolicyId: "peas-study-schedule-source-v1",
-    releaseClusteringPolicyId: "peas-study-release-clustering-v1",
-    shareClassPolicyId: "peas-study-share-class-v1",
-    rankPolicyId: "peas-study-rank-v1",
-    allocationPolicyId: "peas-study-capacity-hamilton-v1",
-    studyReasonCatalogId: "study-reasons-v1",
-    marketReasonCatalogId: "market-reasons-v1",
-    primaryAnchorKind: "capture",
-    primaryAnchorClaim: "operational-durable-peas-knowledge",
-    mandatorySensitivityAnchorKind: "retrieval",
-    selectorKind: "last-eligible-at-or-before-target",
-    releaseOriginSelectorKind: "last-eligible-strictly-before-publication",
-    bootstrapPolicyId: "peas-study-lane-bootstrap-v1",
-    holmPolicyId: "peas-study-holm-24-v1",
-    targetClusters: STUDY_TARGET_CLUSTERS,
-  };
-  for (const [key, expected] of Object.entries(requiredAlgorithmConstants)) {
-    if (algorithms[key] !== expected) invalid(`design.algorithms.${key} is not accepted`);
-  }
+  validateStudyAlgorithms(record["algorithms"]);
   const design = value as StudyDesignV1;
   const studyDesignId = deriveStudyDesignId(design);
   assertExpectedId(design.expectedStudyDesignId, studyDesignId, "design.expectedStudyDesignId");

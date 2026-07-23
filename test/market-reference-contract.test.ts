@@ -96,6 +96,7 @@ import {
   evaluateMarketProviderDiscrepancy,
   evaluateMarketSelectionContext,
   selectMarketReference,
+  selectPairedMarketReferences,
 } from "../src/providers/market-reference/selection.js";
 import {
   deriveAcquisitionObservationId,
@@ -1929,6 +1930,150 @@ test("M-01..M-03 execute strict/as-of, H-001, and independent missing selectors"
   assert.equal(independentResults.length, 3);
   assert.deepEqual(independentResults[1]?.reason, marketReason("market.quote-stale"));
   assertCoreFixtureCase("M-03", "independent-statuses-denominator-retained");
+});
+
+test("retrieval corrected view requires the paired primary capture cutoff authority", () => {
+  const selected = normalizeRecordedMarketRecord(
+    quoteRecord({
+      family: "paired-cutoff-selected",
+      revisionKey: "paired-cutoff-selected",
+      memberKey: "paired-cutoff-selected",
+      eventTimeNs: "100000000000",
+    }),
+  );
+  const facts = [selected];
+  const capture = request({
+    viewKind: "recorded-corrected",
+    facts,
+    targetTimeNs: "105000000000",
+  });
+  const retrievalFrom = (authority: MarketSelectionRequestV1): MarketSelectionRequestV1 => ({
+    ...authority,
+    asOfBasis: {
+      ...authority.asOfBasis,
+      anchorRole: "h001-mandatory-retrieval-sensitivity",
+      trustedObservationBasis: {
+        basisKind: "retrieval",
+        role: "market-page-0",
+        acquisitionObservationId,
+        vaultObservationId: digest("paired-cutoff-vault-observation"),
+        retrievedAtMs: 100_000,
+        clockBasisId: `clk1_${digest("paired-cutoff-retrieval-clock")}`,
+      },
+      targetTimeNs: "100000000000",
+    },
+  });
+  const retrieval = retrievalFrom(capture);
+
+  assert.throws(
+    () => selectMarketReference(retrieval, facts),
+    (error) =>
+      error instanceof MarketContractError &&
+      error.reason.code === "market.input-invalid" &&
+      error.reason.detail === null,
+  );
+
+  const paired = selectPairedMarketReferences(capture, retrieval, facts);
+  const captureOnly = selectMarketReference(capture, facts);
+  assert.deepEqual(paired.primaryCapture, captureOnly);
+  assert.equal(paired.primaryCapture.status, "selected-complete");
+  assert.equal(paired.retrievalSensitivity.status, "selected-complete");
+  assert.equal(capture.correctedCutoffNs, "604905000000000");
+
+  const withCutoff = (
+    authority: MarketSelectionRequestV1,
+    cutoffTargetNs: string,
+  ): MarketSelectionRequestV1 => {
+    assert.equal(authority.corpusCutoff.viewKind, "recorded-corrected");
+    const corpusCutoff = {
+      ...authority.corpusCutoff,
+      cutoffTargetNs,
+    };
+    const corpusCutoffId = deriveRecordedCorpusCutoffId(corpusCutoff);
+    const selectionPolicy = {
+      ...authority.selectionPolicy,
+      correctionPolicy: {
+        ...authority.selectionPolicy.correctionPolicy,
+        corpusCutoffId,
+      },
+    };
+    return {
+      ...authority,
+      selectionPolicy,
+      selectionPolicyId: deriveSelectionPolicyId(selectionPolicy),
+      corpusCutoff,
+      corpusCutoffId,
+      asOfBasis: {
+        ...authority.asOfBasis,
+        corpusCutoffId,
+      },
+      correctedCutoffNs: cutoffTargetNs,
+    };
+  };
+  for (const cutoffTargetNs of ["604904999999999", "604905001000000", "691305000000000"]) {
+    const adversarialRetrieval = withCutoff(retrieval, cutoffTargetNs);
+    assert.throws(
+      () => selectPairedMarketReferences(capture, adversarialRetrieval, facts),
+      MarketContractError,
+    );
+  }
+  for (const divergentAuthority of [
+    {
+      ...retrieval,
+      asOfBasis: {
+        ...retrieval.asOfBasis,
+        recordedCorpusSnapshotId: `mcs1_${digest("divergent-corpus-authority")}`,
+      },
+    },
+    {
+      ...retrieval,
+      asOfBasis: {
+        ...retrieval.asOfBasis,
+        corpusCutoffId: `mcc1_${digest("divergent-cutoff-authority")}`,
+      },
+    },
+    {
+      ...retrieval,
+      asOfBasis: {
+        ...retrieval.asOfBasis,
+        admittedRevisionSetHash: digest("divergent-admitted-authority"),
+      },
+    },
+  ]) {
+    assert.throws(
+      () => selectPairedMarketReferences(capture, divergentAuthority, facts),
+      MarketContractError,
+    );
+  }
+
+  const addedRevision = normalizeRecordedMarketRecord(
+    quoteRecord({
+      family: "paired-cutoff-added-revision",
+      revisionKey: "paired-cutoff-added-revision",
+      memberKey: "paired-cutoff-added-revision",
+      eventTimeNs: "100000000000",
+      durablyRecordedAtMs: 604_905_000,
+      durableLogicalAtMs: 604_905_000,
+      primaryCorpusMember: false,
+    }),
+  );
+  const divergentRetrieval = retrievalFrom(
+    request({
+      viewKind: "recorded-corrected",
+      facts: [selected, addedRevision],
+      targetTimeNs: "105000000000",
+    }),
+  );
+  assert.notEqual(capture.recordedCorpusSnapshotId, divergentRetrieval.recordedCorpusSnapshotId);
+  assert.notEqual(capture.corpusCutoffId, divergentRetrieval.corpusCutoffId);
+  assert.notEqual(
+    capture.asOfBasis.admittedRevisionSetHash,
+    divergentRetrieval.asOfBasis.admittedRevisionSetHash,
+  );
+  assert.throws(
+    () => selectPairedMarketReferences(capture, divergentRetrieval, [selected, addedRevision]),
+    MarketContractError,
+  );
 });
 
 test("every core-owned bound executes its real enforcement site at exact and violating vectors", () => {

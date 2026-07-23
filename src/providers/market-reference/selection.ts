@@ -473,6 +473,22 @@ function validateRequest(request: MarketSelectionRequestV1): Readonly<{
   request: MarketSelectionRequestV1;
   targetNs: bigint;
   admittedRevisionIds: ReadonlySet<string>;
+}>;
+function validateRequest(
+  request: MarketSelectionRequestV1,
+  primaryCaptureAuthority: MarketSelectionRequestV1,
+): Readonly<{
+  request: MarketSelectionRequestV1;
+  targetNs: bigint;
+  admittedRevisionIds: ReadonlySet<string>;
+}>;
+function validateRequest(
+  request: MarketSelectionRequestV1,
+  primaryCaptureAuthority?: MarketSelectionRequestV1,
+): Readonly<{
+  request: MarketSelectionRequestV1;
+  targetNs: bigint;
+  admittedRevisionIds: ReadonlySet<string>;
 }> {
   let exact: MarketSelectionRequestV1;
   try {
@@ -612,6 +628,40 @@ function validateRequest(request: MarketSelectionRequestV1): Readonly<{
       BigInt(basis.receivedAtMs) * 1_000_000n + 604_800_000_000_000n
   ) {
     fail("market.input-invalid");
+  }
+  if (
+    asOf.viewKind === "recorded-corrected" &&
+    basis.basisKind === "retrieval" &&
+    primaryCaptureAuthority === undefined
+  ) {
+    fail("market.input-invalid");
+  }
+  if (
+    asOf.viewKind === "recorded-corrected" &&
+    basis.basisKind === "retrieval" &&
+    primaryCaptureAuthority !== undefined
+  ) {
+    const primary = validateRequest(primaryCaptureAuthority).request;
+    const primaryBasis = primary.asOfBasis.trustedObservationBasis;
+    if (
+      primary.asOfBasis.anchorRole !== "h001-primary-durable-capture" ||
+      primaryBasis.basisKind !== "capture" ||
+      primary.asOfBasis.viewKind !== "recorded-corrected" ||
+      primary.marketReferenceJoinKey !== exact.marketReferenceJoinKey ||
+      primary.intervalKey !== exact.intervalKey ||
+      primary.referenceKind !== exact.referenceKind ||
+      primary.selectionPolicyId !== exact.selectionPolicyId ||
+      primary.recordedCorpusSnapshotId !== exact.recordedCorpusSnapshotId ||
+      primary.corpusCutoffId !== exact.corpusCutoffId ||
+      primary.asOfBasis.admittedRevisionSetHash !== asOf.admittedRevisionSetHash ||
+      primary.correctedCutoffNs !== exact.correctedCutoffNs ||
+      canonicalJson(primary.context as unknown as JsonValue) !==
+        canonicalJson(exact.context as unknown as JsonValue) ||
+      BigInt(exact.correctedCutoffNs as string) !==
+        BigInt(primaryBasis.receivedAtMs) * 1_000_000n + 604_800_000_000_000n
+    ) {
+      fail("market.input-invalid");
+    }
   }
   if (interval.anchorKind === "h001-selected-basis" && interval.offsetNs !== null) {
     const anchorMs = basis.basisKind === "capture" ? basis.receivedAtMs : basis.retrievedAtMs;
@@ -795,8 +845,12 @@ function selectMarketReferenceForSource(
   request: MarketSelectionRequestV1,
   inputFacts: readonly NormalizedMarketFactV1[],
   selectedSource: MarketSourceKeyV1,
+  primaryCaptureAuthority?: MarketSelectionRequestV1,
 ): MarketReferenceResultV1 {
-  const validated = validateRequest(request);
+  const validated =
+    primaryCaptureAuthority === undefined
+      ? validateRequest(request)
+      : validateRequest(request, primaryCaptureAuthority);
   request = validated.request;
   const targetNs = validated.targetNs;
   const selectedSourceKey = canonicalSource(selectedSource);
@@ -1079,6 +1133,31 @@ export function selectMarketReference(
     inputFacts,
     request.selectionPolicy.sourcePolicy.primarySource,
   );
+}
+
+export function selectPairedMarketReferences(
+  primaryCaptureRequest: MarketSelectionRequestV1,
+  retrievalSensitivityRequest: MarketSelectionRequestV1,
+  inputFacts: readonly NormalizedMarketFactV1[],
+): Readonly<{
+  primaryCapture: MarketReferenceResultV1;
+  retrievalSensitivity: MarketReferenceResultV1;
+}> {
+  const primary = validateRequest(primaryCaptureRequest).request;
+  const retrieval = validateRequest(retrievalSensitivityRequest, primary).request;
+  return Object.freeze({
+    primaryCapture: selectMarketReferenceForSource(
+      primary,
+      inputFacts,
+      primary.selectionPolicy.sourcePolicy.primarySource,
+    ),
+    retrievalSensitivity: selectMarketReferenceForSource(
+      retrieval,
+      inputFacts,
+      retrieval.selectionPolicy.sourcePolicy.primarySource,
+      primary,
+    ),
+  });
 }
 
 function resultId(result: MarketReferenceResultV1): string {

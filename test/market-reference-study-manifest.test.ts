@@ -8,12 +8,6 @@ import {
 } from "../src/providers/market-reference/contracts.js";
 import {
   ACCEPTED_CONTRACT_AUTHORITY_REGISTRY_ID,
-  HOLM_SLOT_IDS,
-  STUDY_REASON_CATALOG,
-  STUDY_CONTRACT_AUTHORITY_IDS,
-  STUDY_DATASET_FREEZE_POLICY_VERSION,
-  STUDY_BOUND_IDS,
-  StudyContractError,
   bootstrapPoolIndex,
   capacityHamilton,
   classifyProspectiveControl,
@@ -21,31 +15,40 @@ import {
   deriveBootstrapWord,
   deriveRankSeedHex,
   deriveReleaseClusterKey,
-  deriveStudyDatasetFreezeId,
-  deriveStudyClusterId,
-  deriveStudyManifestId,
-  deriveStudyFrameSnapshotId,
   deriveStudyClusterCandidateId,
+  deriveStudyClusterId,
+  deriveStudyDatasetFreezeId,
+  deriveStudyDesignId,
+  deriveStudyFrameSnapshotId,
+  deriveStudyManifestId,
   deriveStudyRankDigest,
   evaluateClusterReadinessMetrics,
-  evaluateStudyBound,
   evaluateHolm24,
   evaluateReadinessGates,
+  evaluateStudyBound,
   exactMedian,
+  HOLM_SLOT_IDS,
   laneStratifiedBootstrap,
   rational,
-  type7Quantile,
-  validateHolmFamilySlots,
-  validateStudyDatasetFreeze,
-  validateStudyReason,
-  validateStudyClusterCandidate,
-  validateStudyFreezeManifest,
-  validateStudyFrameSnapshot,
+  STUDY_BOUND_IDS,
+  STUDY_CONTRACT_AUTHORITY_IDS,
+  STUDY_DATASET_FREEZE_POLICY_VERSION,
+  STUDY_REASON_CATALOG,
+  type StudyBoundIdV1,
   type StudyCandidateFrameEntryV1,
+  StudyContractError,
+  type StudyDatasetValidationEvidenceV1,
+  type StudyDesignV1,
   type StudyFrameSnapshotV1,
   type StudyFreezeManifestV1,
-  type StudyDatasetValidationEvidenceV1,
-  type StudyBoundIdV1,
+  type7Quantile,
+  validateHolmFamilySlots,
+  validateStudyClusterCandidate,
+  validateStudyDatasetFreeze,
+  validateStudyDesign,
+  validateStudyFrameSnapshot,
+  validateStudyFreezeManifest,
+  validateStudyReason,
 } from "../src/study/market-reference/index.js";
 
 const OBSERVATION = "aob1_0000000000000000000000000000000000000000000000000000000000000000";
@@ -282,6 +285,280 @@ function candidate(vector: Vector): StudyCandidateFrameEntryV1 {
 function rejectsCode(code: string): (error: unknown) => boolean {
   return (error) => error instanceof StudyContractError && error.reasonCode === code;
 }
+
+function studyDesignFixture(): Record<string, unknown> {
+  const movement = (metricId: string, formulaId: string) => ({
+    metricId,
+    metricKind: "exact-rational-return-bps",
+    priceBasis: "quote-nbbo-midpoint",
+    viewKind: "recorded-primary",
+    formulaId,
+    population: "available-case-with-fixed-180-missing-accounting",
+    missingTreatment: "no-imputation",
+    canonicalValue: "reduced-signed-rational",
+    displayRounding: "half-even-6-decimals",
+  });
+  const proportion = (
+    metricId: string,
+    metricKind: string,
+    successPredicateId: string,
+    missingTreatment: string,
+  ) => ({
+    metricId,
+    metricKind,
+    successPredicateId,
+    denominator: 180,
+    missingTreatment,
+  });
+  const design: Record<string, unknown> = {
+    schemaVersion: 1,
+    designVersion: "StudyDesignV1",
+    contractAuthorityRegistryId: ACCEPTED_CONTRACT_AUTHORITY_REGISTRY_ID,
+    acceptedContractIds: [...STUDY_CONTRACT_AUTHORITY_IDS],
+    algorithms: {
+      samplingAlgorithmId: "peas-study-sampling-v1",
+      framePolicyId: "peas-study-frame-v1",
+      scheduleSourcePolicyId: "peas-study-schedule-source-v1",
+      releaseClusteringPolicyId: "peas-study-release-clustering-v1",
+      shareClassPolicyId: "peas-study-share-class-v1",
+      sectorRegistryId: "peas-study-sec-sic-divisions-v1",
+      modelFamilyRegistryId: "peas-study-model-families-v1",
+      lanePolicyId: "peas-study-lanes-v1",
+      controlPolicyId: "peas-study-controls-v1",
+      rankPolicyId: "peas-study-rank-v1",
+      allocationPolicyId: "peas-study-capacity-hamilton-v1",
+      studyReasonCatalogId: "study-reasons-v1",
+      studyReasonCatalogDigest: "7ca2b41b8560e7b4a0672430209f4c334e9d0bee8779cecdc8d0f65bf26a9efc",
+      marketReasonCatalogId: "market-reasons-v1",
+      marketReasonCatalogDigest: "7ca2b41b8560e7b4a0672430209f4c334e9d0bee8779cecdc8d0f65bf26a9efc",
+      primaryAnchorKind: "capture",
+      primaryAnchorClaim: "operational-durable-peas-knowledge",
+      mandatorySensitivityAnchorKind: "retrieval",
+      selectorKind: "last-eligible-at-or-before-target",
+      releaseOriginSelectorKind: "last-eligible-strictly-before-publication",
+      targetOffsetsNs: ["0", "60000000000", "300000000000", "1800000000000"],
+      referenceKinds: [
+        "quote-nbbo-midpoint",
+        "trade-last-eligible-consolidated",
+        "bar-one-minute-completed-close",
+        "prior-listing-official-close",
+      ],
+      viewKinds: ["recorded-primary", "recorded-corrected"],
+      resultStatuses: ["selected-complete", "selected-degraded", "missing"],
+      quoteAgePolicyId: "peas/market-eligibility/v1",
+      sessionPolicyId: "peas/market-eligibility/v1",
+      providerPolicyContractId: "peas/market-provider-source-identity/v1",
+      bootstrapPolicyId: "peas-study-lane-bootstrap-v1",
+      holmPolicyId: "peas-study-holm-24-v1",
+      gatePolicyId: "peas-study-gates-v1",
+      targetClusters: 180,
+      laneTargets: { standard: 120, specialized: 40, prospectiveControl: 20 },
+      controlTargets: {
+        identityTransition: 5,
+        scheduleUncertain: 5,
+        sourceSparse: 5,
+        liquidityTail: 5,
+      },
+    },
+    metricDefinitions: [
+      proportion(
+        "E1.complete-primary",
+        "fixed-denominator-proportion",
+        "trusted-anchor-cprev-q0-q1-q5-q30-recorded-primary-complete",
+        "not-success",
+      ),
+      proportion(
+        "E2.observed-within-15m",
+        "fixed-denominator-proportion",
+        "latency-upper-ms-lte-900000",
+        "not-success",
+      ),
+      proportion(
+        "E3.informative-residual-5m",
+        "fixed-denominator-proportion",
+        "abs-q5-minus-q0-gt-sum-half-spreads",
+        "not-success",
+      ),
+      proportion(
+        "E4.deterministic-reproduction",
+        "exact-reproduction-count",
+        "all-required-variants-byte-identical",
+        "failure",
+      ),
+      movement("priorCloseMovementAtFirstObservation", "return-bps-cprev-q0"),
+      movement("releaseGapMovement", "return-bps-qpre-q0"),
+      movement("residualMovement1m", "return-bps-q0-q1"),
+      movement("residualMovement30m", "return-bps-q0-q30"),
+      movement("residualMovement5m", "return-bps-q0-q5"),
+    ],
+    gateThresholds: [
+      {
+        metricId: "E1.complete-primary",
+        intervalKind: "wilson-two-sided-95",
+        threshold: "0.750000000000000000",
+        goComparator: "lower-gte",
+        noGoComparator: "upper-lt",
+        otherwise: "INCONCLUSIVE",
+      },
+      {
+        metricId: "E2.observed-within-15m",
+        intervalKind: "wilson-two-sided-95",
+        threshold: "0.700000000000000000",
+        goComparator: "lower-gte",
+        noGoComparator: "upper-lt",
+        otherwise: "INCONCLUSIVE",
+      },
+      {
+        metricId: "E3.informative-residual-5m",
+        intervalKind: "wilson-two-sided-95",
+        threshold: "0.250000000000000000",
+        goComparator: "lower-gte",
+        noGoComparator: "upper-lt",
+        otherwise: "INCONCLUSIVE",
+      },
+      {
+        metricId: "E4.deterministic-reproduction",
+        intervalKind: "none",
+        threshold: "180/180",
+        goComparator: "equal",
+        noGoComparator: "not-equal",
+        otherwise: "NO_INCONCLUSIVE_STATE",
+      },
+    ],
+    correctionPolicyId: "peas/market-provider-source-identity/v1",
+    missingPolicyId: "peas/study-freeze-manifest/v1",
+    outlierPolicyId: "peas/study-freeze-manifest/v1",
+    multiplicityPolicyId: "peas/study-freeze-manifest/v1",
+    sensitivityPolicyId: "peas/study-freeze-manifest/v1",
+    boundsPolicyId: "peas/market-resource-bounds/v1",
+    analysisCodeDigest: "a".repeat(64),
+    expectedStudyDesignId: "",
+  };
+  design["expectedStudyDesignId"] = deriveStudyDesignId(design as unknown as StudyDesignV1);
+  return design;
+}
+
+function refreezeStudyDesign(design: Record<string, unknown>): void {
+  design["expectedStudyDesignId"] = deriveStudyDesignId(design as unknown as StudyDesignV1);
+}
+
+function designRow(
+  design: Record<string, unknown>,
+  field: "metricDefinitions" | "gateThresholds",
+  index: number,
+): Record<string, unknown> {
+  const row = (design[field] as Record<string, unknown>[])[index];
+  if (row === undefined) throw new Error(`missing ${field}[${index}]`);
+  return row;
+}
+
+test("study design closes algorithms, metrics, gates, policies, digests, and tuple order", () => {
+  const valid = studyDesignFixture();
+  assert.equal(validateStudyDesign(valid).studyDesignId, valid["expectedStudyDesignId"]);
+  const mutations: readonly ((design: Record<string, unknown>) => void)[] = [
+    (design) => {
+      (design["algorithms"] as Record<string, unknown>)["forbiddenPostOutcomeOverride"] = "GO";
+    },
+    (design) => {
+      delete (design["algorithms"] as Record<string, unknown>)["gatePolicyId"];
+    },
+    (design) => {
+      (design["algorithms"] as Record<string, unknown>)["studyReasonCatalogDigest"] = "b".repeat(
+        64,
+      );
+    },
+    (design) => {
+      const offsets = (design["algorithms"] as Record<string, unknown>)[
+        "targetOffsetsNs"
+      ] as string[];
+      [offsets[1], offsets[2]] = [offsets[2] as string, offsets[1] as string];
+    },
+    (design) => {
+      ((design["algorithms"] as Record<string, unknown>)["laneTargets"] as Record<string, unknown>)[
+        "extra"
+      ] = 0;
+    },
+    (design) => {
+      (design["algorithms"] as Record<string, unknown>)["providerPolicyContractId"] = "wrong";
+    },
+    (design) => {
+      designRow(design, "metricDefinitions", 4)["formulaId"] = "return-bps-qpre-q0";
+    },
+    (design) => {
+      delete designRow(design, "metricDefinitions", 4)["formulaId"];
+    },
+    (design) => {
+      designRow(design, "metricDefinitions", 0)["denominator"] = 179;
+    },
+    (design) => {
+      designRow(design, "metricDefinitions", 0)["missingTreatment"] = null;
+    },
+    (design) => {
+      designRow(design, "metricDefinitions", 5)["unexpected"] = true;
+    },
+    (design) => {
+      const metrics = design["metricDefinitions"] as Record<string, unknown>[];
+      [metrics[7], metrics[8]] = [
+        metrics[8] as Record<string, unknown>,
+        metrics[7] as Record<string, unknown>,
+      ];
+    },
+    (design) => {
+      designRow(design, "gateThresholds", 0)["threshold"] = "0.749999999999999999";
+    },
+    (design) => {
+      designRow(design, "gateThresholds", 0)["threshold"] = "0.750000000000000001";
+    },
+    (design) => {
+      designRow(design, "gateThresholds", 1)["goComparator"] = "upper-gte";
+    },
+    (design) => {
+      delete designRow(design, "gateThresholds", 1)["goComparator"];
+    },
+    (design) => {
+      designRow(design, "gateThresholds", 2)["otherwise"] = null;
+    },
+    (design) => {
+      designRow(design, "gateThresholds", 3)["threshold"] = "179/180";
+    },
+    (design) => {
+      designRow(design, "gateThresholds", 0)["unexpected"] = true;
+    },
+    (design) => {
+      const gates = design["gateThresholds"] as Record<string, unknown>[];
+      [gates[0], gates[1]] = [
+        gates[1] as Record<string, unknown>,
+        gates[0] as Record<string, unknown>,
+      ];
+    },
+    (design) => {
+      design["missingPolicyId"] = "wrong";
+    },
+    (design) => {
+      design["analysisCodeDigest"] = null;
+    },
+  ];
+  for (const mutate of mutations) {
+    const candidate = structuredClone(valid);
+    mutate(candidate);
+    refreezeStudyDesign(candidate);
+    assert.throws(() => validateStudyDesign(candidate), rejectsCode("study.input-invalid"));
+  }
+  for (const policyField of [
+    "designVersion",
+    "correctionPolicyId",
+    "missingPolicyId",
+    "outlierPolicyId",
+    "multiplicityPolicyId",
+    "sensitivityPolicyId",
+    "boundsPolicyId",
+  ]) {
+    const candidate = structuredClone(valid);
+    candidate[policyField] = "wrong";
+    refreezeStudyDesign(candidate);
+    assert.throws(() => validateStudyDesign(candidate), rejectsCode("study.input-invalid"));
+  }
+});
 
 test("accepted synthetic issuer, instrument, seven SCC vectors, and retired collision are pinned", () => {
   const issuerPreimage = {
@@ -1225,6 +1502,50 @@ test("exact rational statistics, Wilson gates, and 24-slot Holm are deterministi
       e4Reproduced: 180,
     }).overall,
     "INCONCLUSIVE",
+  );
+  for (const boundary of [
+    {
+      field: "E1",
+      lower: { successes: 123, decision: "NO_GO" },
+      upper: { successes: 124, decision: "INCONCLUSIVE" },
+      goLower: { successes: 146, decision: "INCONCLUSIVE" },
+      goUpper: { successes: 147, decision: "GO" },
+    },
+    {
+      field: "E2",
+      lower: { successes: 113, decision: "NO_GO" },
+      upper: { successes: 114, decision: "INCONCLUSIVE" },
+      goLower: { successes: 138, decision: "INCONCLUSIVE" },
+      goUpper: { successes: 139, decision: "GO" },
+    },
+    {
+      field: "E3",
+      lower: { successes: 33, decision: "NO_GO" },
+      upper: { successes: 34, decision: "INCONCLUSIVE" },
+      goLower: { successes: 56, decision: "INCONCLUSIVE" },
+      goUpper: { successes: 57, decision: "GO" },
+    },
+  ] as const) {
+    const decision = (successes: number) =>
+      evaluateReadinessGates({
+        e1Successes: boundary.field === "E1" ? successes : 180,
+        e2Successes: boundary.field === "E2" ? successes : 180,
+        e3Successes: boundary.field === "E3" ? successes : 180,
+        e4Reproduced: 180,
+      })[boundary.field];
+    assert.equal(decision(boundary.lower.successes), boundary.lower.decision);
+    assert.equal(decision(boundary.upper.successes), boundary.upper.decision);
+    assert.equal(decision(boundary.goLower.successes), boundary.goLower.decision);
+    assert.equal(decision(boundary.goUpper.successes), boundary.goUpper.decision);
+  }
+  assert.equal(
+    evaluateReadinessGates({
+      e1Successes: 180,
+      e2Successes: 180,
+      e3Successes: 180,
+      e4Reproduced: 179,
+    }).E4,
+    "NO_GO",
   );
   const readiness = evaluateClusterReadinessMetrics({
     trustedPublication: true,
