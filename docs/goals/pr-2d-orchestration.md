@@ -1,6 +1,6 @@
 # PR 2D market-reference contract orchestration
 
-- Status: Wave 1 research complete; human interval/anchor decision required before Wave 2
+- Status: Wave 2 contract integration in progress
 - Branch: `dev/pr-2d-market-reference-contract`
 - Exact base: `origin/main` at `0377323b5486a8ad3b8e2631d4c8559760893be6`
 - Base evidence: merge commit for pull request #5, including pull request #4, roadmap commit
@@ -203,3 +203,34 @@ remain separately labeled and never substitute silently.
 No ADR, contract, implementation, fixture, test, board, or roadmap integration will begin until the
 human owner approves or changes these material semantics. P1-09 remains `PENDING`; no provider,
 feed, entitlement, fallback, acquisition, raw-byte, or spending authority has changed.
+
+## Human decision H-001
+
+On `2026-07-23`, the human owner approved both integration recommendations:
+
+1. `durable-capture` is the primary observation anchor for the operational PEAS validation claim;
+   the exact existing retrieval basis is a mandatory sensitivity, and the study records
+   capture-minus-retrieval latency whenever both bases are trusted; and
+2. every exact point target uses the last eligible fact at or before the target, subject to the
+   frozen staleness policy. The last eligible quote strictly before trusted publication is the
+   release-gap origin. A first-after-target selector is forbidden because it introduces look-ahead.
+
+The approval does not rename `retrievedAtMs` as transport response completion and does not authorize
+a new clock field, port, migration, provider, entitlement, raw byte, fallback, or spend.
+
+## Wave 2 contract ownership
+
+These paths are exclusive while their assigned writer is active. On explicit handoff, ownership
+returns to the root integration owner for cross-document reconciliation. No two writers may edit a
+file simultaneously.
+
+| Owner | Exclusive Wave 2 paths |
+| --- | --- |
+| Root integration owner | `docs/adr/0010-market-reference-contract.md`; `docs/goals/pr-2d-orchestration.md`; final cross-document reconciliation only after each handoff |
+| Terra microstructure contract owner | `docs/contracts/pr-2d-timestamp-trust.md`; `docs/contracts/pr-2d-market-eligibility.md`; `docs/contracts/pr-2d-reason-codes.md` |
+| Terra identity contract owner | `docs/contracts/pr-2d-provider-source-identity.md`; `docs/contracts/pr-2d-resource-bounds.md` |
+| Luna study/acceptance contract owner | `docs/contracts/pr-2d-fixture-manifest.md`; `docs/contracts/pr-2d-acceptance-matrix.md`; `docs/contracts/pr-2d-study-freeze-manifest.md` |
+
+All Wave 2 writers must implement the approved H-001 semantics, retain quote/trade/bar separation,
+keep provider choices conditional and fail closed while P1-09 is pending, and make no source-code,
+fixture, test, board, roadmap, migration, dependency, or frozen-port change.
