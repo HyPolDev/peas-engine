@@ -1,6 +1,6 @@
 # PR 2D market-reference contract orchestration
 
-- Status: Phase 0 complete; independent contract research authorized
+- Status: Phase 0 complete; independent contract research in progress
 - Branch: `dev/pr-2d-market-reference-contract`
 - Exact base: `origin/main` at `0377323b5486a8ad3b8e2631d4c8559760893be6`
 - Base evidence: merge commit for pull request #5, including pull request #4, roadmap commit
@@ -33,6 +33,8 @@ the evidence it routes to, including:
 
 - ADRs 0001--0009, the project roadmap, project board, readiness publication, and readiness audit
   chain;
+- the complete 726-line revised PR 2D orchestration prompt supplied with the task, including its
+  readiness, entitlement, stopping, exact-checkpoint, and draft-publication rules;
 - PR 2B and PR 2C orchestration records, implementation prompts, contract tables, fixture
   manifests, acceptance matrices, research reports, and full audit histories;
 - the no-trade policy and disposition, policy manifest, validation universe, and entitlement gate;
@@ -48,6 +50,51 @@ the evidence it routes to, including:
 Current documentation drift was identified: the board and roadmap still describe pull request #5
 as unmerged and PR 2D as unauthorized. The integration owner owns that repair after the contract is
 reconciled; it is stale evidence, not a new policy decision.
+
+## Affected-file inventory
+
+The Phase 0 inventory separates expected new PR 2D surfaces from inherited compatibility surfaces.
+Contract reconciliation may narrow names, but it may not expand into a new dependency, migration,
+transport, frozen port, or financial-effect surface without an approved contract amendment.
+
+Expected new documentation:
+
+- `docs/research/pr-2d-market-microstructure.md`
+- `docs/research/pr-2d-alpaca-fmp-contract.md`
+- `docs/research/pr-2d-market-identity-replay.md`
+- `docs/research/pr-2d-event-study-design.md`
+- `docs/adr/0010-market-reference-contract.md`
+- `docs/contracts/pr-2d-provider-source-identity.md`
+- `docs/contracts/pr-2d-timestamp-trust.md`
+- `docs/contracts/pr-2d-market-eligibility.md`
+- `docs/contracts/pr-2d-reason-codes.md`
+- `docs/contracts/pr-2d-resource-bounds.md`
+- `docs/contracts/pr-2d-fixture-manifest.md`
+- `docs/contracts/pr-2d-acceptance-matrix.md`
+- `docs/contracts/pr-2d-study-freeze-manifest.md`
+- `docs/audit/pr-2d-contract-review.md`
+- `docs/audit/pr-2d-final-review.md`
+
+Expected new implementation surfaces, with final filenames and ownership deferred until contract
+GO:
+
+- a provider-neutral `src/providers/market-reference/` namespace for bounded contracts,
+  identities, pure normalization, revision handling, deterministic selection, and study-manifest
+  validation;
+- a recorded-only `src/adapters/market-reference/` boundary;
+- redistribution-safe `fixtures/market-reference/v1/` synthetic manifests and bodies; and
+- focused `test/market-reference-*.test.ts` contract, fixture, replay, differential, integration,
+  and study-manifest suites.
+
+Inherited files that may receive integration/status evidence only are
+`docs/project-board.json`, `docs/project-roadmap.md`, and this orchestration record. Compatibility
+must be demonstrated against, but no PR 2D writer may change, the frozen ports in
+`src/core/event.ts`, `src/core/processor.ts`, and `src/artifacts/artifact-store.ts`; the existing
+artifact-vault implementation under `src/adapters/artifacts/`; `src/providers/observation-ledger.ts`;
+existing provider normalizers/loaders; memory and SQLite implementations; or migrations
+`001`--`005`. The relevant existing tests are the PR 2C provider, observation-ledger,
+recorded-mirror, persistence-differential, SQLite recovery/concurrency, and provenance-closure
+suites recorded in the baseline. No existing fixture body is an authorized PR 2D market fixture.
 
 ## Baseline environment and validation
 
