@@ -1,6 +1,6 @@
 # PR 2D market-reference contract orchestration
 
-- Status: Phase 0 complete; independent contract research in progress
+- Status: Wave 1 research complete; human interval/anchor decision required before Wave 2
 - Branch: `dev/pr-2d-market-reference-contract`
 - Exact base: `origin/main` at `0377323b5486a8ad3b8e2631d4c8559760893be6`
 - Base evidence: merge commit for pull request #5, including pull request #4, roadmap commit
@@ -169,3 +169,37 @@ alone reconciles disagreements and records why a position was accepted or reject
 Any `NO_GO` returns exact findings to the relevant owner and repeats independent review after
 repair. Work stops only for a decision that materially changes the primary observation anchor,
 market/source identity, licensing or authorized spending, frozen ports, or project scope.
+
+## Wave 1 research checkpoint
+
+Four independently authored reports are complete, were read completely by the integration owner,
+and pass repository formatting, lint, and whitespace validation:
+
+| Owner | Report | SHA-256 |
+| --- | --- | --- |
+| Terra A | `docs/research/pr-2d-market-microstructure.md` | `E3727151906FB82D238D7C27EE64E632347FE12319351B3F8FB11DE65C26C3A0` |
+| Luna B | `docs/research/pr-2d-alpaca-fmp-contract.md` | `A937A258A507220E9D24EE565694EA94245A6829BC5615B7FA009ABDA9DD5861` |
+| Terra C | `docs/research/pr-2d-market-identity-replay.md` | `E156D3915EBEFFA170CA1E87D467DF0A6FE7B8DCD23EF0E266C816C44CAB23DC` |
+| Luna D | `docs/research/pr-2d-event-study-design.md` | `73704E3AC8482E1D74D5BD7F83F80A512D966A328C12F44390011B592948A6C5` |
+
+Every report independently concludes that retrieval completion versus durable capture materially
+changes first-observation latency and movement attribution. ADR integration is therefore stopped
+at the prompt's `HUMAN_DECISION_REQUIRED` gate. The majority recommendation, and the integration
+owner's recommendation for an operational PEAS validation claim, is durable capture as primary,
+retrieval basis as a mandatory sensitivity, and a recorded capture-minus-retrieval latency
+distribution. Retrieval completion is appropriate as primary only if the intended claim is
+earliest provider-byte availability; the current `retrievedAtMs` must not be relabeled as transport
+completion.
+
+The reports also expose an interval-selector disagreement. The microstructure analysis selects the
+last eligible quote at or before each exact target, while the event-study report proposes the first
+eligible quote at or after each target. The first-after rule uses future information and can move
+results across the +1/+5/+30 boundaries. The integration recommendation is the as-of rule: last
+eligible quote at or before the target, subject to the frozen staleness bound. Release-gap movement
+remains the authoritative prompt definition: the last eligible quote strictly before publication
+to the as-of quote at the chosen PEAS observation anchor. Quote, trade, and completed-bar variants
+remain separately labeled and never substitute silently.
+
+No ADR, contract, implementation, fixture, test, board, or roadmap integration will begin until the
+human owner approves or changes these material semantics. P1-09 remains `PENDING`; no provider,
+feed, entitlement, fallback, acquisition, raw-byte, or spending authority has changed.
