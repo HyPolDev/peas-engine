@@ -182,7 +182,7 @@ sequenceFailureKind=equal-time-ambiguous.
 | peas-retrieval | Existing retrievedAtMs basis | retrieval sensitivity only |
 | peas-durable-capture | Existing receivedAtMs capture basis | primary T0 wall target |
 | correction-effective | Economic time/relation the revision changes | never correction arrival |
-| correction-arrival | Authoritative PEAS durable capture of the revision | correction view admission only |
+| correction-arrival | Preserved PEAS durable recorded evidence for the revision; not provider-native arrival | recorded-corpus view admission only |
 | bar-start | Inclusive start of an aggregate interval | bar identity only |
 | bar-end | Exclusive end of an aggregate interval | completed-bar selection only |
 | calendar-boundary | Frozen UTC boundary derived from official calendar and tzdb | session classification only |
@@ -208,7 +208,7 @@ classes fails closed.
 | corporate-action provider arrival | nullable if source omits | not PEAS arrival | retain null |
 | corporate-action effective time/date | required for cross-boundary primary comparison | authoritative market/listing source | comparison missing |
 | correction effective time | required when the source supplies it; otherwise explicit null | source revision relation must still identify the affected fact | unresolved revision if neither relation nor time suffices |
-| correction PEAS durable arrival | required for as-known admission | valid durable capture basis | primary as-known view unavailable |
+| correction PEAS durable recorded evidence | required to prove corpus membership/corrected-cutoff admission | preserved wall/logical/clock evidence reconciled to immutable delivery/artifact | requested recorded view unavailable |
 | capture receivedAtMs/logicalAtMs | both required by capture basis | exact PR 2C reconciliation | primary anchor missing |
 | retrieval retrievedAtMs | required by retrieval basis | exact PR 2C raw-link reconciliation | mandatory sensitivity missing |
 | monotonicTimeUs | nullable | same process session only | no monotonic comparison |
@@ -359,43 +359,70 @@ Corrections and cancellations are immutable revisions. Three times remain separa
 
 - original fact event time;
 - correction effective time or explicit source relation; and
-- correction authoritative PEAS durable-arrival time.
+- correction PEAS durable recorded-evidence time.
 
-Effective time determines what economic fact the revision affects. Durable arrival determines when
-the revision is admissible to an as-known view. Neither substitutes for the other.
+Effective time determines what economic fact the revision affects. Durable recorded evidence proves
+when PEAS added the revision to an immutable recorded corpus. It is not provider-native arrival,
+exchange dissemination, or proof that PEAS knew the revision at a market target. Neither time
+substitutes for the other.
 
-### 7.1 As-known cutoffs
+The only V1 view names are `recorded-primary` and `recorded-corrected`. Their complete corpus and
+cutoff schemas, `mcs1_`/`mcc1_` identities, and result `asOfBasis` are normative in the
+provider/source identity contract.
 
-The as-known primary view admits a revision only when its authoritative durable capture is less
-than or equal to the metric cutoff:
+### 7.1 Recorded-primary admission
 
-| Metric/reference | As-known correction cutoff |
-| --- | --- |
-| prior close used at first observation | T0 |
-| release-gap origin and first observation | T0 |
-| residual +1 minute endpoint | T1 |
-| residual +5 minute endpoint | T5 |
-| residual +30 minute endpoint | T30 |
+`recorded-primary` is the as-recorded primary scientific view. It admits exactly each valid
+original, correction, or cancellation revision named in the first complete, bounded, verified,
+immutable recorded corpus for the exact market-reference join/source/query policy. Its cutoff is
+`primary-corpus-closure`; `cutoffTargetNs` is null. Admission is set membership, not a comparison
+with T0/T1/T5/T30 and not a reconstruction of native provider-known state.
 
-A later-arriving correction with an earlier effective time is excluded and annotated
-market.correction-after-cutoff. It does not mutate the existing as-known result.
+The first corpus is accepted only when all declared acquisition members have settled, ArtifactStore
+observation/hash/digest/size evidence reconciles, every revision relation is preserved, and the
+corpus closure carries its original PEAS wall/logical/clock evidence. A later artifact or revision
+cannot mutate it. Corrections and cancellations already present are applied by revision graph and
+effective relation. A revision absent from the first corpus is excluded even when its effective
+time precedes a selected fact.
 
-Historical data that exposes only final-corrected state, corrected-in-place bytes, or unknown
-revision-arrival semantics cannot claim an as-known primary view. It may support only a separately
-labeled corrected sensitivity if every other rule passes.
+Historical data exposing only final-corrected state, corrected-in-place bytes, or unknown revision
+membership cannot produce `recorded-primary`; it yields `market.correction-view-unknown`. This does
+not make the provider unusable for all purposes, but it makes the primary correction view missing.
 
-### 7.2 Corrected cutoff
+### 7.2 Recorded-corrected admission
 
-The corrected sensitivity admits revisions durably captured by:
+`recorded-corrected` starts with the immutable `recorded-primary` set and admits additional valid
+revision evidence durably recorded no later than:
 
     TcorrectedCutoff = T0Capture + 604_800_000_000_000 ns
 
 This is exactly seven 24-hour periods after the capture-primary anchor. Equality is included; one
-nanosecond after is excluded. The dataset freeze occurs only after the last selected cluster reaches
-this cutoff. A correction captured later never changes that dataset version.
+nanosecond after is outside the mathematical cutoff. PEAS durable evidence is inherited
+millisecond-resolution, so the next representable evidence value is one millisecond later. Each
+admitted revision must carry immutable
+`{revisionId,deliveryId,rawArtifactId,durablyRecordedAtMs,logicalAtMs,clockBasisId,
+durableEvidenceHash}` and reconcile to the named corpus. Millisecond evidence is converted with
+exact integer arithmetic before comparison. Evidence at the cutoff is included; evidence after it
+is excluded with `market.correction-after-cutoff`. The dataset freeze occurs only after the last
+selected cluster reaches this cutoff. A later correction never changes that dataset version.
+
+A final-corrected-only corpus can support `recorded-corrected` only when its complete immutable
+corpus was durably closed at or before `TcorrectedCutoff`; otherwise individual revision membership
+cannot be proved and the view is missing with `market.correction-view-unknown`.
 
 Revision target/relation establishes graph order. Arrival order is not revision order. Orphans,
 cycles, forks, conflicting reused keys, and unsupported correction-after-cancellation fail closed.
+
+### 7.3 Cutoff identity and market targets
+
+The correction cutoff never replaces a market target. T0/T1/T5/T30 still restrict fact
+event/completion time under the approved last-at-or-before selector. `recorded-primary` and
+`recorded-corrected` decide only which immutable revisions exist before state reconstruction.
+
+Every selection policy and selected/missing result carries the exact view, `recordedCorpusSnapshotId`,
+`corpusCutoffId`, `admittedRevisionSetHash`, H-001 anchor basis, target time, and comparator. A
+different corpus, closure observation, durable clock fact, admitted revision, cutoff, or view
+therefore produces a different policy/result identity while leaving market-fact identity unchanged.
 
 ## 8. Replay and restart
 
@@ -433,9 +460,11 @@ The acceptance matrix MUST include:
 - ordinary, holiday, early-close, both DST transitions, ambiguous/nonexistent local time, and every
   session boundary;
 - regular/extended transition and overnight exclusion;
-- correction one nanosecond before, at, and after each as-known cutoff;
-- corrected cutoff exactly at seven days and one nanosecond after;
-- final-corrected-only history that cannot claim as-known; and
+- first immutable corpus membership present/absent in both artifact and revision directions;
+- `recorded-corrected` durable evidence one millisecond before, exactly at, and one millisecond after
+  the seven-day cutoff;
+- final-corrected-only history before/at/after corpus closure that cannot claim
+  `recorded-primary`; and
 - page/restart/backend replay with no invented clock.
 
 Every failure or degradation uses the canonical market.* code in

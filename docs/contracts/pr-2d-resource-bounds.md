@@ -57,6 +57,37 @@ active session, partial success, retry-to-a-larger-limit, or silent split. Deter
 allowed only before acquisition under a frozen query policy and creates separately identified
 acquisitions.
 
+### Closed enforcement disposition
+
+Every public boundary produces one `BoundDispositionV1`:
+
+```text
+BoundDispositionV1 = {
+  boundId: exact Bound key below,
+  stage: one exact stage from the enforcement ledger,
+  vectorKind: exact | upper-one-over | lower-one-below | exact-count-minus-one,
+  accepted: boolean,
+  reason: null | one exact canonical reason,
+  detail: null | one exact canonical detail object,
+  atomicity: operation | candidate | metric | study-run
+}
+```
+
+At an allowed exact value, `accepted:true`, `reason:null`, and `detail:null`. At an upper one-over,
+lower one-below, or exact-count-minus-one vector, the closed enforcement ledger below is the sole
+authority for stage, reason, detail, and atomicity. `market.bound-exceeded` and
+`study.bound-exceeded` always carry `{limitKind:<boundId>}`. There is no reason choice, slash,
+fallback, retry, truncation, or validator-initiated split.
+
+For `atomicity:operation`, every acquired stream is cancelled/closed and settled before return, and
+no fact, candidate set, selection, missing result, manifest, or post-return activity survives. For
+`atomicity:candidate`, the one candidate receives the exact ineligibility and no winner is emitted
+until the complete set validates. For `atomicity:metric`, other independent metrics remain
+available but the affected metric emits exactly the listed missing/retained/annotation outcome.
+For `atomicity:study-run`, no partial frame, rank, selected cluster set, manifest, or dataset is
+emitted. Sibling-position vectors place the violating member first, middle, and last and prove the
+same disposition.
+
 ## Exact market and parser bounds
 
 | Bound key | Exact V1 value | Boundary and one-over vector |
@@ -81,18 +112,18 @@ acquisitions.
 | `identifierBytes` | 512 UTF-8 bytes | 512 exact; 513 rejects. |
 | `providerOrDatasetCodeBytes` | 128 ASCII bytes | 128 exact; 129 rejects. |
 | `symbolBytes` | 32 ASCII bytes | 32 exact; 33 rejects. Effective symbol grammar may be stricter. |
-| `timestampTextBytes` | 64 ASCII bytes | 64 exact; 65 rejects as timestamp invalid/bound exceeded. |
+| `timestampTextBytes` | 64 ASCII bytes | 64 exact; 65 rejects as `market.bound-exceeded` with `limitKind=timestampTextBytes`. |
 | `pageTokenInputBytes` | 4,096 UTF-8 bytes | Exact private token input may be hashed; 4,097 rejects before hashing or logging. |
 | `opaqueProviderIdBytes` | 128 ASCII bytes | 128 exact; 129 rejects. |
 | `conditionMembers` | 8 | 8 unique canonical codes exact; ninth rejects. |
 | `conditionMemberBytes` | 8 ASCII bytes | 8 exact; 9 rejects. |
 | `rawDecimalTokenBytes` | 32 ASCII bytes | 32 exact; 33 rejects before numeric conversion. |
 | `rawDecimalScale` | 12 | Scale 12 may be retained as provider evidence; 13 rejects. |
-| `primaryCoefficientDigits` | 20 | 20 exact; 21 makes the fact ineligible/rejected under decimal contract. |
+| `primaryCoefficientDigits` | 20 | 20 exact; 21 rejects normalization as `market.decimal-invalid`; no candidate is emitted. |
 | `primarySourceScale` | 6 | Scale 6 exact; 7 rejects for primary source price/size. |
 | `derivedMidpointScale` | 7 | Scale 7 exact; scale 8 rejects. No rounding is allowed. |
-| `rationalComponentBytes` | 32 ASCII bytes | Exact numerator/denominator component; 33 or arithmetic overflow invalidates the metric. |
-| `instrumentsPerAcquisition` | 64 | 64 exact; 65 requires a pre-acquisition deterministic split. |
+| `rationalComponentBytes` | 32 ASCII bytes | Exact numerator/denominator component; 33 or arithmetic overflow rejects metric construction as `market.decimal-invalid`. |
+| `instrumentsPerAcquisition` | 64 | 64 exact; 65 rejects as `market.bound-exceeded`. A separate planner may create multiple identified acquisitions before this validator is called. |
 | `providersPerSelectionPolicy` | 8 | 8 exact; 9 rejects. |
 | `marketCentersPerInstrumentState` | 64 | 64 exact; 65 rejects; no eviction from active session state. |
 | `revisionDepthPerFamily` | 16 | Original plus bounded chain at exact contract count; link 17 rejects the family. |
@@ -105,7 +136,7 @@ acquisitions.
 | `canonicalSidecarRecordBytes` | 65,536 bytes | Exact succeeds; +1 rejects. |
 | `canonicalExecutionBundleBytes` | 67,108,864 bytes | Exact succeeds; +1 rejects before graph validation. |
 | `recordedReplayPageSize` | 1..10,000 | 1 and 10,000 succeed; 0 and 10,001 reject. |
-| `historicalQueryWindow` | 1..8 consecutive calendar dates | 1 and 8 dates succeed; 0 or a ninth date rejects or requires a frozen pre-acquisition split. This is a calendar-date count, not elapsed nanoseconds. |
+| `historicalQueryWindow` | 1..8 consecutive calendar dates | 1 and 8 dates succeed; 0 rejects as `market.input-invalid`; a ninth date rejects as `market.bound-exceeded`. A separate frozen planner may split before this validator is called. |
 | `selectionSearchWindowMs` | 0..86,400,000 ms | 0 and 86,400,000 succeed; -1 or 86,400,001 rejects the selection request. |
 
 `rawJsonArrayItems` does not authorize 10,000 values in every sidecar field. Named arrays use their
@@ -121,8 +152,8 @@ trailing zeroes; it may not round.
 | `primaryResidualHorizonNs` | 1,800,000,000,000 ns | Exact +30 minutes succeeds; +1 ns rejects primary configuration. |
 | `regularQuoteAgeNs` | 5,000,000,000 ns inclusive | Exact age eligible; +1 ns yields `market.quote-stale`. |
 | `extendedQuoteAgeNs` | 30,000,000,000 ns inclusive | Exact age eligible; +1 ns yields `market.quote-stale`. |
-| `barDurationNs` | exactly 60,000,000,000 ns | 60 seconds exact; +/-1 ns is not a V1 one-minute bar. |
-| `captureRetrievalLagMs` | 600,000 ms inclusive | Exact retained; +1 ms is a timing-quality failure, never a fact rewrite. |
+| `barDurationNs` | exactly 60,000,000,000 ns | 60 seconds exact; +/-1 ns rejects bar normalization as `market.input-invalid`. |
+| `captureRetrievalLagMs` | 600,000 ms inclusive | Exact retained; +1 ms emits `market.timestamp-insufficient` with `timestampFailureKind=capture-retrieval-lag-exceeded`, never a fact rewrite. |
 | `calendarDatesPerManifest` | 400 | 400 exact; 401 rejects. |
 
 Quote-age and capture/retrieval-lag thresholds are study-quality rules, not parser truncation and
@@ -138,7 +169,7 @@ completion.
 | `laneTargets` | exactly 120/40/20 | Any lane +/-1 rejects before collection. |
 | `controlTargets` | exactly 5/5/5/5 | Any control +/-1 rejects before collection. |
 | `candidateFrameMembers` | 8,192 | 8,192 exact; 8,193 yields `study.bound-exceeded`. |
-| `frameDispositionOrStratumCells` | 2,048 | 2,048 exact; 2,049 rejects. |
+| `frameDispositionOrStratumCells` | 2,048 | 2,048 exact; 2,049 rejects as `study.bound-exceeded`. |
 | `selectedClusterEntryBytes` | 65,536 bytes | Exact canonical entry succeeds; +1 rejects. |
 | `completeStudyManifestBytes` | 33,554,432 bytes | Exact manifest succeeds; +1 rejects before ID derivation. |
 | `datasetFreezeBundleBytes` | 67,108,864 bytes | Exact bundle succeeds; +1 rejects atomically. |
@@ -149,7 +180,7 @@ completion.
 | `studyStringBytes` | 4,096 UTF-8 bytes | 4,096 exact; +1 rejects. |
 | `studyIdentifierBytes` | 512 UTF-8 bytes | 512 exact; +1 rejects. |
 | `contractSourceEntitlementIds` | 64 per named set | 64 exact unique sorted IDs; 65 rejects. |
-| `reasonDefinitions` | 64 | 64 exact; 65 rejects. |
+| `reasonDefinitions` | 64 per namespace catalog | 64 exact `market.*` or 64 exact `study.*`; 65 in either catalog rejects. The two catalogs are not summed. |
 | `metricDefinitions` | 32 | 32 exact; 33 rejects. |
 | `sensitivityDefinitions` | 32 | 32 exact; 33 rejects. |
 | `referencesPerCluster` | 64 | 64 exact; 65 rejects. |
@@ -160,15 +191,58 @@ completion.
 | `collectionSessions` | exactly 65 | 65 succeeds; 64 or 66 invalidates this design. |
 | `collectionCalendarSpanMs` | 10,368,000,000 ms (120 days) | Exact span succeeds; +1 ms rejects. |
 | `liquidityHistorySessions` | exactly 20 | Requesting 21 changes the design and rejects. |
-| `minimumValidLiquiditySessions` | at least 15 of 20 | 15 supports known liquidity; 14 forces `unknown`, not rejection/removal. |
-| `timelyObservationMs` | 900,000 ms inclusive | Conservative upper bound 900,000 is timely; 900,001 is not. |
-| `correctionLagMs` | 604,800,000 ms inclusive | Revision at exact cutoff included; +1 ms excluded and annotated. |
+| `minimumValidLiquiditySessions` | at least 15 of 20 | 15 supports known liquidity; 14 emits `study.liquidity-unknown`, never rejection/removal. |
+| `timelyObservationMs` | 900,000 ms inclusive | Conservative upper bound 900,000 is timely; a valid lower bound of 900,001 emits `study.timeliness-threshold-not-met`. |
+| `correctionLagMs` | 604,800,000 ms inclusive | Revision at exact cutoff included; +1 ms is excluded with `study.correction-after-cutoff`. |
 | `bootstrapReplicates` | exactly 10,000 | 10,000 exact; 10,001 or 9,999 changes/rejects frozen analysis. |
 | `holmSlots` | exactly 24 | 24 exact; 25 or 23 rejects; unavailable slots remain with p=1. |
 
 The frame's 8,192 members and manifest's 180 selected clusters are named arrays exempt from the
 generic 256-item array ceiling but subject to their explicit limits. The dataset freeze may contain
 up to 12,800 reference IDs but still must satisfy total nodes and canonical bytes.
+
+## Closed enforcement ledger
+
+Every bound key appears exactly once below. For grouped rows the stated disposition applies
+independently to each comma-separated bound ID, with that exact ID used as `limitKind`.
+
+| Bound IDs | Enforcement stage | Violating vector and sole disposition | Atomicity |
+| --- | --- | --- | --- |
+| rawArtifactBytes, aggregateVerifiedBytes | verified artifact read before parse | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
+| artifactsPerAcquisition, pagesPerAcquisition | acquisition authority preflight before lookup/read | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
+| recordsPerArtifactOrPage, factsPerAcquisition, canonicalRecordBytes | parser/canonical-output preflight before fact emission | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
+| rawJsonDepth, rawJsonNodes, rawJsonKeysPerObject, rawJsonArrayItems, parserTokensPerArtifact | raw parser inert-snapshot preflight before recursive descent | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
+| sidecarDepth, sidecarNodes, sidecarKeysPerObject, sidecarGenericArrayItems | sidecar parser inert-snapshot preflight before recursive descent | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
+| genericStringBytes, identifierBytes, providerOrDatasetCodeBytes, symbolBytes, timestampTextBytes, pageTokenInputBytes, opaqueProviderIdBytes | decoded text preflight before grammar validation/hash/log | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
+| conditionMembers, conditionMemberBytes | condition-array preflight before dictionary lookup | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
+| rawDecimalTokenBytes | decimal-token preflight before numeric conversion | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
+| rawDecimalScale, primaryCoefficientDigits, primarySourceScale, derivedMidpointScale, rationalComponentBytes | exact decimal/rational normalization before candidate or metric construction | upper-one-over -> `market.decimal-invalid` / null | operation |
+| instrumentsPerAcquisition, providersPerSelectionPolicy | acquisition/policy preflight before lookup or split | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
+| marketCentersPerInstrumentState, revisionDepthPerFamily, deliveriesPerProviderObservation | complete immutable source-state preflight before state mutation | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
+| candidatesPerReferenceSelection, intervalsPerCluster, referenceResultsPerCluster | complete selection-request preflight before sorting/winner computation | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
+| sidecarRecordsPerExecution, sidecarEdgesPerExecution, canonicalSidecarRecordBytes, canonicalExecutionBundleBytes | execution-bundle preflight before graph validation | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
+| recordedReplayPageSize | replay request validation before page read | upper-one-over -> `market.bound-exceeded` / limitKind=recordedReplayPageSize; lower-one-below -> `market.input-invalid` / null | operation |
+| historicalQueryWindow | acquisition request validation before planning/lookup | upper-one-over -> `market.bound-exceeded` / limitKind=historicalQueryWindow; lower-one-below -> `market.input-invalid` / null | operation |
+| selectionSearchWindowMs | selection request validation before window construction | upper-one-over -> `market.bound-exceeded` / limitKind=selectionSearchWindowMs; lower-one-below -> `market.input-invalid` / null | operation |
+| primaryResidualTargets | policy validation before target derivation | fifth target -> `market.bound-exceeded` / limitKind=primaryResidualTargets; missing, duplicate, or noncanonical order -> `market.input-invalid` / null | operation |
+| primaryResidualHorizonNs | policy validation before interval addition | upper-one-over -> `market.bound-exceeded` / limitKind=primaryResidualHorizonNs | operation |
+| regularQuoteAgeNs, extendedQuoteAgeNs | complete candidate eligibility after timestamp/session validation | upper-one-over -> `market.quote-stale` / null | candidate |
+| barDurationNs | bar normalization before candidate construction | plus-one or minus-one -> `market.input-invalid` / null | operation |
+| captureRetrievalLagMs | anchor-quality classification after both clocks validate | upper-one-over -> `market.timestamp-insufficient` / timestampFailureKind=capture-retrieval-lag-exceeded | metric |
+| calendarDatesPerManifest | manifest preflight before calendar lookup | upper-one-over -> `market.bound-exceeded` / limitKind=calendarDatesPerManifest | operation |
+| targetClusters | study design validation before frame construction | 179 or 181 -> `study.input-invalid` / null; schema-minimum one-below 99 -> `study.input-invalid` / null; schema-maximum one-over 201 -> `study.bound-exceeded` / limitKind=targetClusters | study-run |
+| laneTargets, controlTargets | study design validation before frame construction | plus-one or minus-one -> `study.input-invalid` / null | study-run |
+| candidateFrameMembers, frameDispositionOrStratumCells | frame preflight before candidate validation/rank | upper-one-over -> `study.bound-exceeded` / exact limitKind | study-run |
+| selectedClusterEntryBytes, completeStudyManifestBytes, datasetFreezeBundleBytes | canonical study byte preflight before ID derivation/persistence | upper-one-over -> `study.bound-exceeded` / exact limitKind | study-run |
+| studyJsonDepth, studyJsonNodesTotal, studyKeysPerObject, studyGenericArrayItems | study parser inert-snapshot preflight before recursive descent | upper-one-over -> `study.bound-exceeded` / exact limitKind | study-run |
+| studyStringBytes, studyIdentifierBytes | decoded study text preflight before grammar/hash | upper-one-over -> `study.bound-exceeded` / exact limitKind | study-run |
+| contractSourceEntitlementIds, reasonDefinitions, metricDefinitions, sensitivityDefinitions | design registry preflight before sort/hash | upper-one-over -> `study.bound-exceeded` / exact limitKind | study-run |
+| referencesPerCluster, referencesTotal, annotationsPerCluster, revisionsReferencedPerCluster, strataDimensions | complete study collection preflight before cluster/dataset materialization | upper-one-over -> `study.bound-exceeded` / exact limitKind | study-run |
+| collectionSessions, liquidityHistorySessions, bootstrapReplicates, holmSlots | exact study configuration validation before frame/analysis | plus-one or minus-one -> `study.input-invalid` / null | study-run |
+| collectionCalendarSpanMs | collection-calendar validation before manifest acceptance | upper-one-over -> `study.bound-exceeded` / limitKind=collectionCalendarSpanMs | study-run |
+| minimumValidLiquiditySessions | T-1 liquidity classification after exactly 20 sessions are evaluated | one-below -> `study.liquidity-unknown` / null | metric |
+| timelyObservationMs | E2 classification after a valid conservative latency interval exists | upper-one-over lower bound -> `study.timeliness-threshold-not-met` / null | metric |
+| correctionLagMs | correction-view admission after exact cutoff derivation | upper-one-over -> `study.correction-after-cutoff` / null | metric |
 
 ## Deterministic retention and completion
 
@@ -184,12 +258,15 @@ duplicates as input items for resource safety even when exact semantic duplicate
 
 ## Required exact/one-over coverage
 
-Every numeric row in all three matrices requires an executable pair:
+Every numeric row in all three matrices requires executable vectors:
 
 1. a real value at the exact ceiling or required equality that reaches and succeeds at the public
    validator/selector; and
 2. the same value with exactly one byte, item, key, token, digit, scale unit, nanosecond,
-   millisecond, session, replicate, slot, edge, or record over that fails with the stable reason.
+   millisecond, session, replicate, slot, edge, or record over that produces the sole closed-ledger
+   disposition; and
+3. for ranges, minimums, and exact counts, the corresponding lower-one-below or
+   exact-count-minus-one vector with its sole closed-ledger disposition.
 
 Ranges require both legal endpoints and one below/above. Minimums require equality and one below.
 Exact-count designs require equality and both +/-1. Cross-products require one factor over while all
@@ -200,5 +277,7 @@ zero partial normalization/selection, and no post-return activity.
 
 Coverage must also prove identical accepted bytes and failure reasons across fixture order,
 redelivery order, correction order consistent with the same captured facts, restart, replay page
-sizes `1`, `2`, `7`, `10,000`, repeated execution, and memory/SQLite backends. A row without both
-public exact and one-over vectors is not implemented and cannot be marked accepted.
+sizes `1`, `2`, `7`, `10,000`, repeated execution, and memory/SQLite backends. A row without every
+applicable public exact, upper-one-over, lower-one-below, declared-in-limit/actual-one-over,
+sibling-position, settle-before-return, zero-partial-output, and no-post-return vector is not
+implemented and cannot be marked accepted.

@@ -145,7 +145,8 @@ For a target `t`, the quote selector `Q(t)`:
 
 1. validates the complete bounded manifest, authority chain, identities, entitlement declaration,
    instrument interval, calendar, protocol/condition map, clocks, correction view, and sequence;
-2. replays only immutable facts durably admitted by the requested as-known or corrected cutoff;
+2. replays only immutable facts admitted by the requested `recorded-primary` or
+   `recorded-corrected` corpus cutoff;
 3. processes gaps/resets, trading actions, halts, LULD, quote wipeout, duplicates, and revisions in
    trusted source order;
 4. selects the last explicit consolidated SIP BBO/NBBO state with event time `<= t`;
@@ -192,11 +193,16 @@ variants use different metric names and `priceBasis` values.
 
 ## Corrections, cutoffs, replay, and missingness
 
-The primary view is as-known: only revisions durably captured by the metric cutoff apply. A later
-correction with an earlier effective time is not back-projected. The corrected sensitivity admits
-revisions captured by the frozen cutoff of primary anchor plus exactly seven 24-hour periods.
-Originals, corrections, and cancellations remain immutable; orphans, cycles, forks, ambiguous
-targets, and provider-key conflicts fail closed.
+The primary correction view is `recorded-primary`: it admits exactly the validated revision
+membership of the first complete verified immutable PEAS corpus. This is an as-recorded corpus
+claim, not a claim that PEAS or the native provider knew the revision at the market target. A later
+correction with an earlier effective time is not back-projected into that corpus.
+`recorded-corrected` begins with the immutable primary set and admits additional valid revisions
+whose preserved PEAS durable-recorded evidence is at or before the frozen cutoff of primary anchor
+plus exactly seven 24-hour periods. Originals, corrections, and cancellations remain immutable;
+orphans, cycles, forks, ambiguous targets, and provider-key conflicts fail closed. Final-corrected
+or corrected-in-place evidence with unknown revision membership cannot produce
+`recorded-primary`.
 
 Selection validates the complete declared bounded evidence set before emitting. Candidate hashes
 include eligible, rejected, and typed-missing evidence in canonical order. Provider priority,

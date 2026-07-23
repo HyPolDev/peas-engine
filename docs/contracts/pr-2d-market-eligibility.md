@@ -42,7 +42,7 @@ only original synthetic-offline evidence may pass an executable PR 2D contract t
 
 Every selection runs independently for one exact referenceKind. A missing quote remains a typed
 missing quote even when a trade, bar, another provider, another feed, BOLO, or a snapshot field is
-available. Attempted implicit substitution is market.silent-fallback-forbidden.
+available. Attempted unlabeled substitution is market.silent-fallback-forbidden.
 
 Provider comparison also runs independently. A secondary provider never fills a missing primary
 result, and equal economic values never merge their provider/source provenance.
@@ -155,6 +155,12 @@ Each selection key is:
       selectionPolicyId,
       asOfBasis
     }
+
+`intervalKey` is the recomputed `mik1_` row for `prior-close|publication-pre|t0|t1|t5|t30`;
+`referenceKind` is one exact section-1 value; and `asOfBasis` is the complete
+`MarketResultAsOfBasisV1` object. Caller labels or defaults cannot supply any field. The selection
+policy contains the explicit H-001 anchor pair, all closed component objects, the immutable
+contract-authority registry, and the exact recorded-corpus correction policy.
 
 Selection MUST use the complete declared bounded evidence window. It MUST NOT stop at the first
 provider page or first apparent winner.
@@ -464,17 +470,25 @@ Every source fact and revision is immutable.
 - cancellation creates a null-fact revision and never deletes the original; and
 - orphan, fork, cycle, conflicting reused key, or unsupported correction-after-cancellation fails.
 
-The primary as-known view admits only revisions whose authoritative durable capture is at or before
-the metric-specific cutoff in the timestamp contract. The corrected sensitivity admits revisions
-through exactly capture T0 plus seven 24-hour periods. Effective time determines the target fact;
-arrival time determines admission.
+The only V1 correction views are `recorded-primary` and `recorded-corrected`.
 
-Historical corrected-in-place/final-corrected data with unknown arrival/revision semantics cannot
-satisfy the primary as-known view. It may remain a corrected sensitivity, never a reconstructed
-as-known result.
+`recorded-primary` applies exactly the valid revision set in the first complete verified immutable
+recorded corpus named by `recordedCorpusSnapshotId`/`corpusCutoffId`. It is an as-recorded corpus
+claim, not a claim that PEAS or a native provider knew those revisions at T0/T1/T5/T30. Market
+target times still exclude future economic facts; they are not revision-admission cutoffs.
 
-As-known and corrected selections have different selectionPolicyId values even when their prices
-match. Existing selected/missing results are immutable; later evidence creates a new view/result.
+`recorded-corrected` starts with that set and admits valid revisions with preserved PEAS durable
+recorded evidence at or before exactly capture T0 plus seven 24-hour periods. Equality is included;
+the next representable millisecond after is excluded. Effective time determines the target fact; immutable corpus
+membership and durable recorded evidence determine view admission.
+
+Historical corrected-in-place/final-corrected data with unknown revision membership cannot satisfy
+`recorded-primary`. It may satisfy `recorded-corrected` only when the complete corpus was durably
+closed by the corrected cutoff; otherwise the view is missing with
+market.correction-view-unknown.
+
+The views have different `selectionPolicyId`, `asOfBasis`, `mcc1_`, and selected/missing identities
+even when prices match. Existing results are immutable; later evidence creates a new corpus/view.
 
 ## 14. Result status and missingness
 
@@ -493,8 +507,15 @@ Each result carries:
 - exact price or null;
 - event/completion time, age, session, timestamp/sequence trust, and view;
 - source/condition/calendar/staleness/selection policy identities;
-- exactly one primary reason when missing/rejected, otherwise null; and
-- sorted unique diagnostic codes.
+- exactly one canonical `{code,detail}` reason when missing/rejected, otherwise null; and
+- sorted unique canonical `{code,detail}` diagnostics.
+
+The exact result status strings are
+`selected-complete|selected-degraded|missing|rejected`. The exact view strings are
+`recorded-primary|recorded-corrected`. The exact eleven reference-kind strings are the registry in
+section 1. Any alternate view/status names, abbreviated reference names, untyped diagnostics, or
+untyped reason strings are invalid. Rejected operations emit no selected/missing identity; the
+rejected status remains the operation outcome.
 
 Missing/degraded clusters remain in the study denominator. One missing interval does not prevent
 independent evaluation of the other intervals.

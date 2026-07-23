@@ -44,6 +44,87 @@ adjacent semantic and precision field. PEAS wall times remain non-negative safe 
 milliseconds under an existing clock basis. Monotonic time is session-local telemetry and never a
 cross-session or market-fact identity component.
 
+## Immutable contract authority registry
+
+A logical contract name is never authority by itself. Every accepted PR 2D policy, fixture, result,
+study design, and dataset freeze carries one immutable registry:
+
+```ts
+type ContractLogicalIdV1 =
+  | "peas/adr-0010/v1"
+  | "peas/market-provider-source-identity/v1"
+  | "peas/market-timestamp-trust/v1"
+  | "peas/market-eligibility/v1"
+  | "peas/market-reason-catalog/v1"
+  | "peas/study-reason-catalog/v1"
+  | "peas/market-resource-bounds/v1"
+  | "peas/market-fixture-manifest/v1"
+  | "peas/study-freeze-manifest/v1"
+  | "peas/market-acceptance-matrix/v1";
+
+type ContractAuthorityEntryV1 = Readonly<{
+  logicalContractId: ContractLogicalIdV1;
+  repositoryPath:
+    | "docs/adr/0010-market-reference-contract.md"
+    | "docs/contracts/pr-2d-provider-source-identity.md"
+    | "docs/contracts/pr-2d-timestamp-trust.md"
+    | "docs/contracts/pr-2d-market-eligibility.md"
+    | "docs/contracts/pr-2d-reason-codes.md"
+    | "docs/contracts/pr-2d-resource-bounds.md"
+    | "docs/contracts/pr-2d-fixture-manifest.md"
+    | "docs/contracts/pr-2d-study-freeze-manifest.md"
+    | "docs/contracts/pr-2d-acceptance-matrix.md";
+  documentSha256: string;
+  gitBlobOid: string;
+  contractContentCommit: string;
+}>;
+
+type ContractAuthorityRegistryV1 = Readonly<{
+  schemaVersion: 1;
+  contractContentCommit: string;
+  entries: readonly ContractAuthorityEntryV1[];
+  contractAuthorityRegistryId: string;
+}>;
+
+contractAuthorityRegistryId =
+  "car1_" + H("peas/contract-authority-registry/v1", {
+    schemaVersion,contractContentCommit,entries
+  })
+```
+
+The logical-ID/path mapping is exact:
+
+| Logical contract ID | Repository path |
+| --- | --- |
+| `peas/adr-0010/v1` | `docs/adr/0010-market-reference-contract.md` |
+| `peas/market-provider-source-identity/v1` | `docs/contracts/pr-2d-provider-source-identity.md` |
+| `peas/market-timestamp-trust/v1` | `docs/contracts/pr-2d-timestamp-trust.md` |
+| `peas/market-eligibility/v1` | `docs/contracts/pr-2d-market-eligibility.md` |
+| `peas/market-reason-catalog/v1` | `docs/contracts/pr-2d-reason-codes.md` |
+| `peas/study-reason-catalog/v1` | `docs/contracts/pr-2d-reason-codes.md` |
+| `peas/market-resource-bounds/v1` | `docs/contracts/pr-2d-resource-bounds.md` |
+| `peas/market-fixture-manifest/v1` | `docs/contracts/pr-2d-fixture-manifest.md` |
+| `peas/study-freeze-manifest/v1` | `docs/contracts/pr-2d-study-freeze-manifest.md` |
+| `peas/market-acceptance-matrix/v1` | `docs/contracts/pr-2d-acceptance-matrix.md` |
+
+`entries` contains exactly the ten logical IDs above, sorted by unsigned UTF-8 bytes of
+`logicalContractId`. Both reason-catalog IDs intentionally bind the same reason-catalog document
+bytes. Duplicate logical IDs, any other duplicate path, missing or extra entries, path
+substitutions, a non-64-lowercase-hex document SHA-256, or a
+non-40-lowercase-hex Git SHA-1 blob/commit rejects. Every per-entry `contractContentCommit` must
+equal the registry value. The
+validator reads every blob from `contractContentCommit`, verifies its Git blob OID and SHA-256, then
+recomputes `car1_`. It never resolves `HEAD`, a branch, `latest`, a working-tree path, or a mutable
+title.
+
+The registry record is materialized at
+`docs/audit/pr-2d-contract-authority.json`. It is publication evidence external to the nine
+distinct document blobs and ten logical authorities it binds; embedding it in
+one bound document would create a self-digest cycle. P1-07 cannot become accepted and no
+implementation policy may validate until the integration owner publishes this record for the exact
+contract-content commit. The registry may be committed one commit later; the independent audit
+record binds that registry ID and content commit externally, avoiding an audit/registry cycle.
+
 ## Identity registry
 
 ### Provider and authorization
@@ -289,72 +370,351 @@ not enter `marketFactId`. A current corrected response does not rewrite a prior 
 
 ### Selection, missingness, and discrepancy
 
-```text
-selectionPolicyId = "msp1_" + H("peas/market-selection-policy/v1", {
-  contractVersion, viewKind, primaryAnchorKind, alternateAnchorKind,
-  alternateAnchorRequired, intervalDefinitions, targetSelector,
-  publicationOriginSelector, sourcePolicy, providerPriority,
-  eligibilityPolicy, stalenessPolicy, correctionPolicy,
-  tieBreakPolicy, reasonCatalogVersion, boundsPolicyId
+The following vocabulary is the only V1 vocabulary used by policy, fixture, result, acceptance, and
+study records:
+
+```ts
+type MarketViewKindV1 = "recorded-primary" | "recorded-corrected";
+
+type MarketReferenceKindV1 =
+  | "quote-nbbo-midpoint"
+  | "trade-last-eligible-consolidated"
+  | "bar-one-minute-completed-close"
+  | "prior-listing-official-close"
+  | "listing-official-open"
+  | "opening-trade"
+  | "reopening-trade"
+  | "closing-trade"
+  | "final-eligible-trade-close"
+  | "daily-bar-close"
+  | "bolo";
+
+type MarketReferenceResultStatusV1 =
+  | "selected-complete"
+  | "selected-degraded"
+  | "missing"
+  | "rejected";
+
+type CanonicalReasonDetailV1 =
+  | Readonly<{ field: "sourceFailureKind"; value: "incomplete" | "endpoint-unknown" | "spec-version-unknown" }>
+  | Readonly<{ field: "entitlementFailureKind"; value: "unfrozen" | "pending" | "denied" | "scope-mismatch" | "zero-spend-violation" }>
+  | Readonly<{ field: "artifactFailureKind"; value: "observation-invalid" | "digest-mismatch" | "size-mismatch" | "observation-hash-mismatch" | "media-or-encoding-mismatch" }>
+  | Readonly<{ field: "providerObservationFailureKind"; value: "schema-invalid" | "identity-invalid" | "conflicting-content" }>
+  | Readonly<{ field: "revisionFailureKind"; value: "orphan" | "fork" | "cycle" | "reused-key" | "chain-unresolved" | "unsupported-after-cancellation" }>
+  | Readonly<{ field: "timestampFailureKind"; value: "missing" | "semantic-untrusted" | "precision-insufficient" | "capture-retrieval-lag-exceeded" }>
+  | Readonly<{ field: "sequenceFailureKind"; value: "missing" | "gap" | "equal-time-ambiguous" }>
+  | Readonly<{ field: "instrumentFailureKind"; value: "unmapped" | "ambiguous" | "outside-effective-window" | "symbol-continuity-unresolved" }>
+  | Readonly<{ field: "coverageFailureKind"; value: "provider-unknown" | "instrument-not-covered" }>
+  | Readonly<{ field: "sessionFailureKind"; value: "calendar-missing" | "boundary-ambiguous" | "timestamp-or-coverage-unknown" }>
+  | Readonly<{ field: "tradeConditionFailureKind"; value: "does-not-update-last" | "state-insufficient" }>
+  | Readonly<{ field: "priorCloseFailureKind"; value: "absent" | "ineligible" }>
+  | Readonly<{ field: "endpointKind"; value: "pre-release" | "first-observation" | "plus-1m" | "plus-5m" | "plus-30m" | "sensitivity" }>
+  | Readonly<{ field: "qualityKind"; value: "locked" | "slow" | "luld-limit-state" }>
+  | Readonly<{ field: "evidenceQualityKind"; value: "sip-time-only" | "native-sequence-unchecked" }>;
+
+type CanonicalMarketReasonV1 = Readonly<{
+  code: string;
+  detail: CanonicalReasonDetailV1 | null;
+}>;
+```
+
+`code` is one exact `market.*` value from `market-reasons-v1`. It has the one matching detail shape
+above exactly when that catalog requires it and otherwise has `detail:null`. Diagnostics use
+`CanonicalMarketReasonV1`, are limited to degraded/annotation dispositions, are unique, and sort by
+unsigned UTF-8 bytes of RFC 8785 `{code,detail}`. Any alternate names, untyped reason strings, or
+abbreviated reference kinds are invalid V1 values.
+
+#### Exact interval registry
+
+```ts
+type MarketIntervalDefinitionV1 = Readonly<{
+  intervalKey: string;
+  intervalKind: "prior-close" | "publication-pre" | "t0" | "t1" | "t5" | "t30";
+  anchorKind: "previous-eligible-listing-session" | "earnings-publication" | "h001-selected-basis";
+  offsetNs: string | null;
+  comparator: "authoritative-prior-close" | "strictly-before" | "at-or-before";
+  sessionRule: "prior-eligible-session" | "cross-session-allowed" | "anchor-session" | "same-session-as-t0";
+}>;
+
+intervalKey = "mik1_" + H("peas/market-reference-interval/v1", {
+  intervalKind,anchorKind,offsetNs,comparator,sessionRule
 })
 ```
 
-H-001 fixes:
+The registry contains exactly these six rows:
 
-- `primaryAnchorKind:"capture"` using the existing capture basis;
-- `alternateAnchorKind:"retrieval"` and `alternateAnchorRequired:true`;
-- `targetSelector:"last-eligible-at-or-before"`; and
-- `publicationOriginSelector:"last-eligible-strictly-before-publication"`.
+| intervalKind | anchorKind | offsetNs | comparator | sessionRule |
+| --- | --- | ---: | --- | --- |
+| prior-close | previous-eligible-listing-session | null | authoritative-prior-close | prior-eligible-session |
+| publication-pre | earnings-publication | `0` | strictly-before | cross-session-allowed |
+| t0 | h001-selected-basis | `0` | at-or-before | anchor-session |
+| t1 | h001-selected-basis | `60000000000` | at-or-before | same-session-as-t0 |
+| t5 | h001-selected-basis | `300000000000` | at-or-before | same-session-as-t0 |
+| t30 | h001-selected-basis | `1800000000000` | at-or-before | same-session-as-t0 |
 
-The exact existing retrieval basis is a mandatory sensitivity and is never renamed transport
-response completion. Anchor, view (`as-known|corrected`), as-of selectors, provider priority,
-fallback, interval, staleness, and correction cutoffs enter selection policy identity, never market
-fact identity. Primary source/fallback remains fail closed until P1-09 approval.
+Every row recomputes `mik1_`; `intervalDefinitions` contains the six complete rows sorted by
+`intervalKey`. A name, array position, target time, or caller-provided ID cannot replace that
+derivation.
 
-```text
-candidateSetHash = H("peas/market-candidate-set/v1", sorted {
-  providerObservationId,revisionId,normalizedMarketFactId,
-  eligibilityOutcome:{status,reasonCode,reasonDetail,diagnosticCodes}
+#### Exact policy components
+
+```ts
+type MarketSourceKeyV1 = Readonly<{
+  providerId: string;
+  datasetId: string;
+  feedId: string;
+  endpointChannelId: string;
+  entitlementSnapshotId: string;
+}>;
+
+type MarketSourcePolicyV1 = Readonly<{
+  policyVersion: "market-source-policy-v1";
+  authorizationMode: "p1-09-approved" | "synthetic-offline-only";
+  primarySource: MarketSourceKeyV1;
+  comparisonSources: readonly MarketSourceKeyV1[];
+  fallbackKind: "none";
+  selectionIsolation: "per-source";
+}>;
+
+type MarketProviderPriorityV1 = Readonly<{
+  policyVersion: "market-provider-priority-v1";
+  entries: readonly Readonly<{
+    source: MarketSourceKeyV1;
+    role: "primary" | "discrepancy-only";
+    rank: number;
+  }>[];
+  missingPrimaryBehavior: "typed-missing-no-fallback";
+}>;
+
+type MarketEligibilityPolicyV1 = Readonly<{
+  policyVersion: "market-eligibility-v1";
+  referenceKinds: readonly MarketReferenceKindV1[];
+  primaryReferenceKind: "quote-nbbo-midpoint";
+  currency: "USD";
+  completeWindowRequired: true;
+  referenceSubstitution: "forbidden";
+  unknownConditionBehavior: "ineligible";
+  strictExecutableDiagnostics: readonly ["locked", "luld-limit-state", "slow"];
+}>;
+
+type MarketStalenessPolicyV1 = Readonly<{
+  policyVersion: "market-staleness-v1";
+  regularQuoteAgeNs: "5000000000";
+  extendedQuoteAgeNs: "30000000000";
+  regularTradeAgeNs: "5000000000";
+  extendedTradeAgeNs: "30000000000";
+  completedBarAgeNs: "60000000000";
+  boundary: "inclusive";
+  negativeAgeBehavior: "ineligible";
+  overnightPrimaryAgeNs: null;
+}>;
+
+type MarketCorrectionPolicyV1 = Readonly<{
+  policyVersion: "market-correction-policy-v1";
+  primaryCorpusSnapshotId: string;
+  corpusCutoffId: string;
+}> &
+  (
+    | Readonly<{
+        viewKind: "recorded-primary";
+        admissionKind: "member-of-primary-recorded-corpus";
+        correctedOffsetNs: null;
+        finalCorrectedOnlyBehavior: "recorded-primary-unavailable";
+      }>
+    | Readonly<{
+        viewKind: "recorded-corrected";
+        admissionKind: "member-of-primary-or-durably-recorded-by-corrected-cutoff";
+        correctedOffsetNs: "604800000000000";
+        finalCorrectedOnlyBehavior: "recorded-corrected-only-if-corpus-closed-by-cutoff";
+      }>
+  );
+
+type MarketTieBreakPolicyV1 = Readonly<{
+  policyVersion: "market-tie-break-v1";
+  trustedOrder: readonly ["source-native-total-order", "identical-economic-state", "missing"];
+  identicalEconomicRepresentative: "smallest-normalized-market-fact-id";
+  unresolvedDifferingState: "market.sequence-insufficient/equal-time-ambiguous";
+  forbiddenOrders: readonly ["arrival", "artifact", "hash", "page", "provider-priority", "row"];
+}>;
+
+type MarketDiscrepancyPolicyV1 = Readonly<{
+  policyVersion: "market-discrepancy-v1";
+  comparisonKind: "exact-reduced-rational";
+  compareIndependentSources: true;
+  equalValueMergesProvenance: false;
+  missingBehavior: "not-comparable";
+  disagreementChangesPrimary: false;
+}>;
+```
+
+Set-like source/reference arrays are unique and sorted by canonical UTF-8 bytes. Priority entries
+sort by ascending contiguous `rank` beginning at zero, then canonical source bytes; exactly one is
+`primary`, all others are `discrepancy-only`, and no entry is a fallback. The reference-kind array
+contains all eleven registry values sorted by unsigned UTF-8. The three fixed tie-break arrays have
+exactly the displayed order. Any null, extra value, reordered fixed array, omitted/auto-selected
+provider, feed, anchor, reference, or fallback rejects.
+
+#### Immutable recorded corpus and cutoff evidence
+
+```ts
+type RecordedRevisionEvidenceV1 = Readonly<{
+  revisionId: string;
+  deliveryId: string;
+  rawArtifactId: string;
+  durablyRecordedAtMs: number;
+  logicalAtMs: number;
+  clockBasisId: string;
+  durableEvidenceHash: string;
+}>;
+
+type RecordedCorpusSnapshotV1 = Readonly<{
+  schemaVersion: 1;
+  marketReferenceJoinKey: string;
+  sourcePolicy: MarketSourcePolicyV1;
+  marketAcquisitionIds: readonly string[];
+  rawArtifactIds: readonly string[];
+  providerObservationIds: readonly string[];
+  revisionEvidence: readonly RecordedRevisionEvidenceV1[];
+  corpusClosedAtMs: number;
+  corpusClosedLogicalAtMs: number;
+  corpusClockBasisId: string;
+  corpusClosureEvidenceHash: string;
+}>;
+
+recordedCorpusSnapshotId = "mcs1_" + H("peas/market-recorded-corpus/v1", {
+  schemaVersion,marketReferenceJoinKey,sourcePolicy,marketAcquisitionIds,
+  rawArtifactIds,providerObservationIds,revisionEvidence,
+  corpusClosedAtMs,corpusClosedLogicalAtMs,corpusClockBasisId,
+  corpusClosureEvidenceHash
 })
 
+type RecordedCorpusCutoffV1 = Readonly<{
+  corpusSnapshotId: string;
+  cutoffObservationEvidenceHash: string;
+  admittedRevisionSetHash: string;
+}> &
+  (
+    | Readonly<{
+        viewKind: "recorded-primary";
+        cutoffKind: "primary-corpus-closure";
+        cutoffTargetNs: null;
+      }>
+    | Readonly<{
+        viewKind: "recorded-corrected";
+        cutoffKind: "capture-t0-plus-seven-days";
+        cutoffTargetNs: string;
+      }>
+  );
+
+corpusCutoffId = "mcc1_" + H("peas/market-corpus-cutoff/v1", {
+  corpusSnapshotId,viewKind,cutoffKind,cutoffTargetNs,
+  cutoffObservationEvidenceHash,admittedRevisionSetHash
+})
+```
+
+All ID arrays and `revisionEvidence` are unique and sorted respectively by ID and
+`{revisionId,deliveryId}`. Every evidence row reconciles an immutable delivery/raw artifact and the
+original preserved PEAS durable wall/logical/clock evidence; provider-native arrival is neither
+claimed nor inferred. `recorded-primary` requires `primary-corpus-closure`, null target, and an
+admitted set exactly equal to valid revisions in the first complete verified corpus.
+`recorded-corrected` requires `capture-t0-plus-seven-days`, exact
+`T0CaptureNs+604800000000000`, and admits the primary set plus valid revisions whose
+`durablyRecordedAtMs*1000000 <= cutoffTargetNs`. Equality is included. A value one nanosecond later
+is mathematically outside the cutoff; PEAS evidence is millisecond-resolution, so the executable
+one-over vector is the next millisecond. Final-corrected/corrected-in-place evidence with unknown revision membership cannot
+produce `recorded-primary`; it can produce `recorded-corrected` only when the complete corpus itself
+was durably closed at or before the corrected cutoff.
+
+This is an as-recorded scientific claim about immutable PEAS corpus membership. It is not a claim
+that PEAS or the native provider knew the revision at the market target.
+
+#### Selection and result preimages
+
+```ts
+type MarketResultAsOfBasisV1 = Readonly<{
+  anchorRole: "h001-primary-durable-capture" | "h001-mandatory-retrieval-sensitivity";
+  trustedObservationBasis:
+    | Readonly<{ basisKind: "capture"; eventId: string; receivedAtMs: number; logicalAtMs: number; clockBasisId: string }>
+    | Readonly<{ basisKind: "retrieval"; role: string; acquisitionObservationId: string; vaultObservationId: string; retrievedAtMs: number; clockBasisId: string }>;
+  targetTimeNs: string;
+  comparator: "authoritative-prior-close" | "strictly-before" | "at-or-before";
+  viewKind: MarketViewKindV1;
+  recordedCorpusSnapshotId: string;
+  corpusCutoffId: string;
+  admittedRevisionSetHash: string;
+}>;
+
+type MarketSelectionPolicyPreimageV1 = Readonly<{
+  contractAuthorityRegistryId: string;
+  primaryAnchorKind: "capture";
+  alternateAnchorKind: "retrieval";
+  alternateAnchorRequired: true;
+  intervalDefinitions: readonly MarketIntervalDefinitionV1[];
+  targetSelector: "last-eligible-at-or-before";
+  publicationOriginSelector: "last-eligible-strictly-before-publication";
+  sourcePolicy: MarketSourcePolicyV1;
+  providerPriority: MarketProviderPriorityV1;
+  eligibilityPolicy: MarketEligibilityPolicyV1;
+  stalenessPolicy: MarketStalenessPolicyV1;
+  correctionPolicy: MarketCorrectionPolicyV1;
+  tieBreakPolicy: MarketTieBreakPolicyV1;
+  discrepancyPolicy: MarketDiscrepancyPolicyV1;
+  reasonCatalogId: "market-reasons-v1";
+  boundsPolicyId: "market-reference-bounds-v1";
+}>;
+
+selectionPolicyId =
+  "msp1_" + H("peas/market-selection-policy/v1", selectionPolicyPreimage)
+```
+
+H-001 fields are exact literals
+`capture`, `retrieval`, `true`, `last-eligible-at-or-before`, and
+`last-eligible-strictly-before-publication`. An omitted or inferred anchor rejects. Each named
+policy field is exactly the complete closed object above; `reasonCatalogId` is
+`market-reasons-v1`; `boundsPolicyId` is `market-reference-bounds-v1`; and
+`contractAuthorityRegistryId` must validate against the exact accepted checkpoint.
+
+```text
+candidateSetHash = H("peas/market-candidate-set/v1", candidates)
+
 selectedReferenceId = "msr1_" + H("peas/market-selected-reference/v1", {
-  marketReferenceJoinKey, intervalKey, referenceKind, selectionPolicyId,
-  asOfBasis, selectedNormalizedMarketFactId, selectedRevisionId, candidateSetHash
+  marketReferenceJoinKey,intervalKey,referenceKind,selectionPolicyId,
+  asOfBasis,resultStatus,selectedNormalizedMarketFactId,selectedRevisionId,
+  candidateSetHash,diagnostics
 })
 
 missingReferenceId = "mmr1_" + H("peas/market-missing-reference/v1", {
-  marketReferenceJoinKey, intervalKey, referenceKind, selectionPolicyId,
-  asOfBasis, reasonCode, reasonDetail, candidateSetHash
+  marketReferenceJoinKey,intervalKey,referenceKind,selectionPolicyId,
+  asOfBasis,resultStatus,reason,candidateSetHash
 })
 
 providerDiscrepancyId = "mdp1_" + H("peas/market-provider-discrepancy/v1", {
-  marketReferenceJoinKey, intervalKey, referenceKind, selectionPolicyId,
-  providerResultIds, comparisonPolicyVersion, comparisonResult
+  marketReferenceJoinKey,intervalKey,referenceKind,selectionPolicyId,
+  providerResultIds,discrepancyPolicy,comparisonResult
 })
 ```
 
-`eligibilityOutcome.status` is `eligible|degraded|ineligible|rejected`. `reasonCode` and
-`reasonDetail` are both null for eligible/degraded candidates except that degradation is retained
-in sorted `diagnosticCodes`; terminal/ineligible outcomes carry the canonical reason and its exact
-closed detail object or null. `missingReferenceId.reasonDetail` is the same exact closed detail
-object or null required by the reason catalog. This prevents two causes sharing one consolidated
-reason string from colliding.
+`candidates` is an array of exact
+`{providerObservationId,revisionId,normalizedMarketFactId,eligibilityStatus,reason,diagnostics}`
+objects sorted lexicographically by the three IDs and then RFC 8785 bytes of the remaining fields.
+`eligibilityStatus` is `eligible|degraded|ineligible|rejected`; `reason` is
+`CanonicalMarketReasonV1|null`; and `diagnostics` uses the exact sorted representation above.
+Eligible/degraded has null reason; ineligible/rejected has one reason. The array includes every
+candidate outcome and rejects duplicate tuples.
 
-`providerResultIds` is sorted and keeps equal cross-provider values separate. `comparisonResult` is
-`agree|disagree|not-comparable`. Missing is a stable first-class result retained in denominators.
-The candidate set includes rejected candidates so ordering, paging, or missingness cannot hide
-evidence. A selected/missing result is persisted once and never recomputed after later arrival.
-
-As-known selection admits only revisions authoritatively durably captured by its cutoff. A
-later-arriving correction with earlier effective time remains excluded. Corrected selection uses
-only the revisions named by the frozen dataset manifest through its exact seven-day cutoff. The two
-views have different selection policy IDs even when their prices agree.
+A selected result has `resultStatus:selected-complete|selected-degraded`; complete has empty
+diagnostics and degraded has at least one. A missing result has `resultStatus:"missing"` and one
+canonical reason. Rejected operations emit neither `msr1_` nor `mmr1_`. `referenceKind` is one of
+the eleven exact values and `asOfBasis` is the complete object above. `providerResultIds` is unique
+and UTF-8 sorted; `comparisonResult` is `agree|disagree|not-comparable`. Equal cross-provider values
+remain independent. Persisted results are immutable.
 
 ### Study design, frame, cluster, manifest, and dataset freeze
 
 ```text
 studyDesignId = "std1_" + H("peas/study-design/v1", {
-  designVersion, acceptedContractIds, algorithms, metricDefinitions,
+  designVersion, contractAuthorityRegistryId, acceptedContractIds,
+  algorithms, metricDefinitions,
   gateThresholds, missingPolicyId, outlierPolicyId, multiplicityPolicyId,
   correctionPolicyId, sensitivityPolicyId, boundsPolicyId, analysisCodeDigest
 })
@@ -376,7 +736,8 @@ studyClusterId = "scl1_" + H("peas/study-cluster/v1", {
 })
 
 studyManifestId = "sfm1_" + H("peas/study-freeze-manifest/v1", {
-  studyDesignId, codeCommit, configurationDigest, contractIds,
+  studyDesignId, codeCommit, configurationDigest,
+  contractAuthorityRegistryId, contractIds,
   calendarSnapshotId, entitlementSnapshotIds, providerSourcePolicyId,
   selectionPolicyId, primaryAnchorKind, alternateAnchorRequired,
   readyAtMs, samplingFrameAsOfMs, freezePublishedAtMs,
@@ -393,7 +754,9 @@ datasetFreezeId = "sdf1_" + H("peas/study-dataset-freeze/v1", {
 })
 ```
 
-All set-like arrays are sorted unique. `candidates` includes frame facts only; no outcome,
+`acceptedContractIds` and `contractIds` are exactly the nine logical IDs in the validated
+`contractAuthorityRegistryId`, sorted by unsigned UTF-8. All other set-like arrays are sorted
+unique. `candidates` includes frame facts only; no outcome,
 provider success, price, actual latency, event-time condition, correction, result, or conclusion may
 enter design/frame/cluster/manifest identities. `StudyDatasetFreezeV1` is the first study identity
 that may name collected market outcomes and typed missing results. It cannot alter any design,
@@ -442,16 +805,24 @@ The executable suite must pin canonical preimage bytes and IDs for every prefix/
 prove at minimum:
 
 - every displayed ID rejects a forged value;
+- every `car1_` entry rejects a forged blob, digest, path, commit, missing logical
+  ID, extra logical ID, `HEAD`, branch, or `latest`;
+- every `mik1_`, `mcs1_`, `mcc1_`, component-policy field, candidate tuple, as-of field, reference
+  kind, result status, reason detail, and diagnostic rejects missing/extra/forged values in both
+  directions;
 - null and absent differ; unknown and current values cannot substitute;
 - same content under different provider/feed/endpoint/entitlement observations shares only
   content/fact identities allowed by this contract;
 - exact redelivery collapses semantically while preserving delivery evidence;
 - same-provider conflicts reject in every order;
-- correction effective time and durable arrival produce distinct as-known/corrected views;
+- correction effective time, durable recorded evidence, and immutable corpus membership produce
+  distinct `recorded-primary`/`recorded-corrected` views without a provider-known claim;
 - symbol continuity requires an exact effective mapping and share-class evidence;
 - quote, trade, bar, and prior close cannot collide or substitute;
 - H-001 capture-primary and retrieval-sensitivity branches have distinct policy/result IDs but the
   same fact identities;
+- `recorded-primary` admits exactly first-corpus membership and `recorded-corrected` includes
+  durable evidence one millisecond before/at its cutoff while excluding one millisecond after;
 - page, order, restart, replay, backend, and clock-regression remapping invariance; and
 - URL, query, credential, header, account, path, wall-clock telemetry, provider bytes, and outcome
   conclusions cannot enter forbidden preimages.

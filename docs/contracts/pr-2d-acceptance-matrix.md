@@ -26,9 +26,10 @@ This matrix cross-links:
 
 ## Contract identity registry
 
-The integration owner must bind each logical ID to the accepted document digest/commit before the
-contract checkpoint. No implementation may accept `latest`, a path alone, or a mutable display
-title as contract authority.
+The integration owner first commits the exact contract content, then materializes the external
+`ContractAuthorityRegistryV1` record in a follow-on publication commit before the independent
+review checkpoint. No implementation may accept `latest`, a path alone, or a mutable display title
+as contract authority.
 
 | Logical contract ID | Semantic authority |
 | --- | --- |
@@ -36,7 +37,8 @@ title as contract authority.
 | `peas/market-provider-source-identity/v1` | Provider/dataset/feed/instrument/fact/observation/revision/result identity |
 | `peas/market-timestamp-trust/v1` | Timestamp, sequence, clock, anchor, and session trust |
 | `peas/market-eligibility/v1` | Quote/trade/bar/prior-close/session/correction selection |
-| `peas/market-reason-catalog/v1` | Closed `market.*` and `study.*` reasons/flags |
+| `peas/market-reason-catalog/v1` | Closed 63-definition `market.*` catalog, details, priority, and applicability |
+| `peas/study-reason-catalog/v1` | Closed 33-definition `study.*` catalog, preservation, details, priority, and applicability |
 | `peas/market-resource-bounds/v1` | Canonical exact byte/item/key/depth/window/state bounds |
 | `peas/market-fixture-manifest/v1` | Original-synthetic recorded fixture contract |
 | `peas/study-freeze-manifest/v1` | N=180 pre-outcome design, selection, and dataset-freeze contract |
@@ -69,12 +71,13 @@ PR 2C/storage/replay suite remains required as regression evidence.
 | `AM-ID-005` | all contracts | Every public constructor/validator rejects unknown, missing, inherited, accessor, symbol, proxy, sparse, cyclic, duplicate-key, unsafe/nonfinite, and over-limit values before getter/trap execution or hashing. | `X-01`, hostile-boundary counters | `REQUIRED_PENDING` |
 | `AM-ID-006` | provider-source | Same provider stable identity with changed content and no explicit revision quarantines independent of input/arrival order; distinct providers never collapse. | `R-05` | `REQUIRED_PENDING` |
 | `AM-ID-007` | provider-source, observation ledger | `marketReferenceJoinKey` remains the exact inherited PR 2C key; prices/provider/feed/result/study outcomes do not enter it or earnings/evidence-bundle identity. | golden join vectors, regression suite | `REQUIRED_PENDING` |
+| `AM-ID-008` | all contracts | The external `car1_` registry contains exactly ten sorted logical authorities over nine immutable document blobs at one exact content commit; both reason-catalog IDs intentionally bind the same reason document. Every document SHA-256, Git blob OID, path, content commit, and registry ID recomputes; missing, extra, forged, `HEAD`, branch, `latest`, path-only, self-referential, or audit-cyclic authority rejects. | registry golden/forgery vectors and independent checkpoint audit | `REQUIRED_PENDING` |
 
 ## H-001, timestamp, selection, and metric evidence
 
 | ID | Contract IDs | Required executable proof | Planned evidence | Status |
 | --- | --- | --- | --- | --- |
-| `AM-TM-001` | ADR0010, timestamp, eligibility | Durable capture is the implicit/default primary only under accepted H-001; retrieval is mandatory sensitivity. Missing explicit policy/default mismatch fails. | `M-02`, contract vectors | `REQUIRED_PENDING` |
+| `AM-TM-001` | ADR0010, timestamp, eligibility | The accepted explicit H-001 policy names durable capture as primary and retrieval as mandatory sensitivity. An absent policy, capture mismatch, retrieval omission, or reinterpretation of retrievedAtMs fails with the exact canonical anchor reason/detail. | `M-02`, explicit-policy accept/reject vectors | `REQUIRED_PENDING` |
 | `AM-TM-002` | timestamp | Retrieval basis retains exact PR 2C `retrievedAtMs` semantics and is never described or hashed as transport/response completion. | schema rejection/vector | `REQUIRED_PENDING` |
 | `AM-TM-003` | timestamp | Capture-minus-retrieval is emitted when both bases validate; incompatible clocks, missing basis, wall regression, monotonic regression/session mismatch fail or type missing exactly. | anchor/clock matrix | `REQUIRED_PENDING` |
 | `AM-SEL-001` | eligibility | Every Q/L/B point selector uses only facts with event time `<= target`; an otherwise eligible fact at target+1 ns is ignored. | `Q-03`, `M-01` | `REQUIRED_PENDING` |
@@ -82,7 +85,7 @@ PR 2C/storage/replay suite remains required as regression evidence.
 | `AM-SEL-003` | eligibility | T0/T1/T5/T30 are exact UTC offsets; no snapping to quote, bar, minute, or wall-clock boundary; duplicate/omitted/fifth target rejects. | target-vector tests | `REQUIRED_PENDING` |
 | `AM-SEL-004` | eligibility | Missing Q0 independently makes only dependent quote metrics missing; other target evidence is still evaluated and recorded. | `M-03` | `REQUIRED_PENDING` |
 | `AM-MET-001` | eligibility | Prior-close, release-gap, and residual +1/+5/+30 outputs use exact reduced rational arithmetic and bind endpoint result IDs, times, sessions, age, view, basis, and policies. | `M-01`, exact numeric vectors | `REQUIRED_PENDING` |
-| `AM-MET-002` | eligibility | Quote, last-eligible-trade, and completed-bar results/metrics remain differently typed/named; available trade/bar never fills missing quote. | `M-04` | `REQUIRED_PENDING` |
+| `AM-MET-002` | eligibility | `quote-nbbo-midpoint`, `trade-last-eligible-consolidated`, and `bar-one-minute-completed-close` results/metrics remain differently typed/named; available trade/bar never fills a missing quote. | `M-04` | `REQUIRED_PENDING` |
 | `AM-MET-003` | eligibility | Official corrected/listing close precedence is exact; final trade or daily bar can appear only as labeled sensitivity. | `PCL-01..03` | `REQUIRED_PENDING` |
 | `AM-MET-004` | eligibility, bounds | Decimal coefficient/scale/midpoint and signed rational return canonicalization has exact boundary/one-over, zero denominator, negative/zero eligible price, and no IEEE-754 drift. | `Q-01`, `Q-02`, numeric bounds | `REQUIRED_PENDING` |
 
@@ -105,14 +108,25 @@ PR 2C/storage/replay suite remains required as regression evidence.
 
 | ID | Contract IDs | Required executable proof | Planned evidence | Status |
 | --- | --- | --- | --- | --- |
-| `AM-REV-001` | provider-source, eligibility | Correction/cancellation creates immutable targeted revision; original remains. As-recorded and later-corrected views select exact expected states. | `R-01..03` | `REQUIRED_PENDING` |
+| `AM-REV-001` | provider-source, eligibility | Correction/cancellation creates an immutable targeted revision; original remains. `recorded-primary` and `recorded-corrected` select the exact expected corpus states. | `R-01..03` | `REQUIRED_PENDING` |
 | `AM-REV-002` | provider-source | Orphan, fork, cycle, reused revision key, over-depth chain, and correction of unsupported cancellation fail closed in every arrival order. | `R-06`, bound cases | `REQUIRED_PENDING` |
 | `AM-DUP-001` | provider-source | Same identity+digest redelivery applies once but retains deliveries; same identity+different digest without edge conflicts; same values across providers stay distinct. | `R-04..05`, `D-01` | `REQUIRED_PENDING` |
 | `AM-ORD-001` | timestamp | Trusted source sequence beats arrival order; gaps/resets/retransmissions/regressions and equal-time ambiguity have exact fail/recovery behavior. Artifact ordinal never claims market order. | `Q-12..13`, `O-02` | `REQUIRED_PENDING` |
 | `AM-INS-001` | provider-source, eligibility | Effective-dated alias continuity only with authoritative same-issue/share-class evidence; symbol reuse, ambiguous class/CUSIP-like change, and unsupported bridge fail. | `I-01..03` | `REQUIRED_PENDING` |
 | `AM-CA-001` | provider-source, eligibility | Corporate action crossing makes primary comparison missing; pure split/cash sensitivity is exact; merger/spin/ADR/combined/ambiguous actions never guess. | `C-01..04` | `REQUIRED_PENDING` |
-| `AM-DIS-001` | provider-source, study | Independent provider results yield deterministic `agree|disagree|not-comparable`; primary missing is never filled, equal facts retain provenance, and provider priority cannot change. | `D-01..03` | `REQUIRED_PENDING` |
-| `AM-MISS-001` | reason catalog | Every selected/missing/rejected result uses exactly one closed primary reason plus sorted closed flags; provider/free-form error text never enters identity. | complete case/reason matrix | `REQUIRED_PENDING` |
+| `AM-DIS-001` | provider-source, study | Independent provider results yield exactly `agree`, `disagree`, or `not-comparable`; primary missing is never filled, equal facts retain provenance, and provider priority cannot change. | `D-01..03` | `REQUIRED_PENDING` |
+| `AM-MISS-001` | market reason catalog | Every selected/missing/rejected market result uses exactly one closed primary reason plus sorted closed diagnostics; provider/free-form error text never enters identity. | complete market case/reason matrix | `REQUIRED_PENDING` |
+
+## Closed reason-catalog evidence
+
+| ID | Contract IDs | Required executable proof | Planned evidence | Status |
+| --- | --- | --- | --- | --- |
+| `AM-RSN-001` | market reason catalog | Enumerate exactly 63 unique `market.*` definitions and unique numeric priorities; every code, required detail value, null-detail case, disposition, scope, applicability, retired alias, and collision vector validates or rejects exactly. | exhaustive generated catalog vectors | `REQUIRED_PENDING` |
+| `AM-RSN-002` | study reason catalog | Enumerate exactly 33 unique `study.*` definitions and unique numeric priorities; every code, required detail value, null-detail case, disposition, scope, applicability, and unknown/retired spelling validates or rejects exactly. | exhaustive generated study catalog vectors | `REQUIRED_PENDING` |
+| `AM-RSN-003` | study reason catalog | Missing, extra, inherited, accessor, symbol, proxy, sparse, cyclic, duplicate-key, wrong-code/detail, wrong-disposition, wrong-scope, wrong-subject, and noncanonical-order `StudyReasonV1` values reject as `study.input-invalid` before hashing or value echo. | one-mutation-at-a-time hostile schema vectors | `REQUIRED_PENDING` |
+| `AM-RSN-004` | market reason catalog, study reason catalog | Every fatal collision selects the lowest numeric applicable reason independent of input order; frame dispositions remain pre-rank counts; retained outcomes never change N=180; metric-missing is metric-local; annotations sort uniquely by canonical tuple. | all-pairs priority and permutation matrix | `REQUIRED_PENDING` |
+| `AM-RSN-005` | market reason catalog, study reason catalog | Every study reason requiring market evidence carries an exact immutable `marketResultId` plus byte-equal canonical market code/disposition/scope/detail. Missing, partial, forged, differently detailed, replaced, or generic study substitution rejects; the original market reason remains independently queryable. | bidirectional preservation and forgery vectors | `REQUIRED_PENDING` |
+| `AM-RSN-006` | reason catalog, bounds | The 64-definition ceiling applies independently to each namespace: 64 market or study definitions validates, 65 in either rejects with `study.bound-exceeded` and `limitKind=reasonDefinitions`; counts are never summed across namespaces. | 63/64/65 per-namespace vectors | `REQUIRED_PENDING` |
 
 ## Replay, persistence, and deterministic state evidence
 
@@ -134,20 +148,32 @@ PR 2C/storage/replay suite remains required as regression evidence.
 | `AM-ST-003` | study | Sampling frame snapshot alone controls lane/strata/rank/allocation; later per-event T-1 snapshots annotate drift and cannot change selection. | frame/T-1 mutation matrix | `REQUIRED_PENDING` |
 | `AM-ST-004` | study | SHA-256 rank and capacity-aware Hamilton floors/remainders/ties/exhaustion recompute exactly under every input order; unknown cells explicit; insufficient quota blocks start. | ranking/allocation vectors | `REQUIRED_PENDING` |
 | `AM-ST-005` | study | Freeze/calendar dates derive from gate GO timestamps, freeze strictly precedes S6 open, collection is S15..S79, and an outcome before freeze rejects. | calendar/freeze boundary tests | `REQUIRED_PENDING` |
-| `AM-ST-006` | study | Cancelled, shifted, missed, duplicate, halted, contaminated, missing, disagreeing, or corrected cluster remains in fixed N=180; no replacement or denominator shrink. | attrition permutation matrix | `REQUIRED_PENDING` |
+| `AM-ST-006` | study, study reason catalog | Cancelled, shifted, missed, halted, contaminated, missing, disagreeing, or corrected selected cluster retains the exact closed study reason and preserved market reason where required, remains in fixed N=180, and cannot be replaced. Duplicate selected identity is fatal before dataset materialization. | attrition/reason/preservation permutation matrix | `REQUIRED_PENDING` |
 | `AM-ST-007` | study | Every forbidden actual outcome/provider success/price/latency/result/correction/post-frame field in a pre-outcome object rejects before ranking and without value echo. | one-field-at-a-time leakage matrix | `REQUIRED_PENDING` |
 | `AM-ST-008` | study, eligibility | E1 completeness, E2 conservative 15-minute timing, E3 half-spread residual information, and E4 reproduction use fixed n=180 and exact quote/reference rules. | metric golden vectors | `REQUIRED_PENDING` |
 | `AM-ST-009` | study | Wilson calculation uses pinned z/precision/sqrt/rounding; lower/upper equality and one unit around 0.75/0.70/0.25 yield exact GO/NO_GO/inconclusive. | threshold vectors | `REQUIRED_PENDING` |
 | `AM-ST-010` | study | Missing is not-success for primary rates; no primary imputation; valid extremes retained; invalid price is missing; winsorized/missing-bound sensitivities cannot alter gate. | missing/outlier matrix | `REQUIRED_PENDING` |
 | `AM-ST-011` | study | Holm has exactly 24 slots, missing slot p=1, tied p uses slot ID; bootstrap has exactly 10,000 lane-stratified deterministic rejection-sampled replicates. | Holm/bootstrap vectors | `REQUIRED_PENDING` |
-| `AM-ST-012` | study, provider-source | As-recorded cutoff prevents correction look-ahead; later-corrected cutoff exactly T0+604800000 ms includes equality and excludes +1 ms; dataset freezes after all cutoffs. | correction-cutoff matrix | `REQUIRED_PENDING` |
+| `AM-ST-012` | study, provider-source | `recorded-primary` freezes first-corpus membership; `recorded-corrected` at exactly T0+604800000 ms includes equality and excludes +1 ms; neither is represented as provider-native knowledge, and the dataset freezes after all cutoffs. | correction-cutoff matrix | `REQUIRED_PENDING` |
 | `AM-ST-013` | study | Dataset freeze contains exactly one entry per frozen cluster, complete attrition/denominator tables and selected/missing IDs, while pre-outcome design/selection fields remain byte-identical. | dataset-freeze differential | `REQUIRED_PENDING` |
 
 ## Bound-coverage ledger
 
-Every canonical bound row in `peas/market-resource-bounds/v1`, plus every fixture/study bound below,
-must produce machine-readable evidence `{boundId,exactCaseId,oneOverCaseId,exactResult,oneOverReason}`.
-No aggregate “bounds tested” boolean is sufficient.
+Every canonical bound row in `peas/market-resource-bounds/v1` must produce machine-readable
+`BoundDispositionV1` evidence plus
+`{exactCaseId,upperOneOverCaseId,lowerCaseId,siblingPosition,settledBeforeReturn,
+zeroPartialOutput,noPostReturnActivity}`. `lowerCaseId` is required for a range, minimum, or exact
+count and null otherwise. Each disposition must match the one closed enforcement-ledger stage,
+reason, detail, and atomicity. No aggregate “bounds tested” boolean is sufficient.
+
+| ID | Contract IDs | Required executable proof | Planned evidence | Status |
+| --- | --- | --- | --- | --- |
+| `AM-BND-001` | bounds | `BoundDispositionV1` accepts only its exact closed fields/enums and all 84 unique bound IDs. Missing, extra, forged ID/stage/vector/reason/detail/atomicity, noncanonical key, and duplicate ledger membership reject before hashing. | schema and complete-ID registry vectors | `REQUIRED_PENDING` |
+| `AM-BND-002` | bounds | Each of 84 bound IDs reaches the named public stage at exact acceptance and produces the sole ledger disposition at upper one-over; ranges/minimums/exact counts also produce the sole lower-one-below or exact-count-minus-one disposition. | generated 84-row exact/upper/lower matrix | `REQUIRED_PENDING` |
+| `AM-BND-003` | bounds | A 65-byte timestamp yields only `market.bound-exceeded/limitKind=timestampTextBytes`; a 21-digit primary coefficient yields only operation-rejected `market.decimal-invalid`; 65 instruments and a ninth query date yield only `market.bound-exceeded` and never validator splitting. | R2D-CONTRACT-006 regression vectors | `REQUIRED_PENDING` |
+| `AM-BND-004` | bounds | Pre-acquisition planner splitting is a separately identified operation completed before validation; recorded parser/validator one-over input always rejects and never silently starts another acquisition. | planner/validator isolation vectors | `REQUIRED_PENDING` |
+| `AM-BND-005` | bounds | Declared-in-limit/actual-one-over and stream growth/replacement fail on verified actual size. Violating siblings in first/middle/last position settle every acquired stream before return, emit zero partial output, and schedule no post-return activity. | fault-injected stream/member matrix | `REQUIRED_PENDING` |
+| `AM-BND-006` | bounds, reason catalogs | Quote-age +1 is candidate-only `market.quote-stale`; capture/retrieval lag +1 is metric-local `market.timestamp-insufficient/capture-retrieval-lag-exceeded`; liquidity one-below, timely +1, and correction +1 produce only their exact closed study dispositions without changing the frozen cohort. | threshold classification vectors | `REQUIRED_PENDING` |
 
 | Bound family | Required boundary members | Status |
 | --- | --- | --- |
@@ -161,9 +187,9 @@ No aggregate “bounds tested” boolean is sufficient.
 | Study structure | frame 8192/8193, cells 2048/2049, 180 and 100..200, lane/control +/-1, references/revisions/annotations | `REQUIRED_PENDING` |
 | Study time/statistics | 65 sessions, 120 days/+1 ms, 20/15 liquidity, 900000/900001 latency, 604800000/+1 correction, 10000/10001 bootstrap, 24/25 Holm | `REQUIRED_PENDING` |
 
-The exact case must pass and the one-over case must fail with the canonical bound reason before
-partial materialization. A declared in-limit size paired with actual growth one over must fail on
-the actual verified read.
+The exact case must pass. Every upper-one-over, lower-one-below, and exact-count-minus-one case must
+produce its sole closed-ledger disposition before partial materialization. A declared in-limit size
+paired with actual growth one over must fail on the actual verified read.
 
 ## Licensing, zero-spend, effect, and compatibility evidence
 

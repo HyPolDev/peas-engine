@@ -115,9 +115,12 @@ Current checkpoint: PR 2B and the original PR 2C are merged as pull requests #3 
 PR 2C implementation has exact-SHA independent `GO`, and combined readiness candidate `8ab07d67`
 has a final independent readiness `GO` with `R2D-READY-001` closed. PR #5 merged as exact PR 2D base
 `0377323b5486a8ad3b8e2631d4c8559760893be6`; that `origin/main` was fetched and verified before the
-isolated branch was created. P1-07 research is complete, the human owner approved durable capture
-as primary with retrieval sensitivity and as-of target selectors, and the proposed ADR/contracts
-now await exact-checkpoint independent review. P1-08 remains sequenced after contract `GO`. No new
+isolated branch was created. P1-07 research is complete, and the human owner approved durable
+capture as primary with retrieval sensitivity and as-of target selectors. The first contract
+checkpoint `7c484124680972b5cbbd39f31cf69b542a6341cc` received independent `NO_GO`; its six
+determinism findings are preserved in `docs/audit/pr-2d-contract-review.md` and have been repaired.
+The repaired content and its external immutable digest/blob registry now await a fresh exact-SHA
+independent review. P1-08 remains sequenced after contract `GO`. No new
 market-data spend is authorized before the first event-validation study. Historical Alpaca REST
 `feed=sip`, WebSocket `v2/delayed_sip`, and latest-endpoint `feed=delayed_sip` are separate identities
 unless written provider evidence proves an exact equivalence. Existing FMP Premium is a pending

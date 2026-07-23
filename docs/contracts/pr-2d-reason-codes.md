@@ -4,6 +4,9 @@ Status: normative Wave 2 contract input
 Catalog ID: market-reasons-v1
 Canonical namespace: market.*
 Canonical definitions: 63, within the resource-bound maximum of 64
+Study catalog ID: study-reasons-v1
+Study namespace: study.*
+Study definitions: 33, within the independent per-namespace maximum of 64
 
 This document reconciles every independent mr.* and market.* research proposal into one closed PR
 2D namespace. Constructors, validators, normalizers, selectors, missing results, discrepancy
@@ -28,8 +31,8 @@ market.* is the only PR 2D market-reference namespace.
 
 Inherited fmp.*, ir.*, observation.*, and clock.* values remain upstream transcript/ledger reasons.
 They are not aliases and are not renamed. A PR 2D record retains them in typed provenance while its
-own primaryReason uses this catalog. study.* remains a separate event-study layer and may point to
-one immutable market result without replacing its reason.
+own typed `reason` uses this catalog. study.* is the separately versioned closed event-study layer
+defined in section 5. It points to immutable market results without replacing their reasons.
 
 Some canonical codes use one required closed detail enum to stay within the frozen 64-definition
 bound without losing deterministic cause. Detail is a separately validated enum field, not free
@@ -37,6 +40,7 @@ text and not part of the reason string:
 
 | Canonical code | Required detail field | Closed values |
 | --- | --- | --- |
+| market.bound-exceeded | limitKind | One exact market-scoped bound key from `market-reference-bounds-v1`. |
 | market.source-contract-invalid | sourceFailureKind | incomplete, endpoint-unknown, spec-version-unknown |
 | market.entitlement-invalid | entitlementFailureKind | unfrozen, pending, denied, scope-mismatch, zero-spend-violation |
 | market.artifact-invalid | artifactFailureKind | observation-invalid, digest-mismatch, size-mismatch, observation-hash-mismatch, media-or-encoding-mismatch |
@@ -56,7 +60,7 @@ text and not part of the reason string:
 The detail value is required exactly for those codes and forbidden for other codes. Provider error
 text, HTTP text, exception text, symbol, price, path, URL, credential, account fact, current wall
 time, and arbitrary free text are forbidden from codes, details, and identities. Bounded structured
-evidence may separately carry IDs, limitKind, expected/actual counts, and policy versions.
+evidence may separately carry IDs, expected/actual counts, and policy versions.
 
 ## 2. Dispositions and priority
 
@@ -68,8 +72,8 @@ evidence may separately carry IDs, limitKind, expected/actual counts, and policy
 | degraded | none | Emit selected result plus sorted unique diagnostic. |
 | annotation | none | Retain nonterminal evidence; selected/missing status is decided elsewhere. |
 
-A missing/rejected result has exactly one primaryReason. A selected result has primaryReason null.
-selected-degraded has one or more diagnosticCodes.
+A missing/rejected result has exactly one typed `reason`. A selected result has `reason:null`.
+`selected-degraded` has one or more sorted typed `diagnostics` entries.
 
 Priority is deterministic:
 
@@ -86,6 +90,21 @@ Priority is deterministic:
 
 Arrival order, provider priority, page order, hash order, or implementation branch order cannot
 change priority.
+
+For the three definitions whose terminal scope depends on the validated subject, the mapping is
+closed:
+
+| Canonical code | Validated subject | Disposition and scope |
+| --- | --- | --- |
+| market.timestamp-insufficient | one candidate fact | ineligible / candidate |
+| market.timestamp-insufficient | reference or metric after the complete candidate set | missing / reference or metric |
+| market.sequence-insufficient | one candidate or revision member | ineligible / candidate |
+| market.sequence-insufficient | complete source state or reference | missing / state or reference |
+| market.instrument-invalid | one candidate fact | ineligible / candidate |
+| market.instrument-invalid | requested reference after complete mapping evidence | missing / reference |
+
+No caller chooses between these outcomes. The already validated subject type and complete-set state
+determine the single row before priority evaluation.
 
 ## 3. Canonical terminal and missing definitions
 
@@ -104,7 +123,7 @@ change priority.
 | 11 | market.decimal-invalid | rejected | operation | price/size/action/return | Decimal is malformed, noncanonical, non-positive where required, out of bounds, or arithmetic overflows. |
 | 12 | market.timestamp-invalid | rejected | operation | any timestamp | Grammar, range, precision representation, timezone/offset, or exact conversion is invalid. |
 | 13 | market.clock-basis-invalid | rejected | operation | PEAS clock/anchor/revision arrival | Basis, stamp, synchronization/error/nullability, parent, regression witness, or monotonic order violates contract. |
-| 14 | market.anchor-policy-invalid | rejected | operation | selection/study policy | Primary is not durable capture, retrieval sensitivity is not mandatory, anchor is implicit, or retrievedAtMs is reinterpreted. |
+| 14 | market.anchor-policy-invalid | rejected | operation | selection/study policy | The explicit policy is absent, primary is not durable capture, retrieval sensitivity is not mandatory, or retrievedAtMs is reinterpreted. |
 | 15 | market.sequence-regression | rejected | operation | source state | Sequence regresses outside a documented reset or reset/retransmission contract is violated. |
 | 16 | market.replay-incompatible | rejected | operation | replay/restart/backend | Replay changes semantic evidence/identity, fails causal remap, selects partial state, or differs by page/order/restart/backend. |
 | 17 | market.silent-fallback-forbidden | rejected | operation | source/reference selection | Quote/trade/bar/prior-close/provider/feed substitution is attempted without a distinct frozen labeled policy. |
@@ -114,7 +133,7 @@ change priority.
 | 101 | market.timestamp-insufficient | ineligible or missing | candidate/reference/metric | market fact/publication/capture-retrieval latency | Required timestamp is missing, semantic/precision cannot support the use, or comparable capture-retrieval lag exceeds 600,000 ms; timestampFailureKind fixes scope/disposition. |
 | 102 | market.clock-basis-incompatible | missing | metric/sensitivity | capture-retrieval latency | Bases validate independently but do not share one comparable trusted clock basis. |
 | 103 | market.sequence-insufficient | ineligible or missing | candidate/state/reference | source ordering | Required sequence is absent, state has an unresolved gap, or equal-time differing facts lack trusted order; sequenceFailureKind fixes scope/disposition. |
-| 104 | market.correction-view-unknown | missing | reference/view | historical provider data | Original/revision/arrival semantics cannot reconstruct requested as-known view. |
+| 104 | market.correction-view-unknown | missing | reference/view | historical provider data | Original/revision/corpus-membership semantics cannot reconstruct the requested recorded view. |
 | 105 | market.instrument-invalid | ineligible or missing | candidate/reference | instrument/share class/symbol | Mapping is absent, ambiguous, outside effective interval, or symbol continuity is unproved; instrumentFailureKind fixes scope/disposition. |
 | 106 | market.coverage-insufficient | missing | reference | provider/source coverage | Coverage is not frozen or explicitly excludes instrument/session/date; coverageFailureKind distinguishes it. |
 | 107 | market.currency-unsupported | ineligible | candidate | any price/action | Currency is absent, conflicting, or not USD for V1. |
@@ -160,7 +179,137 @@ change priority.
 | 904 | market.provider-disagreement | annotation | provider discrepancy | Independently selected comparable provider results differ under frozen comparison. |
 | 905 | market.provider-not-comparable | annotation | provider discrepancy | Secondary is absent or semantics prevent comparison; this is not agreement. |
 
-## 5. Retirement of every mr.* research spelling
+## 5. Closed study reason catalog
+
+`study-reasons-v1` is a closed catalog. It is not an alias layer over `market.*`. A study reason
+describes frame validation, fixed-denominator retention, metric evaluability, or study diagnostics;
+the exact underlying market result and market reason remain independently preserved as specified
+below.
+
+### 5.1 Typed study reason and details
+
+Every study reason is the exact inert object:
+
+```text
+StudyReasonV1 = {
+  code: one exact study.* code from section 5.2,
+  disposition: fatal | frame-disposition | retained-outcome | metric-missing | annotation,
+  scope: design | frame | candidate | cluster | metric | dataset | replay,
+  detail: null | one exact detail object required by the table below,
+  marketResultId: null | one immutable selected/missing market result ID,
+  preservedMarketReason: null | PreservedMarketReasonV1
+}
+
+PreservedMarketReasonV1 = {
+  code: one canonical market.* code,
+  disposition: the exact market disposition,
+  scope: the exact market scope,
+  detail: null | the exact canonical market detail object
+}
+```
+
+Unknown, missing, extra, inherited, accessor, symbol, proxy, sparse, cyclic, or noncanonical members
+reject the containing study object as `study.input-invalid`. `detail` is required and non-null
+exactly for the codes below and must contain exactly the named key:
+
+| Study code | Required detail key | Closed values |
+| --- | --- | --- |
+| study.bound-exceeded | limitKind | One exact bound key from `market-reference-bounds-v1` whose scope is study. |
+| study.frame-not-frozen | frameFailureKind | snapshot-missing, snapshot-mutable, seed-unfrozen, policy-unfrozen, contract-unbound |
+| study.freeze-after-outcome | freezeFailureKind | equal-to-first-outcome, after-first-outcome |
+| study.outcome-leakage | leakageFieldKind | actual-release, price, latency, condition, availability, correction, market-result, post-frame |
+| study.duplicate-cluster | duplicateFailureKind | duplicate-identity, conflicting-preimage |
+| study.quota-insufficient | quotaKind | lane, control, stratum |
+| study.rank-invalid | rankFailureKind | seed, hash, ordering, allocation |
+| study.primary-provider-unfrozen | providerFreezeKind | provider, dataset, feed, endpoint, entitlement, fallback |
+| study.anchor-policy-invalid | anchorFailureKind | capture-not-primary, retrieval-not-required, policy-missing, retrieved-at-reinterpreted |
+| study.frame-candidate-invalid | candidateFailureKind | schedule, issuer, instrument, fiscal-period, source-conflict |
+| study.release-not-observed | releaseFailureKind | cancelled, postponed, outside-window, not-captured |
+| study.identity-changed | identityChangeKind | issuer, instrument, share-class |
+| study.anchor-clock-insufficient | basisKind | capture, retrieval, capture-minus-retrieval |
+| study.reference-window-missing | endpointKind | pre-release, first-observation, plus-1m, plus-5m, plus-30m, sensitivity |
+| study.correction-semantics-unknown | correctionFailureKind | original-admission, revision-arrival, cancellation, cutoff-evidence |
+| study.concurrent-event | contaminationKind | issuer-release, macro-release, trading-halt, corporate-action |
+| study.market-quality-degraded | qualityKind | halt, stale, locked, crossed, one-sided, condition-ineligible |
+
+Every other study code requires `detail:null`. `marketResultId` and `preservedMarketReason` are both
+required or both null. When non-null they must reproduce the referenced immutable market result
+exactly; a forged, partial, differently detailed, or noncanonical pair rejects as
+`study.input-invalid`.
+
+### 5.2 Canonical study definitions
+
+| Priority | Canonical code | Disposition | Scope | Applies to | Exact trigger |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | study.bound-exceeded | fatal | design/frame/cluster/metric/dataset | study parser/validator/analysis | A named study byte/item/key/depth/node/string/window/state ceiling is exceeded; limitKind is required. |
+| 2 | study.input-invalid | fatal | design/frame/cluster/metric/dataset | any public study input | Closed shape, type, nullability, canonical ordering, identity, or exact-count validation fails and no more specific fatal code applies. |
+| 3 | study.frame-not-frozen | fatal | design/frame | pre-outcome authority | Required immutable snapshot, seed, policy, or accepted contract binding is absent or mutable; frameFailureKind is required. |
+| 4 | study.freeze-after-outcome | fatal | design/frame | freeze chronology | Freeze equals or follows the first selected outcome; freezeFailureKind is required. |
+| 5 | study.outcome-leakage | fatal | design/frame/candidate | pre-outcome selection preimage | A forbidden outcome or post-frame field is present; leakageFieldKind is required. |
+| 6 | study.duplicate-cluster | fatal | frame/cluster | candidate and selected identities | A cluster identity repeats or the same identity has conflicting preimages; duplicateFailureKind is required. |
+| 7 | study.quota-insufficient | fatal | frame | lane/control/stratum allocation | Deterministic eligible capacity cannot fill a fixed target; quotaKind is required. |
+| 8 | study.rank-invalid | fatal | frame | rank/Hamilton allocation | Seed, rank hash, ordering, or allocation does not recompute; rankFailureKind is required. |
+| 9 | study.primary-provider-unfrozen | fatal | design/frame | provider/source gate | Any required provider/source/entitlement/fallback component is not accepted and frozen; providerFreezeKind is required. |
+| 10 | study.anchor-policy-invalid | fatal | design/frame | H-001 policy | Durable capture is not explicit primary, retrieval is not explicit mandatory sensitivity, the policy is missing, or retrievedAtMs is reinterpreted; anchorFailureKind is required. |
+| 11 | study.replay-mismatch | fatal | replay/dataset | order/page/restart/backend replay | Required recomputation differs in any semantic byte, reason, identity, denominator, or result. |
+| 100 | study.frame-candidate-invalid | frame-disposition | candidate | pre-sampling frame | Candidate schedule/issuer/instrument/fiscal/source evidence cannot validate; candidateFailureKind is required and the candidate is counted before sampling. |
+| 101 | study.instrument-out-of-scope | frame-disposition | candidate | instrument universe | Frozen instrument is not a supported U.S.-listed common share or ADR. |
+| 102 | study.share-class-not-selected | frame-disposition | candidate | deterministic share-class choice | Another instrument wins the frozen liquidity then instrument-ID rule. |
+| 200 | study.release-not-observed | retained-outcome | cluster | fixed N=180 cohort | Selected release is cancelled, postponed, outside the collection window, or never captured; releaseFailureKind is required and the cluster remains in every denominator. |
+| 201 | study.timeliness-threshold-not-met | retained-outcome | metric | E2 latency classification | Valid conservative latency lower bound is greater than 900000 ms; this is not missing and remains a non-success. |
+| 300 | study.publication-time-insufficient | metric-missing | metric | latency and release-origin metrics | Publication is null, inferred, date-only, or below frozen primary trust. |
+| 301 | study.anchor-clock-insufficient | metric-missing | metric | capture/retrieval/latency metric | Selected basis or trusted clock/error evidence cannot support the metric; basisKind is required. |
+| 302 | study.latency-ambiguous | metric-missing | metric | E2 latency classification | Conservative latency interval straddles 900000 ms and therefore is not a timely success. |
+| 303 | study.prior-close-missing | metric-missing | metric | prior-close movement | Referenced canonical market result has no eligible prior close. |
+| 304 | study.reference-window-missing | metric-missing | metric | release-gap/residual endpoint | Exact endpoint is absent; endpointKind is required. |
+| 305 | study.correction-semantics-unknown | metric-missing | metric | frozen correction view | Recorded evidence cannot apply the requested original/revision/cancellation cutoff predicate; correctionFailureKind is required. |
+| 306 | study.metric-not-evaluable | metric-missing | metric | any frozen metric | Required validated inputs remain absent after every more-specific study and preserved market reason is recorded. |
+| 900 | study.schedule-changed | annotation | cluster | actual versus frozen schedule | Actual date/session differs from the frozen planned value; membership and denominator cannot change. |
+| 901 | study.t-minus-one-missing | annotation | cluster | T-1 drift snapshot | Per-cluster T-1 snapshot cannot validate; frozen frame membership cannot change. |
+| 902 | study.identity-changed | annotation | cluster | post-frame identity drift | Issuer, instrument, or share-class evidence changes after frame freeze; identityChangeKind is required. |
+| 903 | study.provider-disagreement | annotation | metric/cluster | provider comparison | Frozen independently selected comparable provider results disagree. |
+| 904 | study.provider-not-comparable | annotation | metric/cluster | provider comparison | Secondary is absent or its frozen semantics do not permit comparison; this is not agreement. |
+| 905 | study.correction-after-cutoff | annotation | metric/cluster | correction view | Valid market revision is durably captured one unit after the exact requested cutoff and remains excluded. |
+| 906 | study.concurrent-event | annotation | cluster | contamination policy | A predeclared event-time contamination rule matches; contaminationKind is required and the cluster remains in N=180. |
+| 907 | study.market-quality-degraded | annotation | metric/cluster | referenced market result | Preserved market reason reports halt, stale, locked, crossed, one-sided, or condition failure; qualityKind is required. |
+| 908 | study.outlier-retained | annotation | metric | descriptive return fence | Valid return is outside the frozen descriptive fence; it is retained without winsorization in the primary analysis. |
+| 909 | study.liquidity-unknown | annotation | candidate/cluster | T-1 liquidity evidence | Fewer than 15 of exactly 20 required sessions validate; liquidity stratum is exactly unknown and the fact is not guessed. |
+
+### 5.3 Priority, applicability, and cross-layer preservation
+
+For one public study operation, evaluate all applicable causes against the complete inert snapshot.
+The lowest numeric fatal priority is the sole operation reason and the operation emits no partial
+frame, rank, cluster, manifest, metric set, or dataset. Frame dispositions attach to rejected frame
+candidates and are counted by exact code/detail before sampling. Retained outcomes attach only to
+already frozen clusters and can never recruit, remove, or replace a cluster. A missing metric has
+exactly one lowest-priority applicable metric-missing reason. Annotations are sorted by unsigned
+UTF-8 bytes of `(code, canonical detail, marketResultId)` and are unique by that tuple.
+
+Applicability is closed:
+
+- fatal reasons cannot be downgraded to a frame disposition, retained outcome, missing metric, or
+  annotation;
+- frame dispositions are legal only before rank/allocation and never appear on a selected cluster;
+- retained outcomes and annotations require an already frozen cluster and cannot change N=180;
+- metric-missing reasons apply only to the named metric family and never erase other evaluable
+  metrics;
+- `study.prior-close-missing`, `study.reference-window-missing`,
+  `study.correction-semantics-unknown`, `study.provider-disagreement`,
+  `study.provider-not-comparable`, `study.correction-after-cutoff`, and
+  `study.market-quality-degraded` require the exact `marketResultId` and
+  `preservedMarketReason`;
+- `study.metric-not-evaluable` is legal only after all more-specific causes were evaluated and
+  retains every referenced market result/reason in the metric evidence; and
+- no study code may replace, translate, reprioritize, or discard a canonical market code/detail.
+
+The validator rejects every unknown `study.*` string and the retired
+`study.anchor-human-decision-unresolved` spelling. Because H-001 is approved, the latter maps only
+as migration documentation to `study.anchor-policy-invalid` with the exact applicable detail; it
+is never accepted at runtime. Both catalog IDs and accepted digests are bound into
+`StudyDesignV1`, every study result identity, fixture oracle, and acceptance evidence. A catalog
+change creates a new version and requires pre-outcome review.
+
+## 6. Retirement of every mr.* research spelling
 
 Left-column spellings are not accepted V1 outputs. Where the canonical code uses a detail field, the
 required detail is shown.
@@ -229,7 +378,7 @@ required detail is shown.
 H-001 is approved. mr.anchor-decision-required does not remain a runtime decision-pending state.
 A missing/contradictory approved policy is market.anchor-policy-invalid.
 
-## 6. Reconciliation of other market.* research spellings
+## 7. Reconciliation of other market.* research spellings
 
 Left-column values not present in canonical tables are retired and MUST NOT be emitted.
 
@@ -287,7 +436,7 @@ Consolidating aliases under a required closed detail enum preserves the exact tr
 subject/fact applicability while honoring the maximum of 64 reason definitions. It does not merge,
 raise, or weaken any byte/item/time/state bound.
 
-## 7. Applicability and validator rules
+## 8. Applicability and validator rules
 
 Applicability is normative:
 
@@ -306,8 +455,8 @@ The validator MUST:
 2. reject every mr.* value and every retired market.* alias;
 3. require and validate the exact closed detail field where declared;
 4. validate code/disposition/scope/subject/fact compatibility;
-5. validate one primaryReason for missing/rejected and null for selected;
-6. validate sorted unique diagnosticCodes containing only diagnostic definitions;
+5. validate one typed `reason` for missing/rejected and null for selected;
+6. validate sorted unique typed `diagnostics` containing only diagnostic definitions;
 7. require bounded limitKind for market.bound-exceeded;
 8. preserve upstream reasons separately without accepting them as PR 2D codes;
 9. produce identical reason/detail/diagnostics across input order, page size, restart, replay, and
