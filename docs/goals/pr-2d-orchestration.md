@@ -104,6 +104,18 @@ No owner may edit another owner's surface or any frozen port, migration, depende
 provider, or existing fixture body. Cross-surface changes return to the integration owner for an
 explicit ownership-map amendment before editing.
 
+## Accepted-contract publication proof
+
+Publication commit `d934d1185cf3a42b9e598cf7c7d520da06ee45ce` follows the independent
+audit-only commit `bfdc45fe7ee2276ad143fae31d51cdf290bfbcb0`. Relative to reviewed checkpoint
+`750e1ab2486ce785a60304fceb19a1502ff34319`, `git diff --name-status` reports only the new final
+audit and status/governance changes to ADR 0010, this orchestration record, the project board, and
+the roadmap. The eight normative `docs/contracts/pr-2d-*.md` blobs and the external registry blob
+are byte-identical to the reviewed checkpoint. ADR 0010's only delta is its `Accepted` status,
+reviewed SHA, registry ID, and audit link. No semantic contract, source, fixture, test, port,
+migration, or dependency changed; P1-08 therefore begins from the independently authorized
+contract.
+
 Inherited files that may receive integration/status evidence only are
 `docs/project-board.json`, `docs/project-roadmap.md`, and this orchestration record. Compatibility
 must be demonstrated against, but no PR 2D writer may change, the frozen ports in
