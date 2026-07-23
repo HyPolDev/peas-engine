@@ -2,16 +2,24 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 
-import { FMP_FIXTURE_CASES, type FmpFixtureCase } from "../fixtures/fmp/v1/manifest.js";
-import { NVIDIA_BASELINE_MANIFEST } from "../fixtures/ir/nvidia/v1/manifest.js";
+import {
+  FMP_FIXTURE_CASES,
+  FMP_FIXTURE_SEEDS,
+  type FmpFixtureCase,
+} from "../fixtures/fmp/v1/manifest.js";
+import {
+  NVIDIA_BASELINE_MANIFEST,
+  NVIDIA_FIXTURE_SEEDS,
+} from "../fixtures/ir/nvidia/v1/manifest.js";
 import {
   loadRecordedFmpFixture,
-  type RecordedFmpFixtureManifestV1,
+  type RecordedFmpFixtureManifestV2,
 } from "../src/adapters/fmp/recorded-fmp-fixture.js";
 import {
   loadRecordedNvidiaFixture,
-  type NvidiaFixtureManifestV1,
+  type NvidiaFixtureManifestV2,
 } from "../src/adapters/ir/nvidia/recorded-nvidia-fixture.js";
+import { recordedFixtureArtifactStore } from "./recorded-fixture-artifact-store.js";
 
 const FMP_ROOT = path.join(process.cwd(), "fixtures", "fmp", "v1");
 const NVIDIA_ROOT = path.join(process.cwd(), "fixtures", "ir", "nvidia", "v1");
@@ -23,17 +31,20 @@ function fmpCase(caseId: string): FmpFixtureCase {
 }
 
 async function loadFmp(manifest: unknown) {
-  return loadRecordedFmpFixture({
-    fixtureRoot: FMP_ROOT,
-    manifest: manifest as RecordedFmpFixtureManifestV1,
-  });
+  const caseId = (manifest as { caseId?: unknown }).caseId;
+  const seeds = typeof caseId === "string" ? FMP_FIXTURE_SEEDS.get(caseId) : undefined;
+  assert.ok(seeds);
+  return loadRecordedFmpFixture(
+    recordedFixtureArtifactStore(FMP_ROOT, seeds).store,
+    manifest as RecordedFmpFixtureManifestV2,
+  );
 }
 
 async function loadNvidia(manifest: unknown) {
-  return loadRecordedNvidiaFixture({
-    fixtureRoot: NVIDIA_ROOT,
-    manifest: manifest as NvidiaFixtureManifestV1,
-  });
+  return loadRecordedNvidiaFixture(
+    recordedFixtureArtifactStore(NVIDIA_ROOT, NVIDIA_FIXTURE_SEEDS).store,
+    manifest as NvidiaFixtureManifestV2,
+  );
 }
 
 test("nvidia requires one proof for each derived role and recomputes the complete proof map", async () => {

@@ -1,0 +1,234 @@
+{
+  "schemaVersion": 1,
+  "policyVersion": "0.1",
+  "status": "research-contract",
+  "asOfDate": "2026-07-16",
+  "scope": "US-listed earnings-event capture, research, shadow, and paper eligibility",
+  "liveTradingAuthorized": false,
+  "principles": {
+    "captureFirst": true,
+    "unknownFailsClosed": true,
+    "tickerBlacklistIsPrimaryControl": false,
+    "reasonCodesAreEffectiveDated": true,
+    "noTradeSuppressesCapture": false
+  },
+  "states": ["capture_only", "observe_only", "model_eligible", "no_trade", "trade_eligible"],
+  "gateOrder": [
+    "security_venue",
+    "executable_market",
+    "expectation_evidence",
+    "model_family",
+    "event_contamination",
+    "edge_after_costs"
+  ],
+  "provisionalThresholds": {
+    "minimumPreviousCloseUsd": 5,
+    "minimumMedian20dDollarVolumeUsd": 5000000,
+    "maximumTargetOrderFractionOfMedian20dDollarVolume": 0.005,
+    "maximumRegularSpreadBps": 50,
+    "maximumExtendedSpreadBps": 100,
+    "maximumTargetOrderFractionOfDisplayedCollarDepth": 0.1,
+    "minimumConsensusContributors": 3,
+    "minimumCleanSingleNameEvents": 12,
+    "minimumPersistentWalkForwardFolds": 2,
+    "thresholdStatus": "provisional-until-p5"
+  },
+  "modelFamilies": [
+    {
+      "id": "standard_operating_company",
+      "defaultState": "model_eligible",
+      "requiredMetrics": ["revenue", "eps", "guidance", "operating_kpis"]
+    },
+    {
+      "id": "digital_asset_treasury",
+      "defaultState": "observe_only",
+      "requiredMetrics": [
+        "token_return",
+        "holdings",
+        "diluted_token_per_share",
+        "mnav",
+        "financing",
+        "capital_stack"
+      ]
+    },
+    {
+      "id": "precommercial_biotech",
+      "defaultState": "observe_only",
+      "requiredMetrics": [
+        "trial_calendar",
+        "regulatory_status",
+        "pipeline_value",
+        "cash_runway",
+        "financing"
+      ]
+    },
+    {
+      "id": "bank",
+      "defaultState": "observe_only",
+      "requiredMetrics": ["nim", "deposits", "provisions", "charge_offs", "cet1", "guidance"]
+    },
+    {
+      "id": "insurer",
+      "defaultState": "observe_only",
+      "requiredMetrics": [
+        "combined_ratio",
+        "reserve_development",
+        "premiums",
+        "investment_income",
+        "book_value"
+      ]
+    },
+    {
+      "id": "equity_reit",
+      "defaultState": "observe_only",
+      "requiredMetrics": ["ffo", "affo", "same_store_noi", "occupancy", "leasing", "leverage"]
+    },
+    {
+      "id": "bdc",
+      "defaultState": "observe_only",
+      "requiredMetrics": [
+        "nii",
+        "nav",
+        "nonaccruals",
+        "portfolio_marks",
+        "leverage",
+        "dividend_coverage"
+      ]
+    },
+    {
+      "id": "commodity_producer",
+      "defaultState": "observe_only",
+      "requiredMetrics": [
+        "production",
+        "realized_price",
+        "unit_cost",
+        "hedges",
+        "capex",
+        "commodity_residual"
+      ]
+    },
+    {
+      "id": "holding_nav",
+      "defaultState": "observe_only",
+      "requiredMetrics": [
+        "nav_bridge",
+        "asset_marks",
+        "capital_allocation",
+        "look_through_earnings"
+      ]
+    },
+    {
+      "id": "discontinuous_history",
+      "defaultState": "observe_only",
+      "requiredMetrics": ["post_transaction_identity", "pro_forma_history", "clean_event_count"]
+    }
+  ],
+  "reasonCodes": [
+    { "id": "NT_INSTRUMENT_UNSUPPORTED", "gate": "security_venue", "defaultState": "no_trade" },
+    { "id": "NT_VENUE_UNSUPPORTED", "gate": "security_venue", "defaultState": "no_trade" },
+    { "id": "NT_SHELL_OR_SPAC", "gate": "security_venue", "defaultState": "no_trade" },
+    {
+      "id": "NT_SECURITY_IDENTITY_AMBIGUOUS",
+      "gate": "security_venue",
+      "defaultState": "no_trade"
+    },
+    { "id": "NT_PRICE_BELOW_FLOOR", "gate": "executable_market", "defaultState": "no_trade" },
+    { "id": "NT_CAPACITY_TOO_LOW", "gate": "executable_market", "defaultState": "no_trade" },
+    {
+      "id": "NT_NO_FRESH_TWO_SIDED_QUOTE",
+      "gate": "executable_market",
+      "defaultState": "no_trade"
+    },
+    { "id": "NT_SPREAD_TOO_WIDE", "gate": "executable_market", "defaultState": "no_trade" },
+    { "id": "NT_TRADING_HALTED", "gate": "executable_market", "defaultState": "no_trade" },
+    { "id": "NT_BORROW_UNAVAILABLE", "gate": "executable_market", "defaultState": "no_trade" },
+    {
+      "id": "NT_EXPECTATION_MISSING_OR_STALE",
+      "gate": "expectation_evidence",
+      "defaultState": "no_trade"
+    },
+    {
+      "id": "NT_EVENT_IDENTITY_AMBIGUOUS",
+      "gate": "expectation_evidence",
+      "defaultState": "no_trade"
+    },
+    {
+      "id": "NT_MARKET_SNAPSHOT_INCOMPLETE",
+      "gate": "expectation_evidence",
+      "defaultState": "no_trade"
+    },
+    { "id": "NT_REVISION_UNRESOLVED", "gate": "expectation_evidence", "defaultState": "no_trade" },
+    {
+      "id": "NT_FIRST_OBSERVATION_TOO_LATE",
+      "gate": "expectation_evidence",
+      "defaultState": "no_trade"
+    },
+    { "id": "NT_MODEL_FAMILY_UNSUPPORTED", "gate": "model_family", "defaultState": "observe_only" },
+    { "id": "NT_EXTERNAL_DRIVER_DOMINANT", "gate": "model_family", "defaultState": "observe_only" },
+    {
+      "id": "NT_EARNINGS_NOT_PRIMARY_CATALYST",
+      "gate": "model_family",
+      "defaultState": "observe_only"
+    },
+    {
+      "id": "NT_ACCOUNTING_MARK_TO_MARKET_DOMINATED",
+      "gate": "model_family",
+      "defaultState": "observe_only"
+    },
+    { "id": "NT_INSUFFICIENT_HISTORY", "gate": "model_family", "defaultState": "observe_only" },
+    { "id": "NT_NO_OUT_OF_SAMPLE_EDGE", "gate": "edge_after_costs", "defaultState": "no_trade" },
+    {
+      "id": "NT_CONCURRENT_MATERIAL_EVENT",
+      "gate": "event_contamination",
+      "defaultState": "no_trade"
+    },
+    {
+      "id": "NT_PRICE_DISCOVERY_UNSTABLE",
+      "gate": "event_contamination",
+      "defaultState": "no_trade"
+    },
+    { "id": "NT_MARKET_DISLOCATION", "gate": "event_contamination", "defaultState": "no_trade" },
+    {
+      "id": "NT_EXPECTED_EDGE_NOT_AFTER_COSTS",
+      "gate": "edge_after_costs",
+      "defaultState": "no_trade"
+    }
+  ],
+  "seedReviewExamples": [
+    {
+      "ticker": "MSTR",
+      "modelFamily": "digital_asset_treasury",
+      "state": "observe_only",
+      "reasons": [
+        "NT_MODEL_FAMILY_UNSUPPORTED",
+        "NT_EXTERNAL_DRIVER_DOMINANT",
+        "NT_ACCOUNTING_MARK_TO_MARKET_DOMINATED"
+      ],
+      "permanent": false
+    },
+    {
+      "ticker": "APGE",
+      "modelFamily": "precommercial_biotech",
+      "state": "observe_only",
+      "reasons": ["NT_MODEL_FAMILY_UNSUPPORTED", "NT_EARNINGS_NOT_PRIMARY_CATALYST"],
+      "permanent": false
+    }
+  ],
+  "forwardRunSamplingTarget": {
+    "totalClusters": 180,
+    "standardOperatingCompany": 120,
+    "specializedModelCandidate": 40,
+    "hardOrEventSpecificNoTradeControl": 20
+  },
+  "requiredDecisionEvidence": [
+    "policy_version",
+    "model_family_version",
+    "primary_reason",
+    "all_reasons",
+    "evaluated_thresholds",
+    "observed_values",
+    "effective_at",
+    "source_ids",
+    "artifact_ids"
+  ]
+}

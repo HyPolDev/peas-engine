@@ -1,8 +1,90 @@
-import type { NvidiaFixtureManifestV1 } from "../../../../src/adapters/ir/nvidia/recorded-nvidia-fixture.js";
+import type {
+  NvidiaFixtureManifestV2,
+  NvidiaRetrievedMemberV2,
+} from "../../../../src/adapters/ir/nvidia/recorded-nvidia-fixture.js";
+import type {
+  RetrievalAttemptDraft,
+  SafeHttpResponseMetadata,
+} from "../../../../src/artifacts/artifact-store.js";
+import { sanitizeRequestIdentity } from "../../../../src/artifacts/identity.js";
+import { canonicalHash } from "../../../../src/core/hash.js";
+
+export type NvidiaFixtureSeedMemberV1 = Readonly<{
+  role: NvidiaRetrievedMemberV2["role"];
+  path: string;
+  artifactHash: string;
+  sizeBytes: number;
+  attempt: RetrievalAttemptDraft;
+  response: SafeHttpResponseMetadata;
+  retrievedAtMs: number;
+}>;
+
+const FIXTURE_REQUEST = sanitizeRequestIdentity({
+  method: "GET",
+  origin: "https://fixture.invalid",
+  path: "/recorded/nvidia",
+  routeLabel: "recorded-nvidia-fixture",
+});
+const NVIDIA_FIXTURE_SEED_MEMBERS: NvidiaFixtureSeedMemberV1[] = [];
+export const NVIDIA_FIXTURE_SEEDS: readonly NvidiaFixtureSeedMemberV1[] =
+  NVIDIA_FIXTURE_SEED_MEMBERS;
+
+function persistedId(kind: "attempt" | "provider" | "record" | "revision", value: string): string {
+  const prefix = { attempt: "att1", provider: "prv1", record: "rec1", revision: "rev1" }[kind];
+  return `${prefix}_${canonicalHash(`peas/artifact-${kind}-identifier/v1`, { value })}`;
+}
+
+function retrievedMember(input: {
+  role: NvidiaRetrievedMemberV2["role"];
+  path: string;
+  artifactHash: string;
+  sizeBytes: number;
+  retrievedAtMs: number;
+  mediaType: string;
+}): NvidiaRetrievedMemberV2 {
+  const attempt: RetrievalAttemptDraft = {
+    attemptId: `nvidia-${input.role === "ir.rss-feed" ? "rss" : "html"}`,
+    provider: "nvidia-ir",
+    recordId: "fixture-nvidia-rss-baseline",
+    revisionId: "v1",
+    startedAtMs: input.retrievedAtMs - 1_000,
+    request: FIXTURE_REQUEST,
+  };
+  const response: SafeHttpResponseMetadata = {
+    statusCode: 200,
+    etag: null,
+    lastModified: null,
+    mediaType: input.mediaType,
+    contentEncoding: null,
+    declaredContentLength: input.sizeBytes,
+    transportDecoded: true,
+  };
+  const selectedObservationId = canonicalHash("peas/artifact-observation-id/v1", {
+    attemptId: persistedId("attempt", attempt.attemptId),
+    artifactDigest: input.artifactHash,
+    response,
+  });
+  NVIDIA_FIXTURE_SEED_MEMBERS.push({
+    role: input.role,
+    path: input.path,
+    artifactHash: input.artifactHash,
+    sizeBytes: input.sizeBytes,
+    attempt,
+    response,
+    retrievedAtMs: input.retrievedAtMs,
+  });
+  return {
+    kind: "retrieved",
+    role: input.role,
+    artifactHash: input.artifactHash,
+    sizeBytes: input.sizeBytes,
+    selectedObservationId,
+  };
+}
 
 /** Full, closed, original-synthetic evidence manifest for the accepted baseline recording. */
-export const NVIDIA_BASELINE_MANIFEST: NvidiaFixtureManifestV1 = {
-  schemaVersion: 1,
+export const NVIDIA_BASELINE_MANIFEST: NvidiaFixtureManifestV2 = {
+  schemaVersion: 2,
   caseId: "nvidia-rss-baseline",
   provider: "nvidia-ir",
   source: "peas-recorded:nvidia-newsroom-press-release-synthetic-v1",
@@ -19,34 +101,22 @@ export const NVIDIA_BASELINE_MANIFEST: NvidiaFixtureManifestV1 = {
     mappingVersion: "1",
   },
   retrievedMembers: [
-    {
-      kind: "retrieved",
+    retrievedMember({
       role: "ir.rss-feed",
       path: "bodies/baseline.rss",
       artifactHash: "8f75463aaba9e1f535c82cc65c4d14f10864d199d2c87decc19cfb085e9b6c30",
       sizeBytes: 853,
-      selectedObservationId: "0d7fa033ae6a3c0041b6d8d954c6a49a8891ff477358b8105555833cedd75a26",
-      observation: {
-        provider: "nvidia-ir",
-        artifactDigest: "8f75463aaba9e1f535c82cc65c4d14f10864d199d2c87decc19cfb085e9b6c30",
-        retrievedAtMs: 1_905_078_900_000,
-        observationHash: "2cf0ddb6ad3b102f6bc96a6aca059808c74f06b97ce46f9d287e66535f26b51e",
-      },
-    },
-    {
-      kind: "retrieved",
+      retrievedAtMs: 1_905_078_900_000,
+      mediaType: "application/rss+xml",
+    }),
+    retrievedMember({
       role: "ir.release-html",
       path: "bodies/baseline.html",
       artifactHash: "7f77b5831efd61966acb2c1f3053fc34c3fdfd4513e125d50021fc10f9ff1e3e",
       sizeBytes: 665,
-      selectedObservationId: "21294192161c39f6a1c172f4a8b5414db2844ee2c2846a8a4ffc0f02e919cfd9",
-      observation: {
-        provider: "nvidia-ir",
-        artifactDigest: "7f77b5831efd61966acb2c1f3053fc34c3fdfd4513e125d50021fc10f9ff1e3e",
-        retrievedAtMs: 1_905_078_901_000,
-        observationHash: "ef607f6c720210fbac9997b9d735659146c6312868268da0bc2c3d5a21ab7716",
-      },
-    },
+      retrievedAtMs: 1_905_078_901_000,
+      mediaType: "text/html",
+    }),
   ],
   derivedProofs: [
     {
@@ -92,4 +162,4 @@ export const NVIDIA_BASELINE_MANIFEST: NvidiaFixtureManifestV1 = {
   },
 };
 
-export const NVIDIA_FIXTURE_CASES: readonly NvidiaFixtureManifestV1[] = [NVIDIA_BASELINE_MANIFEST];
+export const NVIDIA_FIXTURE_CASES: readonly NvidiaFixtureManifestV2[] = [NVIDIA_BASELINE_MANIFEST];

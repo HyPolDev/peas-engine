@@ -1,7 +1,7 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "project": "PEAS Engine",
-  "lastReviewed": "2026-07-18",
+  "lastReviewed": "2026-07-23",
   "operatingModel": {
     "execution": "GitHub Issues/Projects",
     "specification": "Repository docs, ADRs, fixtures, and evidence",
@@ -11,11 +11,14 @@
   "current": {
     "stage": "P1",
     "status": "in-progress",
-    "branch": "dev/market-reference-roadmap",
-    "mainCommit": "73b4d0b5f85f04f66315bdb6b43edd187381e600",
+    "branch": "dev/pre-pr-2d-readiness",
+    "codeBaselineCommit": "731c2d33285cee8f27d9fe8ff1a2b9a1a29e9e4e",
+    "planningBaselineCommit": "c51758a1058b86730e19185b98fcd448d9ff533a",
+    "pr2cAuditPublicationCommit": "aaabdb416368aa349872bc5f1d6621362f6f3cde",
+    "readinessIntegrationCommit": "e42300a42743143db4979d7103a31e9957c48b58",
     "release": "v0.2.0-kernel-rc.2",
-    "focus": "Zero-incremental-cost live capture and reproducible delayed market-reference path",
-    "nextGate": "Accept ADR 0010, freeze the event-study design, and confirm Alpaca Basic retention and derived-use permission"
+    "focus": "Merge independently approved pre-PR-2D readiness evidence, verify the exact origin/main base, then execute the recorded/offline market-reference contract milestone",
+    "nextGate": "Merge PR #5 audit/status publication, fetch and verify the exact merged origin/main base contains readiness candidate 8ab07d67 and both readiness audits, then start P1-07; P1-08 remains dependent on P1-07 contract GO while human-owned P1-09 remains PENDING"
   },
   "stages": [
     {
@@ -124,7 +127,14 @@
             "https://github.com/HyPolDev/peas-engine/pull/4",
             "https://github.com/HyPolDev/peas-engine/actions/runs/29640667768",
             "audited-head@9b1a32a5e7992c7d98ac3bde8b79b032de76168e",
-            "main@73b4d0b5f85f04f66315bdb6b43edd187381e600"
+            "main@73b4d0b5f85f04f66315bdb6b43edd187381e600",
+            "docs/audit/pr-2c-fresh-audit-9b1a32.md",
+            "docs/audit/pr-2c-fixture-boundary-audit-9b1a32.md",
+            "docs/audit/pr-2c-reaudit-175b75a.md",
+            "docs/audit/pr-2c-reaudit-43ba575.md",
+            "docs/audit/pr-2c-final-disposition.md",
+            "reviewed-repair@731c2d33285cee8f27d9fe8ff1a2b9a1a29e9e4e",
+            "audit-publication@aaabdb416368aa349872bc5f1d6621362f6f3cde"
           ]
         },
         {
@@ -159,7 +169,10 @@
             "test/observation-ledger-contract.test.ts",
             "docs/audit/pr-2c-no-go-finding-matrix.json",
             "audited-head@9b1a32a5e7992c7d98ac3bde8b79b032de76168e",
-            "main@73b4d0b5f85f04f66315bdb6b43edd187381e600"
+            "main@73b4d0b5f85f04f66315bdb6b43edd187381e600",
+            "docs/audit/pr-2c-final-disposition.md",
+            "reviewed-repair@731c2d33285cee8f27d9fe8ff1a2b9a1a29e9e4e",
+            "audit-publication@aaabdb416368aa349872bc5f1d6621362f6f3cde"
           ]
         },
         {
@@ -168,12 +181,26 @@
           "status": "ready",
           "owner": "integration-owner",
           "dependsOn": ["P1-02", "P1-05"],
+          "blocker": "READY_ON_MERGE: merge PR #5 audit/status publication into origin/main, fetch it, and verify the exact PR 2D base contains candidate 8ab07d67 and both readiness audits before creating the PR 2D branch",
           "acceptance": "ADR 0010 freezes observation anchors, prior-close/release-gap/residual movement metrics, quote/trade and session rules, deterministic market identity and joins, corrections, missing-data reason codes, resource bounds, licensing, and the precommitted 100-200-cluster study design without changing frozen kernel ports.",
-          "evidence": ["docs/agent-prompts/adr-0010-market-reference.md"]
+          "evidence": [
+            "docs/agent-prompts/adr-0010-market-reference.md",
+            "docs/audit/pre-pr-2d-readiness.md",
+            "docs/audit/pre-pr-2d-readiness-review.md",
+            "docs/audit/pre-pr-2d-readiness-ci-go.md",
+            "https://github.com/HyPolDev/peas-engine/pull/5",
+            "https://github.com/HyPolDev/peas-engine/actions/runs/29970456123",
+            "readiness-candidate@8ab07d67b25622dda32408822288c5ed88602b69",
+            "docs/research/no-trade-policy-disposition.md",
+            "docs/research/candidates/no-trade-v0.1/no-trade-universe-policy.md",
+            "docs/research/candidates/no-trade-v0.1/no-trade-policy.v1.json",
+            "docs/research/candidates/no-trade-v0.1/no-trade-blueprint.html",
+            "docs/research/market-data-entitlement-gate.md"
+          ]
         },
         {
           "id": "P1-08",
-          "title": "Recorded market-reference contract gate",
+          "title": "Recorded market-reference implementation gate",
           "status": "planned",
           "owner": "agent",
           "dependsOn": ["P1-07"],
@@ -183,11 +210,14 @@
         {
           "id": "P1-09",
           "title": "Zero-cost provider entitlement and retention gate",
-          "status": "ready",
+          "status": "in-progress",
+          "gateState": "PENDING",
           "owner": "human-owner",
-          "dependsOn": ["P1-07"],
-          "acceptance": "Written Alpaca Basic permission and account evidence cover delayed SIP access, private durable retention, offline replay, internal non-display research, post-account retention, and publication of derived aggregate results; otherwise an explicit human decision records the lower-grade FMP-only fallback without authorizing spend.",
-          "evidence": []
+          "dependsOn": [],
+          "closureDependsOn": ["P1-07"],
+          "blocker": "Human evidence collection may proceed now, but P1-09 cannot close until its frozen provider, dataset, feed, and fallback policy is compatible with accepted ADR 0010 and receives independent GO",
+          "acceptance": "A human-owned, independently reviewed entitlement snapshot compatible with accepted ADR 0010 freezes the provider, dataset, and feed policy; separately identifies historical REST feed=sip, WebSocket v2/delayed_sip, and latest-endpoint delayed_sip; authorizes private retention, replay, research, and derived publication or explicitly approves a named lower-evidence fallback; and adds no spend.",
+          "evidence": ["docs/research/market-data-entitlement-gate.md"]
         },
         {
           "id": "P1-10",
@@ -220,9 +250,12 @@
           "title": "100-200 cluster collection",
           "status": "planned",
           "owner": "agent",
-          "dependsOn": ["P1-06"],
-          "acceptance": "Every precommitted cluster has source timestamps, raw artifact identities, duplicates, revisions, eligibility/no-trade state, and a frozen marketReferenceJoinKey or stable missing-reference reason; missing cases remain in the denominator.",
-          "evidence": []
+          "dependsOn": ["P1-06", "P1-09"],
+          "acceptance": "Every precommitted cluster has source timestamps, raw artifact identities, duplicates, revisions, a prospectively frozen stratum/control assignment, an event-time data-quality snapshot, and a frozen marketReferenceJoinKey or stable missing-reference reason; missing cases remain in the denominator and later trade eligibility remains out of scope.",
+          "evidence": [
+            "docs/research/no-trade-policy-disposition.md",
+            "docs/research/market-data-entitlement-gate.md"
+          ]
         },
         {
           "id": "P2-02",

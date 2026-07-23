@@ -38,10 +38,29 @@ Do not maintain task state independently in Linear, Notion, and GitHub.
   verified selected-observation loading, pure deterministic normalization, schema-V2 evidence
   provenance, trusted capture, and byte-identical live-style/replay processing in memory and
   SQLite. Historical RC.2 vectors and frozen kernel ports remain unchanged.
-- PR 2C merged as pull request #4 at `73b4d0b5f85f04f66315bdb6b43edd187381e600` after the repaired
-  implementation head `9b1a32a5e7992c7d98ac3bde8b79b032de76168e` received a fresh
-  independent `GO`. It supplies the recorded FMP/NVIDIA IR contract gate, cross-source mirror
-  acceptance tests, and the provider-neutral observation ledger required by live read-only work.
+- PR 2C originally merged as pull request #4 at
+  `73b4d0b5f85f04f66315bdb6b43edd187381e600`. The preserved audit chain rejected implementation
+  SHAs `9b1a32a5e7992c7d98ac3bde8b79b032de76168e`,
+  `175b75a33acaa8a8355c37dc630cbe0ebdc4f852`, and
+  `43ba57539f76d01658a7fe21b06187c724c941ce`. A fresh independent review then returned `GO` for
+  exact repaired implementation `731c2d33285cee8f27d9fe8ff1a2b9a1a29e9e4e`. Its final disposition
+  is `docs/audit/pr-2c-final-disposition.md`, published by documentation-only child commit
+  `aaabdb416368aa349872bc5f1d6621362f6f3cde` and combined with the readiness package by
+  `e42300a42743143db4979d7103a31e9957c48b58`. The `GO` remains scoped to the reviewed implementation
+  SHA; it is not a readiness verdict.
+- Planning commit `c51758a1058b86730e19185b98fcd448d9ff533a` records the P1-07, P1-08,
+  P1-09, P1-10, and P1-06 sequence. Exact readiness candidate
+  `8ab07d67b25622dda32408822288c5ed88602b69` received independent `GO` after PR #5 CI run
+  [`29970456123`](https://github.com/HyPolDev/peas-engine/actions/runs/29970456123) passed Linux job
+  `89091170729`, Windows job `89091170828`, and required 10k-scale job `89092258656`.
+  `R2D-READY-001` is closed. P1-07 is ready on merge: PR 2D may start only after this audit/status
+  publication is merged into `origin/main` and that exact merged base is fetched and verified.
+- The preserved no-trade candidate has disposition `ADOPT_WITH_CHANGES`. It is research input for
+  ADR 0010, not an executable policy; later model/trade thresholds remain outside PR 2D.
+- The P1-09 market-data entitlement gate is active with gate state `PENDING`: human attestation and
+  written-provider evidence collection proceed in parallel. The gate cannot close until its frozen
+  provider/dataset/feed/fallback policy is compatible with accepted ADR 0010 and receives independent
+  `GO`. Recorded/offline PR 2D work may proceed after readiness `GO`, but P1-10 and P2 remain blocked.
 - No live SEC HTTP, FMP, issuer-IR, calendar, market-data, LLM, brokerage, or trading adapter exists.
 - The next product slice is explicitly read-only: no LLM dependency, no orders, no brokerage, and
   no portfolio mutation.
@@ -91,16 +110,24 @@ invariant.
 
 ## Zero-incremental-cost path to event validation
 
-Current checkpoint: PR 2B and PR 2C are merged as pull requests #3 and #4. No new market-data spend
-is authorized before the first event-validation study. Existing FMP Premium access may be used as a
-secondary comparison source. The provisional primary reference is Alpaca Basic delayed SIP history
-if written terms permit private durable retention, deterministic replay, internal research, and
-publication of derived aggregate results. IBKR, paid Alpaca, FMP Ultimate, Databento, Massive, and
-any other new subscription remain deferred until the study justifies additional spend.
+Current checkpoint: PR 2B and the original PR 2C are merged as pull requests #3 and #4. The repaired
+PR 2C implementation has exact-SHA independent `GO`, and combined readiness candidate `8ab07d67`
+has a final independent readiness `GO` with `R2D-READY-001` closed. PR #5 must now merge the audit/
+status publication; PR 2D remains unauthorized until the resulting `origin/main` is fetched and
+verified to contain that evidence. P1-07 is ready on merge, while P1-08 remains sequenced after the
+P1-07 contract `GO`. No new market-data spend is authorized before the first event-validation
+study. Historical Alpaca REST
+`feed=sip`, WebSocket `v2/delayed_sip`, and latest-endpoint `feed=delayed_sip` are separate identities
+unless written provider evidence proves an exact equivalence. Existing FMP Premium is a pending
+repository assertion and a separately labeled lower-evidence discrepancy candidate, not an
+authorized or SIP-equivalent fallback. Paid Alpaca, FMP Ultimate, IBKR, Databento, Massive, and every
+other new subscription remain deferred.
 
-This choice does not delay live read-only provider capture. Market-reference contract work and live
-SEC/FMP/NVIDIA acquisition proceed in parallel. The recorded market contract, a permitted frozen
-historical reference, and the readiness drill block P2 collection; an IBKR live witness does not.
+The entitlement delay does not block official-document research, provider-neutral contracts,
+original synthetic fixtures, recorded implementation, or offline tests in PR 2D. It does block the
+P1-10 market adapter and P2 collection. Agents must not inspect accounts or credentials, call a
+provider, retrieve provider bytes, activate a plan, or silently choose a fallback while the gate is
+pending. An IBKR live witness is not required for P2 and remains deferred.
 
 ### Fast-track scheduling judgment
 
@@ -113,8 +140,8 @@ depends on the earnings calendar and provider availability.
 | Delivery box | Fastest credible effort | Exit evidence | Main timing risk |
 | --- | --- | --- | --- |
 | 1. ADR 0010 and frozen study design | 1 focused day plus independent review | Accepted ADR, metric/reason-code tables, study manifest contract, review `GO` | A metric or timestamp decision changes the contract |
-| 2. Zero-cost entitlement and retention | 2-4 engineering hours; external response time is unbounded | Written permission/account evidence or explicit FMP-only fallback decision | Provider legal/support response time |
-| 3. Recorded market-reference gate | 1-2 focused days after ADR `GO` | Synthetic fixtures, exact/one-over tests, replay/order invariance, independent `GO` | Corrections, quote conditions, or bounds expose contract gaps |
+| 2. Zero-cost entitlement and retention | Human response and provider response time are unbounded | Sanitized human attestation plus written permission, or an explicit permitted lower-evidence fallback decision before outcomes | Account-specific and provider legal/support response time |
+| 3. Recorded market-reference implementation gate | 1-2 focused days after ADR `GO` | Synthetic fixtures, exact/one-over tests, replay/order invariance, independent `GO` | Corrections, quote conditions, or bounds expose contract gaps |
 | 4. Live sources plus delayed reference adapter | 2-4 focused days with non-overlapping parallel owners | SEC, FMP, NVIDIA and delayed reference paths integrated behind recorded contracts | Rate limits, authentication, provider variance, restart integration |
 | 5. Integrated readiness drill | 1 setup day plus one complete scheduled window | Restart/reconciliation, backfill, deterministic replay, completeness and zero-effects evidence | No suitable event window or an external provider outage |
 
@@ -140,28 +167,43 @@ Create ADR 0010 before market-provider implementation. It must define:
 - a licensing boundary that keeps raw provider bytes private and permits only synthetic fixtures in
   Git.
 
-In parallel, freeze the 100-200-cluster universe, sampling strata, no-trade controls, exclusions,
-minimum evidence completeness, and success/failure thresholds. The study must not choose thresholds
-after inspecting outcomes.
+In parallel, freeze the 100-200-cluster universe, sampling strata, prospective controls,
+event-time data-quality annotations, exclusions, denominators, minimum evidence completeness, and
+success/failure/inconclusive thresholds. Follow the `ADOPT_WITH_CHANGES` decision in
+[`docs/research/no-trade-policy-disposition.md`](research/no-trade-policy-disposition.md): treat the
+preserved `120/40/20` allocation and later trading thresholds as candidate inputs, not accepted
+contract values. The study must not choose sampling, fallback, exclusions, or thresholds after
+inspecting outcomes.
 
 The copy-ready manager assignment for this gate is
 [`docs/agent-prompts/adr-0010-market-reference.md`](agent-prompts/adr-0010-market-reference.md).
 
-### Step 2 - close the zero-cost entitlement and retention gate
+### Step 2 - collect evidence and close the zero-cost entitlement and retention gate
 
-Obtain written answers for Alpaca Basic covering durable private retention, offline replay, internal
-non-display research, retention after account closure, and publication of derived latency/return
-statistics. Verify the account exposes the delayed SIP quote/trade history and extended-hours fields
-required by ADR 0010 without enabling a paid plan.
+Human evidence collection may start before ADR 0010 is accepted. The gate may close only after its
+provider, dataset, feed, entitlement, and fallback policy is checked for compatibility with accepted
+ADR 0010 and receives independent `GO`.
 
-Record the existing FMP Premium endpoints and entitlements that are actually available. FMP remains
-a secondary discrepancy check, not a silent replacement for missing SIP evidence.
+The human owner must obtain written Alpaca answers covering exact product/feed identity, durable
+private retention, offline replay, internal non-display research, retention after account closure,
+and publication of derived latency/return statistics. Historical REST `feed=sip`, WebSocket
+`v2/delayed_sip`, and latest-endpoint `feed=delayed_sip` must be asked about separately. Agents must
+not inspect the account, credentials, dashboards, invoices, correspondence, or provider bytes.
 
-If Alpaca does not permit the required use, stop the adapter at the recorded boundary and make an
-explicit human decision. The no-spend fallback is a clearly labeled provisional FMP-only validation
-dataset with a lower evidence grade; no paid provider is selected automatically.
+The human owner must provide a sanitized FMP plan/classification attestation and obtain written
+permission for each required use if FMP remains a candidate. FMP remains separately labeled lower-
+evidence discrepancy research, not a silent replacement for missing SIP evidence.
 
-### Step 3 - land recorded market-reference contracts first
+If Alpaca does not permit the required use, stop at the recorded boundary. A no-spend FMP-only or
+other lower-evidence fallback requires explicit human `FALLBACK_APPROVED` status, sufficient
+retention/replay permission, and any necessary study-contract amendment before outcomes. No
+provider is selected automatically.
+
+The complete pending capability matrix, acceptable sanitized evidence, questions, and human-only
+actions live in
+[`docs/research/market-data-entitlement-gate.md`](research/market-data-entitlement-gate.md).
+
+### Step 3 - pass the recorded market-reference implementation gate
 
 Add synthetic SIP-style quote, trade, and bar manifests plus executable contract tests for exact
 and one-over bounds, regular/extended sessions, duplicates, corrections, stale/crossed quotes,
@@ -169,21 +211,21 @@ halts, missing windows, symbol remaps, malformed payloads, and oversized pages. 
 identical normalized output and selected references across fixture order, retrieval order, restart,
 and replay page size. No test contacts a provider.
 
-### Step 4 - build live source capture and delayed market acquisition in parallel
+### Step 4 - build live source capture and delayed market acquisition only after their gates
 
-Implement live read-only capture in the existing order: SEC, FMP, then the NVIDIA issuer-IR
-allowlist, with calendar prewarming and durable raw artifacts. Separately implement the Alpaca
-delayed historical adapter behind the recorded contract:
+P1-10 must not begin while P1-09 is `PENDING`. After the human-owned entitlement snapshot receives
+independent `GO`, implement only the exact approved delayed historical provider/dataset/feed behind
+the accepted recorded contract:
 
 ```text
 bounded acquisition -> private raw artifact -> verified read -> pure market normalization
   -> deterministic reference selection -> marketReferenceJoinKey
 ```
 
-Retrieval waits until the SIP window is available, but reference selection uses exchange event
-timestamps around the immutable PEAS observation anchor. Credentials, URLs, arbitrary headers,
-prices, and retrieval telemetry do not enter earnings-event identity. Add a hard configuration that
-prevents paid-plan activation or a non-zero provider budget before the validation decision.
+Retrieval timing and reference selection then follow the accepted ADR 0010 and frozen entitlement
+snapshot. Credentials, URLs, arbitrary headers, prices, and retrieval telemetry do not enter
+earnings-event identity. A hard configuration prevents paid-plan activation, unapproved feed
+selection, fallback drift, or a non-zero provider budget before the validation decision.
 
 ### Step 5 - run the integrated readiness drill
 
@@ -195,7 +237,8 @@ The deployment must expose no broker/order surface and create zero dispatchable 
 
 ### Step 6 - collect and freeze the forward dataset
 
-Collect 100-200 forward earnings clusters using the precommitted universe and strata. Every cluster
+P2 remains blocked until P1-09, P1-10, and P1-06 are complete. Then collect 100-200 forward earnings
+clusters using the precommitted universe and strata. Every cluster
 must retain source-level provenance, publication and PEAS observation clocks, raw artifact digests,
 duplicate/revision relationships, the frozen market-reference join, and eligibility/no-trade
 snapshot. A cluster with unavailable or unusable market evidence remains in the denominator with a

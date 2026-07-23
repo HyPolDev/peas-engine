@@ -2,3 +2,4 @@
 *.ps1 text eol=crlf
 *.bat text eol=crlf
 *.cmd text eol=crlf
+docs/research/candidates/no-trade-v0.1/no-trade-universe-policy.md whitespace=-blank-at-eof
