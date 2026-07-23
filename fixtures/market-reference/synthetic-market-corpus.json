@@ -1,0 +1,3958 @@
+{
+  "schemaVersion": 1,
+  "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+  "records": [
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:Q-01",
+      "providerRevisionKey": "original:Q-01",
+      "providerStableRecordFamily": "synthetic-catalog-family:Q-01",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100000000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "1",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:Q-01:original",
+      "occurrenceOrdinal": 0,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:Q-02",
+      "providerRevisionKey": "original:Q-02",
+      "providerStableRecordFamily": "synthetic-catalog-family:Q-02",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100001000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "2",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "f1c744b3b4ea15394f7d79edf1981c6196bf399eca58f7dc71132529d344b4c7",
+      "memberKey": "synthetic-catalog:Q-02:original",
+      "occurrenceOrdinal": 1,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "1",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1000001",
+          "scale": 6,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:Q-03",
+      "providerRevisionKey": "original:Q-03",
+      "providerStableRecordFamily": "synthetic-catalog-family:Q-03",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100002000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "3",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:Q-03:original",
+      "occurrenceOrdinal": 2,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:Q-04",
+      "providerRevisionKey": "original:Q-04",
+      "providerStableRecordFamily": "synthetic-catalog-family:Q-04",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100003000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "4",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:Q-04:original",
+      "occurrenceOrdinal": 3,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:Q-05",
+      "providerRevisionKey": "original:Q-05",
+      "providerStableRecordFamily": "synthetic-catalog-family:Q-05",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100004000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "5",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "59f98d84fea52dcebf577a1e281d643f817aabb0d3973a4121073aa93612c35f",
+      "memberKey": "synthetic-catalog:Q-05:original",
+      "occurrenceOrdinal": 4,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "0",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:Q-06",
+      "providerRevisionKey": "original:Q-06",
+      "providerStableRecordFamily": "synthetic-catalog-family:Q-06",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100005000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "6",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "45b8293cfbadb93992929b879cd3a0945b5c0a7344103f3a0ad39745f8d0eaea",
+      "memberKey": "synthetic-catalog:Q-06:original",
+      "occurrenceOrdinal": 5,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:Q-07",
+      "providerRevisionKey": "original:Q-07",
+      "providerStableRecordFamily": "synthetic-catalog-family:Q-07",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100006000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "7",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "7fe4428fb764c7acaa8a4a34330c027c9671a058927a2036fc3d59bb6f192933",
+      "memberKey": "synthetic-catalog:Q-07:original",
+      "occurrenceOrdinal": 6,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "1003",
+          "scale": 2,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:Q-08",
+      "providerRevisionKey": "original:Q-08",
+      "providerStableRecordFamily": "synthetic-catalog-family:Q-08",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100007000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "8",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "a728d31764583b82098b5a0f91d3dcdc754a4951dc5866e1cbdb51b623cd252f",
+      "memberKey": "synthetic-catalog:Q-08:original",
+      "occurrenceOrdinal": 7,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": true,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:Q-09",
+      "providerRevisionKey": "original:Q-09",
+      "providerStableRecordFamily": "synthetic-catalog-family:Q-09",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100008000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "9",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "3184fa944ce1ce9305771c59337d282894643916975dc063e9c7471d408416e7",
+      "memberKey": "synthetic-catalog:Q-09:original",
+      "occurrenceOrdinal": 8,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "unknown",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:Q-10",
+      "providerRevisionKey": "original:Q-10",
+      "providerStableRecordFamily": "synthetic-catalog-family:Q-10",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100009000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "10",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "9ebe2ae13d83e866231747afd43984f483542d91d494ae54426a1ed97e9a495e",
+      "memberKey": "synthetic-catalog:Q-10:original",
+      "occurrenceOrdinal": 9,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "limit",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:Q-11",
+      "providerRevisionKey": "original:Q-11",
+      "providerStableRecordFamily": "synthetic-catalog-family:Q-11",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100010000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "11",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "3fdcb97cb8efe5468c83dc92846144ffde2eea5a39bd6227290dd6ff08ca8b15",
+      "memberKey": "synthetic-catalog:Q-11:original",
+      "occurrenceOrdinal": 10,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": true
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:Q-12",
+      "providerRevisionKey": "original:Q-12",
+      "providerStableRecordFamily": "synthetic-catalog-family:Q-12",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100011000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "12",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:Q-12:original",
+      "occurrenceOrdinal": 11,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:Q-13",
+      "providerRevisionKey": "original:Q-13",
+      "providerStableRecordFamily": "synthetic-catalog-family:Q-13",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100012000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "13",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:Q-13:original",
+      "occurrenceOrdinal": 12,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:Q-14",
+      "providerRevisionKey": "original:Q-14",
+      "providerStableRecordFamily": "synthetic-catalog-family:Q-14",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100013000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "14",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "1cc8beaaba1518ef6f8b50826286cac466c1532e6324c425ae49451c8f51f6f3",
+      "memberKey": "synthetic-catalog:Q-14:original",
+      "occurrenceOrdinal": 13,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "bolo",
+        "bidPrice": {
+          "coefficient": "1003",
+          "scale": 2,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1004",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": false,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:Q-15",
+      "providerRevisionKey": "original:Q-15",
+      "providerStableRecordFamily": "synthetic-catalog-family:Q-15",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100014000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "15",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:Q-15:original",
+      "occurrenceOrdinal": 14,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:S-01",
+      "providerRevisionKey": "original:S-01",
+      "providerStableRecordFamily": "synthetic-catalog-family:S-01",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100015000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "16",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:S-01:original",
+      "occurrenceOrdinal": 15,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "calendar-closed",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:S-02",
+      "providerRevisionKey": "original:S-02",
+      "providerStableRecordFamily": "synthetic-catalog-family:S-02",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100016000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "17",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:S-02:original",
+      "occurrenceOrdinal": 16,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:S-03",
+      "providerRevisionKey": "original:S-03",
+      "providerStableRecordFamily": "synthetic-catalog-family:S-03",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100017000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "18",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:S-03:original",
+      "occurrenceOrdinal": 17,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:S-04",
+      "providerRevisionKey": "original:S-04",
+      "providerStableRecordFamily": "synthetic-catalog-family:S-04",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100018000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "19",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:S-04:original",
+      "occurrenceOrdinal": 18,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "extended-pre",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:S-05",
+      "providerRevisionKey": "original:S-05",
+      "providerStableRecordFamily": "synthetic-catalog-family:S-05",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100019000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "20",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:S-05:original",
+      "occurrenceOrdinal": 19,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "overnight",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:T-01",
+      "providerRevisionKey": "original:T-01",
+      "providerStableRecordFamily": "synthetic-catalog-family:T-01",
+      "eventKind": "trade",
+      "eventTime": {
+        "epochNs": "100020000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "21",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "d25bbf80ea469cbfe0830c05dbb9dfe996a871166e2ef7fbfa6e426b18a4d580",
+      "memberKey": "synthetic-catalog:T-01:original",
+      "occurrenceOrdinal": 20,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "trade",
+        "tradeKind": "last-eligible",
+        "price": {
+          "coefficient": "1001",
+          "scale": 2,
+          "negative": false
+        },
+        "size": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "updatesConsolidatedLast": true,
+        "oddLot": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:T-02",
+      "providerRevisionKey": "original:T-02",
+      "providerStableRecordFamily": "synthetic-catalog-family:T-02",
+      "eventKind": "trade",
+      "eventTime": {
+        "epochNs": "100021000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "22",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "2916595be34e57f45468a715cee7391f187b04522511bedb573a766b29df3de8",
+      "memberKey": "synthetic-catalog:T-02:original",
+      "occurrenceOrdinal": 21,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "trade",
+        "tradeKind": "last-eligible",
+        "price": {
+          "coefficient": "1001",
+          "scale": 2,
+          "negative": false
+        },
+        "size": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "updatesConsolidatedLast": false,
+        "oddLot": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:T-03",
+      "providerRevisionKey": "original:T-03",
+      "providerStableRecordFamily": "synthetic-catalog-family:T-03",
+      "eventKind": "trade",
+      "eventTime": {
+        "epochNs": "100022000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "23",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "7372d5d230a0c3fddefcab0e63a302b0c82bd81a7bb89229686a706085480275",
+      "memberKey": "synthetic-catalog:T-03:original",
+      "occurrenceOrdinal": 22,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "trade",
+        "tradeKind": "last-eligible",
+        "price": {
+          "coefficient": "1001",
+          "scale": 2,
+          "negative": false
+        },
+        "size": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "updatesConsolidatedLast": "state-insufficient",
+        "oddLot": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:T-04",
+      "providerRevisionKey": "original:T-04",
+      "providerStableRecordFamily": "synthetic-catalog-family:T-04",
+      "eventKind": "trade",
+      "eventTime": {
+        "epochNs": "100023000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "24",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "08ba86a9960deec9198b38d1cb7768df14f742c2d669c8bd6ca580a8a449b61c",
+      "memberKey": "synthetic-catalog:T-04:original",
+      "occurrenceOrdinal": 23,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "trade",
+        "tradeKind": "last-eligible",
+        "price": {
+          "coefficient": "1001",
+          "scale": 2,
+          "negative": false
+        },
+        "size": {
+          "coefficient": "1",
+          "scale": 0,
+          "negative": false
+        },
+        "updatesConsolidatedLast": true,
+        "oddLot": true
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:T-05",
+      "providerRevisionKey": "original:T-05",
+      "providerStableRecordFamily": "synthetic-catalog-family:T-05",
+      "eventKind": "trade",
+      "eventTime": {
+        "epochNs": "100024000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "25",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "2916595be34e57f45468a715cee7391f187b04522511bedb573a766b29df3de8",
+      "memberKey": "synthetic-catalog:T-05:original",
+      "occurrenceOrdinal": 24,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "trade",
+        "tradeKind": "last-eligible",
+        "price": {
+          "coefficient": "1001",
+          "scale": 2,
+          "negative": false
+        },
+        "size": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "updatesConsolidatedLast": false,
+        "oddLot": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:T-06",
+      "providerRevisionKey": "original:T-06",
+      "providerStableRecordFamily": "synthetic-catalog-family:T-06",
+      "eventKind": "trade",
+      "eventTime": {
+        "epochNs": "100025000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "26",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "431f95457be5eb9262f22b612c85f4ca0088e141f7b4ae8c423ad482cfbab1d0",
+      "memberKey": "synthetic-catalog:T-06:original",
+      "occurrenceOrdinal": 25,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "trade",
+        "tradeKind": "closing",
+        "price": {
+          "coefficient": "1001",
+          "scale": 2,
+          "negative": false
+        },
+        "size": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "updatesConsolidatedLast": true,
+        "oddLot": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:B-01",
+      "providerRevisionKey": "original:B-01",
+      "providerStableRecordFamily": "synthetic-catalog-family:B-01",
+      "eventKind": "bar",
+      "eventTime": {
+        "epochNs": "100026000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "27",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "c7ff9cf049349bef7a9bbf22d2d31550dcf6e7d9d33a048b205f94ceb087879b",
+      "memberKey": "synthetic-catalog:B-01:original",
+      "occurrenceOrdinal": 26,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "bar",
+        "barKind": "one-minute",
+        "close": {
+          "coefficient": "1001",
+          "scale": 2,
+          "negative": false
+        },
+        "barStartNs": "40026000000",
+        "barEndNs": "100026000000",
+        "adjustmentMode": "raw"
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:B-02",
+      "providerRevisionKey": "original:B-02",
+      "providerStableRecordFamily": "synthetic-catalog-family:B-02",
+      "eventKind": "bar",
+      "eventTime": {
+        "epochNs": "100027000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "28",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "809bdbcb62e5ec1dc37a0a29510870e4bcc9265496bd16f8f9c4afa9418c943e",
+      "memberKey": "synthetic-catalog:B-02:original",
+      "occurrenceOrdinal": 27,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "bar",
+        "barKind": "one-minute",
+        "close": {
+          "coefficient": "1001",
+          "scale": 2,
+          "negative": false
+        },
+        "barStartNs": "40027000001",
+        "barEndNs": "100027000001",
+        "adjustmentMode": "raw"
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:B-03",
+      "providerRevisionKey": "original:B-03",
+      "providerStableRecordFamily": "synthetic-catalog-family:B-03",
+      "eventKind": "bar",
+      "eventTime": {
+        "epochNs": "100028000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "29",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "41f03d008eb8106055d792235c9ef0657cd37e54f304fbafe08157fd043e9baa",
+      "memberKey": "synthetic-catalog:B-03:original",
+      "occurrenceOrdinal": 28,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "bar",
+        "barKind": "one-minute",
+        "close": {
+          "coefficient": "1001",
+          "scale": 2,
+          "negative": false
+        },
+        "barStartNs": "40028000000",
+        "barEndNs": "100028000000",
+        "adjustmentMode": "raw"
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:PCL-01",
+      "providerRevisionKey": "original:PCL-01",
+      "providerStableRecordFamily": "synthetic-catalog-family:PCL-01",
+      "eventKind": "corrected-close",
+      "eventTime": {
+        "epochNs": "100029000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "30",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "20a20de03ebe9a411dd676f49c908f44b1c3392a1a668f17f175fa90894e3e04",
+      "memberKey": "synthetic-catalog:PCL-01:original",
+      "occurrenceOrdinal": 29,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "prior-close",
+        "price": {
+          "coefficient": "995",
+          "scale": 2,
+          "negative": false
+        },
+        "closeKind": "corrected-consolidated-close",
+        "sessionDate": "2037-06-16"
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:PCL-02",
+      "providerRevisionKey": "original:PCL-02",
+      "providerStableRecordFamily": "synthetic-catalog-family:PCL-02",
+      "eventKind": "official-close",
+      "eventTime": {
+        "epochNs": "100030000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "31",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "b3ae2a08e6d7ce93676f76b040ef60fd89dde342bc71c4af37f56cfbb963161d",
+      "memberKey": "synthetic-catalog:PCL-02:original",
+      "occurrenceOrdinal": 30,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "prior-close",
+        "price": {
+          "coefficient": "995",
+          "scale": 2,
+          "negative": false
+        },
+        "closeKind": "listing-official-close",
+        "sessionDate": "2037-06-16"
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:PCL-03",
+      "providerRevisionKey": "original:PCL-03",
+      "providerStableRecordFamily": "synthetic-catalog-family:PCL-03",
+      "eventKind": "trade",
+      "eventTime": {
+        "epochNs": "100031000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "32",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "cc208f8faaec81b1bd5aa3687074ed8a781ca47bb53f05e1e97521b3143dca0b",
+      "memberKey": "synthetic-catalog:PCL-03:original",
+      "occurrenceOrdinal": 31,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "trade",
+        "tradeKind": "final-close",
+        "price": {
+          "coefficient": "1001",
+          "scale": 2,
+          "negative": false
+        },
+        "size": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "updatesConsolidatedLast": true,
+        "oddLot": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:R-01",
+      "providerRevisionKey": "original:R-01",
+      "providerStableRecordFamily": "synthetic-catalog-family:R-01",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100032000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "33",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:R-01:original",
+      "occurrenceOrdinal": 32,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:R-02",
+      "providerRevisionKey": "original:R-02",
+      "providerStableRecordFamily": "synthetic-catalog-family:R-02",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100033000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "34",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:R-02:original",
+      "occurrenceOrdinal": 33,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:R-03",
+      "providerRevisionKey": "original:R-03",
+      "providerStableRecordFamily": "synthetic-catalog-family:R-03",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100034000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "35",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:R-03:original",
+      "occurrenceOrdinal": 34,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:R-04",
+      "providerRevisionKey": "original:R-04",
+      "providerStableRecordFamily": "synthetic-catalog-family:R-04",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100035000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "36",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:R-04:original",
+      "occurrenceOrdinal": 35,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:R-05",
+      "providerRevisionKey": "original:R-05",
+      "providerStableRecordFamily": "synthetic-catalog-family:R-05",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100036000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "37",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:R-05:original",
+      "occurrenceOrdinal": 36,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:R-06",
+      "providerRevisionKey": "original:R-06",
+      "providerStableRecordFamily": "synthetic-catalog-family:R-06",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100037000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "38",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:R-06:original",
+      "occurrenceOrdinal": 37,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:R-07",
+      "providerRevisionKey": "original:R-07",
+      "providerStableRecordFamily": "synthetic-catalog-family:R-07",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100038000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "39",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:R-07:original",
+      "occurrenceOrdinal": 38,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:R-08",
+      "providerRevisionKey": "original:R-08",
+      "providerStableRecordFamily": "synthetic-catalog-family:R-08",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100039000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "40",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:R-08:original",
+      "occurrenceOrdinal": 39,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:O-01",
+      "providerRevisionKey": "original:O-01",
+      "providerStableRecordFamily": "synthetic-catalog-family:O-01",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100040000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "41",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:O-01:original",
+      "occurrenceOrdinal": 40,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:O-02",
+      "providerRevisionKey": "original:O-02",
+      "providerStableRecordFamily": "synthetic-catalog-family:O-02",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100041000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "42",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:O-02:original",
+      "occurrenceOrdinal": 41,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:O-03",
+      "providerRevisionKey": "original:O-03",
+      "providerStableRecordFamily": "synthetic-catalog-family:O-03",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100042000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "43",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:O-03:original",
+      "occurrenceOrdinal": 42,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:I-01",
+      "providerRevisionKey": "original:I-01",
+      "providerStableRecordFamily": "synthetic-catalog-family:I-01",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100043000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "44",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:I-01:original",
+      "occurrenceOrdinal": 43,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:I-02",
+      "providerRevisionKey": "original:I-02",
+      "providerStableRecordFamily": "synthetic-catalog-family:I-02",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100044000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "45",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:I-02:original",
+      "occurrenceOrdinal": 44,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:I-03",
+      "providerRevisionKey": "original:I-03",
+      "providerStableRecordFamily": "synthetic-catalog-family:I-03",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100045000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "46",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:I-03:original",
+      "occurrenceOrdinal": 45,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:C-01",
+      "providerRevisionKey": "original:C-01",
+      "providerStableRecordFamily": "synthetic-catalog-family:C-01",
+      "eventKind": "corporate-action",
+      "eventTime": {
+        "epochNs": "100046000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "47",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "80535ca2040cc63ba5d60c157d9073d1ce7d0c866a45d632b7dd935232d21917",
+      "memberKey": "synthetic-catalog:C-01:original",
+      "occurrenceOrdinal": 46,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "corporate-action",
+        "actionKind": "split",
+        "effectiveNs": "100046000000",
+        "successorInstrumentId": null
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:C-02",
+      "providerRevisionKey": "original:C-02",
+      "providerStableRecordFamily": "synthetic-catalog-family:C-02",
+      "eventKind": "corporate-action",
+      "eventTime": {
+        "epochNs": "100047000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "48",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "3e94e809d9223aec8baa491bc69b732b77cac5004eca6dcf43dd5ff44c7caeb5",
+      "memberKey": "synthetic-catalog:C-02:original",
+      "occurrenceOrdinal": 47,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "corporate-action",
+        "actionKind": "dividend",
+        "effectiveNs": "100047000000",
+        "successorInstrumentId": null
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:C-03",
+      "providerRevisionKey": "original:C-03",
+      "providerStableRecordFamily": "synthetic-catalog-family:C-03",
+      "eventKind": "corporate-action",
+      "eventTime": {
+        "epochNs": "100048000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "49",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "763440fbc407f6a007a969e3e73a38eb9e74d7caaa1c877cb382692c7d92127b",
+      "memberKey": "synthetic-catalog:C-03:original",
+      "occurrenceOrdinal": 48,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "corporate-action",
+        "actionKind": "spin-off",
+        "effectiveNs": "100048000000",
+        "successorInstrumentId": null
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:C-04",
+      "providerRevisionKey": "original:C-04",
+      "providerStableRecordFamily": "synthetic-catalog-family:C-04",
+      "eventKind": "corporate-action",
+      "eventTime": {
+        "epochNs": "100049000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "50",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "7bb804bd6158f040db857094bd3ea8dfb1eceb3b275a4e3725d2404167e2c03b",
+      "memberKey": "synthetic-catalog:C-04:original",
+      "occurrenceOrdinal": 49,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "corporate-action",
+        "actionKind": "symbol-change",
+        "effectiveNs": "100049000000",
+        "successorInstrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3"
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:M-01",
+      "providerRevisionKey": "original:M-01",
+      "providerStableRecordFamily": "synthetic-catalog-family:M-01",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100050000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "51",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:M-01:original",
+      "occurrenceOrdinal": 50,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:M-02",
+      "providerRevisionKey": "original:M-02",
+      "providerStableRecordFamily": "synthetic-catalog-family:M-02",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100051000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "52",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:M-02:original",
+      "occurrenceOrdinal": 51,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:M-03",
+      "providerRevisionKey": "original:M-03",
+      "providerStableRecordFamily": "synthetic-catalog-family:M-03",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100052000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "53",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:M-03:original",
+      "occurrenceOrdinal": 52,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:M-04",
+      "providerRevisionKey": "original:M-04",
+      "providerStableRecordFamily": "synthetic-catalog-family:M-04",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100053000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "54",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:M-04:original",
+      "occurrenceOrdinal": 53,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:D-01",
+      "providerRevisionKey": "original:D-01",
+      "providerStableRecordFamily": "synthetic-catalog-family:D-01",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100054000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "55",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:D-01:original",
+      "occurrenceOrdinal": 54,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:D-02",
+      "providerRevisionKey": "original:D-02",
+      "providerStableRecordFamily": "synthetic-catalog-family:D-02",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100055000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "56",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:D-02:original",
+      "occurrenceOrdinal": 55,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:D-03",
+      "providerRevisionKey": "original:D-03",
+      "providerStableRecordFamily": "synthetic-catalog-family:D-03",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100056000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "57",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:D-03:original",
+      "occurrenceOrdinal": 56,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:E-01",
+      "providerRevisionKey": "original:E-01",
+      "providerStableRecordFamily": "synthetic-catalog-family:E-01",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100057000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "58",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:E-01:original",
+      "occurrenceOrdinal": 57,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:E-02",
+      "providerRevisionKey": "original:E-02",
+      "providerStableRecordFamily": "synthetic-catalog-family:E-02",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100058000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "59",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:E-02:original",
+      "occurrenceOrdinal": 58,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:X-01",
+      "providerRevisionKey": "original:X-01",
+      "providerStableRecordFamily": "synthetic-catalog-family:X-01",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100059000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "60",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:X-01:original",
+      "occurrenceOrdinal": 59,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:X-02",
+      "providerRevisionKey": "original:X-02",
+      "providerStableRecordFamily": "synthetic-catalog-family:X-02",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100060000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "61",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:X-02:original",
+      "occurrenceOrdinal": 60,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:X-03",
+      "providerRevisionKey": "original:X-03",
+      "providerStableRecordFamily": "synthetic-catalog-family:X-03",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100061000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "62",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:X-03:original",
+      "occurrenceOrdinal": 61,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:X-04",
+      "providerRevisionKey": "original:X-04",
+      "providerStableRecordFamily": "synthetic-catalog-family:X-04",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100062000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "63",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:X-04:original",
+      "occurrenceOrdinal": 62,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    },
+    {
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "memberRole": "market-page-0",
+      "instrumentId": "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3",
+      "venueTapeId": "mvt1_494f3e640539030e9d002795bf26d99a274bac2c4d53c1dad69af508c054d5cd",
+      "providerRecordKey": "synthetic-catalog:X-05",
+      "providerRevisionKey": "original:X-05",
+      "providerStableRecordFamily": "synthetic-catalog-family:X-05",
+      "eventKind": "quote",
+      "eventTime": {
+        "epochNs": "100063000000",
+        "semantic": "participant-publication",
+        "precisionNs": "1000000"
+      },
+      "providerSequence": {
+        "value": "64",
+        "scope": "synthetic-catalog",
+        "trustClass": "provider-stable-sequence"
+      },
+      "sequenceSessionDate": "2037-06-17",
+      "canonicalProviderPayloadDigest": "74ad438a519c11c07843a5d0548b9bd235638b1281246111121ae08642815177",
+      "memberKey": "synthetic-catalog:X-05:original",
+      "occurrenceOrdinal": 63,
+      "revisionKind": "original",
+      "supersedesRevisionId": null,
+      "effectiveEventTime": null,
+      "sessionKind": "regular-continuous",
+      "currency": "USD",
+      "payload": {
+        "kind": "quote",
+        "quoteKind": "nbbo",
+        "bidPrice": {
+          "coefficient": "10",
+          "scale": 0,
+          "negative": false
+        },
+        "askPrice": {
+          "coefficient": "1002",
+          "scale": 2,
+          "negative": false
+        },
+        "bidSize": {
+          "coefficient": "100",
+          "scale": 0,
+          "negative": false
+        },
+        "askSize": {
+          "coefficient": "200",
+          "scale": 0,
+          "negative": false
+        },
+        "explicitConsolidatedNbbo": true,
+        "condition": "eligible",
+        "slow": false,
+        "luldState": "executable",
+        "halted": false
+      },
+      "normalizerVersion": "market-normalizer-v1",
+      "conditionPolicyVersion": "synthetic-utp-v1",
+      "calendarVersion": "synthetic-calendar-v1",
+      "parserContractVersion": "synthetic-parser-v1",
+      "durablyRecordedAtMs": 105000,
+      "durableLogicalAtMs": 105000,
+      "durableClockBasisId": "clk1_efb7cfc7d88825b539b3ab33509106260414ee4581c0e533359100dfa5ef10ea",
+      "primaryCorpusMember": true
+    }
+  ]
+}

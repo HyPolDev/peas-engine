@@ -98,7 +98,7 @@ Independent contract `GO` was issued for exact checkpoint
 | Terra core contract | `src/providers/market-reference/**`; `test/market-reference-contract.test.ts` | Bounded provider-neutral types, identities, reasons, normalization, revision state, deterministic selectors, and unchanged-ledger join evidence. |
 | Terra recorded fixtures | `src/adapters/market-reference/**`; `fixtures/market-reference/**`; `test/market-reference-fixtures.test.ts` | Original synthetic corpus, recorded-only verified loading, provenance, malformed inputs, and exact/one-over fixture boundaries. |
 | Luna study manifest | `src/study/market-reference/**`; `test/market-reference-study-manifest.test.ts` | Bounded study design/frame/freeze validators and identities without calculating outcomes. |
-| Integration owner | `test/market-reference-integration.test.ts`; `test/market-reference-replay.test.ts`; `test/market-reference-persistence.test.ts`; PR 2D governance/audit files | Cross-owner integration, order/restart/page-size/memory/SQLite/effect-isolation proofs, validation, and publication. |
+| Integration owner | `test/market-reference-scenario.ts`; `test/market-reference-integration.test.ts`; `test/market-reference-replay.test.ts`; `test/market-reference-persistence.test.ts`; PR 2D governance/audit files | Shared original-synthetic integration scenario, cross-owner integration, order/restart/page-size/memory/SQLite/effect-isolation proofs, validation, and publication. |
 
 No owner may edit another owner's surface or any frozen port, migration, dependency, existing
 provider, or existing fixture body. Cross-surface changes return to the integration owner for an
@@ -264,3 +264,40 @@ file simultaneously.
 All Wave 2 writers must implement the approved H-001 semantics, retain quote/trade/bar separation,
 keep provider choices conditional and fail closed while P1-09 is pending, and make no source-code,
 fixture, test, board, roadmap, migration, dependency, or frozen-port change.
+
+## Wave 4 recorded implementation checkpoint
+
+Implementation began only after the independent contract `GO` and accepted-contract publication
+proof recorded above. The completed recorded/offline surface contains:
+
+- provider-neutral market source, identity, normalization, immutable revision/corpus, discrepancy,
+  selection, reason, and bounded operation contracts;
+- a recorded-only `ArtifactStore` loader with fail-closed entitlement/authorization preflight,
+  bounded parsing, phase restart boundaries, and no HTTP, WebSocket, credential, account, or spend
+  surface;
+- checked project-authored synthetic fixture
+  `mfx1_1c199ece41ba2dbd00e605d96914116ff5c9d0d4502e582de976fe91f37b93eb`, whose
+  manifest identity is
+  `mfm1_1538a166afd4537063efeeda60747f263866864f1b69cc631de8b7733aeb7aa7`;
+- all 64 frozen fixture cases executed and cross-bound as 40 recorded-loader, 22 market-core, and
+  two integration/replay outcomes, including independent literal comparison of non-null structured
+  operation evidence for every recorded-loader case;
+- all 84 canonical bounds executed at their real enforcement surfaces, partitioned exactly as 20
+  core, 33 recorded-loader, and 31 study bounds with exact and applicable violating vectors;
+- durable-capture primary and inherited retrieval-sensitivity branches with recomputed metrics and
+  capture-minus-retrieval telemetry; and
+- a closed 180-cluster study freeze requiring six capture-primary plus six paired retrieval results
+  per cluster, or 2,160 immutable market-result evidence rows in total.
+
+The combined pre-candidate gate passed formatting, lint, typecheck, build, whitespace validation,
+and 74 focused tests. These include checked bytes through observation lookup, verified read,
+normalization, selection, memory/SQLite persistence, durable vault reopen, page sizes `1`, `2`, `7`,
+and `10,000`, and canonical restart checkpoints before/after lookup, read, normalization, and
+selection. P1-09 remains `PENDING` and fails closed before provider policy or outcome inspection.
+
+Two fresh read-only pre-candidate reviewers returned binary `GO` with zero findings after the final
+repair. They independently confirmed all 40 operation-evidence rows, the 20/33/31 operational bound
+partition, H-001 branch/metric pairing, 180-by-12 study accounting, source/corpus isolation,
+restart/persistence determinism, and absence of network, financial-effect, frozen-port, migration,
+dependency, broker, or spend changes. This authorizes creation of an exact implementation candidate
+commit; it is not the formal final implementation audit or merge authority.
