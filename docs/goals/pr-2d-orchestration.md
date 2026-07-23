@@ -1,6 +1,7 @@
 # PR 2D market-reference contract orchestration
 
-- Status: Wave 4 recorded implementation authorized
+- Status: final implementation `GO` for `9dcefde1954c8426312fb082950b6105fe6847f6`;
+  draft publication and CI pending
 - Branch: `dev/pr-2d-market-reference-contract`
 - Exact base: `origin/main` at `0377323b5486a8ad3b8e2631d4c8559760893be6`
 - Base evidence: merge commit for pull request #5, including pull request #4, roadmap commit
@@ -301,3 +302,41 @@ partition, H-001 branch/metric pairing, 180-by-12 study accounting, source/corpu
 restart/persistence determinism, and absence of network, financial-effect, frozen-port, migration,
 dependency, broker, or spend changes. This authorizes creation of an exact implementation candidate
 commit; it is not the formal final implementation audit or merge authority.
+
+## Wave 5 final implementation gate and publication authorization
+
+The first exact implementation candidate, `f63172b523e951f995df054cbbd63026ec674bfe`, received
+independent `NO_GO` in `docs/audit/pr-2d-final-review.md` for two reproducible acceptance gaps:
+the study-design validator did not close every frozen formula, threshold, policy, and nested field,
+and corrected retrieval selection did not prove the branch-independent capture-T0-plus-seven-days
+cutoff. The audit remains preserved; its findings were not waived or overwritten.
+
+Replacement candidate `9dcefde1954c8426312fb082950b6105fe6847f6` closes both findings. Study
+design validation now rejects missing, extra, cross-paired, or arbitrary algorithm, metric, gate,
+policy, digest, tuple, denominator, comparator, threshold, and nullability values before deriving
+the design identity. Corrected retrieval fails closed without a paired primary capture authority;
+the paired selector requires the exact capture cutoff plus shared join, interval, reference,
+policy, context, corpus, cutoff, and admitted-revision identities over one fact corpus. It does not
+equate corpus closure with capture T0 and changes no frozen port or accepted normative contract.
+
+The exact replacement candidate passed:
+
+- runtime, fault-boundary inventory, formatting, lint, typecheck, build, and whitespace gates;
+- 76 focused recorded market-reference tests with zero failures, skips, or cancellations;
+- the uninterrupted complete `npm run check` in 2,496.9 seconds;
+- three of three hard-kill tests;
+- the full coverage suite at 90.41% lines, 80.78% branches, and 96.25% functions;
+- evidence reconciliation with 31 passes, one platform skip, and zero failures; and
+- all 39 targeted mutations killed: 14 kernel and 25 artifact-vault mutations.
+
+Fresh independent re-audit `docs/audit/pr-2d-final-reaudit.md` returned binary `GO` for the exact
+replacement candidate, closed both prior findings, and found no additional issue across identity,
+timestamp/as-of semantics, source isolation, revisions, provenance, the 64 fixture cases, all 84
+bounds, replay/restart/persistence, the 180-by-12 study freeze, leakage controls, P1-09 enforcement,
+offline safety, frozen ports, dependencies, migrations, and financial effects.
+
+Only the final audit and status-publication files may follow the reviewed candidate. Any source,
+accepted contract, fixture, or test change invalidates this `GO`. P1-09 remains human-owned and
+`PENDING`; P1-10 and the 100--200-event study remain blocked. The authorized next actions are to
+push the branch, open an unmerged draft pull request, pass required Linux and Windows CI, and stop
+without merging.

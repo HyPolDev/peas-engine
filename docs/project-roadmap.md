@@ -55,7 +55,9 @@ Do not maintain task state independently in Linear, Notion, and GitHub.
   `89091170729`, Windows job `89091170828`, and required 10k-scale job `89092258656`.
   `R2D-READY-001` is closed. PR #5 merged as `0377323b5486a8ad3b8e2631d4c8559760893be6`;
   the isolated PR 2D branch was created from that exact fetched and verified `origin/main` base.
-  P1-07 is in progress and implementation remains locked behind its independent contract `GO`.
+  P1-07 is complete. Exact P1-08 implementation candidate
+  `9dcefde1954c8426312fb082950b6105fe6847f6` received independent final `GO` in
+  [`docs/audit/pr-2d-final-reaudit.md`](audit/pr-2d-final-reaudit.md).
 - The preserved no-trade candidate has disposition `ADOPT_WITH_CHANGES`. It is research input for
   ADR 0010, not an executable policy; later model/trade thresholds remain outside PR 2D.
 - The P1-09 market-data entitlement gate is active with gate state `PENDING`: human attestation and
@@ -131,8 +133,9 @@ literal vectors used invalid issuer/instrument identity families; the finding is
 `car1_f57a4f613fbadcb7a3b38dbf9748dfecc725d33e747b042fe2f21fba5d52eaad`, and independently
 reviewed at exact checkpoint `750e1ab2486ce785a60304fceb19a1502ff34319`. The fresh review in
 `docs/audit/pr-2d-contract-final-go.md` returned `GO` with implementation authorization and no
-findings. ADR 0010 is Accepted, P1-07 is complete, and P1-08 recorded/offline implementation is in
-progress under a non-overlapping ownership map. No new
+findings. ADR 0010 is Accepted, P1-07 is complete, and P1-08 recorded/offline implementation is
+complete at exact candidate `9dcefde1954c8426312fb082950b6105fe6847f6` after independent final
+`GO` in `docs/audit/pr-2d-final-reaudit.md`. No new
 market-data spend is authorized before the first event-validation study. Historical Alpaca REST
 `feed=sip`, WebSocket `v2/delayed_sip`, and latest-endpoint `feed=delayed_sip` are separate identities
 unless written provider evidence proves an exact equivalence. Existing FMP Premium is a pending
@@ -220,13 +223,14 @@ The complete pending capability matrix, acceptable sanitized evidence, questions
 actions live in
 [`docs/research/market-data-entitlement-gate.md`](research/market-data-entitlement-gate.md).
 
-### Step 3 - pass the recorded market-reference implementation gate
+### Step 3 - recorded market-reference implementation gate: complete
 
-Add synthetic SIP-style quote, trade, and bar manifests plus executable contract tests for exact
-and one-over bounds, regular/extended sessions, duplicates, corrections, stale/crossed quotes,
-halts, missing windows, symbol remaps, malformed payloads, and oversized pages. Tests must prove
-identical normalized output and selected references across fixture order, retrieval order, restart,
-and replay page size. No test contacts a provider.
+Exact candidate `9dcefde1954c8426312fb082950b6105fe6847f6` received independent final `GO`
+in `docs/audit/pr-2d-final-reaudit.md`. Project-authored synthetic quote, trade, bar, session,
+correction, malformed-input, and exact/one-over fixtures execute all 64 cases and 84 bounds.
+Recorded selection is deterministic across order, restart, replay page size, memory/SQLite, and
+durable ArtifactStore reopen. The implementation has no provider call, credential access, paid
+activation, broker/order surface, or financial effect.
 
 ### Step 4 - build live source capture and delayed market acquisition only after their gates
 

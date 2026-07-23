@@ -6,6 +6,11 @@
 - Contract authority registry:
   `car1_f57a4f613fbadcb7a3b38dbf9748dfecc725d33e747b042fe2f21fba5d52eaad`
 - Contract audit: [`pr-2d-contract-final-go.md`](../audit/pr-2d-contract-final-go.md)
+- Implementation candidate: `9dcefde1954c8426312fb082950b6105fe6847f6`
+- Final implementation audit:
+  [`pr-2d-final-reaudit.md`](../audit/pr-2d-final-reaudit.md), independent `GO`; the replaced
+  candidate's `NO_GO` remains preserved in
+  [`pr-2d-final-review.md`](../audit/pr-2d-final-review.md)
 - Scope: provider-neutral recorded/offline market evidence and pre-outcome study freeze
 - Compatibility: additive sidecar contract; no frozen port, reducer, migration, dependency, or
   financial-effect change

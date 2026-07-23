@@ -18,8 +18,8 @@
     "readinessIntegrationCommit": "e42300a42743143db4979d7103a31e9957c48b58",
     "pr2dBaseCommit": "0377323b5486a8ad3b8e2631d4c8559760893be6",
     "release": "v0.2.0-kernel-rc.2",
-    "focus": "Execute the independently authorized P1-08 provider-neutral recorded market-reference implementation",
-    "nextGate": "Complete the accepted-contract implementation, full offline validation, and fresh independent final implementation GO; human-owned P1-09 remains PENDING"
+    "focus": "Publish the independently accepted P1-08 recorded/offline market-reference candidate as an unmerged draft pull request",
+    "nextGate": "Push the branch, open the draft pull request, and pass required Linux and Windows CI; human-owned P1-09 remains PENDING and P1-10/P2 remain blocked"
   },
   "stages": [
     {
@@ -222,11 +222,18 @@
         {
           "id": "P1-08",
           "title": "Recorded market-reference implementation gate",
-          "status": "in-progress",
+          "status": "done",
           "owner": "agent",
           "dependsOn": ["P1-07"],
           "acceptance": "Synthetic SIP-style quote/trade/bar fixtures cover sessions, duplicates, corrections, stale/crossed quotes, halts, missing windows, symbol remaps, malformed input, and exact/one-over bounds; normalized references are invariant to order, restart, and replay page size with no network access.",
-          "evidence": []
+          "evidence": [
+            "implementation-candidate@9dcefde1954c8426312fb082950b6105fe6847f6",
+            "docs/audit/pr-2d-final-review.md",
+            "docs/audit/pr-2d-final-reaudit.md",
+            "fixtures/market-reference/fixture-manifest.json",
+            "fixtures/market-reference/synthetic-market-corpus.json",
+            "docs/goals/pr-2d-orchestration.md"
+          ]
         },
         {
           "id": "P1-09",
