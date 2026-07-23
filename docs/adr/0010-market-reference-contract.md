@@ -1,7 +1,11 @@
 # ADR 0010: Recorded market-reference and event-study contract
 
-- Status: Proposed; implementation prohibited until exact-checkpoint independent contract `GO`
+- Status: Accepted; independent contract `GO` on
+  `750e1ab2486ce785a60304fceb19a1502ff34319`
 - Date: 2026-07-23
+- Contract authority registry:
+  `car1_f57a4f613fbadcb7a3b38dbf9748dfecc725d33e747b042fe2f21fba5d52eaad`
+- Contract audit: [`pr-2d-contract-final-go.md`](../audit/pr-2d-contract-final-go.md)
 - Scope: provider-neutral recorded/offline market evidence and pre-outcome study freeze
 - Compatibility: additive sidecar contract; no frozen port, reducer, migration, dependency, or
   financial-effect change

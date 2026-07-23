@@ -18,8 +18,8 @@
     "readinessIntegrationCommit": "e42300a42743143db4979d7103a31e9957c48b58",
     "pr2dBaseCommit": "0377323b5486a8ad3b8e2631d4c8559760893be6",
     "release": "v0.2.0-kernel-rc.2",
-    "focus": "Publish the repaired immutable PR 2D contract registry and obtain a fresh independent exact-checkpoint GO",
-    "nextGate": "Commit the repaired contract content, publish its exact digest/blob registry, obtain a fresh independent binary GO for that review checkpoint, publish ADR 0010 as Accepted, then begin P1-08; human-owned P1-09 remains PENDING"
+    "focus": "Execute the independently authorized P1-08 provider-neutral recorded market-reference implementation",
+    "nextGate": "Complete the accepted-contract implementation, full offline validation, and fresh independent final implementation GO; human-owned P1-09 remains PENDING"
   },
   "stages": [
     {
@@ -179,10 +179,9 @@
         {
           "id": "P1-07",
           "title": "Market-reference and event-study contract",
-          "status": "in-progress",
+          "status": "done",
           "owner": "integration-owner",
           "dependsOn": ["P1-02", "P1-05"],
-          "blocker": "CONTRACT_REVIEW_REQUIRED: the approved durable-capture/as-of-target contract must receive independent binary GO at its exact checkpoint before P1-08 implementation begins",
           "acceptance": "ADR 0010 freezes observation anchors, prior-close/release-gap/residual movement metrics, quote/trade and session rules, deterministic market identity and joins, corrections, missing-data reason codes, resource bounds, licensing, and the precommitted 100-200-cluster study design without changing frozen kernel ports.",
           "evidence": [
             "docs/agent-prompts/adr-0010-market-reference.md",
@@ -212,13 +211,18 @@
             "contract-final-reaudit-no-go@737ea8fc236c07ea7bba635bda63abcc74126de3",
             "docs/audit/pr-2d-contract-final-reaudit.md",
             "contract-go-audit-no-go@acbad9a7757ac1d42f89769c217ef5075a0d1998",
-            "docs/audit/pr-2d-contract-go-audit.md"
+            "docs/audit/pr-2d-contract-go-audit.md",
+            "contract-content@acd9f25bc89355ce18292d0dcd5afecfebf818cf",
+            "contract-checkpoint-go@750e1ab2486ce785a60304fceb19a1502ff34319",
+            "car1_f57a4f613fbadcb7a3b38dbf9748dfecc725d33e747b042fe2f21fba5d52eaad",
+            "docs/audit/pr-2d-contract-authority.json",
+            "docs/audit/pr-2d-contract-final-go.md"
           ]
         },
         {
           "id": "P1-08",
           "title": "Recorded market-reference implementation gate",
-          "status": "planned",
+          "status": "in-progress",
           "owner": "agent",
           "dependsOn": ["P1-07"],
           "acceptance": "Synthetic SIP-style quote/trade/bar fixtures cover sessions, duplicates, corrections, stale/crossed quotes, halts, missing windows, symbol remaps, malformed input, and exact/one-over bounds; normalized references are invariant to order, restart, and replay page size with no network access.",

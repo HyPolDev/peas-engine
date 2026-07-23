@@ -1,6 +1,6 @@
 # PR 2D market-reference contract orchestration
 
-- Status: Wave 2 contract integration in progress
+- Status: Wave 4 recorded implementation authorized
 - Branch: `dev/pr-2d-market-reference-contract`
 - Exact base: `origin/main` at `0377323b5486a8ad3b8e2631d4c8559760893be6`
 - Base evidence: merge commit for pull request #5, including pull request #4, roadmap commit
@@ -85,6 +85,24 @@ GO:
 - redistribution-safe `fixtures/market-reference/v1/` synthetic manifests and bodies; and
 - focused `test/market-reference-*.test.ts` contract, fixture, replay, differential, integration,
   and study-manifest suites.
+
+## Wave 4 non-overlapping ownership map
+
+Independent contract `GO` was issued for exact checkpoint
+`750e1ab2486ce785a60304fceb19a1502ff34319` and registry
+`car1_f57a4f613fbadcb7a3b38dbf9748dfecc725d33e747b042fe2f21fba5d52eaad` in
+`docs/audit/pr-2d-contract-final-go.md`. Implementation is partitioned as follows:
+
+| Owner | Exclusive write surface | Responsibility |
+| --- | --- | --- |
+| Terra core contract | `src/providers/market-reference/**`; `test/market-reference-contract.test.ts` | Bounded provider-neutral types, identities, reasons, normalization, revision state, deterministic selectors, and unchanged-ledger join evidence. |
+| Terra recorded fixtures | `src/adapters/market-reference/**`; `fixtures/market-reference/**`; `test/market-reference-fixtures.test.ts` | Original synthetic corpus, recorded-only verified loading, provenance, malformed inputs, and exact/one-over fixture boundaries. |
+| Luna study manifest | `src/study/market-reference/**`; `test/market-reference-study-manifest.test.ts` | Bounded study design/frame/freeze validators and identities without calculating outcomes. |
+| Integration owner | `test/market-reference-integration.test.ts`; `test/market-reference-replay.test.ts`; `test/market-reference-persistence.test.ts`; PR 2D governance/audit files | Cross-owner integration, order/restart/page-size/memory/SQLite/effect-isolation proofs, validation, and publication. |
+
+No owner may edit another owner's surface or any frozen port, migration, dependency, existing
+provider, or existing fixture body. Cross-surface changes return to the integration owner for an
+explicit ownership-map amendment before editing.
 
 Inherited files that may receive integration/status evidence only are
 `docs/project-board.json`, `docs/project-roadmap.md`, and this orchestration record. Compatibility

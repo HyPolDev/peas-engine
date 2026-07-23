@@ -126,9 +126,13 @@ independent `NO_GO` for one newly discovered underbound release-cluster candidat
 preserved in `docs/audit/pr-2d-contract-final-reaudit.md`. That formula was repaired at
 `acbad9a7757ac1d42f89769c217ef5075a0d1998`, whose independent audit then found only that its new
 literal vectors used invalid issuer/instrument identity families; the finding is preserved in
-`docs/audit/pr-2d-contract-go-audit.md` and is under repair. The next content and regenerated
-external immutable digest/blob registry require another fresh exact-SHA independent review. P1-08
-remains sequenced after contract `GO`. No new
+`docs/audit/pr-2d-contract-go-audit.md`. That final finding was repaired in content commit
+`acd9f25bc89355ce18292d0dcd5afecfebf818cf`, bound by registry
+`car1_f57a4f613fbadcb7a3b38dbf9748dfecc725d33e747b042fe2f21fba5d52eaad`, and independently
+reviewed at exact checkpoint `750e1ab2486ce785a60304fceb19a1502ff34319`. The fresh review in
+`docs/audit/pr-2d-contract-final-go.md` returned `GO` with implementation authorization and no
+findings. ADR 0010 is Accepted, P1-07 is complete, and P1-08 recorded/offline implementation is in
+progress under a non-overlapping ownership map. No new
 market-data spend is authorized before the first event-validation study. Historical Alpaca REST
 `feed=sip`, WebSocket `v2/delayed_sip`, and latest-endpoint `feed=delayed_sip` are separate identities
 unless written provider evidence proves an exact equivalence. Existing FMP Premium is a pending
