@@ -210,7 +210,9 @@
             "contract-reaudit-no-go@726f1690ce80562a1e9a452a26bf90849f04d08f",
             "docs/audit/pr-2d-contract-reaudit.md",
             "contract-final-reaudit-no-go@737ea8fc236c07ea7bba635bda63abcc74126de3",
-            "docs/audit/pr-2d-contract-final-reaudit.md"
+            "docs/audit/pr-2d-contract-final-reaudit.md",
+            "contract-go-audit-no-go@acbad9a7757ac1d42f89769c217ef5075a0d1998",
+            "docs/audit/pr-2d-contract-go-audit.md"
           ]
         },
         {

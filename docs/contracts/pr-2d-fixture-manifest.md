@@ -729,23 +729,33 @@ The fixture oracle uses the exact same seven literals as the registry-bound stud
 ```text
 scheduleSourceObservationId =
   "aob1_0000000000000000000000000000000000000000000000000000000000000000"
+issuerMappingPreimage =
+  {"issuerCik":"0000000001","symbols":["PEAS"],"selectedSymbol":"PEAS","mappingAuthority":"peas-synthetic-fixture","mappingVersion":"v1","effectiveFromMs":0,"effectiveToMs":null}
 issuerMappingId =
-  "ism1_1111111111111111111111111111111111111111111111111111111111111111"
+  "imap1_b5fb4ba66e0c0db04d272e66bcfd071e46fe343be06487bb76c892834958441e"
+instrumentPreimage =
+  {"issuerMappingId":"imap1_b5fb4ba66e0c0db04d272e66bcfd071e46fe343be06487bb76c892834958441e","securityAuthority":"peas-synthetic","securityKey":"fictional-common-1","issueType":"common-share","shareClass":"A","primaryListingVenueCode":"XNAS","currency":"USD","roundLotSize":100,"effectiveFromNs":"0","effectiveToNs":null,"predecessorInstrumentId":null,"transitionReason":null}
 instrumentId =
-  "ins1_2222222222222222222222222222222222222222222222222222222222222222"
+  "min1_e9356093916724ade802248d445ca057c3667b74cb09a06fe34c01767f807fc3"
 plannedReleaseDate = "2027-02-03"
 plannedSession = "pre-market"
 ```
 
+The issuer preimage is original project-authored synthetic data and recomputes under inherited
+`H("peas/issuer-mapping/v1",...)`. The instrument preimage then recomputes under
+`H("peas/market-instrument/v1",...)`. A prefix-only or digest-only substitution is not a golden
+fixture: both displayed IDs must validate from these exact primitive preimages before release-key
+or candidate hashing.
+
 | Vector | `releaseKind`; exact `clusterBasis`; `plannedFiscalPeriod` | Exact `releaseClusterKey` | Exact expected `scc1_` |
 | --- | --- | --- | --- |
-| `SCC-Q-X-A` | `quarterly`; `{kind:"cross-source",crossSourceReleaseKeyHash:"3333333333333333333333333333333333333333333333333333333333333333"}`; null | `e93fd5ecdb8f5b0f6d234f2791795b408e0046c85ebcdbf8be755d837a2acf7f` | `scc1_bdf356c3a2cc41610900efe5e0282619244e088282b831bf0cd6e71998f8c2be` |
-| `SCC-A-X-A` | `annual`; `{kind:"cross-source",crossSourceReleaseKeyHash:"3333333333333333333333333333333333333333333333333333333333333333"}`; null | `79d3062f95a003ef9b10496a05e213c05579109eb545056a82007d5a1a228b0d` | `scc1_913c686ee0dd0cb5a0e7464b4037ad8424dd6469aacc48bbb8d4e84258692345` |
-| `SCC-Q-X-B` | `quarterly`; `{kind:"cross-source",crossSourceReleaseKeyHash:"4444444444444444444444444444444444444444444444444444444444444444"}`; null | `1698b8639b1f26c895389d068133635914ffe29ca37db08109a91220ace0b235` | `scc1_33f09078a7f07e17b38773e551f056d7ee0d4aaf77b102545b31f466a31c0527` |
-| `SCC-Q-N-A` | `quarterly`; `{kind:"native-date",plannedReleaseDate:"2027-02-03",nativeScheduleIdHash:"5555555555555555555555555555555555555555555555555555555555555555"}`; null | `75ca8e4b532f555a6263da39fff86228d697eaa70cdbaa27dcff6c138315e3b8` | `scc1_938b83e815b33cb96758d4e3151d38df6912632a6e8644172521946723cef61f` |
-| `SCC-Q-N-B` | `quarterly`; `{kind:"native-date",plannedReleaseDate:"2027-02-03",nativeScheduleIdHash:"6666666666666666666666666666666666666666666666666666666666666666"}`; null | `042760129b22245193cba965fb5758c5fe7052ade377f06c23093e627e28f922` | `scc1_4b2b5db9ace0557e8645635dccd6e76554c3d3bd335eef749a9a3168c289b8f5` |
-| `SCC-Q-F-A` | `quarterly`; `{kind:"fiscal-period",plannedFiscalPeriod:"2027-Q1"}`; `"2027-Q1"` | `ca354c12cf82e426949cae20040f91bc37ac4e31b1063b847e43986dad163626` | `scc1_4507ea7eb73d9a5b742e517eadb1be175c1d1fc38d6ba174771281ffdc302185` |
-| `SCC-Q-N-C` | `quarterly`; `{kind:"native-date",plannedReleaseDate:"2027-02-03",nativeScheduleIdHash:"7777777777777777777777777777777777777777777777777777777777777777"}`; null | `9ae383fc930eaf7f391f929c4b5887544018a3419623e6710a53686c36ac26df` | `scc1_e4c42bd8e4eeb0b98163bb2b59be53ab7b94c511cdcd66130f290a3f2e58d5e1` |
+| `SCC-Q-X-A` | `quarterly`; `{kind:"cross-source",crossSourceReleaseKeyHash:"3333333333333333333333333333333333333333333333333333333333333333"}`; null | `760e1a706fd2a029bf6c2be35713f6055a58ccb03b38346a37b6a17e1c160dad` | `scc1_23a3ce22af13c273284dcc55f2a2f98e71d8ee33039d896b34789e26fc51a29c` |
+| `SCC-A-X-A` | `annual`; `{kind:"cross-source",crossSourceReleaseKeyHash:"3333333333333333333333333333333333333333333333333333333333333333"}`; null | `f187d8d01fdeb210ec1f201f155dfdfa17edf9e26f0cf2018788559170b05acc` | `scc1_9d065ec03ea039dbfe4a979a91903706f93fe8d8d58a177365fa5d702139e898` |
+| `SCC-Q-X-B` | `quarterly`; `{kind:"cross-source",crossSourceReleaseKeyHash:"4444444444444444444444444444444444444444444444444444444444444444"}`; null | `f8d55d7faab94cb219a6be507859ffdb38f5c4ba47221a3500a69b59f92243f6` | `scc1_e1e29e6b3a530fcaf740d74460e19c09b7f617b14d0dda169555a9e6a32ee602` |
+| `SCC-Q-N-A` | `quarterly`; `{kind:"native-date",plannedReleaseDate:"2027-02-03",nativeScheduleIdHash:"5555555555555555555555555555555555555555555555555555555555555555"}`; null | `0b6220f62e090fcf1dbab51c9a6f1e67cea26a6b24536a940839e41254501a0d` | `scc1_f1978744380df6d88f5c04b45d28dfe5744f00d4bec9dfa4f3212e4932aa04d8` |
+| `SCC-Q-N-B` | `quarterly`; `{kind:"native-date",plannedReleaseDate:"2027-02-03",nativeScheduleIdHash:"6666666666666666666666666666666666666666666666666666666666666666"}`; null | `e821fcc567119d5a7a4beec2f592594c29489e1ab5210cfc36492484d9d1a866` | `scc1_ff342e0d714128058f7b0c60bd3961d41b91cc90992e3dd5596be9ec7fe70c8e` |
+| `SCC-Q-F-A` | `quarterly`; `{kind:"fiscal-period",plannedFiscalPeriod:"2027-Q1"}`; `"2027-Q1"` | `ad7cb2c98df8c571669552d26826b4d99a99daf48917be02e3bdbd3e4680e7ea` | `scc1_44c9c8a19d0ceb40a2e0e27ac574a4c9a9559a040dc72dad625ef16cdecddc38` |
+| `SCC-Q-N-C` | `quarterly`; `{kind:"native-date",plannedReleaseDate:"2027-02-03",nativeScheduleIdHash:"7777777777777777777777777777777777777777777777777777777777777777"}`; null | `7dac1d974db6c72a5a0c59ab3e651b5c9a1bedf3b56fd217f7125545c88d0374` | `scc1_aff6232f2aac45822feabd9336e4729804959b04d99ad9d1588231a4a4229a87` |
 
 All seven exact evidence items share that one observation and use
 `sourceFamily:"issuer-ir-calendar"`, `precedenceOrdinal:1`, `sourceRevisionId:null`,
@@ -774,10 +784,10 @@ wrong-precedence basis selection reject before `scc1_`.
 
 For the common null-period fields, the prohibited old six-field candidate preimage was identical
 for the first five and final native row and collided at
-`scc1_ccbd0bbddcb06b722082461293abd6a0d704954f2b0db22d80dce712de7ebfa3`. It is a literal rejection
+`scc1_3dedd976378f6b5a8fb86477f3518ed9c62068ac4a697dd2eaba2c2c8b233f0b`. It is a literal rejection
 vector. In particular, its quarterly/annual collision is replaced by the exact distinct pair
-`scc1_bdf356c3a2cc41610900efe5e0282619244e088282b831bf0cd6e71998f8c2be` and
-`scc1_913c686ee0dd0cb5a0e7464b4037ad8424dd6469aacc48bbb8d4e84258692345`. One-field mutations of
+`scc1_23a3ce22af13c273284dcc55f2a2f98e71d8ee33039d896b34789e26fc51a29c` and
+`scc1_9d065ec03ea039dbfe4a979a91903706f93fe8d8d58a177365fa5d702139e898`. One-field mutations of
 kind, cross-source key, native schedule ID, basis kind/value,
 representative item, or planned fiscal period must either produce the corresponding distinct
 literal pair above or reject before ID. A supplied old key or ID is never repaired silently.

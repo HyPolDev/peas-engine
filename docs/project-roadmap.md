@@ -123,9 +123,12 @@ checkpoint `726f1690ce80562a1e9a452a26bf90849f04d08f` also received independent 
 cross-document findings are preserved in `docs/audit/pr-2d-contract-reaudit.md` and are repaired.
 The next checkpoint `737ea8fc236c07ea7bba635bda63abcc74126de3` closed those findings but received
 independent `NO_GO` for one newly discovered underbound release-cluster candidate identity,
-preserved in `docs/audit/pr-2d-contract-final-reaudit.md`. That sole `scc1_` finding is under
-repair; the next content and regenerated external immutable digest/blob registry require another
-fresh exact-SHA independent review. P1-08 remains sequenced after contract `GO`. No new
+preserved in `docs/audit/pr-2d-contract-final-reaudit.md`. That formula was repaired at
+`acbad9a7757ac1d42f89769c217ef5075a0d1998`, whose independent audit then found only that its new
+literal vectors used invalid issuer/instrument identity families; the finding is preserved in
+`docs/audit/pr-2d-contract-go-audit.md` and is under repair. The next content and regenerated
+external immutable digest/blob registry require another fresh exact-SHA independent review. P1-08
+remains sequenced after contract `GO`. No new
 market-data spend is authorized before the first event-validation study. Historical Alpaca REST
 `feed=sip`, WebSocket `v2/delayed_sip`, and latest-endpoint `feed=delayed_sip` are separate identities
 unless written provider evidence proves an exact equivalence. Existing FMP Premium is a pending
