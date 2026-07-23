@@ -58,6 +58,7 @@ frameSnapshotId = "sfs1_" + H("peas/study-frame-snapshot/v1", {
 })
 clusterCandidateId = "scc1_" + H("peas/event-study-cluster-candidate/v1", {
   scheduleSourceObservationId, issuerMappingId, instrumentId,
+  releaseKind, releaseClusterKey,
   plannedFiscalPeriod, plannedReleaseDate, plannedSession
 })
 studyClusterId = "scl1_" + H("peas/study-cluster/v1", {
@@ -679,6 +680,7 @@ type StudyCandidateFrameEntryV1 = Readonly<{
   scheduleSourceObservationId: string;
   releaseClusterKey: string;
   releaseKind: "quarterly" | "annual";
+  clusterBasis: StudyReleaseClusterBasisV1;
   scheduleSourceEvidence: readonly StudyScheduleSourceEvidenceV1[];
   issuerMappingId: string;
   instrumentId: string;
@@ -727,6 +729,21 @@ type StudyCandidateFrameEntryV1 = Readonly<{
   }>;
   expectedClusterCandidateId: string;
 }>;
+
+type StudyReleaseClusterBasisV1 =
+  | Readonly<{
+      kind: "fiscal-period";
+      plannedFiscalPeriod: string;
+    }>
+  | Readonly<{
+      kind: "cross-source";
+      crossSourceReleaseKeyHash: string;
+    }>
+  | Readonly<{
+      kind: "native-date";
+      plannedReleaseDate: string;
+      nativeScheduleIdHash: string;
+    }>;
 
 type StudyScheduleSourceEvidenceV1 = Readonly<{
   sourceFamily:
@@ -882,6 +899,12 @@ type StudyClusterFreezeEntryV1 = Readonly<{
 }>;
 ```
 
+The eight fields in the displayed `scc1_` formula are its complete preimage field set. In particular,
+`releaseKind` and the recomputed `releaseClusterKey` are semantic identity inputs; neither may be
+inferred from, replaced by, or omitted because of `scheduleSourceObservationId`. `clusterBasis` and
+`scheduleSourceEvidence` are validation evidence in the containing `sfs1_` preimage and bind
+`scc1_` through the mandatory key recomputation below.
+
 The six cluster fields above are the complete `scl1_` preimage; no unnamed or indirect preimage
 alias is accepted. `expectedFrameSnapshotId`, `expectedClusterCandidateId`,
 `expectedStudyClusterId`, and `expectedStudyManifestId` are displayed evidence only and are stripped
@@ -894,9 +917,14 @@ and cluster IDs.
 `peas-study-schedule-source-v1` has exactly four families and fixed precedence: issuer regulatory
 filing `0`, issuer IR calendar `1`, exchange calendar `2`, and an explicitly accepted schedule
 provider `3`. Family and ordinal must match. This is evidence precedence, not entitlement or market
-provider fallback. Every retained source observation must have durable capture
-`<=samplingFrameAsOfMs` and appears once in `scheduleSourceEvidence`, sorted by
-`(precedenceOrdinal,scheduleSourceObservationId)`.
+provider fallback. Every retained source schedule item must have durable capture
+`<=samplingFrameAsOfMs` and appears once in `scheduleSourceEvidence`. One acquisition observation
+may contain multiple items; its observation ID is not an item or cluster identity. Rows sort by
+numeric `precedenceOrdinal` ascending, then unsigned UTF-8 over `scheduleSourceObservationId`,
+`nativeScheduleIdHash`, `releaseKind`, nullable `plannedFiscalPeriod`, `plannedReleaseDate`,
+`plannedSession`, and nullable `crossSourceReleaseKeyHash`, with null before every string, then by
+the RFC 8785 bytes of the complete row. Duplicate rows or two rows with the same complete
+item/revision identity and conflicting canonical content reject.
 
 Within one `{sourceFamily,nativeScheduleIdHash}`, accept the greatest canonical non-negative
 `nativeRevisionSequence` when every revision supplies it. Otherwise accept the greatest
@@ -908,7 +936,9 @@ content, a fork, or a cycle receives canonical `study.frame-candidate-invalid` w
 Clustering occurs before share-class selection:
 
 1. validate issuer mapping, release kind, date, session, and fiscal-period grammar;
-2. encode fiscal period only as `YYYY-Q1` through `YYYY-Q4`, `YYYY-FY`, or null;
+2. encode fiscal period only as `YYYY-Q1` through `YYYY-Q4`, `YYYY-FY`, or null; a non-null
+   quarterly period must be `YYYY-Q1` through `YYYY-Q4`, a non-null annual period must be
+   `YYYY-FY`, and cross-kind forms reject;
 3. when fiscal period is non-null, group exact
    `{issuerMappingId,releaseKind,plannedFiscalPeriod}`; a date/session disagreement stays one cluster
    and sets the two `scheduleDisagreement` booleans;
@@ -923,16 +953,127 @@ Clustering occurs before share-class selection:
 7. a restatement or later release with a different validated fiscal period remains distinct and is
    never merged after outcomes.
 
-The cluster representative is the retained evidence row with lowest precedence ordinal, then
-greatest effective time (null last), greatest durable capture, then smallest observation ID. Its
-schedule observation and planned fields enter `scc1_`; all contributing rows remain in frame
-evidence. `releaseClusterKey` is lowercase SHA-256 of RFC 8785 canonical
-`{issuerMappingId,releaseKind,clusterBasis}`. `clusterBasis` is exactly one of
-`{kind:"fiscal-period",plannedFiscalPeriod}`, `{kind:"cross-source",crossSourceReleaseKeyHash}`,
-or `{kind:"native-date",plannedReleaseDate,nativeScheduleIdHash}` in that precedence. Exact
-duplicate candidate IDs are fatal `study.duplicate-cluster` with
-`duplicateFailureKind:duplicate-identity`; conflicting preimages use `conflicting-preimage`. A
-provider delivery is never a second candidate.
+For each cluster, `scheduleSourceEvidence` is nonempty and contains exactly its contributing,
+retained-revision rows, not every item from their containing observations. Every row has the
+candidate's exact `issuerMappingId` and `releaseKind` and satisfies exactly one selected basis:
+
+- `fiscal-period`: candidate and every row have the same non-null `plannedFiscalPeriod`, with the
+  release-kind grammar above; `clusterBasis` has exactly
+  `{kind:"fiscal-period",plannedFiscalPeriod}`;
+- `cross-source`: candidate and every row have `plannedFiscalPeriod:null` and the same non-null
+  `crossSourceReleaseKeyHash`; `clusterBasis` has exactly
+  `{kind:"cross-source",crossSourceReleaseKeyHash}`; or
+- `native-date`: candidate and every row have `plannedFiscalPeriod:null`,
+  `crossSourceReleaseKeyHash:null`, the same `plannedReleaseDate`, and the same
+  `nativeScheduleIdHash`; `clusterBasis` has exactly
+  `{kind:"native-date",plannedReleaseDate,nativeScheduleIdHash}`.
+
+The alternatives are selected in the displayed precedence and are exact disjoint shapes. A field
+from another alternative, an unrelated evidence row, a mixed kind/issuer/basis, an empty
+contributor set, or a caller-selected lower-precedence basis rejects before candidate hashing.
+Every `nativeScheduleIdHash` and non-null `crossSourceReleaseKeyHash` used by these shapes is exactly
+64 lowercase hexadecimal characters representing its raw 32-byte digest.
+
+The cluster representative is the contributing row with lowest precedence ordinal, then greatest
+effective time with null less than every integer, greatest durable capture, smallest
+`scheduleSourceObservationId`, smallest `nativeScheduleIdHash`, then smallest canonical nullable
+`crossSourceReleaseKeyHash` with null before every string, all string comparisons by unsigned UTF-8
+bytes, then smallest RFC 8785 bytes of the complete row. Candidate `scheduleSourceObservationId`,
+`issuerMappingId`, `releaseKind`,
+`plannedFiscalPeriod`, `plannedReleaseDate`, and `plannedSession` byte-match that representative.
+Thus multiple schedule items inside one observation remain independently representable even though
+they share `scheduleSourceObservationId`.
+
+`releaseClusterKey` is exactly 64 lowercase hexadecimal characters and equals raw SHA-256, without
+a prefix or repository length framing, of the RFC 8785 bytes for the exact three-key object
+`{issuerMappingId,releaseKind,clusterBasis}`. Validators first select and validate the basis and
+representative, recompute this key, and only then recompute the exact eight-field `scc1_` preimage.
+The candidate's `releaseKind` and `releaseClusterKey` must equal those recomputed values; no
+displayed or supplied key is trusted.
+
+`sfs1_` hashes the complete validated candidate evidence, including kind, key, basis, and
+contributors, after `scc1_` recomputation succeeds. `scl1_` binds that `scc1_` and `sfs1_`;
+`sfm1_` binds the frame and the selected `scl1_` entries. Changing kind, basis, representative item,
+or contributing evidence therefore changes `scc1_` and/or `sfs1_`, and every dependent selected
+cluster/manifest identity must be regenerated. A stale downstream identity, a mutation that leaves
+an identity unchanged, or a candidate ID reused for a different validated cluster rejects. Exact
+duplicate candidate IDs are fatal
+`study.duplicate-cluster` with `duplicateFailureKind:duplicate-identity`; conflicting preimages use
+`conflicting-preimage`. A provider delivery is never a second candidate.
+
+### Literal cluster-candidate identity vectors
+
+All rows below use these exact common candidate fields:
+
+```text
+scheduleSourceObservationId =
+  "aob1_0000000000000000000000000000000000000000000000000000000000000000"
+issuerMappingId =
+  "ism1_1111111111111111111111111111111111111111111111111111111111111111"
+instrumentId =
+  "ins1_2222222222222222222222222222222222222222222222222222222222222222"
+plannedReleaseDate = "2027-02-03"
+plannedSession = "pre-market"
+```
+
+`releaseClusterKey` uses the raw RFC-8785 SHA-256 rule above. `clusterCandidateId` uses repository
+length-prefixed `canonicalHash("peas/event-study-cluster-candidate/v1", preimage)` over the exact
+eight-field preimage. The expected literals are:
+
+| Vector | `releaseKind`; `clusterBasis`; `plannedFiscalPeriod` | Expected `releaseClusterKey` | Expected `clusterCandidateId` |
+| --- | --- | --- | --- |
+| `SCC-Q-X-A` | `quarterly`; `{kind:"cross-source",crossSourceReleaseKeyHash:"3333333333333333333333333333333333333333333333333333333333333333"}`; null | `e93fd5ecdb8f5b0f6d234f2791795b408e0046c85ebcdbf8be755d837a2acf7f` | `scc1_bdf356c3a2cc41610900efe5e0282619244e088282b831bf0cd6e71998f8c2be` |
+| `SCC-A-X-A` | `annual`; `{kind:"cross-source",crossSourceReleaseKeyHash:"3333333333333333333333333333333333333333333333333333333333333333"}`; null | `79d3062f95a003ef9b10496a05e213c05579109eb545056a82007d5a1a228b0d` | `scc1_913c686ee0dd0cb5a0e7464b4037ad8424dd6469aacc48bbb8d4e84258692345` |
+| `SCC-Q-X-B` | `quarterly`; `{kind:"cross-source",crossSourceReleaseKeyHash:"4444444444444444444444444444444444444444444444444444444444444444"}`; null | `1698b8639b1f26c895389d068133635914ffe29ca37db08109a91220ace0b235` | `scc1_33f09078a7f07e17b38773e551f056d7ee0d4aaf77b102545b31f466a31c0527` |
+| `SCC-Q-N-A` | `quarterly`; `{kind:"native-date",plannedReleaseDate:"2027-02-03",nativeScheduleIdHash:"5555555555555555555555555555555555555555555555555555555555555555"}`; null | `75ca8e4b532f555a6263da39fff86228d697eaa70cdbaa27dcff6c138315e3b8` | `scc1_938b83e815b33cb96758d4e3151d38df6912632a6e8644172521946723cef61f` |
+| `SCC-Q-N-B` | `quarterly`; `{kind:"native-date",plannedReleaseDate:"2027-02-03",nativeScheduleIdHash:"6666666666666666666666666666666666666666666666666666666666666666"}`; null | `042760129b22245193cba965fb5758c5fe7052ade377f06c23093e627e28f922` | `scc1_4b2b5db9ace0557e8645635dccd6e76554c3d3bd335eef749a9a3168c289b8f5` |
+| `SCC-Q-F-A` | `quarterly`; `{kind:"fiscal-period",plannedFiscalPeriod:"2027-Q1"}`; `"2027-Q1"` | `ca354c12cf82e426949cae20040f91bc37ac4e31b1063b847e43986dad163626` | `scc1_4507ea7eb73d9a5b742e517eadb1be175c1d1fc38d6ba174771281ffdc302185` |
+| `SCC-Q-N-C` | `quarterly`; `{kind:"native-date",plannedReleaseDate:"2027-02-03",nativeScheduleIdHash:"7777777777777777777777777777777777777777777777777777777777777777"}`; null | `9ae383fc930eaf7f391f929c4b5887544018a3419623e6710a53686c36ac26df` | `scc1_e4c42bd8e4eeb0b98163bb2b59be53ab7b94c511cdcd66130f290a3f2e58d5e1` |
+
+The same-observation evidence vector places all seven items in the one synthetic observation named
+above. Each candidate's `scheduleSourceEvidence` retains its corresponding exact item. Every item
+uses `sourceFamily:"issuer-ir-calendar"`, `precedenceOrdinal:1`, `sourceRevisionId:null`,
+`durablyCapturedAtMs:1800000000000`, `effectiveAtMs:1800000000000`,
+`nativeRevisionSequence:"1"`, the common issuer/date/session, and its table release kind/period.
+Its remaining exact hashes are:
+
+| Vector | Evidence `nativeScheduleIdHash` | Evidence `crossSourceReleaseKeyHash` |
+| --- | --- | --- |
+| `SCC-Q-X-A` | `8888888888888888888888888888888888888888888888888888888888888888` | `3333333333333333333333333333333333333333333333333333333333333333` |
+| `SCC-A-X-A` | `9999999999999999999999999999999999999999999999999999999999999999` | `3333333333333333333333333333333333333333333333333333333333333333` |
+| `SCC-Q-X-B` | `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` | `4444444444444444444444444444444444444444444444444444444444444444` |
+| `SCC-Q-N-A` | `5555555555555555555555555555555555555555555555555555555555555555` | null |
+| `SCC-Q-N-B` | `6666666666666666666666666666666666666666666666666666666666666666` | null |
+| `SCC-Q-F-A` | `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb` | null |
+| `SCC-Q-N-C` | `7777777777777777777777777777777777777777777777777777777777777777` | null |
+
+As a regression witness, projecting either `SCC-Q-X-A` or `SCC-A-X-A` onto the retired six fields
+`{scheduleSourceObservationId,issuerMappingId,instrumentId,plannedFiscalPeriod,plannedReleaseDate,plannedSession}`
+produces the same retired hash
+`scc1_ccbd0bbddcb06b722082461293abd6a0d704954f2b0db22d80dce712de7ebfa3`.
+The accepted eight-field preimages instead produce the pinned distinct
+`scc1_bdf356c3a2cc41610900efe5e0282619244e088282b831bf0cd6e71998f8c2be` and
+`scc1_913c686ee0dd0cb5a0e7464b4037ad8424dd6469aacc48bbb8d4e84258692345`.
+Validators reject the retired projection and never accept its hash as a V1 candidate identity.
+
+The executable vector set proves:
+
+- `SCC-Q-X-A` versus `SCC-A-X-A` isolates quarterly/annual kind under the same observation and
+  cross-source key;
+- `SCC-Q-X-A` versus `SCC-Q-X-B` isolates two non-null cross-source keys;
+- `SCC-Q-N-A` versus `SCC-Q-N-B` isolates two native schedule item IDs;
+- `SCC-Q-F-A` versus `SCC-Q-N-C` distinguishes fiscal-period and native-date basis selection; and
+- all seven rows can originate as separate schedule items inside the same acquisition observation;
+  accepted evidence membership and the recomputed cluster key, not observation uniqueness, decide
+  whether they form one or multiple clusters.
+
+Every displayed pair has distinct key and candidate ID. Mutating `releaseKind`, basis kind, basis
+value, representative item, or planned fiscal period while retaining an old key rejects the
+cross-field check; recomputing the key must produce the corresponding distinct candidate ID.
+Substituting fiscal/cross/native fields across alternatives, adding an unrelated same-observation
+item, or collapsing two rows merely because their observation IDs match rejects. For each accepted
+mutation in an otherwise byte-identical frame, tests also assert changed `sfs1_`, changed `scl1_`,
+and changed `sfm1_`; retaining any old downstream ID rejects.
 
 ### Market-cap and liquidity evidence
 
@@ -1566,7 +1707,7 @@ not an opportunity to exercise the 64-definition storage ceiling.
 | `STV-003` | Each study reason that requires market evidence round-trips exact `marketResultId` and `PreservedMarketReasonV1`; forged ID, changed market detail, absent half of the pair, or generic study replacement rejects. |
 | `STV-004` | The authority registry recomputes from exactly the ten literal `StudyContractAuthorityIdsV1` entries with exact paths, document digests, blob OIDs, and one common commit; the design, frame, and manifest bind the same registry ID and the design/freeze bind the exact tuple. Accepted study/market catalog digests recompute. One changed byte, missing/extra/reordered authority, mutable path, logical ID without digest, or mismatched checkpoint rejects before seed/frame construction and changes every dependent ID. |
 | `STV-005` | Four schedule families, every precedence tie-break, sequence/no-sequence revision selection, conflict/fork/cycle, input permutation, and post-frame revision exclusion yield one result independent of arrival order. |
-| `STV-006` | Same issuer/fiscal release across sources clusters once; date/session disagreement annotates; null-period proved key clusters; ambiguous null key and conflicting fiscal period dispose; restatement/later period remains separate. |
+| `STV-006` | Same issuer/fiscal release across sources clusters once; date/session disagreement annotates; null-period proved key clusters; ambiguous null key and conflicting fiscal period dispose; restatement/later period remains separate. Recompute all literal `SCC-*` vectors and mutations: quarterly/annual, two cross-source keys, two native IDs, fiscal/native basis, and multiple same-observation items must validate exact representative/basis/key/preimage fields, never collide, and propagate changed `sfs1_`, `scl1_`, and `sfm1_`. Stale keys/IDs and every cross-field mismatch reject. |
 | `STV-007` | Market-cap evidence proves selected/missing official close, exact as-of shares authority, all known/unknown nullability branches, global exact-rational tertiles, boundary ties, and unknown exclusion without candidate exclusion. Liquidity proves exactly 20 consecutive S5-ending rows, 14/15/20 valid boundaries, exact median, global tertiles, post-earlier-control bottom-decile population, boundary ties, and unknown behavior. Share-class known median wins; null sorts last; exact rational tie and all-null use instrument ID; every loser is counted; post-freeze reversal cannot change winner. |
 | `STV-008` | All 11 SIC divisions/unknown and all 11 model-family values validate authority/version/as-of evidence; conflict becomes exact unknown; unknown remains an explicit standard stratum. |
 | `STV-009` | One candidate matching all controls receives only the first; each group with 4/5/6 members proves insufficient/exact/oversubscribed rank behavior; unselected controls return to their natural lane. |

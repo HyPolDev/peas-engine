@@ -824,6 +824,7 @@ frameSnapshotId = "sfs1_" + H("peas/study-frame-snapshot/v1", {
 
 clusterCandidateId = "scc1_" + H("peas/event-study-cluster-candidate/v1", {
   scheduleSourceObservationId, issuerMappingId, instrumentId,
+  releaseKind, releaseClusterKey,
   plannedFiscalPeriod, plannedReleaseDate, plannedSession
 })
 
@@ -863,6 +864,39 @@ enter design/frame/cluster/manifest identities. `StudyDatasetFreezeV1` is the fi
 that may name collected selected/missing outcomes. It rejects an operation-terminal market outcome
 because no result ID exists. It cannot alter any design, frame, cluster, lane, threshold, provider,
 anchor, or selection-policy field.
+
+For `scc1_`, `releaseKind` is exactly `quarterly|annual`. The primitive
+`StudyReleaseClusterBasisV1` selected and retained in the frame is exactly one of
+`{kind:"fiscal-period",plannedFiscalPeriod}`,
+`{kind:"cross-source",crossSourceReleaseKeyHash}`, or
+`{kind:"native-date",plannedReleaseDate,nativeScheduleIdHash}`. The candidate
+`releaseClusterKey` must equal lowercase hexadecimal
+`SHA-256(RFC8785({issuerMappingId,releaseKind,clusterBasis}))`; this inner release-cluster digest is
+raw SHA-256 over the canonical JSON bytes, not `H`, and has no domain/prefix frame.
+
+Cross-field validation precedes `scc1_` derivation. `scheduleSourceEvidence` is nonempty and contains
+exactly the cluster's contributing retained-revision rows. Every row has the candidate's issuer and
+release kind. A non-null `plannedFiscalPeriod` selects only the fiscal-period basis and every row
+has that exact period; quarterly accepts only `YYYY-Q1` through `YYYY-Q4`, and annual accepts only
+`YYYY-FY`. With null fiscal period, a proved non-null cross-source key selects only the cross-source
+basis and every row has that exact key; without it, the native-date basis is required and every row
+has its exact `plannedReleaseDate` and `nativeScheduleIdHash`. These three alternatives are disjoint
+and selected in that precedence.
+
+The representative is the contributing row with lowest precedence ordinal, greatest effective
+time with null below every integer, greatest durable-capture time, smallest observation ID, smallest
+native schedule ID, then smallest canonical nullable cross-source key, using unsigned UTF-8 for
+strings. Its observation ID, issuer, release kind, planned fiscal period/date/session byte-match the
+candidate. Multiple schedule items may share one `scheduleSourceObservationId`; item identity comes
+from the selected fiscal-period, cross-source, or native-schedule primitive, never from observation
+uniqueness. Missing, mismatched, mixed, empty, ambiguous, wrong-precedence, or unproved
+basis/evidence rejects before an `scc1_` is derived.
+
+Changing either `releaseKind` or the recomputed `releaseClusterKey` changes `scc1_`. Because the
+frame binds the complete candidate, selected basis, retained evidence, and recomputed candidate ID,
+that mutation also changes `sfs1_`; it then changes every dependent `scl1_`, `sfm1_`, and `sdf1_`.
+Golden and mutation vectors must recompute this full dependency chain rather than substituting an
+old displayed child ID.
 
 ## Relationship to inherited PR 2C identities and ports
 
@@ -917,6 +951,10 @@ prove at minimum:
   directions;
 - every direct reason detail rejects `{field,value}`, wrong key/value, two keys, top-level
   `limitKind`, and a bound ID not authorized for the exact reason/ledger row;
+- `scc1_` literal golden and mutation vectors distinguish quarterly from annual, two non-null
+  cross-source keys, two native schedule IDs, fiscal-period from native-date basis, and multiple
+  schedule items carried by one observation; each vector proves exact basis/evidence validation and
+  propagates the changed candidate ID through `sfs1_`, `scl1_`, `sfm1_`, and `sdf1_`;
 - null and absent differ; unknown and current values cannot substitute;
 - same content under different provider/feed/endpoint/entitlement observations shares only
   content/fact identities allowed by this contract;

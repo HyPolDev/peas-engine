@@ -120,9 +120,12 @@ capture as primary with retrieval sensitivity and as-of target selectors. The fi
 checkpoint `7c484124680972b5cbbd39f31cf69b542a6341cc` received independent `NO_GO`; its six
 determinism findings are preserved in `docs/audit/pr-2d-contract-review.md`. The first repaired
 checkpoint `726f1690ce80562a1e9a452a26bf90849f04d08f` also received independent `NO_GO`; its four
-cross-document findings are preserved in `docs/audit/pr-2d-contract-reaudit.md` and are under
-repair. The next repaired content and regenerated external immutable digest/blob registry require
-another fresh exact-SHA independent review. P1-08 remains sequenced after contract `GO`. No new
+cross-document findings are preserved in `docs/audit/pr-2d-contract-reaudit.md` and are repaired.
+The next checkpoint `737ea8fc236c07ea7bba635bda63abcc74126de3` closed those findings but received
+independent `NO_GO` for one newly discovered underbound release-cluster candidate identity,
+preserved in `docs/audit/pr-2d-contract-final-reaudit.md`. That sole `scc1_` finding is under
+repair; the next content and regenerated external immutable digest/blob registry require another
+fresh exact-SHA independent review. P1-08 remains sequenced after contract `GO`. No new
 market-data spend is authorized before the first event-validation study. Historical Alpaca REST
 `feed=sip`, WebSocket `v2/delayed_sip`, and latest-endpoint `feed=delayed_sip` are separate identities
 unless written provider evidence proves an exact equivalence. Existing FMP Premium is a pending
