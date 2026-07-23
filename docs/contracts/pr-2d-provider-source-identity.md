@@ -12,14 +12,50 @@
 Every displayed V1 identity is recomputed from an exact inert JSON preimage:
 
 ```text
-id = prefix + SHA-256(domainSeparator || 0x00 || RFC8785(preimage))
+utf8(s) = the exact UTF-8 bytes of s
+lp(b) = uint64be(byteLength(b)) || b
+hashParts(domain, ...parts) =
+  SHA-256(lp(utf8(domain)) || lp(bytes(parts[0])) || ... || lp(bytes(parts[n])))
+H(domain, preimage) = hashParts(domain, utf8(RFC8785(preimage)))
+id = literalPrefix || H(literalDomainSeparator, exactPreimage)
 ```
 
+`uint64be` is exactly eight unsigned big-endian bytes. This is the repository
+`src/core/hash.ts` `hashParts`/`canonicalHash` framing; no zero separator, concatenation-only frame,
+hex-text length, character count, native-endian integer, or alternate canonicalizer is permitted.
 The domain separator and prefix in this document are literal. A preimage has exactly the shown
 fields. Unknown, missing, extra, inherited, accessor, symbol, sparse, proxy, cyclic, non-finite,
 negative-zero, and unsafe-integer values reject before canonicalization. Arrays are dense. Set-like
 arrays are unique and sorted by unsigned UTF-8 bytes before hashing. An implementation must not
 silently add defaults.
+
+Literal framing vectors:
+
+```text
+canonical ordinary
+domain UTF-8: 706561732f676f6c64656e2f7631
+canonical JSON UTF-8: 7b2261223a2278222c226e223a317d
+preimage: {"a":"x","n":1}
+frame:
+000000000000000e706561732f676f6c64656e2f7631
+000000000000000f7b2261223a2278222c226e223a317d
+SHA-256: 6b2d9419f583fd8f1e317a03a25f14dbcaeb06a3e63bfe566ab9f33b1e39de97
+
+framing collision witness: unframed parts ["ab","c"] and ["a","bc"] both concatenate to 616263
+domain: peas/frame-collision/v1
+left frame:
+0000000000000017706561732f6672616d652d636f6c6c6973696f6e2f7631
+00000000000000026162000000000000000163
+left SHA-256: 4e38029c6f73af0004b786cb417eaf3f4b06d9c4c23477e65a6a0136f0ef6ff8
+right frame:
+0000000000000017706561732f6672616d652d636f6c6c6973696f6e2f7631
+00000000000000016100000000000000026263
+right SHA-256: 31b5b621ccf61824923b45fb664e683a1f719e61aebe63cca5ebe1bbcf910ae3
+```
+
+The line breaks in displayed frames are presentation only; the hashed frame is their exact
+concatenation. Golden tests must compare the literal frame bytes and digests above and must also
+prove the two collision-witness digests differ.
 
 Strings are NFC-normalized only when the field contract explicitly says so; V1 identifiers,
 provider codes, symbols, condition codes, decimal strings, timestamps, hashes, and enum values are
@@ -392,25 +428,73 @@ type MarketReferenceKindV1 =
 type MarketReferenceResultStatusV1 =
   | "selected-complete"
   | "selected-degraded"
-  | "missing"
-  | "rejected";
+  | "missing";
+
+type MarketEvaluationStatusV1 = MarketReferenceResultStatusV1 | "rejected";
+
+type MarketBoundIdV1 =
+  | "rawArtifactBytes"
+  | "aggregateVerifiedBytes"
+  | "artifactsPerAcquisition"
+  | "pagesPerAcquisition"
+  | "recordsPerArtifactOrPage"
+  | "factsPerAcquisition"
+  | "canonicalRecordBytes"
+  | "rawJsonDepth"
+  | "rawJsonNodes"
+  | "rawJsonKeysPerObject"
+  | "rawJsonArrayItems"
+  | "parserTokensPerArtifact"
+  | "sidecarDepth"
+  | "sidecarNodes"
+  | "sidecarKeysPerObject"
+  | "sidecarGenericArrayItems"
+  | "genericStringBytes"
+  | "identifierBytes"
+  | "providerOrDatasetCodeBytes"
+  | "symbolBytes"
+  | "timestampTextBytes"
+  | "pageTokenInputBytes"
+  | "opaqueProviderIdBytes"
+  | "conditionMembers"
+  | "conditionMemberBytes"
+  | "rawDecimalTokenBytes"
+  | "instrumentsPerAcquisition"
+  | "providersPerSelectionPolicy"
+  | "marketCentersPerInstrumentState"
+  | "revisionDepthPerFamily"
+  | "deliveriesPerProviderObservation"
+  | "candidatesPerReferenceSelection"
+  | "intervalsPerCluster"
+  | "referenceResultsPerCluster"
+  | "sidecarRecordsPerExecution"
+  | "sidecarEdgesPerExecution"
+  | "canonicalSidecarRecordBytes"
+  | "canonicalExecutionBundleBytes"
+  | "recordedReplayPageSize"
+  | "historicalQueryWindow"
+  | "selectionSearchWindowMs"
+  | "primaryResidualTargets"
+  | "primaryResidualHorizonNs"
+  | "calendarDatesPerManifest";
 
 type CanonicalReasonDetailV1 =
-  | Readonly<{ field: "sourceFailureKind"; value: "incomplete" | "endpoint-unknown" | "spec-version-unknown" }>
-  | Readonly<{ field: "entitlementFailureKind"; value: "unfrozen" | "pending" | "denied" | "scope-mismatch" | "zero-spend-violation" }>
-  | Readonly<{ field: "artifactFailureKind"; value: "observation-invalid" | "digest-mismatch" | "size-mismatch" | "observation-hash-mismatch" | "media-or-encoding-mismatch" }>
-  | Readonly<{ field: "providerObservationFailureKind"; value: "schema-invalid" | "identity-invalid" | "conflicting-content" }>
-  | Readonly<{ field: "revisionFailureKind"; value: "orphan" | "fork" | "cycle" | "reused-key" | "chain-unresolved" | "unsupported-after-cancellation" }>
-  | Readonly<{ field: "timestampFailureKind"; value: "missing" | "semantic-untrusted" | "precision-insufficient" | "capture-retrieval-lag-exceeded" }>
-  | Readonly<{ field: "sequenceFailureKind"; value: "missing" | "gap" | "equal-time-ambiguous" }>
-  | Readonly<{ field: "instrumentFailureKind"; value: "unmapped" | "ambiguous" | "outside-effective-window" | "symbol-continuity-unresolved" }>
-  | Readonly<{ field: "coverageFailureKind"; value: "provider-unknown" | "instrument-not-covered" }>
-  | Readonly<{ field: "sessionFailureKind"; value: "calendar-missing" | "boundary-ambiguous" | "timestamp-or-coverage-unknown" }>
-  | Readonly<{ field: "tradeConditionFailureKind"; value: "does-not-update-last" | "state-insufficient" }>
-  | Readonly<{ field: "priorCloseFailureKind"; value: "absent" | "ineligible" }>
-  | Readonly<{ field: "endpointKind"; value: "pre-release" | "first-observation" | "plus-1m" | "plus-5m" | "plus-30m" | "sensitivity" }>
-  | Readonly<{ field: "qualityKind"; value: "locked" | "slow" | "luld-limit-state" }>
-  | Readonly<{ field: "evidenceQualityKind"; value: "sip-time-only" | "native-sequence-unchecked" }>;
+  | Readonly<{ limitKind: MarketBoundIdV1 }>
+  | Readonly<{ sourceFailureKind: "incomplete" | "endpoint-unknown" | "spec-version-unknown" }>
+  | Readonly<{ entitlementFailureKind: "unfrozen" | "pending" | "denied" | "scope-mismatch" | "zero-spend-violation" }>
+  | Readonly<{ artifactFailureKind: "observation-invalid" | "digest-mismatch" | "size-mismatch" | "observation-hash-mismatch" | "media-or-encoding-mismatch" }>
+  | Readonly<{ providerObservationFailureKind: "schema-invalid" | "identity-invalid" | "conflicting-content" }>
+  | Readonly<{ revisionFailureKind: "orphan" | "fork" | "cycle" | "reused-key" | "chain-unresolved" | "unsupported-after-cancellation" }>
+  | Readonly<{ timestampFailureKind: "missing" | "semantic-untrusted" | "precision-insufficient" | "capture-retrieval-lag-exceeded" }>
+  | Readonly<{ sequenceFailureKind: "missing" | "gap" | "equal-time-ambiguous" }>
+  | Readonly<{ instrumentFailureKind: "unmapped" | "ambiguous" | "outside-effective-window" | "symbol-continuity-unresolved" }>
+  | Readonly<{ coverageFailureKind: "provider-unknown" | "instrument-not-covered" }>
+  | Readonly<{ sessionFailureKind: "calendar-missing" | "boundary-ambiguous" | "timestamp-or-coverage-unknown" }>
+  | Readonly<{ tradeConditionFailureKind: "does-not-update-last" | "state-insufficient" }>
+  | Readonly<{ priorCloseFailureKind: "absent" | "ineligible" }>
+  | Readonly<{ endpointKind: "pre-release" | "first-observation" | "plus-1m" | "plus-5m" | "plus-30m" | "sensitivity" }>
+  | Readonly<{ qualityKind: "locked" | "slow" | "luld-limit-state" }>
+  | Readonly<{ evidenceQualityKind: "sip-time-only" | "native-sequence-unchecked" }>;
 
 type CanonicalMarketReasonV1 = Readonly<{
   code: string;
@@ -418,8 +502,12 @@ type CanonicalMarketReasonV1 = Readonly<{
 }>;
 ```
 
-`code` is one exact `market.*` value from `market-reasons-v1`. It has the one matching detail shape
-above exactly when that catalog requires it and otherwise has `detail:null`. Diagnostics use
+`MarketBoundIdV1` is the exact market-scoped bound-ID subset whose enforcement-ledger disposition
+uses `market.bound-exceeded` in `market-reference-bounds-v1`; no fixture alias or study bound is
+accepted. `code` is one exact `market.*` value from `market-reasons-v1`. It has the one matching
+direct-key detail shape above exactly when that catalog requires it and otherwise has
+`detail:null`. A non-null detail has exactly one own property. A `{field,value}` wrapper,
+top-level/separate `limitKind`, or any second detail channel is invalid. Diagnostics use
 `CanonicalMarketReasonV1`, are limited to degraded/annotation dispositions, are unique, and sort by
 unsigned UTF-8 bytes of RFC 8785 `{code,detail}`. Any alternate names, untyped reason strings, or
 abbreviated reference kinds are invalid V1 values.
@@ -697,10 +785,11 @@ providerDiscrepancyId = "mdp1_" + H("peas/market-provider-discrepancy/v1", {
 `candidates` is an array of exact
 `{providerObservationId,revisionId,normalizedMarketFactId,eligibilityStatus,reason,diagnostics}`
 objects sorted lexicographically by the three IDs and then RFC 8785 bytes of the remaining fields.
-`eligibilityStatus` is `eligible|degraded|ineligible|rejected`; `reason` is
+`eligibilityStatus` is `eligible|degraded|ineligible`; `reason` is
 `CanonicalMarketReasonV1|null`; and `diagnostics` uses the exact sorted representation above.
-Eligible/degraded has null reason; ineligible/rejected has one reason. The array includes every
-candidate outcome and rejects duplicate tuples.
+Eligible/degraded has null reason; ineligible has one reason. The array includes every candidate
+outcome and rejects duplicate tuples. An operation-terminal rejection aborts before
+`candidateSetHash` and produces no candidate array.
 
 A selected result has `resultStatus:selected-complete|selected-degraded`; complete has empty
 diagnostics and degraded has at least one. A missing result has `resultStatus:"missing"` and one
@@ -708,6 +797,12 @@ canonical reason. Rejected operations emit neither `msr1_` nor `mmr1_`. `referen
 the eleven exact values and `asOfBasis` is the complete object above. `providerResultIds` is unique
 and UTF-8 sorted; `comparisonResult` is `agree|disagree|not-comparable`. Equal cross-provider values
 remain independent. Persisted results are immutable.
+
+An operation-terminal rejection is not a reference result and cannot enter `referenceResultIds`,
+denominator accounting, or study-reason preservation through a fabricated ID. If any required
+market-reference operation rejects, the proposed dataset freeze is invalid as a whole and no
+`sdf1_` is derived or persisted. The precommitted cluster remains in the study design/frame; a
+repaired execution must reproduce the same frozen design before a dataset freeze can validate.
 
 ### Study design, frame, cluster, manifest, and dataset freeze
 
@@ -720,9 +815,11 @@ studyDesignId = "std1_" + H("peas/study-design/v1", {
 })
 
 frameSnapshotId = "sfs1_" + H("peas/study-frame-snapshot/v1", {
-  studyDesignId, samplingFrameAsOfMs, calendarSnapshotId,
-  scheduleSourcePolicyId, frameConstructionCodeDigest,
-  configurationDigest, candidates, dispositions
+  studyDesignId, contractAuthorityRegistryId, samplingFrameAsOfMs,
+  calendarSnapshotId, scheduleSourcePolicyId,
+  frameConstructionCodeDigest, configurationDigest,
+  preFrameEvidenceSnapshotId, rankSeedMaterialId, rankSeedHex,
+  seedCommittedAtMs, frameConstructedAtMs, candidates, dispositions
 })
 
 clusterCandidateId = "scc1_" + H("peas/event-study-cluster-candidate/v1", {
@@ -741,7 +838,7 @@ studyManifestId = "sfm1_" + H("peas/study-freeze-manifest/v1", {
   calendarSnapshotId, entitlementSnapshotIds, providerSourcePolicyId,
   selectionPolicyId, primaryAnchorKind, alternateAnchorRequired,
   readyAtMs, samplingFrameAsOfMs, freezePublishedAtMs,
-  collectionSessions, correctionLagMs, rankSeedHex,
+  collectionSessions, correctionLagMs, rankSeedMaterialId, rankSeedHex,
   frameSnapshotId, selectedClusters, expectedCounts
 })
 
@@ -754,13 +851,18 @@ datasetFreezeId = "sdf1_" + H("peas/study-dataset-freeze/v1", {
 })
 ```
 
-`acceptedContractIds` and `contractIds` are exactly the nine logical IDs in the validated
-`contractAuthorityRegistryId`, sorted by unsigned UTF-8. All other set-like arrays are sorted
-unique. `candidates` includes frame facts only; no outcome,
+`acceptedContractIds` and `contractIds` are exactly the ten logical IDs in the validated
+`contractAuthorityRegistryId`, sorted by unsigned UTF-8. `StudyDesignV1`/`std1_`,
+`StudyFrameSnapshotV1`/`sfs1_`, and `StudyFreezeManifestV1`/`sfm1_` must each contain the same non-null
+`contractAuthorityRegistryId`; omission or a different registry rejects before hashing. Golden
+vectors cover ten exact entries, nine missing, eleven with an extra, a duplicate, and all
+noncanonical orders. All other set-like arrays are sorted unique. `candidates` includes frame facts
+only; no outcome,
 provider success, price, actual latency, event-time condition, correction, result, or conclusion may
 enter design/frame/cluster/manifest identities. `StudyDatasetFreezeV1` is the first study identity
-that may name collected market outcomes and typed missing results. It cannot alter any design,
-frame, cluster, lane, threshold, provider, anchor, or selection-policy field.
+that may name collected selected/missing outcomes. It rejects an operation-terminal market outcome
+because no result ID exists. It cannot alter any design, frame, cluster, lane, threshold, provider,
+anchor, or selection-policy field.
 
 ## Relationship to inherited PR 2C identities and ports
 
@@ -805,11 +907,16 @@ The executable suite must pin canonical preimage bytes and IDs for every prefix/
 prove at minimum:
 
 - every displayed ID rejects a forged value;
+- the literal ordinary and collision-witness frame bytes/digests at the top of this contract match
+  repository `hashParts` and differ from concatenation/zero-separator framing;
 - every `car1_` entry rejects a forged blob, digest, path, commit, missing logical
-  ID, extra logical ID, `HEAD`, branch, or `latest`;
+  ID, extra logical ID, `HEAD`, branch, or `latest`, including exact ten/nine/eleven cardinality
+  and noncanonical-order vectors;
 - every `mik1_`, `mcs1_`, `mcc1_`, component-policy field, candidate tuple, as-of field, reference
   kind, result status, reason detail, and diagnostic rejects missing/extra/forged values in both
   directions;
+- every direct reason detail rejects `{field,value}`, wrong key/value, two keys, top-level
+  `limitKind`, and a bound ID not authorized for the exact reason/ledger row;
 - null and absent differ; unknown and current values cannot substitute;
 - same content under different provider/feed/endpoint/entitlement observations shares only
   content/fact identities allowed by this contract;

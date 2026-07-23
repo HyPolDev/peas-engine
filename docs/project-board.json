@@ -206,7 +206,9 @@
             "docs/adr/0010-market-reference-contract.md",
             "docs/contracts/pr-2d-acceptance-matrix.md",
             "contract-checkpoint-no-go@7c484124680972b5cbbd39f31cf69b542a6341cc",
-            "docs/audit/pr-2d-contract-review.md"
+            "docs/audit/pr-2d-contract-review.md",
+            "contract-reaudit-no-go@726f1690ce80562a1e9a452a26bf90849f04d08f",
+            "docs/audit/pr-2d-contract-reaudit.md"
           ]
         },
         {

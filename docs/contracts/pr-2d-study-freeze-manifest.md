@@ -44,14 +44,17 @@ before recursion, sorting, allocation, hashing, metric evaluation, or partial ou
 
 ```text
 studyDesignId = "std1_" + H("peas/study-design/v1", {
-  designVersion, acceptedContractIds, algorithms, metricDefinitions,
+  designVersion, contractAuthorityRegistryId, acceptedContractIds,
+  algorithms, metricDefinitions,
   gateThresholds, missingPolicyId, outlierPolicyId, multiplicityPolicyId,
   correctionPolicyId, sensitivityPolicyId, boundsPolicyId, analysisCodeDigest
 })
 frameSnapshotId = "sfs1_" + H("peas/study-frame-snapshot/v1", {
-  studyDesignId, samplingFrameAsOfMs, calendarSnapshotId,
-  scheduleSourcePolicyId, frameConstructionCodeDigest,
-  configurationDigest, candidates, dispositions
+  studyDesignId, contractAuthorityRegistryId, samplingFrameAsOfMs,
+  calendarSnapshotId, scheduleSourcePolicyId,
+  frameConstructionCodeDigest, configurationDigest,
+  preFrameEvidenceSnapshotId, rankSeedMaterialId, rankSeedHex,
+  seedCommittedAtMs, frameConstructedAtMs, candidates, dispositions
 })
 clusterCandidateId = "scc1_" + H("peas/event-study-cluster-candidate/v1", {
   scheduleSourceObservationId, issuerMappingId, instrumentId,
@@ -62,11 +65,12 @@ studyClusterId = "scl1_" + H("peas/study-cluster/v1", {
   strata, rank, allocationCell, selectionFraction
 })
 studyManifestId = "sfm1_" + H("peas/study-freeze-manifest/v1", {
-  studyDesignId, codeCommit, configurationDigest, contractIds,
+  studyDesignId, codeCommit, configurationDigest,
+  contractAuthorityRegistryId, contractIds,
   calendarSnapshotId, entitlementSnapshotIds, providerSourcePolicyId,
   selectionPolicyId, primaryAnchorKind, alternateAnchorRequired,
   readyAtMs, samplingFrameAsOfMs, freezePublishedAtMs,
-  collectionSessions, correctionLagMs, rankSeedHex,
+  collectionSessions, correctionLagMs, rankSeedMaterialId, rankSeedHex,
   frameSnapshotId, selectedClusters, expectedCounts
 })
 datasetFreezeId = "sdf1_" + H("peas/study-dataset-freeze/v1", {
@@ -86,6 +90,16 @@ excluded from its own preimage and recomputed; a missing or forged value rejects
 containing frame or manifest preimage is canonicalized. The validator inserts only their recomputed
 IDs where a higher-level preimage explicitly calls for an ID.
 
+`contractAuthorityRegistryId` has exact grammar `car1_` plus 64 lowercase hexadecimal characters
+and must recompute from the accepted `ContractAuthorityRegistryV1` using the repository's existing
+length-prefixed `canonicalHash`. Its registry has exactly ten entries, one for every literal in
+`StudyContractAuthorityIdsV1`, sorted in that tuple order. Each entry binds exact logical ID,
+repository path, document SHA-256, Git blob OID, and one common contract-content commit. Both the
+design and freeze carry the same recomputed registry ID and exact ten-item tuple; the frame carries
+the same ID and inherits the tuple through `studyDesignId`. Missing, extra, duplicate, reordered,
+path-only, mutable, or digest/blob/commit-mismatched authority fails before seed or frame work. A
+new semantic checkpoint regenerates the registry and every dependent study identity.
+
 Paths, URLs, credentials, raw provider bytes, account facts, page tokens, current wall time, actual
 prices, actual latency, provider success, corrections, missingness, and conclusions are excluded
 from all pre-outcome identities.
@@ -96,7 +110,8 @@ from all pre-outcome identities.
 type StudyDesignV1 = Readonly<{
   schemaVersion: 1;
   designVersion: string;
-  acceptedContractIds: readonly string[];
+  contractAuthorityRegistryId: string;
+  acceptedContractIds: StudyContractAuthorityIdsV1;
   algorithms: StudyAlgorithmsV1;
   metricDefinitions: readonly StudyMetricDefinitionV1[];
   gateThresholds: readonly StudyGateThresholdV1[];
@@ -109,6 +124,19 @@ type StudyDesignV1 = Readonly<{
   analysisCodeDigest: string;
   expectedStudyDesignId: string;
 }>;
+
+type StudyContractAuthorityIdsV1 = readonly [
+  "peas/adr-0010/v1",
+  "peas/market-acceptance-matrix/v1",
+  "peas/market-eligibility/v1",
+  "peas/market-fixture-manifest/v1",
+  "peas/market-provider-source-identity/v1",
+  "peas/market-reason-catalog/v1",
+  "peas/market-resource-bounds/v1",
+  "peas/market-timestamp-trust/v1",
+  "peas/study-freeze-manifest/v1",
+  "peas/study-reason-catalog/v1",
+];
 ```
 
 The following definitions close every value inside the `std1_` preimage. Arrays appear in the
@@ -126,8 +154,7 @@ type StudyViewKindV1 = "recorded-primary" | "recorded-corrected";
 type StudyResultStatusV1 =
   | "selected-complete"
   | "selected-degraded"
-  | "missing"
-  | "rejected";
+  | "missing";
 
 type StudySectorV1 =
   | "agriculture"
@@ -188,7 +215,6 @@ type StudyAlgorithmsV1 = Readonly<{
     "selected-complete",
     "selected-degraded",
     "missing",
-    "rejected",
   ];
   quoteAgePolicyId: string;
   sessionPolicyId: string;
@@ -311,11 +337,174 @@ scope, applicability, or priority rejects as canonical `study.input-invalid`; th
 not define a competing local code list.
 
 ```ts
+type CanonicalReasonDetailV1 =
+  | null
+  | Readonly<{ limitKind: string }>
+  | Readonly<{
+      sourceFailureKind: "incomplete" | "endpoint-unknown" | "spec-version-unknown";
+    }>
+  | Readonly<{
+      entitlementFailureKind:
+        | "unfrozen"
+        | "pending"
+        | "denied"
+        | "scope-mismatch"
+        | "zero-spend-violation";
+    }>
+  | Readonly<{
+      artifactFailureKind:
+        | "observation-invalid"
+        | "digest-mismatch"
+        | "size-mismatch"
+        | "observation-hash-mismatch"
+        | "media-or-encoding-mismatch";
+    }>
+  | Readonly<{
+      providerObservationFailureKind:
+        | "schema-invalid"
+        | "identity-invalid"
+        | "conflicting-content";
+    }>
+  | Readonly<{
+      revisionFailureKind:
+        | "orphan"
+        | "fork"
+        | "cycle"
+        | "reused-key"
+        | "chain-unresolved"
+        | "unsupported-after-cancellation";
+    }>
+  | Readonly<{
+      timestampFailureKind:
+        | "missing"
+        | "semantic-untrusted"
+        | "precision-insufficient"
+        | "capture-retrieval-lag-exceeded";
+    }>
+  | Readonly<{
+      sequenceFailureKind: "missing" | "gap" | "equal-time-ambiguous";
+    }>
+  | Readonly<{
+      instrumentFailureKind:
+        | "unmapped"
+        | "ambiguous"
+        | "outside-effective-window"
+        | "symbol-continuity-unresolved";
+    }>
+  | Readonly<{
+      coverageFailureKind: "provider-unknown" | "instrument-not-covered";
+    }>
+  | Readonly<{
+      sessionFailureKind:
+        | "calendar-missing"
+        | "boundary-ambiguous"
+        | "timestamp-or-coverage-unknown";
+    }>
+  | Readonly<{
+      tradeConditionFailureKind: "does-not-update-last" | "state-insufficient";
+    }>
+  | Readonly<{ priorCloseFailureKind: "absent" | "ineligible" }>
+  | Readonly<{
+      endpointKind:
+        | "pre-release"
+        | "first-observation"
+        | "plus-1m"
+        | "plus-5m"
+        | "plus-30m"
+        | "sensitivity";
+    }>
+  | Readonly<{
+      qualityKind:
+        | "locked"
+        | "slow"
+        | "luld-limit-state"
+        | "halt"
+        | "stale"
+        | "crossed"
+        | "one-sided"
+        | "condition-ineligible";
+    }>
+  | Readonly<{
+      evidenceQualityKind: "sip-time-only" | "native-sequence-unchecked";
+    }>
+  | Readonly<{
+      frameFailureKind:
+        | "snapshot-missing"
+        | "snapshot-mutable"
+        | "seed-unfrozen"
+        | "policy-unfrozen"
+        | "contract-unbound";
+    }>
+  | Readonly<{
+      freezeFailureKind: "equal-to-first-outcome" | "after-first-outcome";
+    }>
+  | Readonly<{
+      leakageFieldKind:
+        | "actual-release"
+        | "price"
+        | "latency"
+        | "condition"
+        | "availability"
+        | "correction"
+        | "market-result"
+        | "post-frame";
+    }>
+  | Readonly<{
+      duplicateFailureKind: "duplicate-identity" | "conflicting-preimage";
+    }>
+  | Readonly<{ quotaKind: "lane" | "control" | "stratum" }>
+  | Readonly<{ rankFailureKind: "seed" | "hash" | "ordering" | "allocation" }>
+  | Readonly<{
+      providerFreezeKind:
+        | "provider"
+        | "dataset"
+        | "feed"
+        | "endpoint"
+        | "entitlement"
+        | "fallback";
+    }>
+  | Readonly<{
+      anchorFailureKind:
+        | "capture-not-primary"
+        | "retrieval-not-required"
+        | "policy-missing"
+        | "retrieved-at-reinterpreted";
+    }>
+  | Readonly<{
+      candidateFailureKind:
+        | "schedule"
+        | "issuer"
+        | "instrument"
+        | "fiscal-period"
+        | "source-conflict";
+    }>
+  | Readonly<{
+      releaseFailureKind: "cancelled" | "postponed" | "outside-window" | "not-captured";
+    }>
+  | Readonly<{
+      identityChangeKind: "issuer" | "instrument" | "share-class";
+    }>
+  | Readonly<{ basisKind: "capture" | "retrieval" | "capture-minus-retrieval" }>
+  | Readonly<{
+      correctionFailureKind:
+        | "original-admission"
+        | "revision-arrival"
+        | "cancellation"
+        | "cutoff-evidence";
+    }>
+  | Readonly<{
+      contaminationKind:
+        | "issuer-release"
+        | "macro-release"
+        | "trading-halt"
+        | "corporate-action";
+    }>;
+
 type StudyReasonV1 = Readonly<{
   code: string;
   disposition: "fatal" | "frame-disposition" | "retained-outcome" | "metric-missing" | "annotation";
   scope: "design" | "frame" | "candidate" | "cluster" | "metric" | "dataset" | "replay";
-  detail: Readonly<Record<string, string>> | null;
+  detail: CanonicalReasonDetailV1;
   marketResultId: string | null;
   preservedMarketReason: PreservedMarketReasonV1 | null;
 }>;
@@ -324,12 +513,18 @@ type PreservedMarketReasonV1 = Readonly<{
   code: string;
   disposition: "rejected" | "ineligible" | "missing" | "degraded" | "annotation";
   scope: string;
-  detail: Readonly<Record<string, string>> | null;
+  detail: CanonicalReasonDetailV1;
 }>;
 ```
 
 The two shapes above are exact envelopes; `code`, `detail`, `disposition`, and `scope` are not free
 text because the accepted catalog digest closes their total permitted values and pairings.
+Every non-null `detail` has exactly one own direct-key property from
+`CanonicalReasonDetailV1`; scalar details, `{field,value}`, inherited/accessor properties,
+top-level or parallel detail channels, and a second detail key reject. `limitKind` is one exact
+market- or study-scoped bound ID, as selected by `code`, from the accepted
+`market-reference-bounds-v1` registry. The accepted reason catalog closes every code to exactly one
+detail alternative and exact value; a structurally valid detail paired with the wrong code rejects.
 `marketResultId` and `preservedMarketReason` are both null or both non-null. When non-null they must
 byte-match the referenced immutable selected/missing market result's canonical market reason. The
 seven study codes named by section 5.3 of the catalog require that pair. A study reason never
@@ -368,6 +563,51 @@ frozen calendar:
 If quotas cannot be filled, collection does not start. A started run is never extended and no later
 frame replaces attrited clusters.
 
+## Non-tunable rank-seed derivation
+
+The seed is derived, never supplied. First close the complete immutable pre-frame evidence snapshot:
+
+```text
+preFrameEvidenceSnapshotId = "pfe1_" + H("peas/study-pre-frame-evidence/v1", {
+  contractAuthorityRegistryId, studyDesignId, samplingFrameAsOfMs,
+  calendarSnapshotId, scheduleSourcePolicyId,
+  frameConstructionCodeDigest, configurationDigest,
+  sourceObservationIds, artifactInventoryDigest
+})
+
+rankSeedMaterialId = "rsm1_" + H("peas/study-rank-seed-material/v1", {
+  contractAuthorityRegistryId, studyDesignId, samplingFrameAsOfMs,
+  calendarSnapshotId, scheduleSourcePolicyId,
+  frameConstructionCodeDigest, configurationDigest,
+  preFrameEvidenceSnapshotId
+})
+
+rankSeedHex = H("peas/study-rank-seed/v1", {rankSeedMaterialId})
+```
+
+`H` is the repository length-prefixed `canonicalHash`; every shown object is RFC 8785 canonical
+inert JSON. `sourceObservationIds` is the complete sorted-unique set admitted by the frozen
+schedule/issuer/instrument/market-cap/liquidity evidence policies at
+`samplingFrameAsOfMs`; omission or addition changes the snapshot ID and fails complete-frame
+reconciliation. `artifactInventoryDigest` binds the complete verified artifact inventory, not a
+path or caller declaration.
+
+`rankSeedHex` is exactly 64 lowercase hexadecimal characters with no `0x`, representing 32 bytes.
+`rankSeedBytes[k]` is the integer encoded by characters `2k,2k+1`, for `k=0..31`; uppercase, odd
+length, nonhex, or alternate text/byte conversion rejects. The material record is durably committed
+after the pre-frame snapshot closes and strictly before any candidate list, stratum, rank, or
+allocation is emitted: `samplingFrameAsOfMs <= seedCommittedAtMs < frameConstructedAtMs`. The
+durable stamp is timing evidence and does not enter either seed hash, so waiting cannot tune the
+seed. `frameConstructedAtMs` must be before the first selected outcome and no later than
+`freezePublishedAtMs`.
+
+The frame and manifest carry identical `contractAuthorityRegistryId`, `rankSeedMaterialId`, and
+`rankSeedHex`; the frame additionally carries the snapshot and timing evidence. Validators
+recompute all three IDs before ranking. Changing any registry/evidence/calendar/code/config input
+changes the material, seed, frame, cluster, and manifest identities. Reusing a seed under different
+material or trying multiple seeds for one material is `study.rank-invalid` with
+`rankFailureKind:seed`.
+
 ## StudyFreezeManifestV1
 
 ```ts
@@ -376,7 +616,8 @@ type StudyFreezeManifestV1 = Readonly<{
   studyDesignId: string;
   codeCommit: string;
   configurationDigest: string;
-  contractIds: readonly string[];
+  contractAuthorityRegistryId: string;
+  contractIds: StudyContractAuthorityIdsV1;
   calendarSnapshotId: string;
   entitlementSnapshotIds: readonly string[];
   providerSourcePolicyId: string;
@@ -388,6 +629,7 @@ type StudyFreezeManifestV1 = Readonly<{
   freezePublishedAtMs: number;
   collectionSessions: readonly string[];
   correctionLagMs: 604800000;
+  rankSeedMaterialId: string;
   rankSeedHex: string;
   frameSnapshotId: string;
   selectedClusters: readonly StudyClusterFreezeEntryV1[];
@@ -417,11 +659,17 @@ are not substituted into the preimage.
 type StudyFrameSnapshotV1 = Readonly<{
   schemaVersion: 1;
   studyDesignId: string;
+  contractAuthorityRegistryId: string;
   samplingFrameAsOfMs: number;
   calendarSnapshotId: string;
   scheduleSourcePolicyId: "peas-study-schedule-source-v1";
   frameConstructionCodeDigest: string;
   configurationDigest: string;
+  preFrameEvidenceSnapshotId: string;
+  rankSeedMaterialId: string;
+  rankSeedHex: string;
+  seedCommittedAtMs: number;
+  frameConstructedAtMs: number;
   candidates: readonly StudyCandidateFrameEntryV1[];
   dispositions: readonly FrameDispositionCountV1[];
   expectedFrameSnapshotId: string;
@@ -449,7 +697,9 @@ type StudyCandidateFrameEntryV1 = Readonly<{
     sicAuthorityObservationId: string | null;
     sicMappingVersion: "sec-sic-division-v1";
     sectorStratum: StudySectorV1;
+    marketCapEvidence: StudyMarketCapEvidenceV1;
     marketCapStratum: "low" | "mid" | "high" | "unknown";
+    liquidityEvidence: StudyLiquidityEvidenceV1;
     liquidityStratum: "low" | "mid" | "high" | "unknown";
     modelFamily: StudyModelFamilyV1;
     modelFamilyAuthority:
@@ -499,12 +749,87 @@ type StudyScheduleSourceEvidenceV1 = Readonly<{
   plannedSession: "pre-market" | "regular" | "post-market" | "overnight-or-closed" | "unknown";
 }>;
 
+type StudyExactDecimalV1 = Readonly<{
+  coefficient: string;
+  scale: number;
+  negative: false;
+}>;
+
+type StudyExactRationalV1 = Readonly<{
+  numerator: string;
+  denominator: string;
+}>;
+
+type StudyMarketCapEvidenceV1 = Readonly<{
+  policyId: "peas-study-market-cap-v1";
+  asOfSession: string;
+  asOfNs: string;
+  priceReferenceKind: "prior-listing-official-close";
+  priceViewKind: "recorded-primary";
+  priceMarketResultId: string;
+  priceResultStatus: "selected-complete" | "selected-degraded" | "missing";
+  price: StudyExactDecimalV1 | null;
+  sharesOutstanding: StudyExactDecimalV1 | null;
+  sharesValueDate: string | null;
+  sharesEffectiveAtNs: string | null;
+  sharesSourceObservationId: string | null;
+  sharesAuthorityVersion: string | null;
+  sharesDurablyCapturedAtMs: number | null;
+  marketCap: StudyExactRationalV1 | null;
+  unknownKind:
+    | null
+    | "price-missing"
+    | "shares-missing"
+    | "shares-after-frame"
+    | "authority-unknown"
+    | "nonpositive-or-overflow";
+  stratum: "low" | "mid" | "high" | "unknown";
+  comparisonRank: number | null;
+  comparisonPopulationSize: number;
+}>;
+
+type StudyLiquiditySessionEvidenceV1 = Readonly<{
+  sessionId: string;
+  sessionCloseNs: string;
+  closeMarketResultId: string;
+  closeResultStatus: "selected-complete" | "selected-degraded" | "missing";
+  closePrice: StudyExactDecimalV1 | null;
+  regularSessionVolume: StudyExactDecimalV1 | null;
+  volumeFactId: string | null;
+  volumeSourceObservationId: string | null;
+  volumeAuthorityVersion: "consolidated-regular-session-volume-v1" | null;
+  dollarVolume: StudyExactRationalV1 | null;
+  status: "valid" | "missing";
+  missingKind:
+    | null
+    | "close-missing"
+    | "volume-missing"
+    | "nonpositive-or-overflow"
+    | "after-frame"
+    | "authority-unknown";
+}>;
+
+type StudyLiquidityEvidenceV1 = Readonly<{
+  policyId: "peas-study-liquidity-20-session-median-v1";
+  asOfSession: string;
+  sessions: readonly StudyLiquiditySessionEvidenceV1[];
+  validSessionCount: number;
+  medianDollarVolume: StudyExactRationalV1 | null;
+  stratum: "low" | "mid" | "high" | "unknown";
+  comparisonRank: number | null;
+  comparisonPopulationSize: number;
+  tailRank: number | null;
+  tailPopulationSize: number | null;
+  tailEligible: boolean;
+}>;
+
 type StudyShareClassCandidateV1 = Readonly<{
   instrumentId: string;
   securityKind: "common-share" | "supported-adr";
   usExchangeListed: true;
-  validLiquiditySessions: number;
-  medianDollarVolume: Readonly<{ numerator: string; denominator: string }> | null;
+  liquiditySessions: readonly StudyLiquiditySessionEvidenceV1[];
+  validLiquiditySessionCount: number;
+  medianDollarVolume: StudyExactRationalV1 | null;
 }>;
 
 type StudyShareClassSelectionV1 = Readonly<{
@@ -609,17 +934,47 @@ duplicate candidate IDs are fatal `study.duplicate-cluster` with
 `duplicateFailureKind:duplicate-identity`; conflicting preimages use `conflicting-preimage`. A
 provider delivery is never a second candidate.
 
+### Market-cap and liquidity evidence
+
+All decimal coefficients are canonical nonzero ASCII digits without leading zero, scales are
+non-negative safe integers within the resource policy, and values used here are positive.
+Rationals use signed canonical numerator text, positive denominator text, and are reduced by GCD;
+binary floating point is forbidden.
+
+Market cap uses the selected instrument's last eligible `prior-listing-official-close` from
+`recorded-primary` whose official session close is at or before the S5 frame close, plus the latest
+authoritative shares-outstanding fact with effective time and durable capture both
+`<=samplingFrameAsOfMs`. The price market result must be selected/missing and byte-reconcile with
+the recorded market result. The shares fact binds exact value date, effective time, source
+observation, authority version, and durable capture. When both values are valid,
+`marketCap = price * sharesOutstanding` as a reduced rational and `unknownKind:null`; every known
+field is non-null. Otherwise `marketCap:null`, `stratum:"unknown"`, and exactly one matching
+`unknownKind`; unavailable shares authority fields are null, never guessed. `marketCapStratum` must
+equal `marketCapEvidence.stratum`.
+
+Liquidity contains exactly the 20 consecutive frozen regular sessions ending with S5, oldest to
+newest, with no duplicate or skipped session. Every row binds the official close time, immutable
+close market result, exact regular-session consolidated volume fact, source observation, and
+authority version. A valid row has selected close status, positive close/volume, non-null evidence,
+exact reduced `dollarVolume=close*volume`, `status:"valid"`, and `missingKind:null`. Every other row
+has `dollarVolume:null`, `status:"missing"`, and one exact missing kind; it cannot be repaired from a
+later, extended-hours, provider-summary, or different-instrument fact. `validSessionCount` equals
+the valid-row count. At 15..20 valid rows, median is the exact middle value or rational mean of the
+two middle values; at 0..14 it is null and stratum unknown with canonical
+`study.liquidity-unknown`. `liquidityStratum` must equal `liquidityEvidence.stratum`.
+
 ### Deterministic share-class selection
 
 For each cluster, retain only supported U.S.-exchange-listed common shares and explicitly supported
 ADRs. Every other security receives canonical `study.instrument-out-of-scope`. For each supported
-candidate calculate the exact median of `close*volume` over the 20 regular sessions ending at the
-frame snapshot. Fewer than 15 valid sessions gives `medianDollarVolume:null` and canonical
+candidate calculate the exact median of `close*volume` over the same 20 regular sessions ending at
+the frame snapshot through its complete `liquiditySessions`. Fewer than 15 valid sessions gives
+`medianDollarVolume:null` and canonical
 `study.liquidity-unknown`; it never borrows another share class's value.
 
 Known median numerator is canonical non-negative decimal integer text, denominator is canonical
-positive decimal integer text, and the fraction is reduced. `validLiquiditySessions` is 0..20 and
-must agree with the retained session evidence.
+positive decimal integer text, and the fraction is reduced. `validLiquiditySessionCount` is 0..20
+and must agree with the retained session evidence.
 
 Sort candidates by known median before null, known median descending by exact rational comparison,
 then `instrumentId` ascending by unsigned UTF-8 bytes. The first wins, even when every median is
@@ -705,11 +1060,29 @@ rankDigest = SHA256("peas/event-study-rank/v1" || 0x00 ||
                     rankSeedBytes || 0x00 || utf8(clusterCandidateId))
 ```
 
-Sort by unsigned digest bytes, then `clusterCandidateId` ascending. For each tertile, sort known
-exact values by `(value,instrumentId)`, give zero-based rank `r` among `n`, and assign
-`min(2,floor(3*r/n))`; missing/invalid is `unknown`. Liquidity is the exact median of `close*volume`
-over the prior 20 regular sessions with at least 15 valid sessions. Its bottom decile is
-`floor(10*r/n)==0`. No calculation uses binary floating point.
+`rankDigest` is exactly 64 lowercase hex characters for the 32 digest bytes. Sort by unsigned digest
+bytes, then `clusterCandidateId` ascending.
+
+The market-cap and liquidity tertile comparison population is, independently for each dimension,
+every unique eligible release-cluster candidate after source clustering, scope validation, and
+share-class selection, but before control assignment or lane sampling. It is global across sectors,
+models, sessions, and lanes. Filter only candidates whose corresponding evidence produces a known
+positive exact value. Sort ascending by exact rational value, then `instrumentId`, then
+`clusterCandidateId`, both unsigned UTF-8. With zero-based rank `r` among `n`, assign
+`min(2,floor(3*r/n))` to low/mid/high. Equal values remain consecutive in the deterministic ID order;
+there is no averaged-rank or shared-boundary override. Missing/invalid evidence is excluded only
+from that dimension's comparison population and must assert `unknown`; it remains an eligible frame
+candidate. The recomputed value, rank, population size, and label must agree with the hashed evidence.
+Every known row has integer `comparisonRank` in `0..comparisonPopulationSize-1`; every unknown row
+has null rank, while all rows carry the same known-population size for that dimension.
+
+For `liquidity-tail`, after removing candidates assigned to the first three control eligibility
+groups, rebuild one known-liquidity population from the remaining candidates, use the same
+`(value,instrumentId,clusterCandidateId)` order, and mark exactly rows satisfying
+`floor(10*r/n)==0`. Remaining known rows carry exact tail rank/population; remaining unknown rows
+carry null rank and the same population size; candidates removed by an earlier control carry both
+tail fields null. `tailEligible` is true exactly for the bottom-decile expression. Unknown liquidity
+never qualifies. No calculation uses binary floating point.
 
 Allocation is deterministic capacity-aware Hamilton:
 
@@ -722,10 +1095,13 @@ Allocation is deterministic capacity-aware Hamilton:
 5. cap at `Ci`, remove exhausted cells, and repeat; and
 6. select candidates within cells by rank.
 
-Apply the same loop first across model-family/sector groups and then within each awarded group
-across canonical cell IDs
-`{marketCapStratum}|{liquidityStratum}|{plannedSession}`. Group and cell IDs compare by unsigned
-UTF-8 bytes. `selectionFraction` is the reduced exact rational
+First-level `Ci` is the remaining capacity of each model-family or sector group after its exact base
+award; `R` is 40 or 120 minus all base awards. After the first-level final award `Ai` is fixed for a
+group, second-level allocation starts fresh across that group's canonical populated cell IDs
+`{marketCapStratum}|{liquidityStratum}|{plannedSession}`: every cell has base award exactly zero,
+`R=Ai`, and `Ci` equals its full candidate count. Apply steps 3--5 until exactly `Ai` seats are
+awarded. The specialized two-seat and standard one-seat bases never propagate to cells. Group and
+cell IDs compare by unsigned UTF-8 bytes. `selectionFraction` is the reduced exact rational
 `cellSelectedCount/cellFrameCount`; a zero-capacity cell is omitted, never assigned denominator
 zero. Unknown is explicit. There is no cross-lane spillover. Capacity exhaustion returns
 `study.quota-insufficient` with `quotaKind:lane` or `stratum` as applicable.
@@ -867,9 +1243,8 @@ thresholds.
 - The gate is a fixed threshold rule, not a p-value search. Optional secondary tests use Holm at
   familywise alpha `0.05` over exactly 24 slots: five movement metrics in four actual-session groups
   plus four quote/trade comparisons. Missing slots have `p=1`; sort by `(p,slotId)`.
-- Movement medians use 10,000 lane-stratified bootstrap replicates. Replicate `i` derives from
-  `SHA256("peas/study-bootstrap/v1" || seed || uint64be(i))`; unsigned-64 rejection sampling avoids
-  modulo bias; type-7 percentile endpoints and half-even six-decimal display are fixed.
+- Movement medians use only the single exact 10,000-replicate lane-stratified procedure below; no
+  summary digest, alternate PRNG, library RNG, or caller seed exists.
 - Exactly one primary provider/source policy is frozen. An authorized secondary discrepancy source
   yields `agree|disagree|not-comparable`; it never fills primary missingness. Equal facts retain
   provenance. Absent secondary is not agreement.
@@ -916,6 +1291,19 @@ probability `p` uses `h=1+(N-1)*p`, `j=floor(h)`, `g=h-j`, and
 exact `p=1/40` and `39/40`. Canonical values remain reduced rationals; display-only values round
 half-even to six decimals. Any 9,999/10,001 count, duplicate index, invalid rational, changed lane
 size, modulo-biased draw, or noncanonical output order rejects.
+
+Literal bootstrap vectors are normative:
+
+| Vector | Input | Exact output |
+| --- | --- | --- |
+| `BOOT-SEED-01` | rank seed bytes `00 01 ... 1f`; study design ID `std1_` plus 64 zeroes | bootstrap seed `c53a848e04b4d945a53529ae5b38521ed30911687fc2a5da82f9cac328837bc9` |
+| `BOOT-WORD-01` | that seed; metric `residualMovement5m`; replicate/lane/draw/counter all zero | digest `d61c7e091da9669460ab57eecf06483bc5250e38f3740827fb63813bc181d818`; first uint64 `15428345001081923220`; pool 180 index `60` |
+| `BOOT-REJECT-01` | pool 10; injected word `18446744073709551610`, then `9` | limit `18446744073709551610`; first word rejects on equality; next accepts index `9` |
+| `BOOT-MEDIAN-01` | exact sorted values `[-3,1,5]` and `[-3,1,5,9]` | exact medians `1` and `3` |
+| `BOOT-Q7-01` | exact sorted `[0,10,20,30,40]` | type-7 at `1/40` is `1`; at `39/40` is `39` |
+
+The injected-word vector tests the rejection helper directly; production words still come only
+from the one SHA-256 procedure above.
 
 ### Exact 24-slot Holm family
 
@@ -994,14 +1382,36 @@ type StudyDatasetFreezeV1 = Readonly<{
   expectedDatasetFreezeId: string;
 }>;
 
-type StudyReferenceAccountingV1 = Readonly<{
+type StudyReferenceAccountingV1 =
+  | Readonly<{
+      endpointKind: "Cprev" | "Qpre" | "Q0" | "Q1" | "Q5" | "Q30" | "sensitivity";
+      referenceKind: StudyReferenceKindV1;
+      viewKind: StudyViewKindV1;
+      resultStatus: "selected-complete" | "selected-degraded";
+      selectedReferenceId: string;
+      missingReferenceId: null;
+      studyReason: null;
+      diagnostics: readonly PreservedMarketReasonV1[];
+    }>
+  | Readonly<{
+      endpointKind: "Cprev" | "Qpre" | "Q0" | "Q1" | "Q5" | "Q30" | "sensitivity";
+      referenceKind: StudyReferenceKindV1;
+      viewKind: StudyViewKindV1;
+      resultStatus: "missing";
+      selectedReferenceId: null;
+      missingReferenceId: string;
+      studyReason: StudyReasonV1;
+      diagnostics: readonly PreservedMarketReasonV1[];
+    }>;
+
+type StudyRejectedMarketOperationV1 = Readonly<{
   endpointKind: "Cprev" | "Qpre" | "Q0" | "Q1" | "Q5" | "Q30" | "sensitivity";
   referenceKind: StudyReferenceKindV1;
   viewKind: StudyViewKindV1;
-  resultStatus: StudyResultStatusV1;
-  marketResultId: string;
-  studyReason: StudyReasonV1 | null;
-  diagnostics: readonly PreservedMarketReasonV1[];
+  resultStatus: "rejected";
+  selectedReferenceId: null;
+  missingReferenceId: null;
+  rejectedReason: PreservedMarketReasonV1;
 }>;
 
 type StudyMetricAccountingV1 = Readonly<{
@@ -1060,6 +1470,17 @@ type StudyDenominatorTableV1 = Readonly<{
 }>;
 ```
 
+`StudyRejectedMarketOperationV1` is validation-input evidence only; it is not a study-result
+variant and is forbidden from `StudyReferenceAccountingV1`, `StudyDenominatorTableV1`,
+`referenceResultIds`, every metric/attrition/annotation row, and the
+`StudyDatasetFreezeV1` identity preimage. A rejected market operation emits no market result, no
+selected or missing reference ID, no study row, and no `sdf1_` dataset-freeze ID. Encountering one
+rejects the complete dataset-freeze validation atomically; no partial dataset is published. The
+same already-frozen cluster and policy must be rerun without changing its manifest membership until
+each required operation yields exactly one selected or typed-missing market result. Only after all
+180 clusters have the complete selected/missing accounting union may dataset validation and
+`expectedDatasetFreezeId` computation occur.
+
 Exactly one denominator-accounting entry exists for each of the 180 frozen cluster IDs. The sorted
 identity arrays bind actual source observations/revisions, `marketReferenceJoinKey`, selected or
 typed-missing references, discrepancies, metrics, and replay executions; their referenced immutable
@@ -1079,10 +1500,12 @@ not-passed stage requires canonical retained-outcome or metric-missing evidence.
 The six primary reference rows occur first in order `Cprev,Qpre,Q0,Q1,Q5,Q30`: Cprev uses
 `prior-listing-official-close`, the five Q rows use `quote-nbbo-midpoint`, and all use
 `recorded-primary`. Sensitivities follow sorted by `(endpointKind,referenceKind,viewKind)`. A
-selected result has null study missing reason; a missing/rejected result requiring study treatment
-has the exact reason and preserved market result/reason pair. Typed `diagnostics` byte-match the
-canonical market result's sorted typed diagnostics. Metrics contain exactly the nine design metric
-IDs sorted by `metricId`.
+selected result has non-null `selectedReferenceId`, null `missingReferenceId`, and null study
+missing reason. A typed-missing result has null `selectedReferenceId`, a non-null
+`missingReferenceId`, and the exact study reason plus preserved missing market result/reason pair.
+The two variants are disjoint and exhaustive for a publishable dataset. Typed `diagnostics`
+byte-match the canonical selected or missing market result's sorted typed diagnostics. Metrics
+contain exactly the nine design metric IDs sorted by `metricId`.
 Movement success is null; E1--E4 success is boolean when evaluable and false when fixed-denominator
 missingness is not-success. `metricRecordId` is non-null exactly when evaluable.
 
@@ -1141,15 +1564,15 @@ not an opportunity to exercise the 64-definition storage ceiling.
 | `STV-001` | For every type in this document, exact valid object plus each key missing, extra, null-swapped, wrong-type, inherited, accessor, proxy, sparse, cyclic, duplicate-key, unsafe-number, noncanonical set order, and forged displayed ID. |
 | `STV-002` | All 33 accepted `StudyReasonV1` codes, every closed detail value, wrong/missing/extra detail, priority collision, scope/disposition mismatch, and every unknown/retired study string. |
 | `STV-003` | Each study reason that requires market evidence round-trips exact `marketResultId` and `PreservedMarketReasonV1`; forged ID, changed market detail, absent half of the pair, or generic study replacement rejects. |
-| `STV-004` | Accepted study/market catalog digests recompute; one changed catalog byte, mutable path, logical ID without digest, or mismatched checkpoint rejects before frame construction. |
+| `STV-004` | The authority registry recomputes from exactly the ten literal `StudyContractAuthorityIdsV1` entries with exact paths, document digests, blob OIDs, and one common commit; the design, frame, and manifest bind the same registry ID and the design/freeze bind the exact tuple. Accepted study/market catalog digests recompute. One changed byte, missing/extra/reordered authority, mutable path, logical ID without digest, or mismatched checkpoint rejects before seed/frame construction and changes every dependent ID. |
 | `STV-005` | Four schedule families, every precedence tie-break, sequence/no-sequence revision selection, conflict/fork/cycle, input permutation, and post-frame revision exclusion yield one result independent of arrival order. |
 | `STV-006` | Same issuer/fiscal release across sources clusters once; date/session disagreement annotates; null-period proved key clusters; ambiguous null key and conflicting fiscal period dispose; restatement/later period remains separate. |
-| `STV-007` | Share-class known median wins; null sorts last; exact rational tie and all-null use instrument ID; every loser is counted; post-freeze reversal cannot change winner. |
+| `STV-007` | Market-cap evidence proves selected/missing official close, exact as-of shares authority, all known/unknown nullability branches, global exact-rational tertiles, boundary ties, and unknown exclusion without candidate exclusion. Liquidity proves exactly 20 consecutive S5-ending rows, 14/15/20 valid boundaries, exact median, global tertiles, post-earlier-control bottom-decile population, boundary ties, and unknown behavior. Share-class known median wins; null sorts last; exact rational tie and all-null use instrument ID; every loser is counted; post-freeze reversal cannot change winner. |
 | `STV-008` | All 11 SIC divisions/unknown and all 11 model-family values validate authority/version/as-of evidence; conflict becomes exact unknown; unknown remains an explicit standard stratum. |
 | `STV-009` | One candidate matching all controls receives only the first; each group with 4/5/6 members proves insufficient/exact/oversubscribed rank behavior; unselected controls return to their natural lane. |
-| `STV-010` | Rank digest, UTF-8 tie, specialized/standard bases, Hamilton floor/remainder/tie/capacity iteration, unknown cell, exact selection fraction, empty cell, and insufficient capacity recompute under every input order. |
+| `STV-010` | Pre-frame evidence, rank material, and 32-byte lowercase seed recompute through the two-stage derivation; changed evidence/registry, caller seed, alternate byte conversion, reuse, post-exposure commitment, and timing-boundary failures reject. Rank digest and UTF-8 ties recompute. First-level specialized/standard bases and second-level fresh zero bases with `R=Ai` and full cell capacities prove Hamilton floor/remainder/tie/capacity iteration, unknown cell, exact selection fraction, empty cell, and insufficient capacity under every input order. |
 | `STV-011` | Dataset has the exact same 180 cluster IDs, nine ordered attrition stages each, six ordered primary references, nine metrics, stable missing/retained annotations, and no replacement; 179/181, duplicate, reordered, or reason-erased rows reject. |
-| `STV-012` | Every canonical reference kind, `recorded-primary|recorded-corrected` view, and `selected-complete|selected-degraded|missing|rejected` status round-trips; every retired abbreviation rejects. |
+| `STV-012` | Every canonical reference kind and `recorded-primary|recorded-corrected` view round-trips through the disjoint `selected-complete|selected-degraded|missing` accounting union; wrong/null-swapped selected/missing IDs and every retired abbreviation reject. A validator-only rejected operation proves atomic no-row/no-result-ID/no-`sdf1_` failure, then the unchanged frozen cluster reruns to selected or typed-missing accounting. |
 | `STV-013` | Bootstrap includes pool sizes 0/1/even/odd in each lane, rejected uint64 draw then accepted draw, four counter blocks, exact median/type-7 endpoints, 10,000 outputs, restart/backend equality, and 9,999/10,001 rejection. |
 | `STV-014` | All 24 literal Holm slots, positive/negative/zero ties, exact binomial p, unavailable p=1, equal-p slot tie, step-down first failure, adjusted monotonic p, exact alpha equality, and 23/25 rejection. |
 | `STV-015` | Wilson threshold equality and one canonical 18-decimal unit around every boundary, E4 180/180 and one mismatch, plus immutable overall GO/NO_GO/INCONCLUSIVE composition. |

@@ -39,7 +39,7 @@ type RecordedMarketFixtureManifestV1 = Readonly<{
   parsedFactExpectations: readonly SyntheticParsedFactExpectationV1[];
   recordedCorpora: readonly SyntheticRecordedCorpusV1[];
   selectionRequests: readonly SyntheticSelectionRequestV1[];
-  expectedResults: readonly SyntheticExpectedResultV1[];
+  expectedEvaluations: readonly SyntheticExpectedEvaluationV1[];
   expectedMetrics: readonly SyntheticExpectedMetricV1[];
   expectedReasonTrace: readonly SyntheticExpectedReasonV1[];
   exercisedBounds: readonly SyntheticExercisedBoundV1[];
@@ -577,24 +577,24 @@ type SyntheticExpectedCandidateV1 = Readonly<{
   providerObservationId: string;
   revisionId: string;
   normalizedMarketFactId: string;
-  eligibilityStatus: "eligible" | "degraded" | "ineligible" | "rejected";
+  eligibilityStatus: "eligible" | "degraded" | "ineligible";
   reason: CanonicalMarketReasonV1 | null;
   diagnostics: readonly CanonicalMarketReasonV1[];
 }>;
 
-type SyntheticExpectedResultV1 = Readonly<{
+type SyntheticExpectedEvaluationV1 = Readonly<{
   requestId: string;
   intervalKey: string;
   referenceKind: MarketReferenceKindV1;
   asOfBasis: MarketResultAsOfBasisV1;
-  status: MarketReferenceResultStatusV1;
+  status: MarketEvaluationStatusV1;
   resultKind: "selected" | "missing" | "rejected";
   candidateOutcomes: readonly SyntheticExpectedCandidateV1[];
   selectedReferenceId: string | null;
   missingReferenceId: string | null;
   selectedNormalizedMarketFactId: string | null;
   selectedRevisionId: string | null;
-  candidateSetHash: string;
+  candidateSetHash: string | null;
   exactPrice: CanonicalDecimalV1 | null;
   marketEventTimeNs: string | null;
   ageNs: string | null;
@@ -639,24 +639,31 @@ type SyntheticExpectedReasonV1 = Readonly<{
 }>;
 
 type SyntheticExercisedBoundV1 = Readonly<{
-  boundId: string;
+  boundId: CanonicalBoundIdV1;
   observedValue: string;
-  expectedDisposition: "exact-accepted" | "one-over-rejected";
-  expectedReason: Readonly<{ code: "market.bound-exceeded"; detail: null }> | null;
-  limitKind: string | null;
+  expectedDisposition: BoundDispositionV1;
+  candidateIdentity: string | null;
+  metricId: string | null;
+  studyCaseId: string | null;
 }>;
 ```
 
 `candidateOutcomes` sorts exactly as the identity contract requires and recomputes
 `candidateSetHash`. The oracle then recomputes `msr1_` or `mmr1_` from the matching request in both
-directions. Selected status requires exactly one selected ID, null missing ID/reason, and
-complete/degraded diagnostic cardinality. Missing requires exactly one missing ID/reason and null
-selected fields. Rejected requires both IDs and all selected fields null and emits no result ID.
+directions. `resultKind:"selected"` requires `status:"selected-complete"|"selected-degraded"`,
+exactly one selected ID, null missing ID/reason, and complete/degraded diagnostic cardinality.
+`resultKind:"missing"` requires `status:"missing"`, exactly one missing ID/reason, and null selected
+fields. `resultKind:"rejected"` requires `status:"rejected"`, both IDs and all selected fields null,
+a null candidate-set hash, and an empty candidate-outcome array; it emits no result ID.
+The rejected fixture row is only an expected operation outcome; it is not a market result. A
+required rejected operation must also assert that dataset-freeze validation fails atomically, no
+`sdf1_` is derived, and the precommitted cluster remains in the unchanged design/frame.
 
 Reason/detail correspondence and diagnostic sorting use the one canonical identity/reason schema;
 a detail required by the catalog cannot be null, including `qualityKind` for locked/slow/LULD
-degradation. Bound one-over rows require `market.bound-exceeded`, null reason detail, and the exact
-separate `limitKind`; exact rows require both null.
+degradation. `CanonicalBoundIdV1` and `BoundDispositionV1` are exact normative references to the 84
+unique bound IDs and closed enforcement schema in the registry-bound
+`peas/market-resource-bounds/v1` document. The fixture neither redefines nor aliases them.
 
 Quote, trade, bar, and official close IDs and metric names remain distinct. Exact rational
 comparison is required; tests may not use approximate floating-point equality.
@@ -697,57 +704,57 @@ Executable fixture validation MUST include:
    first/array/default selection is impossible;
 4. complete candidate arrays with one omitted expected candidate and one unexpected actual
    candidate, plus tuple permutations that recompute the same canonical hash;
-5. every detail-required reason with correct, null, wrong-field, wrong-value, and extra-detail
-   variants, including locked/slow/LULD degradation;
+5. every detail-required reason with correct direct key, null, wrong direct key, wrong value,
+   `{field,value}`, top-level detail, and extra-detail variants, including `{limitKind}` and
+   locked/slow/LULD degradation;
 6. selected-complete, selected-degraded, missing, and rejected cardinality in both directions,
    including forged candidate-set, selected, and missing IDs; and
 7. first-corpus membership present/absent plus corrected durable evidence at cutoff-1ms, cutoff,
-   and cutoff+1ms for original, correction, and cancellation revisions.
+   and cutoff+1ms for original, correction, and cancellation revisions; and
+8. every one of the 84 canonical bound IDs with all exact/upper/lower/count-minus-one vectors
+   required by its sole `BoundDispositionV1`, including candidate- and metric-local outcomes; and
+9. rejected authority, bound, and identity operations proving no `msr1_`/`mmr1_` is forged, the
+   frozen cluster remains present, and dataset-freeze validation emits no `sdf1_`.
 
 No vector may populate an expected ID by calling the production derivation under test and then
 compare it to itself; golden bytes/digests are literal reviewed fixture expectations.
 
 ## Exact fixture bounds
 
-These limits are part of fixture schema V1 and must reconcile with
-[`pr-2d-resource-bounds.md`](pr-2d-resource-bounds.md). Any later integrated numeric change requires
-the two files and exact/one-over matrix to change together before contract review.
+The only fixture-bound authority is the exact `market-reference-bounds-v1` document blob selected by
+`contractAuthorityRegistryId`. Its three numeric tables contain exactly 84 unique
+`CanonicalBoundIdV1` values and its closed enforcement ledger defines the sole
+`BoundDispositionV1` for each vector. No local bound alias, duplicated numeric table, general
+one-over rule, or caller-selected reason is permitted.
 
-| Bound ID | Exact limit |
-| --- | ---: |
-| `fixture.manifest-bytes` | 32 MiB |
-| `fixture.member-bytes` | 10,485,760 bytes |
-| `fixture.aggregate-member-bytes` | 67,108,864 bytes |
-| `fixture.members` | 16 |
-| `fixture.source-profiles` | 8 |
-| `fixture.records-per-member` | 10,000 |
-| `fixture.record-bytes` | 65,536 bytes |
-| `fixture.fields-per-record` | 64 |
-| `fixture.generic-string-bytes` | 1,024 UTF-8 bytes |
-| `fixture.identity-bytes` | 512 UTF-8 bytes |
-| `fixture.conditions-per-fact` | 8 |
-| `fixture.decimal-coefficient-digits` | 20 |
-| `fixture.source-decimal-scale` | 6 |
-| `fixture.midpoint-scale` | 7 |
-| `fixture.correction-depth` | 16 |
-| `fixture.deliveries-per-native-id` | 32 |
-| `fixture.instruments` | 64 |
-| `fixture.calendar-dates` | 400 |
-| `fixture.active-market-centers-per-instrument` | 64 |
-| `fixture.selection-requests` | 64 |
-| `fixture.expected-results` | 64 |
-| `fixture.expected-metrics` | 32 |
-| `fixture.reason-traces` | 64 |
-| `fixture.page-size` | 1..10,000 inclusive |
-| `fixture.primary-target-set` | exactly `T0,T1,T5,T30` |
-| `fixture.maximum-horizon-ns` | 1,800,000,000,000 |
-| `fixture.regular-quote-age-ns` | 5,000,000,000 inclusive |
-| `fixture.extended-quote-age-ns` | 30,000,000,000 inclusive |
+For every canonical bound ID, `exercisedBounds` contains:
 
-Every maximum has a generated exact-limit success and one-unit-over `market.bound-exceeded` failure
-with the exact bounded `limitKind`.
-Actual read bytes override an in-limit size declaration. Bounds preflight before recursion,
-allocation, sorting, hashing, or partial output; over-limit input cannot be truncated.
+- one `vectorKind:"exact"` row with the exact accepted disposition;
+- its required `upper-one-over`, `lower-one-below`, and/or `exact-count-minus-one` rows;
+- the exact enforcement stage, accepted boolean, one canonical `{code,detail}` reason or null, and
+  atomicity copied byte-for-byte from `BoundDispositionV1`; and
+- sibling-position/declared-versus-actual vectors where the resource contract requires them.
+
+The disposition's `boundId` equals the enclosing row's `boundId`. When its canonical reason is
+`market.bound-exceeded` or `study.bound-exceeded`, the only detail is
+`{limitKind:<that exact canonical bound ID>}` inside the reason. No separate `limitKind` exists.
+
+Cross-field requirements are exact:
+
+- `atomicity:"operation"` has all three local IDs null, emits no fact/candidate/result/manifest,
+  settles every sibling, and invalidates any dataset freeze that depends on the operation;
+- `atomicity:"candidate"` requires `candidateIdentity`, null metric/study IDs, and the exact local
+  reason such as `market.quote-stale` for `regularQuoteAgeNs`/`extendedQuoteAgeNs`;
+- `atomicity:"metric"` requires `metricId`, null candidate/study IDs, and the exact local outcome
+  such as `market.timestamp-insufficient` for `captureRetrievalLagMs`,
+  `study.liquidity-unknown`, `study.timeliness-threshold-not-met`, or
+  `study.correction-after-cutoff`; and
+- `atomicity:"study-run"` requires `studyCaseId`, null candidate/metric IDs, and no partial study
+  output.
+
+Actual read bytes override an in-limit declaration. Bounds preflight at the exact ledger stage
+before recursion, allocation, sorting, hashing, or partial output; over-limit input is never
+truncated.
 
 ## Required fixture catalog
 
@@ -760,14 +767,14 @@ allocation, sorting, hashing, or partial output; over-limit input cannot be trun
 | `Q-03` | eligible quote at target and another 1 ns after | target quote selected; future ignored |
 | `Q-04` | age 5 s and 5 s + 1 ns | exact eligible; one-over `market.quote-stale` |
 | `Q-05` | missing/zero side | `market.quote-one-sided`; no trade/bar substitution |
-| `Q-06` | locked NBBO | primary degraded `market.quote-quality-degraded` with `qualityKind:locked`; strict sensitivity missing |
+| `Q-06` | locked NBBO | primary degraded `{code:"market.quote-quality-degraded",detail:{qualityKind:"locked"}}`; strict sensitivity missing |
 | `Q-07` | crossed NBBO | `market.quote-crossed` |
-| `Q-08` | pinned eligible slow condition | primary degraded `market.quote-quality-degraded` with `qualityKind:slow`; strict sensitivity missing |
-| `Q-09` | unknown/over-limit condition set | `market.condition-unknown` / `market.bound-exceeded` |
+| `Q-08` | pinned eligible slow condition | primary degraded `{code:"market.quote-quality-degraded",detail:{qualityKind:"slow"}}`; strict sensitivity missing |
+| `Q-09` | unknown condition and separately one-over condition bound | first candidate `market.condition-unknown`; second exact canonical bound disposition with `{limitKind:"conditionMembers"}` |
 | `Q-10` | executable, limit-state, and non-executable LULD sides | complete, degraded, and missing respectively |
 | `Q-11` | quote, cross-SRO halt, quote resume, trade resume | halt target missing; no post-resume backfill |
 | `Q-12` | native sequence gap then authoritative reset | missing through reset; deterministic recovery |
-| `Q-13` | equal-time conflict without trusted tie-break | `market.sequence-insufficient` with `sequenceFailureKind:equal-time-ambiguous` |
+| `Q-13` | equal-time conflict without trusted tie-break | `{code:"market.sequence-insufficient",detail:{sequenceFailureKind:"equal-time-ambiguous"}}` |
 | `Q-14` | BOLO improves price | protected NBBO unchanged; BOLO separate |
 | `Q-15` | identical values from two providers/feeds | separate observation/selection identities |
 | `S-01` | weekday holiday | `market.session-closed` |
@@ -796,7 +803,7 @@ allocation, sorting, hashing, or partial output; over-limit input cannot be trun
 | `R-02` | revision absent from first corpus, durably recorded before/at corrected cutoff | original in `recorded-primary`; revision in `recorded-corrected` |
 | `R-03` | selected trade then cancellation admitted only by corrected cutoff | `recorded-primary` retains; `recorded-corrected` removes |
 | `R-04` | identical retransmission | one fact, two delivery observations |
-| `R-05` | same native ID, different payload, no edge | `market.provider-observation-invalid` with `providerObservationFailureKind:conflicting-content` in every arrival order |
+| `R-05` | same native ID, different payload, no edge | `{code:"market.provider-observation-invalid",detail:{providerObservationFailureKind:"conflicting-content"}}` in every arrival order |
 | `R-06` | orphan, fork, cycle, reused revision key | correction chain fails closed |
 | `R-07` | additional correction durable evidence at cutoff-1ms, cutoff, cutoff+1ms | first two admitted only to `recorded-corrected`; +1ms excluded and annotated |
 | `R-08` | final-corrected-only corpus closes before/at/after corrected cutoff | no `recorded-primary`; first two may support `recorded-corrected`, after is `market.correction-view-unknown` |
@@ -810,7 +817,7 @@ allocation, sorting, hashing, or partial output; over-limit input cannot be trun
 | --- | --- | --- |
 | `I-01` | authoritative same-share-class symbol change | continuity only at exact effective boundary |
 | `I-02` | symbol reused by unrelated instrument | no continuity |
-| `I-03` | ambiguous share class/CUSIP-like change | `market.instrument-invalid` with exact `instrumentFailureKind:ambiguous` or `symbol-continuity-unresolved` |
+| `I-03` | separate ambiguous/share-continuity cases | exact direct details `{instrumentFailureKind:"ambiguous"}` and `{instrumentFailureKind:"symbol-continuity-unresolved"}` |
 | `C-01` | pure 2-for-1 split between metric endpoints | primary crossing missing; exact adjusted sensitivity |
 | `C-02` | cash distribution under frozen convention | separate exact adjusted sensitivity |
 | `C-03` | merger/spin/ADR-ratio/combined action | unsupported primary crossing, no guessed adjustment |
@@ -828,7 +835,7 @@ allocation, sorting, hashing, or partial output; over-limit input cannot be trun
 | `X-02` | malformed UTF-8/JSON, duplicate key, deep/wide/nested input | exact parser reason, no partial fact |
 | `X-03` | credential, URL, header, account, path, provider body/example marker | reject without echoing value |
 | `X-04` | declared size in limit, actual stream one byte over/grows/replaces | fail verified read; settle siblings |
-| `X-05` | every named bound exact and one over | exact accepted; one-over `market.bound-exceeded` with exact `limitKind` |
+| `X-05` | all 84 canonical bound IDs and required vector kinds | exact `BoundDispositionV1` per enforcement ledger, including candidate/metric/study-local reasons |
 
 ### Replay and integration invariance
 

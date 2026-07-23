@@ -177,8 +177,8 @@ provider page or first apparent winner.
       revisions = validate immutable revision graphs
       view = apply only revisions admitted by the requested cutoff
       state = replay control, halt, LULD, reset, quote, and trade state in trusted source order
-      candidates = all requested-kind facts plus their eligibility outcomes
-      candidateSetHash = hash canonical sorted tuples for eligible and rejected candidates
+      candidates = all requested-kind facts plus their eligible/degraded/ineligible outcomes
+      candidateSetHash = hash canonical sorted tuples for the complete candidate set
       eligible = candidates that pass every kind-specific rule
       eligible = filter eligible by comparator(factTime, targetNs)
       if eligible is empty: return typed missing result
@@ -338,7 +338,7 @@ combination matrix.
 For combined conditions, any official does-not-update result takes precedence. If a conditional
 case requires prior day/session state and that state is not present in the complete bounded window,
 the trade is ineligible with market.trade-condition-ineligible and
-tradeConditionFailureKind=state-insufficient. Page order or a current provider latest-trade label
+`detail:{tradeConditionFailureKind:"state-insufficient"}`. Page order or a current provider latest-trade label
 cannot supply the missing state.
 
 Corrections and cancellations apply under the selected view before L(t). A cancellation removes its
@@ -492,30 +492,37 @@ even when prices match. Existing results are immutable; later evidence creates a
 
 ## 14. Result status and missingness
 
-Each reference result is exactly one of:
+Each reference evaluation outcome is exactly one of:
 
 - selected-complete: eligible with no degradation diagnostic;
 - selected-degraded: eligible with one or more canonical degradation diagnostics;
 - missing: no eligible reference after a valid bounded selection;
-- rejected: input, authority, bounds, identity, or deterministic-state contract failed.
+- rejected: input, authority, bounds, identity, or deterministic-state contract failed; this is an
+  operation outcome, not a reference result.
 
-Each result carries:
+Each selected/missing reference result carries:
 
 - referenceKind, intervalKey, anchor branch, target, and comparison operator;
 - selected normalized fact/revision identity or null;
-- candidateSetHash including rejected candidates;
+- candidateSetHash including every ineligible candidate;
 - exact price or null;
 - event/completion time, age, session, timestamp/sequence trust, and view;
 - source/condition/calendar/staleness/selection policy identities;
-- exactly one canonical `{code,detail}` reason when missing/rejected, otherwise null; and
+- exactly one canonical `{code,detail}` reason when missing, otherwise null; and
 - sorted unique canonical `{code,detail}` diagnostics.
 
-The exact result status strings are
-`selected-complete|selected-degraded|missing|rejected`. The exact view strings are
+The exact reference-result status strings are
+`selected-complete|selected-degraded|missing`; `rejected` exists only in the enclosing evaluation
+status. The exact view strings are
 `recorded-primary|recorded-corrected`. The exact eleven reference-kind strings are the registry in
 section 1. Any alternate view/status names, abbreviated reference names, untyped diagnostics, or
 untyped reason strings are invalid. Rejected operations emit no selected/missing identity; the
-rejected status remains the operation outcome.
+rejected status and one canonical operation reason remain outside the reference-result union.
+
+A required rejected operation invalidates dataset-freeze validation. It must not be converted to a
+missing reference, assigned a synthetic result ID, omitted as attrition, or allowed to remove its
+precommitted cluster. No `sdf1_` may be derived until the same frozen study design is executed
+without an operation-terminal rejection.
 
 Missing/degraded clusters remain in the study denominator. One missing interval does not prevent
 independent evaluation of the other intervals.

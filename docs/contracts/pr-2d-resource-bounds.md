@@ -67,17 +67,19 @@ BoundDispositionV1 = {
   stage: one exact stage from the enforcement ledger,
   vectorKind: exact | upper-one-over | lower-one-below | exact-count-minus-one,
   accepted: boolean,
-  reason: null | one exact canonical reason,
-  detail: null | one exact canonical detail object,
+  reason: null | CanonicalReasonV1,
   atomicity: operation | candidate | metric | study-run
 }
 ```
 
-At an allowed exact value, `accepted:true`, `reason:null`, and `detail:null`. At an upper one-over,
-lower one-below, or exact-count-minus-one vector, the closed enforcement ledger below is the sole
-authority for stage, reason, detail, and atomicity. `market.bound-exceeded` and
-`study.bound-exceeded` always carry `{limitKind:<boundId>}`. There is no reason choice, slash,
-fallback, retry, truncation, or validator-initiated split.
+`CanonicalReasonV1` is exactly the shared `{code,detail}` type in
+[`pr-2d-reason-codes.md`](pr-2d-reason-codes.md). At an allowed exact value, `accepted:true` and
+`reason:null`. At an upper one-over, lower one-below, or exact-count-minus-one vector, the closed
+enforcement ledger below is the sole authority for stage, canonical reason, and atomicity.
+`market.bound-exceeded` and `study.bound-exceeded` always carry the direct detail object
+`{limitKind:<boundId>}` inside `reason.detail`. `{field:"limitKind",value:<boundId>}`, a sibling or
+top-level `limitKind`, a separate `detail`, or any second detail channel is invalid. There is no
+reason choice, slash, fallback, retry, truncation, or validator-initiated split.
 
 For `atomicity:operation`, every acquired stream is cancelled/closed and settled before return, and
 no fact, candidate set, selection, missing result, manifest, or post-return activity survives. For
@@ -112,7 +114,7 @@ same disposition.
 | `identifierBytes` | 512 UTF-8 bytes | 512 exact; 513 rejects. |
 | `providerOrDatasetCodeBytes` | 128 ASCII bytes | 128 exact; 129 rejects. |
 | `symbolBytes` | 32 ASCII bytes | 32 exact; 33 rejects. Effective symbol grammar may be stricter. |
-| `timestampTextBytes` | 64 ASCII bytes | 64 exact; 65 rejects as `market.bound-exceeded` with `limitKind=timestampTextBytes`. |
+| `timestampTextBytes` | 64 ASCII bytes | 64 exact; 65 rejects with `{code:"market.bound-exceeded",detail:{limitKind:"timestampTextBytes"}}`. |
 | `pageTokenInputBytes` | 4,096 UTF-8 bytes | Exact private token input may be hashed; 4,097 rejects before hashing or logging. |
 | `opaqueProviderIdBytes` | 128 ASCII bytes | 128 exact; 129 rejects. |
 | `conditionMembers` | 8 | 8 unique canonical codes exact; ninth rejects. |
@@ -204,45 +206,47 @@ up to 12,800 reference IDs but still must satisfy total nodes and canonical byte
 ## Closed enforcement ledger
 
 Every bound key appears exactly once below. For grouped rows the stated disposition applies
-independently to each comma-separated bound ID, with that exact ID used as `limitKind`.
+independently to each comma-separated bound ID. `<boundId>` is a specification metavariable, never
+serialized: each concrete vector replaces it with the quoted exact current-row bound ID as the
+direct `limitKind` value.
 
-| Bound IDs | Enforcement stage | Violating vector and sole disposition | Atomicity |
+| Bound IDs | Enforcement stage | Violating vector and sole canonical reason | Atomicity |
 | --- | --- | --- | --- |
-| rawArtifactBytes, aggregateVerifiedBytes | verified artifact read before parse | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
-| artifactsPerAcquisition, pagesPerAcquisition | acquisition authority preflight before lookup/read | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
-| recordsPerArtifactOrPage, factsPerAcquisition, canonicalRecordBytes | parser/canonical-output preflight before fact emission | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
-| rawJsonDepth, rawJsonNodes, rawJsonKeysPerObject, rawJsonArrayItems, parserTokensPerArtifact | raw parser inert-snapshot preflight before recursive descent | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
-| sidecarDepth, sidecarNodes, sidecarKeysPerObject, sidecarGenericArrayItems | sidecar parser inert-snapshot preflight before recursive descent | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
-| genericStringBytes, identifierBytes, providerOrDatasetCodeBytes, symbolBytes, timestampTextBytes, pageTokenInputBytes, opaqueProviderIdBytes | decoded text preflight before grammar validation/hash/log | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
-| conditionMembers, conditionMemberBytes | condition-array preflight before dictionary lookup | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
-| rawDecimalTokenBytes | decimal-token preflight before numeric conversion | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
-| rawDecimalScale, primaryCoefficientDigits, primarySourceScale, derivedMidpointScale, rationalComponentBytes | exact decimal/rational normalization before candidate or metric construction | upper-one-over -> `market.decimal-invalid` / null | operation |
-| instrumentsPerAcquisition, providersPerSelectionPolicy | acquisition/policy preflight before lookup or split | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
-| marketCentersPerInstrumentState, revisionDepthPerFamily, deliveriesPerProviderObservation | complete immutable source-state preflight before state mutation | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
-| candidatesPerReferenceSelection, intervalsPerCluster, referenceResultsPerCluster | complete selection-request preflight before sorting/winner computation | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
-| sidecarRecordsPerExecution, sidecarEdgesPerExecution, canonicalSidecarRecordBytes, canonicalExecutionBundleBytes | execution-bundle preflight before graph validation | upper-one-over -> `market.bound-exceeded` / exact limitKind | operation |
-| recordedReplayPageSize | replay request validation before page read | upper-one-over -> `market.bound-exceeded` / limitKind=recordedReplayPageSize; lower-one-below -> `market.input-invalid` / null | operation |
-| historicalQueryWindow | acquisition request validation before planning/lookup | upper-one-over -> `market.bound-exceeded` / limitKind=historicalQueryWindow; lower-one-below -> `market.input-invalid` / null | operation |
-| selectionSearchWindowMs | selection request validation before window construction | upper-one-over -> `market.bound-exceeded` / limitKind=selectionSearchWindowMs; lower-one-below -> `market.input-invalid` / null | operation |
-| primaryResidualTargets | policy validation before target derivation | fifth target -> `market.bound-exceeded` / limitKind=primaryResidualTargets; missing, duplicate, or noncanonical order -> `market.input-invalid` / null | operation |
-| primaryResidualHorizonNs | policy validation before interval addition | upper-one-over -> `market.bound-exceeded` / limitKind=primaryResidualHorizonNs | operation |
-| regularQuoteAgeNs, extendedQuoteAgeNs | complete candidate eligibility after timestamp/session validation | upper-one-over -> `market.quote-stale` / null | candidate |
-| barDurationNs | bar normalization before candidate construction | plus-one or minus-one -> `market.input-invalid` / null | operation |
-| captureRetrievalLagMs | anchor-quality classification after both clocks validate | upper-one-over -> `market.timestamp-insufficient` / timestampFailureKind=capture-retrieval-lag-exceeded | metric |
-| calendarDatesPerManifest | manifest preflight before calendar lookup | upper-one-over -> `market.bound-exceeded` / limitKind=calendarDatesPerManifest | operation |
-| targetClusters | study design validation before frame construction | 179 or 181 -> `study.input-invalid` / null; schema-minimum one-below 99 -> `study.input-invalid` / null; schema-maximum one-over 201 -> `study.bound-exceeded` / limitKind=targetClusters | study-run |
-| laneTargets, controlTargets | study design validation before frame construction | plus-one or minus-one -> `study.input-invalid` / null | study-run |
-| candidateFrameMembers, frameDispositionOrStratumCells | frame preflight before candidate validation/rank | upper-one-over -> `study.bound-exceeded` / exact limitKind | study-run |
-| selectedClusterEntryBytes, completeStudyManifestBytes, datasetFreezeBundleBytes | canonical study byte preflight before ID derivation/persistence | upper-one-over -> `study.bound-exceeded` / exact limitKind | study-run |
-| studyJsonDepth, studyJsonNodesTotal, studyKeysPerObject, studyGenericArrayItems | study parser inert-snapshot preflight before recursive descent | upper-one-over -> `study.bound-exceeded` / exact limitKind | study-run |
-| studyStringBytes, studyIdentifierBytes | decoded study text preflight before grammar/hash | upper-one-over -> `study.bound-exceeded` / exact limitKind | study-run |
-| contractSourceEntitlementIds, reasonDefinitions, metricDefinitions, sensitivityDefinitions | design registry preflight before sort/hash | upper-one-over -> `study.bound-exceeded` / exact limitKind | study-run |
-| referencesPerCluster, referencesTotal, annotationsPerCluster, revisionsReferencedPerCluster, strataDimensions | complete study collection preflight before cluster/dataset materialization | upper-one-over -> `study.bound-exceeded` / exact limitKind | study-run |
-| collectionSessions, liquidityHistorySessions, bootstrapReplicates, holmSlots | exact study configuration validation before frame/analysis | plus-one or minus-one -> `study.input-invalid` / null | study-run |
-| collectionCalendarSpanMs | collection-calendar validation before manifest acceptance | upper-one-over -> `study.bound-exceeded` / limitKind=collectionCalendarSpanMs | study-run |
-| minimumValidLiquiditySessions | T-1 liquidity classification after exactly 20 sessions are evaluated | one-below -> `study.liquidity-unknown` / null | metric |
-| timelyObservationMs | E2 classification after a valid conservative latency interval exists | upper-one-over lower bound -> `study.timeliness-threshold-not-met` / null | metric |
-| correctionLagMs | correction-view admission after exact cutoff derivation | upper-one-over -> `study.correction-after-cutoff` / null | metric |
+| rawArtifactBytes, aggregateVerifiedBytes | verified artifact read before parse | upper-one-over -> `{code:"market.bound-exceeded",detail:{limitKind:<boundId>}}` | operation |
+| artifactsPerAcquisition, pagesPerAcquisition | acquisition authority preflight before lookup/read | upper-one-over -> `{code:"market.bound-exceeded",detail:{limitKind:<boundId>}}` | operation |
+| recordsPerArtifactOrPage, factsPerAcquisition, canonicalRecordBytes | parser/canonical-output preflight before fact emission | upper-one-over -> `{code:"market.bound-exceeded",detail:{limitKind:<boundId>}}` | operation |
+| rawJsonDepth, rawJsonNodes, rawJsonKeysPerObject, rawJsonArrayItems, parserTokensPerArtifact | raw parser inert-snapshot preflight before recursive descent | upper-one-over -> `{code:"market.bound-exceeded",detail:{limitKind:<boundId>}}` | operation |
+| sidecarDepth, sidecarNodes, sidecarKeysPerObject, sidecarGenericArrayItems | sidecar parser inert-snapshot preflight before recursive descent | upper-one-over -> `{code:"market.bound-exceeded",detail:{limitKind:<boundId>}}` | operation |
+| genericStringBytes, identifierBytes, providerOrDatasetCodeBytes, symbolBytes, timestampTextBytes, pageTokenInputBytes, opaqueProviderIdBytes | decoded text preflight before grammar validation/hash/log | upper-one-over -> `{code:"market.bound-exceeded",detail:{limitKind:<boundId>}}` | operation |
+| conditionMembers, conditionMemberBytes | condition-array preflight before dictionary lookup | upper-one-over -> `{code:"market.bound-exceeded",detail:{limitKind:<boundId>}}` | operation |
+| rawDecimalTokenBytes | decimal-token preflight before numeric conversion | upper-one-over -> `{code:"market.bound-exceeded",detail:{limitKind:<boundId>}}` | operation |
+| rawDecimalScale, primaryCoefficientDigits, primarySourceScale, derivedMidpointScale, rationalComponentBytes | exact decimal/rational normalization before candidate or metric construction | upper-one-over -> `{code:"market.decimal-invalid",detail:null}` | operation |
+| instrumentsPerAcquisition, providersPerSelectionPolicy | acquisition/policy preflight before lookup or split | upper-one-over -> `{code:"market.bound-exceeded",detail:{limitKind:<boundId>}}` | operation |
+| marketCentersPerInstrumentState, revisionDepthPerFamily, deliveriesPerProviderObservation | complete immutable source-state preflight before state mutation | upper-one-over -> `{code:"market.bound-exceeded",detail:{limitKind:<boundId>}}` | operation |
+| candidatesPerReferenceSelection, intervalsPerCluster, referenceResultsPerCluster | complete selection-request preflight before sorting/winner computation | upper-one-over -> `{code:"market.bound-exceeded",detail:{limitKind:<boundId>}}` | operation |
+| sidecarRecordsPerExecution, sidecarEdgesPerExecution, canonicalSidecarRecordBytes, canonicalExecutionBundleBytes | execution-bundle preflight before graph validation | upper-one-over -> `{code:"market.bound-exceeded",detail:{limitKind:<boundId>}}` | operation |
+| recordedReplayPageSize | replay request validation before page read | upper-one-over -> `{code:"market.bound-exceeded",detail:{limitKind:"recordedReplayPageSize"}}`; lower-one-below -> `{code:"market.input-invalid",detail:null}` | operation |
+| historicalQueryWindow | acquisition request validation before planning/lookup | upper-one-over -> `{code:"market.bound-exceeded",detail:{limitKind:"historicalQueryWindow"}}`; lower-one-below -> `{code:"market.input-invalid",detail:null}` | operation |
+| selectionSearchWindowMs | selection request validation before window construction | upper-one-over -> `{code:"market.bound-exceeded",detail:{limitKind:"selectionSearchWindowMs"}}`; lower-one-below -> `{code:"market.input-invalid",detail:null}` | operation |
+| primaryResidualTargets | policy validation before target derivation | fifth target -> `{code:"market.bound-exceeded",detail:{limitKind:"primaryResidualTargets"}}`; missing, duplicate, or noncanonical order -> `{code:"market.input-invalid",detail:null}` | operation |
+| primaryResidualHorizonNs | policy validation before interval addition | upper-one-over -> `{code:"market.bound-exceeded",detail:{limitKind:"primaryResidualHorizonNs"}}` | operation |
+| regularQuoteAgeNs, extendedQuoteAgeNs | complete candidate eligibility after timestamp/session validation | upper-one-over -> `{code:"market.quote-stale",detail:null}` | candidate |
+| barDurationNs | bar normalization before candidate construction | plus-one or minus-one -> `{code:"market.input-invalid",detail:null}` | operation |
+| captureRetrievalLagMs | anchor-quality classification after both clocks validate | upper-one-over -> `{code:"market.timestamp-insufficient",detail:{timestampFailureKind:"capture-retrieval-lag-exceeded"}}` | metric |
+| calendarDatesPerManifest | manifest preflight before calendar lookup | upper-one-over -> `{code:"market.bound-exceeded",detail:{limitKind:"calendarDatesPerManifest"}}` | operation |
+| targetClusters | study design validation before frame construction | 179 or 181 -> `{code:"study.input-invalid",detail:null}`; 99 -> `{code:"study.input-invalid",detail:null}`; 201 -> `{code:"study.bound-exceeded",detail:{limitKind:"targetClusters"}}` | study-run |
+| laneTargets, controlTargets | study design validation before frame construction | plus-one or minus-one -> `{code:"study.input-invalid",detail:null}` | study-run |
+| candidateFrameMembers, frameDispositionOrStratumCells | frame preflight before candidate validation/rank | upper-one-over -> `{code:"study.bound-exceeded",detail:{limitKind:<boundId>}}` | study-run |
+| selectedClusterEntryBytes, completeStudyManifestBytes, datasetFreezeBundleBytes | canonical study byte preflight before ID derivation/persistence | upper-one-over -> `{code:"study.bound-exceeded",detail:{limitKind:<boundId>}}` | study-run |
+| studyJsonDepth, studyJsonNodesTotal, studyKeysPerObject, studyGenericArrayItems | study parser inert-snapshot preflight before recursive descent | upper-one-over -> `{code:"study.bound-exceeded",detail:{limitKind:<boundId>}}` | study-run |
+| studyStringBytes, studyIdentifierBytes | decoded study text preflight before grammar/hash | upper-one-over -> `{code:"study.bound-exceeded",detail:{limitKind:<boundId>}}` | study-run |
+| contractSourceEntitlementIds, reasonDefinitions, metricDefinitions, sensitivityDefinitions | design registry preflight before sort/hash | upper-one-over -> `{code:"study.bound-exceeded",detail:{limitKind:<boundId>}}` | study-run |
+| referencesPerCluster, referencesTotal, annotationsPerCluster, revisionsReferencedPerCluster, strataDimensions | complete study collection preflight before cluster/dataset materialization | upper-one-over -> `{code:"study.bound-exceeded",detail:{limitKind:<boundId>}}` | study-run |
+| collectionSessions, liquidityHistorySessions, bootstrapReplicates, holmSlots | exact study configuration validation before frame/analysis | plus-one or minus-one -> `{code:"study.input-invalid",detail:null}` | study-run |
+| collectionCalendarSpanMs | collection-calendar validation before manifest acceptance | upper-one-over -> `{code:"study.bound-exceeded",detail:{limitKind:"collectionCalendarSpanMs"}}` | study-run |
+| minimumValidLiquiditySessions | T-1 liquidity classification after exactly 20 sessions are evaluated | one-below -> `{code:"study.liquidity-unknown",detail:null}` | metric |
+| timelyObservationMs | E2 classification after a valid conservative latency interval exists | upper-one-over lower bound -> `{code:"study.timeliness-threshold-not-met",detail:null}` | metric |
+| correctionLagMs | correction-view admission after exact cutoff derivation | upper-one-over -> `{code:"study.correction-after-cutoff",detail:null}` | metric |
 
 ## Deterministic retention and completion
 
