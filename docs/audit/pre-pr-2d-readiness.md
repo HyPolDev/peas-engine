@@ -2,22 +2,30 @@
 
 ## Decision
 
-- Status: `PENDING_INDEPENDENT_READINESS_REVIEW`
+- Status: `GO`
 - Reviewed baseline: `origin/main@c51758a1058b86730e19185b98fcd448d9ff533a`
+- Exact reviewed readiness candidate: `8ab07d67b25622dda32408822288c5ed88602b69`
 - Readiness branch: `dev/pre-pr-2d-readiness`
-- Certificate date: `2026-07-19`
+- Pull request: [#5](https://github.com/HyPolDev/peas-engine/pull/5)
+- Certificate date: `2026-07-23`
 - PR 2D start authorized: `NO`
-- Recorded/offline PR 2D allowed after this certificate becomes `GO`: `YES`
+- Recorded/offline PR 2D allowed after this audit/status publication is merged into the verified
+  PR 2D base: `YES`
 - Live market-reference acquisition allowed: `NO`
 - P2 collection allowed: `NO`
 - Incremental market-data spending allowed: `NO`
 
-This certificate is deliberately not `GO`. The PR 2C repair now has an independent implementation
-`GO` for exact SHA `731c2d33285cee8f27d9fe8ff1a2b9a1a29e9e4e`, and that disposition is
-published at `aaabdb416368aa349872bc5f1d6621362f6f3cde`. The combined readiness candidate must
-still complete exact-candidate validation and receive a fresh independent readiness `GO`. Do not
-create `dev/pr-2d-market-reference-contract` until that review changes this certificate to `GO`
-against committed evidence that is merged into the PR 2D base.
+This certificate is `GO` for prerequisite merge. The independent substantive review found zero
+defects in exact candidate `8ab07d67b25622dda32408822288c5ed88602b69`, and the fresh CI-closure review
+closed its sole process finding, `R2D-READY-001`, after exact-SHA Windows, Linux, and 10k-scale
+success. The PR 2C implementation `GO`, prior `NO_GO / PENDING_CI` review, and final readiness `GO`
+remain separately recorded and exact-SHA scoped.
+
+This `GO` does not by itself authorize starting PR 2D from the current branch or from the old
+`origin/main`. First merge this audit/status-only publication through PR #5, fetch the resulting
+`origin/main`, and verify that the exact merged base contains the candidate and both readiness audit
+records. Do not create `dev/pr-2d-market-reference-contract` until that merged-base verification
+passes. No future merge SHA is predicted here.
 
 ## Baseline and ancestry
 
@@ -115,24 +123,23 @@ The historical `NO_GO` records and their older current-status labels remain evid
 SHAs. The final disposition is the controlling implementation gate for `731c2d3`; neither its
 publication commit nor the integration merge is a readiness `GO`.
 
-## Pending blocker
+## Readiness validation
 
-### Readiness validation
-
-The following fields must be completed on the final committed readiness candidate:
+The final committed readiness candidate passed every required local and hosted gate:
 
 | Validation | Status | Required recorded result |
 | --- | --- | --- |
-| `npm.cmd run verify:runtime` | `PENDING` | Exact exit status and relevant output |
-| `npm.cmd run format:check` | `PENDING` | Exact exit status |
-| `npm.cmd run lint` | `PENDING` | Exact exit status |
-| `npm.cmd run typecheck` | `PENDING` | Exact exit status |
-| `npm.cmd run build` | `PENDING` | Exact exit status |
-| `npm.cmd run check` | `PENDING` | Test totals, failures, and skips |
-| `git diff --check` | `PENDING` | Exact exit status |
+| `npm.cmd run verify:runtime` | `PASS` | Exit `0`; Node `24.17.0`, npm `12.0.0` |
+| `npm.cmd run format:check` | `PASS` | Exit `0`; 114 files checked |
+| `npm.cmd run lint` | `PASS` | Exit `0`; 114 files checked |
+| `npm.cmd run typecheck` | `PASS` | Exit `0` |
+| `npm.cmd run build` | `PASS` | Exit `0` |
+| `npm.cmd run check` | `PASS` | Exit `0`; hard-kill 3/3; coverage 272 total, 266 passed, 6 intentional skips, 0 failed; evidence reconciliation 32 total, 31 passed, 1 Windows symlink skip, 0 failed; mutations 39/39 killed |
+| `git diff --check` | `PASS` | Exit `0` |
 | Board JSON parse/schema compatibility | `PASS` | PowerShell `ConvertFrom-Json` parsed schema V2; repository search found no board-schema consumer requiring an update. |
-| Required Windows CI | `PENDING` | Run URL, exact candidate SHA, and result |
-| Required Linux CI | `PENDING` | Run URL, exact candidate SHA, and result |
+| Required Linux CI | `PASS` | PR #5 CI run [`29970456123`](https://github.com/HyPolDev/peas-engine/actions/runs/29970456123), job [`89091170729`](https://github.com/HyPolDev/peas-engine/actions/runs/29970456123/job/89091170729), exact head `8ab07d67`, terminal `success` |
+| Required Windows CI | `PASS` | PR #5 CI run [`29970456123`](https://github.com/HyPolDev/peas-engine/actions/runs/29970456123), job [`89091170828`](https://github.com/HyPolDev/peas-engine/actions/runs/29970456123/job/89091170828), exact head `8ab07d67`, terminal `success` |
+| Required 10k scale CI | `PASS` | PR #5 CI run [`29970456123`](https://github.com/HyPolDev/peas-engine/actions/runs/29970456123), job [`89092258656`](https://github.com/HyPolDev/peas-engine/actions/runs/29970456123/job/89092258656), exact head `8ab07d67`, terminal `success` |
 
 Known non-blocking limitation: account-specific provider evidence may remain pending while PR 2D
 does recorded/offline work. It is blocking for P1-10 and P2, not a reason to waive any PR 2D audit.
@@ -175,10 +182,9 @@ is required only if someone proposes weakening or replacing the accepted authori
 7. Authorize no P1-10 or P2 work until the entitlement record passes independent review.
 8. Do not buy, trial, upgrade, or change any market-data plan under the current zero-spend policy.
 
-## Conditions for changing this certificate to `GO`
+## Satisfied `GO` conditions and remaining merge lock
 
-An independent readiness reviewer may change this certificate to `GO` only when all of the following
-are true for exact committed SHAs:
+The independent readiness reviews established the following for exact committed SHAs:
 
 1. The complete PR 2C `NO_GO` and re-audit chain named above remains preserved with the final
    disposition.
@@ -190,16 +196,23 @@ are true for exact committed SHAs:
 5. Required Windows and Linux checks pass on the final readiness PR head.
 6. The independent reviewer records their identity, review date, exact readiness head, exact
    file/line findings, and binary verdict below.
-7. The reviewed readiness evidence is merged into the exact base from which PR 2D will branch.
+7. This audit/status-only publication still must be merged into the exact base from which PR 2D will
+   branch; after the merge, fetch and verify that base before creating the PR 2D branch.
 
 Entitlement may remain `PENDING` when this certificate becomes `GO`, but the certificate must retain
 the explicit P1-10/P2 block and fail-closed provider/fallback policy.
 
 ## Independent readiness review
 
-- Reviewer: `PENDING`
-- Reviewer independence: `PENDING`
-- Exact reviewed readiness SHA: `PENDING`
-- Review date: `PENDING`
-- Findings: `PENDING`
-- Verdict: `PENDING`
+- Substantive reviewer: fresh independent review-only Luna agent `/root/luna_readiness_final`
+- Substantive review record: `docs/audit/pre-pr-2d-readiness-review.md`
+- Substantive result: zero implementation, contract, governance, archive, licensing-boundary,
+  frozen-port, or dirty-worktree findings; `NO_GO / PENDING_CI` solely for `R2D-READY-001`
+- CI-closure reviewer: fresh independent review-only Terra agent `/root/terra_readiness_ci_go`
+- Reviewer independence: authored none of the candidate, PR 2C repair/audits, readiness governance,
+  prior review, PR #5, workflow, or CI results
+- Exact reviewed readiness SHA: `8ab07d67b25622dda32408822288c5ed88602b69`
+- Review date: `2026-07-23`
+- CI-closure record: `docs/audit/pre-pr-2d-readiness-ci-go.md`
+- Findings: `R2D-READY-001` closed; zero open findings
+- Verdict: `GO` for audit/status publication and prerequisite merge

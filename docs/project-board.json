@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "project": "PEAS Engine",
-  "lastReviewed": "2026-07-19",
+  "lastReviewed": "2026-07-23",
   "operatingModel": {
     "execution": "GitHub Issues/Projects",
     "specification": "Repository docs, ADRs, fixtures, and evidence",
@@ -17,8 +17,8 @@
     "pr2cAuditPublicationCommit": "aaabdb416368aa349872bc5f1d6621362f6f3cde",
     "readinessIntegrationCommit": "e42300a42743143db4979d7103a31e9957c48b58",
     "release": "v0.2.0-kernel-rc.2",
-    "focus": "Pre-PR-2D governance reconciliation and zero-spend recorded market-reference readiness",
-    "nextGate": "Validate one exact combined readiness candidate, obtain fresh independent readiness GO, and merge that approved evidence into the PR 2D base; then execute P1-07 and P1-08 while human-owned P1-09 evidence collection continues in parallel"
+    "focus": "Merge independently approved pre-PR-2D readiness evidence, verify the exact origin/main base, then execute the recorded/offline market-reference contract milestone",
+    "nextGate": "Merge PR #5 audit/status publication, fetch and verify the exact merged origin/main base contains readiness candidate 8ab07d67 and both readiness audits, then start P1-07; P1-08 remains dependent on P1-07 contract GO while human-owned P1-09 remains PENDING"
   },
   "stages": [
     {
@@ -178,14 +178,19 @@
         {
           "id": "P1-07",
           "title": "Market-reference and event-study contract",
-          "status": "blocked",
+          "status": "ready",
           "owner": "integration-owner",
           "dependsOn": ["P1-02", "P1-05"],
-          "blocker": "docs/audit/pre-pr-2d-readiness.md must record fresh independent readiness GO for an exact committed candidate, and that approved evidence must be merged into the PR 2D base",
+          "blocker": "READY_ON_MERGE: merge PR #5 audit/status publication into origin/main, fetch it, and verify the exact PR 2D base contains candidate 8ab07d67 and both readiness audits before creating the PR 2D branch",
           "acceptance": "ADR 0010 freezes observation anchors, prior-close/release-gap/residual movement metrics, quote/trade and session rules, deterministic market identity and joins, corrections, missing-data reason codes, resource bounds, licensing, and the precommitted 100-200-cluster study design without changing frozen kernel ports.",
           "evidence": [
             "docs/agent-prompts/adr-0010-market-reference.md",
             "docs/audit/pre-pr-2d-readiness.md",
+            "docs/audit/pre-pr-2d-readiness-review.md",
+            "docs/audit/pre-pr-2d-readiness-ci-go.md",
+            "https://github.com/HyPolDev/peas-engine/pull/5",
+            "https://github.com/HyPolDev/peas-engine/actions/runs/29970456123",
+            "readiness-candidate@8ab07d67b25622dda32408822288c5ed88602b69",
             "docs/research/no-trade-policy-disposition.md",
             "docs/research/candidates/no-trade-v0.1/no-trade-universe-policy.md",
             "docs/research/candidates/no-trade-v0.1/no-trade-policy.v1.json",
