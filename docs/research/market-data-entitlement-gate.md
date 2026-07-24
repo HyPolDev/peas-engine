@@ -2,15 +2,20 @@
 
 ## Document control
 
-- Status: `PENDING`
+- Status: `REVIEW`
 - Gate: `P1-09`
 - Owner: `human-owner`
 - Prepared from public official material only
 - Public-material access date: `2026-07-19`
 - Incremental market-data budget: `0`
-- Alpaca decision: `PENDING`
-- FMP decision: `PENDING`
-- FMP-only fallback decision: `PENDING`
+- Evidence intake: `COMPLETE`
+- Human-owner decision: `OWNER_APPROVED_WITH_RESIDUAL_RISK`
+- Alpaca historical REST `feed=sip` decision: `OWNER_APPROVED_WITH_RESIDUAL_RISK`
+- FMP private discrepancy decision: `OWNER_APPROVED_WITH_RESIDUAL_RISK`
+- FMP-only fallback decision: `NOT_AUTHORIZED`
+- Owner authorization:
+  [`docs/research/p1-09-owner-risk-authorization.md`](p1-09-owner-risk-authorization.md)
+- Independent review: `PENDING`
 - Recorded/offline PR 2D work: `ALLOWED`
 - Live delayed market-reference adapter P1-10: `BLOCKED`
 - P2 forward collection: `BLOCKED`
@@ -18,7 +23,8 @@
 This is an engineering authorization record, not legal advice. Public documentation can establish
 available product surfaces and default restrictions, but it cannot prove the terms, classification,
 or entitlements attached to the human owner's accounts. Only the human owner may change a provider
-decision to `GRANTED`, `DENIED`, or `FALLBACK_APPROVED`.
+decision or accept residual interpretation risk. The owner exercised that authority on
+`2026-07-24`; P1-09 now awaits independent engineering review.
 
 ## Purpose
 
@@ -32,7 +38,9 @@ while this gate remains `PENDING`.
 P1-10 and P2 must fail closed until this gate records either:
 
 1. written permission for a suitable primary source; or
-2. an explicit human-owned `FALLBACK_APPROVED` decision accepting a named lower-evidence source and
+2. an explicit human-owned `OWNER_APPROVED_WITH_RESIDUAL_RISK` decision that freezes the exact
+   source and restrictions before outcomes, followed by independent `GO`; or
+3. an explicit human-owned `FALLBACK_APPROVED` decision accepting a named lower-evidence source and
    its scientific limitations before any outcome data are inspected.
 
 ## Status vocabulary
@@ -40,13 +48,18 @@ P1-10 and P2 must fail closed until this gate records either:
 | Status | Meaning |
 | --- | --- |
 | `PENDING` | Public material is insufficient or account-specific evidence has not been supplied. The use is not authorized while pending. |
+| `ATTESTED` | The human owner supplied the account or project-classification fact; this status does not independently grant a data-use capability. |
 | `GRANTED` | Written provider permission and human account attestation authorize the exact recorded uses and limits in this document. |
+| `OWNER_APPROVED_WITH_RESIDUAL_RISK` | The provider did not affirm every capability, but the human owner reviewed the response and policy, accepted the remaining interpretation risk, and froze a narrower use boundary. Independent engineering `GO` is still required before acquisition. |
 | `DENIED` | The provider refused, or governing terms prohibit, a required use. |
 | `FALLBACK_APPROVED` | The human owner explicitly accepts a named lower-evidence source and freezes that choice before outcomes. |
 | `NOT_AUTHORIZED` | The source or use is outside project authorization and must not be activated or attempted. |
 
 An agent must not infer `GRANTED` from successful authentication, endpoint availability, free access,
-provider marketing, an existing subscription, or absence of an API error.
+provider marketing, an existing subscription, or absence of an API error. Agents must distinguish
+provider-granted capabilities from the human owner's residual-risk authorization and enforce the
+narrower boundary in
+[`p1-09-owner-risk-authorization.md`](p1-09-owner-risk-authorization.md).
 
 ## Current project decision
 
@@ -55,10 +68,10 @@ provider marketing, an existing subscription, or absence of an API error.
 | PR 2D official-document research | `ALLOWED` | Public read-only research may continue. |
 | PR 2D provider-neutral contracts | `ALLOWED` | Contracts must represent unresolved entitlement explicitly and fail closed. |
 | PR 2D synthetic fixtures and offline tests | `ALLOWED` | Fixtures must be original synthetic material, not provider bytes. |
-| Alpaca Basic historical SIP acquisition | `PENDING` | Do not call the API or implement live acquisition yet. |
-| Alpaca `delayed_sip` acquisition | `PENDING` | Treat as a distinct feed; do not call or assume entitlement. |
-| Existing FMP Premium market-reference acquisition | `PENDING` | Existing subscription does not by itself prove the required usage rights. |
-| FMP-only lower-evidence fallback | `PENDING` | Human acceptance is required before it may become the frozen fallback. |
+| Alpaca Basic historical SIP acquisition | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Frozen to historical REST `feed=sip` with request end time at least 15 minutes old; awaits independent P1-09 `GO`. |
+| Alpaca `delayed_sip` acquisition | `NOT_AUTHORIZED` | WebSocket and latest-endpoint delayed feeds are outside the frozen source decision. |
+| Existing FMP Premium market-reference acquisition | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Private discrepancy lane only; no public FMP-derived output and no one-minute data; awaits independent P1-09 `GO`. |
+| FMP-only lower-evidence fallback | `NOT_AUTHORIZED` | FMP may not replace missing Alpaca/SIP evidence. |
 | P1-10 delayed historical adapter | `BLOCKED` | Requires a resolved provider and entitlement snapshot. |
 | P2 collection | `BLOCKED` | Requires P1-10 and a provider choice frozen before outcomes. |
 | Any new paid plan or upgrade | `NOT_AUTHORIZED` | Zero incremental spend is binding. |
@@ -218,11 +231,15 @@ These sources do not clearly grant all PEAS-required uses:
 - publication of charts or tables derived from the data; or
 - use by more than one person or execution agent.
 
-Accordingly, Alpaca remains `PENDING`.
+These public-material limitations formed the original `PENDING` finding. The later support response
+and human-owner decision resolve the engineering authorization through
+`OWNER_APPROVED_WITH_RESIDUAL_RISK`; they do not retroactively convert the public material into an
+affirmative provider grant.
 
-### Required written Alpaca confirmation
+### Alpaca questions submitted to support
 
-The human owner must obtain written confirmation covering this exact proposed use:
+The human owner submitted written questions covering this proposed use. The private response is
+represented by the evidence digest in `p1-09-owner-risk-authorization.md`:
 
 1. The applicable account/product classification and governing agreement.
 2. Basic-plan access to historical US-equity `feed=sip` quotes, trades, and bars when `end` is at
@@ -418,30 +435,30 @@ policy.
 
 | Provider and capability | Status now | Basis |
 | --- | --- | --- |
-| Alpaca Basic account/product classification | `PENDING` | No account-specific human attestation |
-| Alpaca historical `feed=sip` outside 15 minutes | `PENDING` | Official pages conflict; written confirmation required |
-| Alpaca `v2/delayed_sip` WebSocket | `PENDING` | Separate feed identity; not needed in PR 2D |
-| Alpaca latest `delayed_sip` endpoints | `PENDING` | Separate endpoint/feed identity |
-| Alpaca private durable raw retention | `PENDING` | Public terms do not clearly grant it |
-| Alpaca offline deterministic replay | `PENDING` | Public terms do not clearly grant it |
-| Alpaca private non-display research | `PENDING` | Account classification and permitted automation unresolved |
+| Alpaca Basic account/product classification | `ATTESTED` | Human owner identifies an individual Basic account and personal/noncommercial use |
+| Alpaca historical `feed=sip` outside 15 minutes | `GRANTED` | Alpaca support confirms Basic historical SIP access older than 15 minutes |
+| Alpaca `v2/delayed_sip` WebSocket | `NOT_AUTHORIZED` | Outside the frozen source decision |
+| Alpaca latest `delayed_sip` endpoints | `NOT_AUTHORIZED` | Outside the frozen source decision |
+| Alpaca private durable raw retention | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | No fixed expiry until owner revocation, contrary guidance, or loss of personal/individual/noncommercial classification |
+| Alpaca offline deterministic replay | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Support reports no additional documented rule; owner accepts residual interpretation risk |
+| Alpaca private non-display research | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Frozen to locally controlled personal/noncommercial processing |
 | Alpaca raw redistribution or Git fixtures | `NOT_AUTHORIZED` | Public restrictions are explicit |
-| Alpaca post-account raw retention | `PENDING` | No public affirmative permission found |
-| Alpaca derived-data retention after closure | `PENDING` | No public affirmative permission found |
-| Alpaca publication of derived aggregates | `PENDING` | Written consent and classification required |
-| FMP Premium account assertion | `PENDING` | Repository assertion requires human attestation |
-| FMP Premium market endpoints | `PENDING` | Exact endpoint-level entitlement unresolved |
-| FMP Premium one-minute history | `PENDING` | Public pricing and general endpoint documentation are ambiguous |
-| FMP private durable raw retention | `PENDING` | General terms restrict copying/download; written approval required |
-| FMP offline deterministic replay | `PENDING` | Not affirmatively granted by public terms |
-| FMP private non-display research | `PENDING` | Account and project classification unresolved |
+| Alpaca post-account raw retention | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Owner accepts residual risk absent contrary guidance; later contradiction stops affected use |
+| Alpaca derived-data retention after closure | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Owner accepts residual risk absent contrary guidance; later contradiction stops affected use |
+| Alpaca publication of derived aggregates | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Non-reconstructable aggregates only; no raw or row-level data |
+| FMP Premium account assertion | `ATTESTED` | Human owner attests individual Premium and personal/noncommercial use |
+| FMP Premium market endpoints | `GRANTED` | Support identifies included quote, aftermarket, price-change, and batch-quote surfaces |
+| FMP Premium one-minute history | `NOT_AUTHORIZED` | Support states one-minute intraday charting requires Ultimate |
+| FMP private durable raw retention | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Active-subscription private use only; termination triggers the public-default deletion/cessation rule |
+| FMP offline deterministic replay | `GRANTED` | FMP support states offline replay/testing is allowed |
+| FMP private non-display research | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Personal local processing only; the MCP answer did not affirm arbitrary agent use |
 | FMP raw display, redistribution, or Git fixtures | `NOT_AUTHORIZED` | Separate display/licensing agreement required |
 | FMP commercial use under individual Premium | `NOT_AUTHORIZED` | Public individual-use terms prohibit it |
 | FMP post-termination raw retention | `NOT_AUTHORIZED` | Public terms require deletion unless overridden |
 | FMP post-termination derived use | `NOT_AUTHORIZED` | Public terms require cessation unless overridden |
-| FMP publication of derived aggregates | `PENDING` | Written classification and permission required |
+| FMP publication of derived aggregates | `NOT_AUTHORIZED` | Support states publishing or displaying FMP data requires a separate agreement |
 | FMP as SIP-equivalent primary reference | `NOT_AUTHORIZED` | Public evidence does not establish equivalent market semantics |
-| FMP-only lower-evidence fallback | `PENDING` | Requires explicit human acceptance before outcomes |
+| FMP-only lower-evidence fallback | `NOT_AUTHORIZED` | Human owner freezes Alpaca historical SIP as primary and rejects silent fallback |
 | Paid Alpaca, FMP Ultimate, IBKR, Databento, Massive, others | `NOT_AUTHORIZED` | Zero incremental spend |
 
 ## Evidence acceptable for changing status
@@ -530,21 +547,21 @@ PR 2D must not:
 
 ## Gate-resolution procedure
 
-1. Human owner supplies the sanitized FMP plan/classification attestation.
-2. Human owner obtains written Alpaca answers.
-3. Human owner obtains written FMP answers if FMP remains a candidate discrepancy source or
-   fallback.
-4. The entitlement record is updated capability by capability.
-5. If Alpaca grants all required uses, set the exact Alpaca capability rows to `GRANTED`.
-6. If Alpaca denies a required use, set it to `DENIED`.
-7. If Alpaca is unsuitable, the human owner either:
-   - records `FALLBACK_APPROVED` for a fully permitted FMP design; or
-   - leaves P1-10 and P2 blocked.
-8. An independent reviewer verifies that provider, dataset, feed, retention, replay, derived-use,
-   and cost decisions are internally consistent.
-9. Freeze the entitlement snapshot before P1-10 acquisition and before P2 outcomes.
-10. Any later entitlement change creates a new versioned snapshot and may not retroactively alter
-    the frozen study source policy.
+1. Human evidence intake and owner attestation were completed on `2026-07-24`.
+2. Alpaca and FMP written responses are retained privately; the repository stores only the opaque
+   evidence digest in `p1-09-owner-risk-authorization.md`.
+3. The human owner froze Alpaca historical REST `feed=sip` as primary, FMP Premium as a private
+   discrepancy source, and no fallback.
+4. The human owner accepted the recorded residual interpretation risks and prohibited the explicit
+   FMP publication/licensing and one-minute uses.
+5. A fresh independent reviewer must verify that provider, dataset, feed, retention, replay,
+   publication, fallback, and cost decisions are internally consistent with ADR 0010.
+6. On independent `GO`, set P1-09 to `COMPLETE` and authorize P1-10 implementation only within the
+   frozen boundary.
+7. On `NO_GO`, repair the record or return the affected capability to `PENDING`; do not call a
+   provider while unresolved.
+8. Any later entitlement change creates a new versioned snapshot and may not retroactively alter
+   the frozen study source policy.
 
 ## Exit conditions
 
@@ -552,17 +569,19 @@ P1-09 is complete only when:
 
 - an exact provider/dataset/feed policy is frozen;
 - the relevant account classification is attested;
-- private raw retention is explicitly permitted;
+- private raw retention is provider-granted or explicitly owner-approved with residual risk;
 - retention duration is fixed;
-- offline replay is explicitly permitted;
-- private automated non-display research is explicitly permitted;
+- offline replay is provider-granted or explicitly owner-approved with residual risk;
+- private automated non-display research is provider-granted or explicitly owner-approved with
+  residual risk;
 - post-account raw and derived retention are explicitly resolved;
 - derived aggregate publication is explicitly resolved;
 - redistribution remains prohibited unless separately licensed;
 - correction/condition limitations are recorded;
 - provider fallback is frozen before outcomes;
 - incremental budget remains zero;
-- a human owner signs the sanitized record; and
+- the human owner's electronic project instruction is durably attributed in the sanitized record;
+  and
 - an independent reviewer returns `GO`.
 
 ## Human-only actions

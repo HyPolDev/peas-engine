@@ -21,8 +21,8 @@
     "pr2dPublishedHead": "fb150828c0fe5e1272c246f1889be02aab8b0d90",
     "pr2dMergeCommit": "ebe959324e48faf73c325a97ed9200bd6c76c9a6",
     "release": "v0.2.0-kernel-rc.2",
-    "focus": "Close the human-owned P1-09 entitlement and retention gate while agents prepare the recorded/offline P1-10 implementation package",
-    "nextGate": "Freeze a sanitized zero-spend provider/dataset/feed entitlement snapshot and obtain independent GO; live P1-10 and P2 remain blocked until that GO",
+    "focus": "Independently audit the frozen P1-09 human-owner authorization while agents prepare the recorded/offline P1-10 implementation package",
+    "nextGate": "Obtain independent GO for the owner-approved zero-spend Alpaca historical SIP primary and private FMP discrepancy boundary; live P1-10 and P2 remain blocked until that GO",
     "estimatedWorkSessionsToP2Collection": 9,
     "elapsedTimeExclusions": [
       "Human and provider response time for P1-09",
@@ -251,14 +251,20 @@
         {
           "id": "P1-09",
           "title": "Zero-cost provider entitlement and retention gate",
-          "status": "in-progress",
-          "gateState": "PENDING",
+          "status": "review",
+          "gateState": "OWNER_APPROVED_WITH_RESIDUAL_RISK",
+          "evidenceIntake": "complete",
+          "independentReview": "pending",
           "owner": "human-owner",
           "dependsOn": [],
           "closureDependsOn": ["P1-07"],
-          "blocker": "Human evidence collection may proceed now, but P1-09 cannot close until its frozen provider, dataset, feed, and fallback policy is compatible with accepted ADR 0010 and receives independent GO",
-          "acceptance": "A human-owned, independently reviewed entitlement snapshot compatible with accepted ADR 0010 freezes the provider, dataset, and feed policy; separately identifies historical REST feed=sip, WebSocket v2/delayed_sip, and latest-endpoint delayed_sip; authorizes private retention, replay, research, and derived publication or explicitly approves a named lower-evidence fallback; and adds no spend.",
-          "evidence": ["docs/research/market-data-entitlement-gate.md"]
+          "blocker": "Human evidence intake and owner authorization are complete; P1-09 cannot close until a fresh independent reviewer returns GO for compatibility with ADR 0010 and the frozen zero-spend boundaries",
+          "acceptance": "A human-owned, independently reviewed entitlement snapshot compatible with accepted ADR 0010 freezes Alpaca historical REST feed=sip older than 15 minutes as primary, FMP Premium as a private non-fallback discrepancy source, explicit publication and one-minute prohibitions, private retention/replay controls, and zero incremental spend.",
+          "evidence": [
+            "docs/research/market-data-entitlement-gate.md",
+            "docs/research/p1-09-owner-risk-authorization.md",
+            "private-evidence-sha256@0f197aa11318330a7618841d6f3cd106d963d6c768508feed1080aae39ae0c85"
+          ]
         },
         {
           "id": "P1-10",
