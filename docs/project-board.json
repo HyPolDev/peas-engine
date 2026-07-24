@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "project": "PEAS Engine",
-  "lastReviewed": "2026-07-23",
+  "lastReviewed": "2026-07-24",
   "operatingModel": {
     "execution": "GitHub Issues/Projects",
     "specification": "Repository docs, ADRs, fixtures, and evidence",
@@ -11,15 +11,24 @@
   "current": {
     "stage": "P1",
     "status": "in-progress",
-    "branch": "dev/pr-2d-market-reference-contract",
-    "codeBaselineCommit": "731c2d33285cee8f27d9fe8ff1a2b9a1a29e9e4e",
+    "branch": "main",
+    "codeBaselineCommit": "ebe959324e48faf73c325a97ed9200bd6c76c9a6",
     "planningBaselineCommit": "c51758a1058b86730e19185b98fcd448d9ff533a",
     "pr2cAuditPublicationCommit": "aaabdb416368aa349872bc5f1d6621362f6f3cde",
     "readinessIntegrationCommit": "e42300a42743143db4979d7103a31e9957c48b58",
     "pr2dBaseCommit": "0377323b5486a8ad3b8e2631d4c8559760893be6",
+    "pr2dImplementationCandidate": "9dcefde1954c8426312fb082950b6105fe6847f6",
+    "pr2dPublishedHead": "fb150828c0fe5e1272c246f1889be02aab8b0d90",
+    "pr2dMergeCommit": "ebe959324e48faf73c325a97ed9200bd6c76c9a6",
     "release": "v0.2.0-kernel-rc.2",
-    "focus": "Publish the independently accepted P1-08 recorded/offline market-reference candidate as an unmerged draft pull request",
-    "nextGate": "Push the branch, open the draft pull request, and pass required Linux and Windows CI; human-owned P1-09 remains PENDING and P1-10/P2 remain blocked"
+    "focus": "Close the human-owned P1-09 entitlement and retention gate while agents prepare the recorded/offline P1-10 implementation package",
+    "nextGate": "Freeze a sanitized zero-spend provider/dataset/feed entitlement snapshot and obtain independent GO; live P1-10 and P2 remain blocked until that GO",
+    "estimatedWorkSessionsToP2Collection": 9,
+    "elapsedTimeExclusions": [
+      "Human and provider response time for P1-09",
+      "Waiting for an eligible scheduled earnings window",
+      "The P2 observation period itself"
+    ]
   },
   "stages": [
     {
@@ -232,7 +241,11 @@
             "docs/audit/pr-2d-final-reaudit.md",
             "fixtures/market-reference/fixture-manifest.json",
             "fixtures/market-reference/synthetic-market-corpus.json",
-            "docs/goals/pr-2d-orchestration.md"
+            "docs/goals/pr-2d-orchestration.md",
+            "https://github.com/HyPolDev/peas-engine/pull/6",
+            "https://github.com/HyPolDev/peas-engine/actions/runs/30040906906",
+            "published-head@fb150828c0fe5e1272c246f1889be02aab8b0d90",
+            "main@ebe959324e48faf73c325a97ed9200bd6c76c9a6"
           ]
         },
         {
@@ -250,9 +263,12 @@
         {
           "id": "P1-10",
           "title": "Delayed historical market-reference adapter",
-          "status": "planned",
+          "status": "blocked",
+          "preparationStatus": "ready",
           "owner": "agent",
           "dependsOn": ["P1-08", "P1-09"],
+          "blocker": "Live implementation is blocked until P1-09 freezes the exact provider/dataset/feed entitlement snapshot and receives independent GO",
+          "preparationScope": "Agents may prepare the file-ownership map, accepted-contract mapping, synthetic and recorded acceptance vectors, bounded retry/quota/restart plan, secret-redaction tests, and pre-implementation audit without credentials, provider calls, live transport, or provider bytes.",
           "acceptance": "A bounded no-new-spend adapter stores private raw artifacts, verifies reads, normalizes market facts, deterministically selects references around the PR 2C observation anchor, and emits marketReferenceJoinKey or a stable missing reason while paid-plan activation is disabled.",
           "evidence": []
         },

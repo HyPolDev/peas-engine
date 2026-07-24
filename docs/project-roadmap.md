@@ -63,7 +63,15 @@ Do not maintain task state independently in Linear, Notion, and GitHub.
 - The P1-09 market-data entitlement gate is active with gate state `PENDING`: human attestation and
   written-provider evidence collection proceed in parallel. The gate cannot close until its frozen
   provider/dataset/feed/fallback policy is compatible with accepted ADR 0010 and receives independent
-  `GO`. Recorded/offline PR 2D work may proceed after readiness `GO`, but P1-10 and P2 remain blocked.
+  `GO`. P1-10 and P2 remain blocked.
+- PR 2D merged as pull request
+  [`#6`](https://github.com/HyPolDev/peas-engine/pull/6) at
+  `ebe959324e48faf73c325a97ed9200bd6c76c9a6`. Exact published head
+  `fb150828c0fe5e1272c246f1889be02aab8b0d90` passed Linux, Windows, and required 10k-scale CI in
+  [run `30040906906`](https://github.com/HyPolDev/peas-engine/actions/runs/30040906906). The
+  independent project-context audit returned `GO`; the initial 1k throughput failure remains
+  preserved and was closed by an unchanged exact-head rerun. The merge changes no P1-09, spending,
+  live-provider, P1-10, or P2 authorization.
 - No live SEC HTTP, FMP, issuer-IR, calendar, market-data, LLM, brokerage, or trading adapter exists.
 - The next product slice is explicitly read-only: no LLM dependency, no orders, no brokerage, and
   no portfolio mutation.
@@ -144,10 +152,67 @@ authorized or SIP-equivalent fallback. Paid Alpaca, FMP Ultimate, IBKR, Databent
 other new subscription remain deferred.
 
 The entitlement delay does not block official-document research, provider-neutral contracts,
-original synthetic fixtures, recorded implementation, or offline tests in PR 2D. It does block the
-P1-10 market adapter and P2 collection. Agents must not inspect accounts or credentials, call a
+original synthetic fixtures, recorded implementation, offline tests, or preparation of the P1-10
+ownership map and acceptance harness. It does block live P1-10 implementation and P2 collection.
+Agents must not inspect accounts or credentials, call a
 provider, retrieve provider bytes, activate a plan, or silently choose a fallback while the gate is
 pending. An IBKR live witness is not required for P2 and remains deferred.
+
+### Post-PR 2D next actions
+
+PR 2D is complete and merged. The active critical path is now P1-09 -> P1-10 -> P1-06 -> P2. Work
+must follow the order below; parallel preparation does not waive a gate.
+
+| Order | Work item | Owner | May start now | Required output and exit condition |
+| --- | --- | --- | --- | --- |
+| 1 | Close the P1-09 evidence package | Human owner | Yes | Sanitized FMP plan/classification attestation; written Alpaca answers; written FMP answers if FMP remains a discrepancy or fallback candidate; opaque private-evidence digests; explicit zero-spend confirmation |
+| 2 | Freeze and independently audit the P1-09 entitlement snapshot | Integration owner plus fresh independent reviewer | After the human evidence package is complete | Versioned provider/dataset/feed/endpoint capability matrix, retention/replay/derived-publication decisions, exact fallback disposition, human signature, and binary `GO`; any unresolved required capability keeps P1-09 `PENDING` or records `NO_GO` |
+| 3 | Prepare the P1-10 implementation package | Agents with non-overlapping ownership | Yes, recorded/offline only | File-ownership map, exact approved-contract mapping, synthetic/recorded acceptance vectors, bounded retry/quota/restart plan, secret-redaction tests, and an independent pre-implementation review; no credentials, provider calls, or real provider bytes |
+| 4 | Implement P1-10 against the frozen entitlement snapshot | Agents after P1-09 `GO` | No | Only the approved zero-spend provider/dataset/feed; private content-addressed raw artifacts; verified loading; deterministic normalization/selection; stable missing reasons; no silent fallback or paid-plan path; independent implementation `GO` |
+| 5 | Complete live read-only source capture and calendar prewarming | Non-overlapping source and calendar owners | Only where provider/account authorization is already explicit; market-data portions wait for P1-09/P1-10 | Bounded SEC/FMP/issuer-IR capture as authorized, issuer allowlist, schedule provenance, restart/backfill evidence, and no dispatchable financial effects |
+| 6 | Run P1-06 integrated readiness drill | Integration owner plus fresh auditor | After P1-03, P1-04, P1-05, and P1-10 are complete | At least one complete scheduled window; restart/reconciliation, correction, quota, outage, clock-regression, memory/SQLite replay-equivalence, completeness, and zero-effects evidence; binary readiness `GO` |
+| 7 | Collect and freeze P2 | Collection agents, then research owner | Only after P1-06 and P1-09 are complete | Exactly the prospectively frozen 180-cluster cohort, fixed denominators, immutable dataset manifest, code/config/entitlement identities, and completeness report before conclusions |
+| 8 | Execute the event-validation analysis | Research owner plus independent reviewer | After the dataset freeze | Reproducible frozen-metric report and binary decision on whether the evidence justifies any later data, model, or market-access investment |
+
+Immediate agent-safe preparation in item 3 must remain a separate recorded/offline change. It may
+define interfaces around the already frozen provider-neutral boundary, but it must not preselect a
+still-pending feed, add a live transport, read environment credentials, capture provider examples,
+or encode an FMP fallback. If P1-09 changes the provider/source identity or scientific meaning,
+repair and re-audit the preparation package before live implementation.
+
+The next human action is therefore not a code change: complete the sanitized P1-09 evidence package
+described in
+[`docs/research/market-data-entitlement-gate.md`](research/market-data-entitlement-gate.md). The
+next agent deliverable is the recorded/offline P1-10 implementation package, explicitly conditional
+on that future frozen snapshot.
+
+### Work-session plan through dataset collection
+
+A work session is one focused engineering/review block comparable to the sessions used from the
+kernel through PR 2D. Human/provider response time and waiting for a suitable scheduled earnings
+window are not counted as work sessions. The fastest credible plan is nine sessions before P2
+collection begins, followed by an observation period whose elapsed duration is determined by the
+frozen cohort calendar.
+
+| Session | Primary outcome | Parallel work | Exit evidence |
+| --- | --- | --- | --- |
+| 1. P1-09 evidence intake and decision inventory | Convert the human-supplied sanitized attestations and provider answers into a complete capability-by-capability decision inventory | Agents verify completeness and map every answer to ADR 0010; they do not inspect private correspondence or accounts | No unresolved required question is hidden; missing answers remain explicitly `PENDING` |
+| 2. P1-09 snapshot freeze and independent audit | Freeze provider, dataset, feed, endpoint, retention, replay, publication, fallback, and zero-spend policy | A fresh reviewer recomputes identities and checks scientific compatibility | Versioned entitlement snapshot plus binary `GO`; otherwise stop live work |
+| 3. P1-10 recorded/offline implementation package | Freeze file ownership, adapter boundary, bounded acquisition state machine, retry/quota rules, secret-redaction policy, and acceptance vectors | Loader, replay, and fault-injection test owners prepare synthetic harnesses | Independent contract/pre-implementation `GO`; still no live provider access |
+| 4. P1-10 approved acquisition implementation | Implement the exact approved feed and private raw-artifact capture path | Separate owners implement transport, entitlement preflight, and bounded pagination/retry logic without overlapping files | Focused tests prove no unapproved feed, fallback, spend, credential echo, or partial trusted output |
+| 5. P1-10 integration, restart, and final audit | Connect verified artifacts to the merged PR 2D normalization/selection boundary | Memory/SQLite, restart, correction, page-size, quota, and provider-unavailability testing run concurrently | Full evidence as authorized, exact-SHA CI, and independent implementation `GO` |
+| 6. P1-03/P1-04 source and calendar completion | Complete authorized SEC/FMP/issuer-IR capture and calendar prewarming | Source owners work independently while the calendar owner freezes allowlist and schedule provenance | Bounded capture, missed-window backfill, deterministic normalization, and schedule/restart evidence |
+| 7. P1-06 drill preparation and rehearsal | Assemble one deployment candidate and rehearse restart, reconciliation, outage, correction, and clock-regression procedures entirely read-only | Evidence owner prepares completeness, quota, replay, and zero-effects reports | Exact drill candidate, frozen configuration, selected scheduled window, and preflight `GO` |
+| 8. P1-06 scheduled-window execution | Observe one complete eligible window and exercise controlled recovery cases | Independent observer records deviations without changing thresholds or acceptance criteria | Complete window evidence, stable missing reasons, verified raw artifacts, and memory/SQLite replay equality |
+| 9. P1-06 final audit and P2 launch package | Independently audit the drill and freeze collection deployment/configuration | Collection and dataset-freeze owners rehearse the 180-cluster manifest with synthetic identities | Binary readiness `GO`, P2 runbook, monitoring/stop rules, private-storage plan, and collection authorization |
+| Observation period: P2-01 | Collect the prospectively frozen 180-cluster cohort | Continuous reconciliation, completeness monitoring, and typed missing-evidence accounting | All 180 clusters accounted for; no substitutions, threshold changes, or denominator deletions |
+| Dataset-freeze session: P2-02 | Freeze the collected dataset before analysis | Independent inventory reconciliation | Immutable dataset manifest, code/config/entitlement identities, evidence-union equality, and completeness report |
+
+Sessions 1 and 2 cannot be completed by agents alone because the underlying entitlement statements
+and provider correspondence are human-owned. Sessions 3 through 9 can be delegated to agents once
+their stated gates are satisfied. If provider permission is denied or materially changes the
+accepted source identity or study meaning, return to the applicable contract/audit session rather
+than consuming a later session to work around the gate.
 
 ### Fast-track scheduling judgment
 
