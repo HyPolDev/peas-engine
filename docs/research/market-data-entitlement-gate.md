@@ -102,14 +102,14 @@ Official Alpaca material distinguishes these market-data identities:
 
 | Identity | Publicly documented meaning | Current PEAS status |
 | --- | --- | --- |
-| Historical `feed=sip` | Historical CTA/UTP consolidated US-equity data selected with the REST `feed` parameter | `PENDING` |
-| `v2/delayed_sip` | A separately named 15-minute-delayed WebSocket SIP feed | `PENDING` |
-| Latest-endpoint `feed=delayed_sip` | A separately selectable delayed feed on certain latest endpoints | `PENDING` |
+| Historical `feed=sip` | Historical CTA/UTP consolidated US-equity data selected with the REST `feed` parameter | `OWNER_APPROVED_WITH_RESIDUAL_RISK`; exact three-route allowlist |
+| `v2/delayed_sip` | A separately named 15-minute-delayed WebSocket SIP feed | `NOT_AUTHORIZED` |
+| Latest-endpoint `feed=delayed_sip` | A separately selectable delayed feed on certain latest endpoints | `NOT_AUTHORIZED` |
 | `v2/sip` | Real-time SIP WebSocket feed associated with a paid entitlement | `NOT_AUTHORIZED` |
-| `iex` | IEX-only feed and limited real-time coverage on Basic | Not an approved consolidated-market substitute |
+| `iex` | IEX-only feed and limited real-time coverage on Basic | `NOT_AUTHORIZED` |
 | `boats` | Blue Ocean ATS overnight source | `NOT_AUTHORIZED` for the primary study |
 | `overnight` | Alpaca-derived overnight source | `NOT_AUTHORIZED` for the primary study |
-| `otc` | OTC source | Outside current study scope |
+| `otc` | OTC source | `NOT_AUTHORIZED` |
 
 The project must not use "Alpaca Basic delayed SIP history" as a single dataset name.
 
@@ -455,7 +455,10 @@ policy.
 | Alpaca derived-data retention after closure | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Cease affected normalized/derived use within 30 calendar days of effective account closure |
 | Alpaca publication of derived aggregates | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Non-reconstructable aggregates only; no raw or row-level data |
 | FMP Premium account assertion | `ATTESTED` | Human owner attests individual Premium and personal/noncommercial use |
-| FMP Premium market endpoints | `GRANTED` | Support identifies included quote, aftermarket, price-change, and batch-quote surfaces |
+| FMP `/stable/aftermarket-quote` | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Exact private discrepancy quote route; provider reports it included in Premium |
+| FMP `/stable/aftermarket-trade` | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Exact private discrepancy trade route; provider reports it included in Premium |
+| FMP Stock Quote, Stock Quote Short, Stock Price Change, and batch endpoints | `NOT_AUTHORIZED` | Reported as Premium surfaces but excluded from the frozen PEAS allowlist |
+| Every other FMP endpoint | `NOT_AUTHORIZED` | Not present in the exact frozen endpoint-channel allowlist |
 | FMP Premium one-minute history | `NOT_AUTHORIZED` | Support states one-minute intraday charting requires Ultimate |
 | FMP private durable raw retention | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Maximum 3650 days from capture and active-subscription use only; delete/cease no later than effective termination |
 | FMP offline deterministic replay | `GRANTED` | FMP support states offline replay/testing is allowed |

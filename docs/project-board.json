@@ -263,6 +263,8 @@
           "evidence": [
             "docs/research/market-data-entitlement-gate.md",
             "docs/research/p1-09-owner-risk-authorization.md",
+            "docs/audit/p1-09-independent-review.md",
+            "docs/audit/p1-09-independent-reaudit.md",
             "private-evidence-sha256@0f197aa11318330a7618841d6f3cd106d963d6c768508feed1080aae39ae0c85"
           ]
         },

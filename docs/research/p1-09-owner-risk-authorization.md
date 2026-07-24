@@ -118,6 +118,133 @@ The identities below use the accepted PR 2D identity derivations. Documentation 
 `2026-07-25` means the official endpoint reference was verified on that date; it does not claim a
 provider schema release identifier.
 
+### Canonical identity preimages
+
+Every identity below was recomputed with the accepted functions in
+`src/providers/market-reference/identity.ts`. These are the exact inert JSON preimages; no field is
+implicit. URLs are intentionally excluded and appear only in the non-identity route tables.
+
+```json
+{
+  "alpaca": {
+    "providerId": "mpv1_7a0d9dbb0982daebfdc6986ef4903b3c6388f83cbafa6c1b7af8bf92b5ec6d9c",
+    "providerPreimage": {
+      "providerCode": "alpaca",
+      "serviceOperatorCode": "alpaca-markets"
+    },
+    "datasetId": "mds1_d18d90386ef7b3ddff114dc552ca4561a3ee613f3bc501e60491e81d85f734d1",
+    "datasetPreimage": {
+      "providerId": "mpv1_7a0d9dbb0982daebfdc6986ef4903b3c6388f83cbafa6c1b7af8bf92b5ec6d9c",
+      "assetClass": "us-equity",
+      "coverageRegion": "united-states",
+      "productFamily": "historical-stock-market-data",
+      "apiGeneration": "v2",
+      "recordFamily": "quotes-trades-bars",
+      "datasetDocumentationVersion": "official-reference-2026-07-25"
+    },
+    "feedId": "mfd1_79bf3edbf4b7d87ab16edadaafca55d991bdc6962294abc2998f240838483023",
+    "feedPreimage": {
+      "datasetId": "mds1_d18d90386ef7b3ddff114dc552ca4561a3ee613f3bc501e60491e81d85f734d1",
+      "providerFeedCode": "sip",
+      "consolidationKind": "sip-consolidated",
+      "delayClass": "historical",
+      "adjustmentMode": "raw",
+      "correctionRepresentation": "unknown"
+    },
+    "endpointChannels": [
+      {
+        "endpointChannelId": "mec1_c0af047d911436c6c0f73a164885e07c6e5976d217b4f4c8b8dd0db17d14e4f0",
+        "preimage": {
+          "feedId": "mfd1_79bf3edbf4b7d87ab16edadaafca55d991bdc6962294abc2998f240838483023",
+          "channelKind": "historical-rest",
+          "methodKind": "get",
+          "safeRouteLabel": "alpaca-v2-historical-quotes",
+          "endpointDocumentationVersion": "official-reference-2026-07-25",
+          "paginationKind": "opaque-token",
+          "factKinds": ["quote"]
+        }
+      },
+      {
+        "endpointChannelId": "mec1_9f2e99ba4973554bb26e71e722bf5367db20173a49a08f2ea45d227d44af0cf1",
+        "preimage": {
+          "feedId": "mfd1_79bf3edbf4b7d87ab16edadaafca55d991bdc6962294abc2998f240838483023",
+          "channelKind": "historical-rest",
+          "methodKind": "get",
+          "safeRouteLabel": "alpaca-v2-historical-trades",
+          "endpointDocumentationVersion": "official-reference-2026-07-25",
+          "paginationKind": "opaque-token",
+          "factKinds": ["trade"]
+        }
+      },
+      {
+        "endpointChannelId": "mec1_016928912d87c2fd5ae5eae163752f363d7b8deba66f4b08753cf9d80c891c9c",
+        "preimage": {
+          "feedId": "mfd1_79bf3edbf4b7d87ab16edadaafca55d991bdc6962294abc2998f240838483023",
+          "channelKind": "historical-rest",
+          "methodKind": "get",
+          "safeRouteLabel": "alpaca-v2-historical-bars",
+          "endpointDocumentationVersion": "official-reference-2026-07-25",
+          "paginationKind": "opaque-token",
+          "factKinds": ["bar"]
+        }
+      }
+    ]
+  },
+  "financialModelingPrep": {
+    "providerId": "mpv1_526c731d81a453ab057fd6f946e49291d0863350d319a73893d46e34b2a51a7a",
+    "providerPreimage": {
+      "providerCode": "financial-modeling-prep",
+      "serviceOperatorCode": "financial-modeling-prep"
+    },
+    "datasetId": "mds1_eaaa286ff4841f43275131aca2abb17fad3ab78cbe3af49921a36a3249439f68",
+    "datasetPreimage": {
+      "providerId": "mpv1_526c731d81a453ab057fd6f946e49291d0863350d319a73893d46e34b2a51a7a",
+      "assetClass": "us-equity",
+      "coverageRegion": "united-states",
+      "productFamily": "premium-market-reference-discrepancy",
+      "apiGeneration": "stable",
+      "recordFamily": "aftermarket-quote-trade",
+      "datasetDocumentationVersion": "official-stable-docs-2026-07-25"
+    },
+    "feedId": "mfd1_582a672a4109841f0ef80d286021e1e827d4a5f050059e22c87d08c842d0051b",
+    "feedPreimage": {
+      "datasetId": "mds1_eaaa286ff4841f43275131aca2abb17fad3ab78cbe3af49921a36a3249439f68",
+      "providerFeedCode": "exchanges-and-third-party-providers",
+      "consolidationKind": "unknown",
+      "delayClass": "provider-defined",
+      "adjustmentMode": "unknown",
+      "correctionRepresentation": "unknown"
+    },
+    "endpointChannels": [
+      {
+        "endpointChannelId": "mec1_1e1c2239cce268ea690a82bd3f3ff6148bbd2bb8bb288c57a2e2cdf79cf8f1cd",
+        "preimage": {
+          "feedId": "mfd1_582a672a4109841f0ef80d286021e1e827d4a5f050059e22c87d08c842d0051b",
+          "channelKind": "latest-rest",
+          "methodKind": "get",
+          "safeRouteLabel": "fmp-stable-aftermarket-quote",
+          "endpointDocumentationVersion": "official-stable-docs-2026-07-25",
+          "paginationKind": "none-documented",
+          "factKinds": ["quote"]
+        }
+      },
+      {
+        "endpointChannelId": "mec1_feb9f3a3deab6dbabd6fcc204c8ced63d88a2ca14d8f235b1fec2dab49df6bdf",
+        "preimage": {
+          "feedId": "mfd1_582a672a4109841f0ef80d286021e1e827d4a5f050059e22c87d08c842d0051b",
+          "channelKind": "latest-rest",
+          "methodKind": "get",
+          "safeRouteLabel": "fmp-stable-aftermarket-trade",
+          "endpointDocumentationVersion": "official-stable-docs-2026-07-25",
+          "paginationKind": "none-documented",
+          "factKinds": ["trade"]
+        }
+      }
+    ]
+  }
+}
+```
+
 ### Alpaca primary lane
 
 - `providerId`:
