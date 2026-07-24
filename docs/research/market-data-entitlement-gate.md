@@ -2,7 +2,7 @@
 
 ## Document control
 
-- Status: `REVIEW`
+- Status: `COMPLETE`
 - Gate: `P1-09`
 - Owner: `human-owner`
 - Prepared from public official material only
@@ -15,16 +15,19 @@
 - FMP-only fallback decision: `NOT_AUTHORIZED`
 - Owner authorization:
   [`docs/research/p1-09-owner-risk-authorization.md`](p1-09-owner-risk-authorization.md)
-- Independent review: `PENDING`
+- Independent review: `GO`
+- Independent review candidate: `36dcf92b465fc5708614718b4312631fb5dbf544`
+- Independent review record: [`docs/audit/p1-09-final-go.md`](../audit/p1-09-final-go.md)
 - Recorded/offline PR 2D work: `ALLOWED`
-- Live delayed market-reference adapter P1-10: `BLOCKED`
+- Live delayed market-reference adapter P1-10: `READY_WITHIN_FROZEN_BOUNDARY`
 - P2 forward collection: `BLOCKED`
 
 This is an engineering authorization record, not legal advice. Public documentation can establish
 available product surfaces and default restrictions, but it cannot prove the terms, classification,
 or entitlements attached to the human owner's accounts. Only the human owner may change a provider
 decision or accept residual interpretation risk. The owner exercised that authority on
-`2026-07-24`; P1-09 now awaits independent engineering review.
+`2026-07-24`. Independent engineering review returned `GO` for exact candidate
+`36dcf92b465fc5708614718b4312631fb5dbf544`; P1-09 is complete.
 
 ## Purpose
 
@@ -72,7 +75,7 @@ narrower boundary in
 | Alpaca `delayed_sip` acquisition | `NOT_AUTHORIZED` | WebSocket and latest-endpoint delayed feeds are outside the frozen source decision. |
 | Existing FMP Premium market-reference acquisition | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Private discrepancy lane only; no public FMP-derived output and no one-minute data; awaits independent P1-09 `GO`. |
 | FMP-only lower-evidence fallback | `NOT_AUTHORIZED` | FMP may not replace missing Alpaca/SIP evidence. |
-| P1-10 delayed historical adapter | `BLOCKED` | Requires a resolved provider and entitlement snapshot. |
+| P1-10 delayed historical adapter | `READY` | May implement only the exact frozen endpoint/source boundary; all unlisted capabilities fail closed. |
 | P2 collection | `BLOCKED` | Requires P1-10 and a provider choice frozen before outcomes. |
 | Any new paid plan or upgrade | `NOT_AUTHORIZED` | Zero incremental spend is binding. |
 | Raw provider data in Git | `NOT_AUTHORIZED` | Only synthetic or explicitly redistribution-approved fixtures may be committed. |
@@ -565,10 +568,9 @@ PR 2D must not:
    discrepancy source, and no fallback.
 4. The human owner accepted the recorded residual interpretation risks and prohibited the explicit
    FMP publication/licensing and one-minute uses.
-5. A fresh independent reviewer must verify that provider, dataset, feed, retention, replay,
+5. A fresh independent reviewer verified that provider, dataset, feed, retention, replay,
    publication, fallback, and cost decisions are internally consistent with ADR 0010.
-6. On independent `GO`, set P1-09 to `COMPLETE` and authorize P1-10 implementation only within the
-   frozen boundary.
+6. Independent `GO` closed P1-09 and makes P1-10 ready only within the frozen boundary.
 7. On `NO_GO`, repair the record or return the affected capability to `PENDING`; do not call a
    provider while unresolved.
 8. Any later entitlement change creates a new versioned snapshot and may not retroactively alter

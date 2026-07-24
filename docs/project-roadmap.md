@@ -60,12 +60,14 @@ Do not maintain task state independently in Linear, Notion, and GitHub.
   [`docs/audit/pr-2d-final-reaudit.md`](audit/pr-2d-final-reaudit.md).
 - The preserved no-trade candidate has disposition `ADOPT_WITH_CHANGES`. It is research input for
   ADR 0010, not an executable policy; later model/trade thresholds remain outside PR 2D.
-- P1-09 human evidence intake is complete. The owner authorization in
+- P1-09 is complete. The owner authorization in
   [`docs/research/p1-09-owner-risk-authorization.md`](research/p1-09-owner-risk-authorization.md)
   freezes Alpaca historical REST `feed=sip` older than 15 minutes as primary, existing FMP Premium
   as a private non-fallback discrepancy source, zero incremental spend, and explicit publication
-  restrictions. Gate state is `OWNER_APPROVED_WITH_RESIDUAL_RISK`; it cannot close until a fresh
-  independent review returns `GO`. P1-10 and P2 remain blocked meanwhile.
+  restrictions. Fresh independent review returned `GO` for exact candidate
+  `36dcf92b465fc5708614718b4312631fb5dbf544`, recorded in
+  [`docs/audit/p1-09-final-go.md`](audit/p1-09-final-go.md). P1-10 is ready strictly within the
+  frozen boundary; P2 remains blocked behind P1-10 and P1-06.
 - PR 2D merged as pull request
   [`#6`](https://github.com/HyPolDev/peas-engine/pull/6) at
   `ebe959324e48faf73c325a97ed9200bd6c76c9a6`. Exact published head
@@ -168,7 +170,7 @@ must follow the order below; parallel preparation does not waive a gate.
 | Order | Work item | Owner | May start now | Required output and exit condition |
 | --- | --- | --- | --- | --- |
 | 1 | Close the P1-09 evidence package | Human owner | Complete | Sanitized owner attestation, private Alpaca/FMP responses represented by opaque digest, explicit source/fallback decision, and zero-spend confirmation are recorded |
-| 2 | Independently audit the frozen P1-09 authorization | Integration owner plus fresh independent reviewer | Now | Verify the owner-approved residual-risk boundary against ADR 0010 and return binary `GO` or `NO_GO`; live work remains blocked until `GO` |
+| 2 | Independently audit the frozen P1-09 authorization | Integration owner plus fresh independent reviewer | Complete | Exact candidate `36dcf92b...` received `GO`; P1-09 is complete |
 | 3 | Prepare the P1-10 implementation package | Agents with non-overlapping ownership | Yes, recorded/offline only | File-ownership map, exact approved-contract mapping, synthetic/recorded acceptance vectors, bounded retry/quota/restart plan, secret-redaction tests, and an independent pre-implementation review; no credentials, provider calls, or real provider bytes |
 | 4 | Implement P1-10 against the frozen entitlement snapshot | Agents after P1-09 `GO` | No | Only the approved zero-spend provider/dataset/feed; private content-addressed raw artifacts; verified loading; deterministic normalization/selection; stable missing reasons; no silent fallback or paid-plan path; independent implementation `GO` |
 | 5 | Complete live read-only source capture and calendar prewarming | Non-overlapping source and calendar owners | Only where provider/account authorization is already explicit; market-data portions wait for P1-09/P1-10 | Bounded SEC/FMP/issuer-IR capture as authorized, issuer allowlist, schedule provenance, restart/backfill evidence, and no dispatchable financial effects |
@@ -183,8 +185,9 @@ examples, select `delayed_sip`, or encode an FMP fallback. If review changes the
 identity or scientific meaning, repair and re-audit the preparation package before live
 implementation.
 
-The next action is a fresh independent P1-09 review. In parallel, agents may prepare the
-recorded/offline P1-10 implementation package, explicitly conditional on review `GO`.
+The next action is the P1-10 recorded/offline implementation package and its independent
+pre-implementation review. Live acquisition may begin only after that review and only within the
+exact accepted endpoint allowlist.
 
 ### Work-session plan through dataset collection
 
@@ -197,7 +200,7 @@ frozen cohort calendar.
 | Session | Primary outcome | Parallel work | Exit evidence |
 | --- | --- | --- | --- |
 | 1. P1-09 evidence intake and decision inventory | Complete | Human owner froze the source decision and accepted residual interpretation risk | Owner authorization and opaque private-evidence digest are recorded |
-| 2. P1-09 snapshot independent audit | Audit the frozen provider, dataset, feed, endpoint, retention, replay, publication, fallback, and zero-spend policy | A fresh reviewer checks compatibility with ADR 0010 without reopening the owner decision merely for incomplete provider answers | Binary `GO`; otherwise repair the record and keep live work blocked |
+| 2. P1-09 snapshot independent audit | Complete | All identities and authorization boundaries independently reproduced | `GO` for exact candidate `36dcf92b...`; P1-09 closed |
 | 3. P1-10 recorded/offline implementation package | Freeze file ownership, adapter boundary, bounded acquisition state machine, retry/quota rules, secret-redaction policy, and acceptance vectors | Loader, replay, and fault-injection test owners prepare synthetic harnesses | Independent contract/pre-implementation `GO`; still no live provider access |
 | 4. P1-10 approved acquisition implementation | Implement the exact approved feed and private raw-artifact capture path | Separate owners implement transport, entitlement preflight, and bounded pagination/retry logic without overlapping files | Focused tests prove no unapproved feed, fallback, spend, credential echo, or partial trusted output |
 | 5. P1-10 integration, restart, and final audit | Connect verified artifacts to the merged PR 2D normalization/selection boundary | Memory/SQLite, restart, correction, page-size, quota, and provider-unavailability testing run concurrently | Full evidence as authorized, exact-SHA CI, and independent implementation `GO` |
@@ -299,9 +302,9 @@ activation, broker/order surface, or financial effect.
 
 ### Step 4 - build live source capture and delayed market acquisition only after their gates
 
-Live P1-10 must not begin while P1-09 independent review is `PENDING`. After the human-owned
-entitlement snapshot receives independent `GO`, implement only the exact approved delayed
-historical provider/dataset/feed behind
+P1-09 is complete with independent `GO`. After the P1-10 implementation package receives its
+pre-implementation review, implement only the exact approved delayed historical
+provider/dataset/feed behind
 the accepted recorded contract:
 
 ```text

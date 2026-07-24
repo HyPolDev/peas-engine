@@ -11,8 +11,10 @@
 - Private correspondence evidence SHA-256:
   `0f197aa11318330a7618841d6f3cd106d963d6c768508feed1080aae39ae0c85`
 - Private correspondence: retained outside the repository under human control
-- Independent review: `PENDING`
-- P1-10 live acquisition: `BLOCKED_PENDING_INDEPENDENT_GO`
+- Independent review: `GO`
+- Independent review candidate: `36dcf92b465fc5708614718b4312631fb5dbf544`
+- Independent review record: [`docs/audit/p1-09-final-go.md`](../audit/p1-09-final-go.md)
+- P1-10 live acquisition: `READY_WITHIN_FROZEN_BOUNDARY`
 - P2 collection: `BLOCKED`
 
 This is a human-owned engineering authorization and risk-acceptance decision, not a representation
@@ -334,9 +336,9 @@ The independent P1-09 reviewer must audit:
 - whether the proposed P1-10 design can fail closed on an unauthorized feed or use; and
 - whether any supplied provider statement directly contradicts the authorized boundary.
 
-The reviewer must not require additional provider correspondence solely because a provider did not
-answer beyond its documented policy. The required output is binary `GO` or `NO_GO` with exact file
-and line references. P1-09 closes only after `GO`.
+The reviewer did not require additional correspondence solely because a provider did not answer
+beyond its documented policy. The final review returned `GO` for exact candidate
+`36dcf92b465fc5708614718b4312631fb5dbf544`; P1-09 is complete.
 
 ## Owner attestation
 
