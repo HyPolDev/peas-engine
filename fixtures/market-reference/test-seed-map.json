@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "mfx1_1c199ece41ba2dbd00e605d96914116ff5c9d0d4502e582de976fe91f37b93eb",
+  "members": [
+    {
+      "role": "market-page-0",
+      "sourceProfileId": "mfp1_679c05231215eb312e4e2d50955cc0964f66da0aa0cfad16de91d635ee415d27",
+      "providerCode": "peas-synthetic-a",
+      "artifactDigest": "3d92bb8f52330ee80b4f2c376df6207b65374ef4045e07d9b7e22734bffc590a",
+      "sizeBytes": 144025,
+      "relativeBodyPath": "synthetic-market-corpus.json",
+      "attempt": {
+        "attemptId": "peas-synthetic-a-acquisition",
+        "provider": "peas-synthetic-a",
+        "recordId": "market-page-0",
+        "revisionId": "fixture-v1",
+        "startedAtMs": 99000,
+        "request": {
+          "method": "GET",
+          "origin": "https://synthetic.invalid",
+          "pathHash": "a6551f884564f2b670fc57089e4911aad36f7c0436fb3ca62afe19ef2685b4d9",
+          "routeLabel": "market-reference.synthetic-recorded",
+          "identityHash": "40a2c089834155a811c61702b9b47345dc3b892717ff6558490e031d315b2d46"
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "etag": "fixture-0",
+        "lastModified": null,
+        "mediaType": "application/json",
+        "contentEncoding": "identity",
+        "declaredContentLength": 144025,
+        "transportDecoded": true
+      },
+      "retrievedAtMs": 100001
+    }
+  ]
+}

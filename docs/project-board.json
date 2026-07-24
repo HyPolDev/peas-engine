@@ -11,14 +11,15 @@
   "current": {
     "stage": "P1",
     "status": "in-progress",
-    "branch": "dev/pre-pr-2d-readiness",
+    "branch": "dev/pr-2d-market-reference-contract",
     "codeBaselineCommit": "731c2d33285cee8f27d9fe8ff1a2b9a1a29e9e4e",
     "planningBaselineCommit": "c51758a1058b86730e19185b98fcd448d9ff533a",
     "pr2cAuditPublicationCommit": "aaabdb416368aa349872bc5f1d6621362f6f3cde",
     "readinessIntegrationCommit": "e42300a42743143db4979d7103a31e9957c48b58",
+    "pr2dBaseCommit": "0377323b5486a8ad3b8e2631d4c8559760893be6",
     "release": "v0.2.0-kernel-rc.2",
-    "focus": "Merge independently approved pre-PR-2D readiness evidence, verify the exact origin/main base, then execute the recorded/offline market-reference contract milestone",
-    "nextGate": "Merge PR #5 audit/status publication, fetch and verify the exact merged origin/main base contains readiness candidate 8ab07d67 and both readiness audits, then start P1-07; P1-08 remains dependent on P1-07 contract GO while human-owned P1-09 remains PENDING"
+    "focus": "Publish the independently accepted P1-08 recorded/offline market-reference candidate as an unmerged draft pull request",
+    "nextGate": "Push the branch, open the draft pull request, and pass required Linux and Windows CI; human-owned P1-09 remains PENDING and P1-10/P2 remain blocked"
   },
   "stages": [
     {
@@ -178,10 +179,9 @@
         {
           "id": "P1-07",
           "title": "Market-reference and event-study contract",
-          "status": "ready",
+          "status": "done",
           "owner": "integration-owner",
           "dependsOn": ["P1-02", "P1-05"],
-          "blocker": "READY_ON_MERGE: merge PR #5 audit/status publication into origin/main, fetch it, and verify the exact PR 2D base contains candidate 8ab07d67 and both readiness audits before creating the PR 2D branch",
           "acceptance": "ADR 0010 freezes observation anchors, prior-close/release-gap/residual movement metrics, quote/trade and session rules, deterministic market identity and joins, corrections, missing-data reason codes, resource bounds, licensing, and the precommitted 100-200-cluster study design without changing frozen kernel ports.",
           "evidence": [
             "docs/agent-prompts/adr-0010-market-reference.md",
@@ -195,17 +195,45 @@
             "docs/research/candidates/no-trade-v0.1/no-trade-universe-policy.md",
             "docs/research/candidates/no-trade-v0.1/no-trade-policy.v1.json",
             "docs/research/candidates/no-trade-v0.1/no-trade-blueprint.html",
-            "docs/research/market-data-entitlement-gate.md"
+            "docs/research/market-data-entitlement-gate.md",
+            "base@0377323b5486a8ad3b8e2631d4c8559760893be6",
+            "docs/goals/pr-2d-orchestration.md",
+            "docs/research/pr-2d-market-microstructure.md",
+            "docs/research/pr-2d-alpaca-fmp-contract.md",
+            "docs/research/pr-2d-market-identity-replay.md",
+            "docs/research/pr-2d-event-study-design.md",
+            "docs/adr/0010-market-reference-contract.md",
+            "docs/contracts/pr-2d-acceptance-matrix.md",
+            "contract-checkpoint-no-go@7c484124680972b5cbbd39f31cf69b542a6341cc",
+            "docs/audit/pr-2d-contract-review.md",
+            "contract-reaudit-no-go@726f1690ce80562a1e9a452a26bf90849f04d08f",
+            "docs/audit/pr-2d-contract-reaudit.md",
+            "contract-final-reaudit-no-go@737ea8fc236c07ea7bba635bda63abcc74126de3",
+            "docs/audit/pr-2d-contract-final-reaudit.md",
+            "contract-go-audit-no-go@acbad9a7757ac1d42f89769c217ef5075a0d1998",
+            "docs/audit/pr-2d-contract-go-audit.md",
+            "contract-content@acd9f25bc89355ce18292d0dcd5afecfebf818cf",
+            "contract-checkpoint-go@750e1ab2486ce785a60304fceb19a1502ff34319",
+            "car1_f57a4f613fbadcb7a3b38dbf9748dfecc725d33e747b042fe2f21fba5d52eaad",
+            "docs/audit/pr-2d-contract-authority.json",
+            "docs/audit/pr-2d-contract-final-go.md"
           ]
         },
         {
           "id": "P1-08",
           "title": "Recorded market-reference implementation gate",
-          "status": "planned",
+          "status": "done",
           "owner": "agent",
           "dependsOn": ["P1-07"],
           "acceptance": "Synthetic SIP-style quote/trade/bar fixtures cover sessions, duplicates, corrections, stale/crossed quotes, halts, missing windows, symbol remaps, malformed input, and exact/one-over bounds; normalized references are invariant to order, restart, and replay page size with no network access.",
-          "evidence": []
+          "evidence": [
+            "implementation-candidate@9dcefde1954c8426312fb082950b6105fe6847f6",
+            "docs/audit/pr-2d-final-review.md",
+            "docs/audit/pr-2d-final-reaudit.md",
+            "fixtures/market-reference/fixture-manifest.json",
+            "fixtures/market-reference/synthetic-market-corpus.json",
+            "docs/goals/pr-2d-orchestration.md"
+          ]
         },
         {
           "id": "P1-09",
