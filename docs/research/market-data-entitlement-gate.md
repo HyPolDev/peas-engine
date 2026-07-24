@@ -134,8 +134,11 @@ Therefore:
 
 - Public material supports a provisional hypothesis that Basic can query historical SIP bars,
   trades, and quotes outside the recent 15-minute window.
-- The contradiction prevents `GRANTED`.
-- Written account-specific confirmation is required before P1-10.
+- This was the original pre-decision finding: the public-document contradiction prevented
+  `GRANTED`.
+- This original requirement for further written confirmation is superseded by the later support
+  response, the exact endpoint allowlist, and the human owner's
+  `OWNER_APPROVED_WITH_RESIDUAL_RISK` decision.
 - Successful access must not be used as a substitute for written permission.
 
 ### Endpoint shape, pagination, and rate limits
@@ -369,7 +372,7 @@ The terms also state that, upon termination:
 The [pricing page](https://site.financialmodelingprep.com/pricing-plans) separately states that
 displaying or redistributing FMP data requires a Data Display and Licensing Agreement.
 
-Therefore, under public default terms:
+Therefore, under public default terms, and preserved as the historical pre-decision finding:
 
 - raw redistribution is `NOT_AUTHORIZED`;
 - public raw fixtures are `NOT_AUTHORIZED`;
@@ -378,12 +381,17 @@ Therefore, under public default terms:
   the public default;
 - post-termination use of derived information is `NOT_AUTHORIZED` unless a specific written
   agreement overrides it; and
-- private durable capture, replay, and publication of derived aggregates remain `PENDING` written
-  confirmation.
+- private durable capture, replay, and publication of derived aggregates originally remained
+  `PENDING` written confirmation.
 
-### Required human FMP attestation
+This last pending statement is superseded operationally by the later FMP support response and
+human-owner decision: offline replay is `GRANTED`; narrowly private capture and processing are
+`OWNER_APPROVED_WITH_RESIDUAL_RISK`; publication or display of FMP data or FMP-derived outputs
+remains `NOT_AUTHORIZED`. The public-default termination restrictions remain binding.
 
-Without revealing account identifiers, the human owner must attest:
+### Historical FMP attestation requirements
+
+The following requirements drove the human attestation completed on `2026-07-24`:
 
 - current plan name;
 - personal, commercial, academic, or other account classification;
@@ -401,9 +409,9 @@ Without revealing account identifiers, the human owner must attest:
 
 The attestation proves account state only. It does not override FMP's license restrictions.
 
-### Required written FMP confirmation
+### FMP questions submitted to support
 
-The human owner must request written answers covering:
+The human owner submitted questions covering:
 
 1. Whether the existing Premium subscription permits private durable storage of API responses.
 2. Maximum raw retention duration.
@@ -439,17 +447,17 @@ policy.
 | Alpaca historical `feed=sip` outside 15 minutes | `GRANTED` | Alpaca support confirms Basic historical SIP access older than 15 minutes |
 | Alpaca `v2/delayed_sip` WebSocket | `NOT_AUTHORIZED` | Outside the frozen source decision |
 | Alpaca latest `delayed_sip` endpoints | `NOT_AUTHORIZED` | Outside the frozen source decision |
-| Alpaca private durable raw retention | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | No fixed expiry until owner revocation, contrary guidance, or loss of personal/individual/noncommercial classification |
+| Alpaca private durable raw retention | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Maximum 3650 days from capture; account closure or another stop trigger requires deletion/cessation within 30 calendar days or an earlier provider deadline |
 | Alpaca offline deterministic replay | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Support reports no additional documented rule; owner accepts residual interpretation risk |
 | Alpaca private non-display research | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Frozen to locally controlled personal/noncommercial processing |
 | Alpaca raw redistribution or Git fixtures | `NOT_AUTHORIZED` | Public restrictions are explicit |
-| Alpaca post-account raw retention | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Owner accepts residual risk absent contrary guidance; later contradiction stops affected use |
-| Alpaca derived-data retention after closure | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Owner accepts residual risk absent contrary guidance; later contradiction stops affected use |
+| Alpaca post-account raw retention | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Delete within 30 calendar days of effective account closure |
+| Alpaca derived-data retention after closure | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Cease affected normalized/derived use within 30 calendar days of effective account closure |
 | Alpaca publication of derived aggregates | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Non-reconstructable aggregates only; no raw or row-level data |
 | FMP Premium account assertion | `ATTESTED` | Human owner attests individual Premium and personal/noncommercial use |
 | FMP Premium market endpoints | `GRANTED` | Support identifies included quote, aftermarket, price-change, and batch-quote surfaces |
 | FMP Premium one-minute history | `NOT_AUTHORIZED` | Support states one-minute intraday charting requires Ultimate |
-| FMP private durable raw retention | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Active-subscription private use only; termination triggers the public-default deletion/cessation rule |
+| FMP private durable raw retention | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Maximum 3650 days from capture and active-subscription use only; delete/cease no later than effective termination |
 | FMP offline deterministic replay | `GRANTED` | FMP support states offline replay/testing is allowed |
 | FMP private non-display research | `OWNER_APPROVED_WITH_RESIDUAL_RISK` | Personal local processing only; the MCP answer did not affirm arbitrary agent use |
 | FMP raw display, redistribution, or Git fixtures | `NOT_AUTHORIZED` | Separate display/licensing agreement required |
