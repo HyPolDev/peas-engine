@@ -10,11 +10,15 @@ import Database from "better-sqlite3";
 import { canonicalHash } from "../src/core/hash.js";
 import { canonicalJson, type JsonValue } from "../src/core/json.js";
 import {
+  deriveArtifactContentId,
   deriveEndpointChannelId,
+  deriveMarketAcquisitionId,
   deriveMarketDatasetId,
   deriveMarketFeedId,
   deriveMarketProviderId,
+  deriveRawArtifactId,
 } from "../src/providers/market-reference/identity.js";
+import { deriveAcquisitionObservationId } from "../src/providers/observation-ledger.js";
 
 const NS_PER_MINUTE = 60_000_000_000n;
 const HISTORY_DELAY_NS = 15n * NS_PER_MINUTE;
@@ -75,6 +79,34 @@ const ZERO_SPEND_POLICY_PREIMAGE = Object.freeze({
 });
 const ZERO_SPEND_POLICY_ID =
   "mzp1_b2f575e234dcd7f05eb5fcc03060420313b56e45aff87c961c3771d1c5cf3b9e";
+const ENTITLEMENT_SNAPSHOT_ID = `ent1_${"a".repeat(64)}`;
+const ROUTE_POLICY_VERSION = "p1-10-frozen-historical-multi-symbol-v1";
+const JOURNAL_SCHEMA_VERSION = 1;
+const RUN_SESSION_NONCE = "synthetic-run-session-v1";
+const CANONICAL_SYMBOLS = Object.freeze(["glyph-amber", "glyph-cobalt"]);
+const INSTRUMENT_IDS = Object.freeze(
+  CANONICAL_SYMBOLS.map(
+    (symbol) => `min1_${createHash("sha256").update(symbol).digest("hex")}`,
+  ).sort(),
+);
+const EFFECTIVE_CEILINGS = Object.freeze({
+  concurrentRequests: 1,
+  rawArtifactBytes: 10 * 1024 * 1024,
+  aggregateBytes: 64 * 1024 * 1024,
+  pages: 16,
+  recordsPerPage: 10_000,
+  facts: 160_000,
+  tokenBytes: 4_096,
+  instruments: 64,
+  spanDays: 8,
+  attempts: 48,
+  pageAttempts: 3,
+  retryAfterMs: 30_000,
+  attemptDeadlineMs: 30_000,
+  acquisitionDeadlineMs: 300_000,
+  rateAttempts: 30,
+  rateWindowMs: 60_000,
+});
 
 type AlpacaKind = "bars" | "quotes" | "trades";
 type Preflight = Readonly<{
@@ -86,6 +118,8 @@ type Preflight = Readonly<{
   datasetId: string;
   feedId: string;
   endpointChannelId: string;
+  entitlementSnapshotId: string;
+  routePolicyVersion: string;
   fields: Readonly<Record<string, string>>;
   requestStartedNs: bigint;
   maximumClockErrorNs: bigint;
@@ -117,7 +151,7 @@ function rejection(code: string): Error {
 
 function baseRequest(kind: AlpacaKind = "quotes"): Preflight {
   const common = {
-    symbols: "abstract-set",
+    symbols: CANONICAL_SYMBOLS.join(","),
     start: "2026-01-01T00:00:00.000000000Z",
     end: "2026-01-01T00:15:00.000000000Z",
     limit: "10000",
@@ -133,6 +167,8 @@ function baseRequest(kind: AlpacaKind = "quotes"): Preflight {
     datasetId: IDS.alpacaDataset,
     feedId: IDS.alpacaFeed,
     endpointChannelId: ROUTES[kind].channel,
+    entitlementSnapshotId: ENTITLEMENT_SNAPSHOT_ID,
+    routePolicyVersion: ROUTE_POLICY_VERSION,
     fields: kind === "bars" ? { ...common, timeframe: "1Min", adjustment: "raw" } : common,
     requestStartedNs: 1_000_000_000_000_000_000n,
     maximumClockErrorNs: 0n,
@@ -180,7 +216,9 @@ function preflight(value: Preflight): void {
     value.providerId !== IDS.alpacaProvider ||
     value.datasetId !== IDS.alpacaDataset ||
     value.feedId !== IDS.alpacaFeed ||
-    value.endpointChannelId !== route.channel
+    value.endpointChannelId !== route.channel ||
+    value.entitlementSnapshotId !== ENTITLEMENT_SNAPSHOT_ID ||
+    value.routePolicyVersion !== ROUTE_POLICY_VERSION
   ) {
     throw rejection("identity-not-authorized");
   }
@@ -291,9 +329,17 @@ type QuotaClassification =
 type RetryDecision =
   | Readonly<{ kind: "retry"; delayMs: number }>
   | Readonly<{ kind: "stop"; delayMs: null }>;
+type RetryFailure = "pre-response" | "clean-partial" | `http-${number}` | "schema" | "artifact";
+type RetryEventContext = Readonly<{
+  failure: RetryFailure;
+  pageAttemptNumber: number;
+  acquisitionAttemptCount: number;
+  retryAfter: string | null;
+  quotaClassification: QuotaClassification;
+}>;
 
 function retryDecision(
-  failure: "pre-response" | "clean-partial" | `http-${number}` | "schema" | "artifact",
+  failure: RetryFailure,
   attempt: number,
   retryAfter: string | null,
   quotaClassification: QuotaClassification,
@@ -326,8 +372,27 @@ function retryDecision(
   return { kind: "retry", delayMs: projectDelayMs };
 }
 
+function retryEventDecision(context: RetryEventContext): RetryDecision {
+  if (
+    !Number.isSafeInteger(context.pageAttemptNumber) ||
+    context.pageAttemptNumber < 1 ||
+    !Number.isSafeInteger(context.acquisitionAttemptCount) ||
+    context.acquisitionAttemptCount < 1 ||
+    context.acquisitionAttemptCount >= LIMITS.attempts
+  ) {
+    return { kind: "stop", delayMs: null };
+  }
+  return retryDecision(
+    context.failure,
+    context.pageAttemptNumber,
+    context.retryAfter,
+    context.quotaClassification,
+  );
+}
+
 type Page = Readonly<{
   ordinal: number;
+  deliveryObservationId: string;
   requestHash: string;
   precedingHash: string | null;
   nextHash: string | null;
@@ -340,7 +405,7 @@ function hash(text: string): string {
 }
 
 function verifyChain(pages: readonly Page[], requestHash: string): readonly Page[] {
-  const seenDigests = new Set<string>();
+  const seenDeliveryObservations = new Set<string>();
   const returnedTokenHashes = new Set<string>();
   let expectedPreceding: string | null = null;
   let terminal = false;
@@ -349,8 +414,10 @@ function verifyChain(pages: readonly Page[], requestHash: string): readonly Page
     if (page.ordinal !== index) throw rejection("page-position");
     if (page.requestHash !== requestHash) throw rejection("query-substitution");
     if (page.precedingHash !== expectedPreceding) throw rejection("token-gap");
-    if (seenDigests.has(page.digest)) throw rejection("duplicate-page");
-    seenDigests.add(page.digest);
+    if (seenDeliveryObservations.has(page.deliveryObservationId)) {
+      throw rejection("duplicate-page-delivery-observation");
+    }
+    seenDeliveryObservations.add(page.deliveryObservationId);
     if (
       !Number.isSafeInteger(page.records) ||
       page.records < 0 ||
@@ -490,27 +557,271 @@ function guardedPreflight(request: Preflight, counters: SideEffectCounters): voi
   counters.transportConstructions += 1;
 }
 
-function requestIdentity(request: Preflight): string {
-  return canonicalHash("peas/p1-10-request-identity/v1", {
+function independentCanonicalJson(value: JsonValue): string {
+  if (value === null || typeof value === "boolean" || typeof value === "number") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "string") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(independentCanonicalJson).join(",")}]`;
+  return `{${Object.keys(value)
+    .sort()
+    .map(
+      (key) =>
+        `${JSON.stringify(key)}:${independentCanonicalJson(
+          (value as Readonly<Record<string, JsonValue>>)[key] as JsonValue,
+        )}`,
+    )
+    .join(",")}}`;
+}
+
+function independentCanonicalHash(domain: string, value: JsonValue): string {
+  const digest = createHash("sha256");
+  for (const part of [domain, independentCanonicalJson(value)]) {
+    const bytes = Buffer.from(part, "utf8");
+    const length = Buffer.alloc(8);
+    length.writeBigUInt64BE(BigInt(bytes.byteLength));
+    digest.update(length);
+    digest.update(bytes);
+  }
+  return digest.digest("hex");
+}
+
+function requestIdentityPreimage(request: Preflight): JsonValue {
+  const symbols = (request.fields["symbols"] as string).split(",").sort();
+  return {
     providerId: request.providerId,
     datasetId: request.datasetId,
     feedId: request.feedId,
     endpointChannelId: request.endpointChannelId,
-    kind: request.kind,
-    start: request.fields["start"] as string,
-    end: request.fields["end"] as string,
-    sort: request.fields["sort"] as string,
+    entitlementSnapshotId: request.entitlementSnapshotId,
     authorizationMode: request.authorizationMode,
-  });
+    instrumentIds: INSTRUMENT_IDS,
+    canonicalSymbols: symbols,
+    factFamily: request.kind,
+    queryStartNs: parseCanonicalNs(request.fields["start"] as string).toString(),
+    queryEndNs: parseCanonicalNs(request.fields["end"] as string).toString(),
+    semanticFixedFields: {
+      feed: request.fields["feed"] as string,
+      sort: request.fields["sort"] as string,
+      timeframe: request.kind === "bars" ? (request.fields["timeframe"] as string) : null,
+      adjustment: request.kind === "bars" ? (request.fields["adjustment"] as string) : null,
+    },
+    routePolicyVersion: request.routePolicyVersion,
+  };
+}
+
+function requestIdentity(request: Preflight): string {
+  const preimage = requestIdentityPreimage(request);
+  const derived = canonicalHash("peas/market-acquisition-request/v1", preimage);
+  assert.equal(derived, independentCanonicalHash("peas/market-acquisition-request/v1", preimage));
+  return derived;
+}
+
+function configurationPreimage(request: Preflight): JsonValue {
+  return {
+    requestIdentityHash: requestIdentity(request),
+    requestedPageLimit: Number(request.fields["limit"]),
+    effectiveLesserOfEntitlementAndProjectCeilings: EFFECTIVE_CEILINGS,
+    runScopedLiveEnableDecision: request.liveEnabled,
+    zeroSpendPolicyIdAndDecision: {
+      policyId: request.zeroSpendPolicyId,
+      decision: request.runDecision,
+    },
+    retryPolicyVersion: "p1-10-deterministic-1s-2s-no-jitter-v1",
+    quotaPolicyVersion: "p1-10-30-per-rolling-60s-v1",
+    deadlinePolicyVersion: "p1-10-30s-attempt-300s-acquisition-v1",
+    retentionPolicyReadiness: "human-authorization-required-not-authorized",
+    journalSchemaVersion: JOURNAL_SCHEMA_VERSION,
+  };
 }
 
 function configurationHash(request: Preflight): string {
-  return canonicalHash("peas/p1-10-private-configuration/v1", {
+  const preimage = configurationPreimage(request);
+  const derived = canonicalHash("peas/market-acquisition-configuration/v1", preimage);
+  assert.equal(
+    derived,
+    independentCanonicalHash("peas/market-acquisition-configuration/v1", preimage),
+  );
+  return derived;
+}
+
+function logicalPageIdentityHash(
+  requestIdentityHash: string,
+  pageOrdinal: number,
+  currentTokenHash: string | null,
+): string {
+  const preimage = {
+    requestIdentityHash,
+    pageOrdinal,
+    currentTokenHash: currentTokenHash ?? "no-token",
+  } satisfies JsonValue;
+  const derived = canonicalHash("peas/market-acquisition-logical-page/v1", preimage);
+  assert.equal(
+    derived,
+    independentCanonicalHash("peas/market-acquisition-logical-page/v1", preimage),
+  );
+  return derived;
+}
+
+function attemptIdentity(
+  logicalPageHash: string,
+  attemptOrdinal: number,
+): Readonly<{ attemptId: string; retrievalAttemptId: string }> {
+  const preimage = {
+    logicalPageIdentityHash: logicalPageHash,
+    attemptOrdinal,
+    runSessionNonce: RUN_SESSION_NONCE,
+  } satisfies JsonValue;
+  const digest = canonicalHash("peas/market-acquisition-attempt-control/v1", preimage);
+  assert.equal(
+    digest,
+    independentCanonicalHash("peas/market-acquisition-attempt-control/v1", preimage),
+  );
+  return {
+    attemptId: `mat1_${digest}`,
+    retrievalAttemptId: `rat1_${digest}`,
+  };
+}
+
+function acquisitionObservationIdentity(request: Preflight, retrievalAttemptId: string): string {
+  const preimage = {
+    provider: "alpaca",
+    retrievalAttemptId,
+    sanitizedRequestIdentityHash: requestIdentity(request),
+    routeLabel: `alpaca-v2-historical-${request.kind}`,
+  };
+  const derived = deriveAcquisitionObservationId(preimage);
+  assert.equal(
+    derived,
+    `aob1_${independentCanonicalHash("peas/acquisition-observation/v1", preimage)}`,
+  );
+  return derived;
+}
+
+function marketAcquisitionIdentity(request: Preflight, acquisitionObservationId: string): string {
+  const preimage = {
+    acquisitionObservationId,
+    providerId: request.providerId,
+    datasetId: request.datasetId,
+    feedId: request.feedId,
+    endpointChannelId: request.endpointChannelId,
+    entitlementSnapshotId: request.entitlementSnapshotId,
+    instrumentIds: INSTRUMENT_IDS,
+    requestedFactKinds: [request.kind === "bars" ? "bar" : request.kind.slice(0, -1)].sort(),
+    queryStartNs: parseCanonicalNs(request.fields["start"] as string).toString(),
+    queryEndNs: parseCanonicalNs(request.fields["end"] as string).toString(),
+    sortOrder: "asc",
+    routePolicyVersion: request.routePolicyVersion,
+  };
+  const derived = deriveMarketAcquisitionId(preimage);
+  assert.equal(
+    derived,
+    `maq1_${independentCanonicalHash("peas/market-acquisition-attempt/v1", preimage)}`,
+  );
+  return derived;
+}
+
+function marketAcquisitionJournalIdentity(request: Preflight): string {
+  const preimage = {
+    schemaVersion: JOURNAL_SCHEMA_VERSION,
     requestIdentityHash: requestIdentity(request),
-    requestedPageLimit: request.fields["limit"] as string,
-    zeroSpendPolicyId: request.zeroSpendPolicyId,
-    zeroSpendRunDecision: request.runDecision,
+    providerId: request.providerId,
+    datasetId: request.datasetId,
+    feedId: request.feedId,
+    endpointChannelId: request.endpointChannelId,
+  } satisfies JsonValue;
+  const derived = canonicalHash("peas/market-acquisition-journal/v1", preimage);
+  assert.equal(derived, independentCanonicalHash("peas/market-acquisition-journal/v1", preimage));
+  return derived;
+}
+
+function privateTokenHash(material: string): string {
+  const preimage = { opaqueTokenMaterial: material } satisfies JsonValue;
+  const derived = canonicalHash("peas/market-acquisition-private-token/v1", preimage);
+  assert.equal(
+    derived,
+    independentCanonicalHash("peas/market-acquisition-private-token/v1", preimage),
+  );
+  return derived;
+}
+
+function continuationBindingHash(value: {
+  precedingMarketAcquisitionId: string;
+  requestIdentityHash: string;
+  precedingLogicalPageIdentityHash: string;
+  precedingPageOrdinal: number;
+  precedingArtifactObservationId: string;
+  precedingArtifactDigest: string;
+  precedingPageChainHash: string;
+  nextPageOrdinal: number;
+  nextTokenHash: string;
+}): string {
+  const preimage = value as unknown as JsonValue;
+  const derived = canonicalHash("peas/market-acquisition-continuation-binding/v1", preimage);
+  assert.equal(
+    derived,
+    independentCanonicalHash("peas/market-acquisition-continuation-binding/v1", preimage),
+  );
+  return derived;
+}
+
+function admittedPageChainHash(priorPageChainHash: string, checkpoint: DurableCheckpoint): string {
+  const preimage = {
+    priorPageChainHash,
+    marketAcquisitionId: checkpoint.marketAcquisitionId,
+    requestIdentityHash: checkpoint.requestIdentityHash,
+    logicalPageIdentityHash: checkpoint.logicalPageIdentityHash,
+    pageOrdinal: checkpoint.pageOrdinal,
+    artifactObservationId: checkpoint.artifactObservationId,
+    artifactDigest: checkpoint.artifactDigest,
+    artifactSizeBytes: checkpoint.artifactSizeBytes,
+    artifactObservationHash: checkpoint.artifactObservationHash,
+    artifactContentId: checkpoint.artifactContentId,
+    rawArtifactId: checkpoint.rawArtifactId,
+    currentTokenHash: checkpoint.pageOrdinal === 0 ? "no-token" : checkpoint.currentTokenHash,
+    nextTokenHash: checkpoint.nextTokenHash,
+    pageRecordCount: checkpoint.pageRecordCount,
+    cumulativeSuccessfulPages: checkpoint.cumulativeSuccessfulPages,
+    cumulativeVerifiedBytes: checkpoint.cumulativeVerifiedBytes,
+    cumulativeRecords: checkpoint.cumulativeRecords,
+    cumulativeNormalizedFacts: checkpoint.cumulativeNormalizedFacts,
+    cumulativeAttempts: checkpoint.cumulativeAttempts,
+  } satisfies JsonValue;
+  const derived = canonicalHash("peas/market-acquisition-page-chain/v1", preimage);
+  assert.equal(
+    derived,
+    independentCanonicalHash("peas/market-acquisition-page-chain/v1", preimage),
+  );
+  return derived;
+}
+
+function artifactIdentities(
+  receipt: StoredReceipt,
+  acquisitionObservationId: string,
+): Readonly<{
+  artifactObservationHash: string;
+  artifactContentId: string;
+  rawArtifactId: string;
+}> {
+  const artifactObservationHash = canonicalHash("peas/synthetic-artifact-observation/v1", {
+    observationId: receipt.observationId,
+    digest: receipt.digest,
+    sizeBytes: receipt.bytes.byteLength,
   });
+  const artifactContentId = deriveArtifactContentId({
+    sha256: receipt.digest,
+    sizeBytes: receipt.bytes.byteLength,
+    mediaType: "application/x-peas-synthetic-glyph-page",
+    contentEncoding: "identity",
+  });
+  const rawArtifactId = deriveRawArtifactId({
+    artifactContentId,
+    vaultObservationId: receipt.observationId,
+    vaultObservationHash: artifactObservationHash,
+    acquisitionObservationId,
+    role: "private-market-reference-page",
+  });
+  return { artifactObservationHash, artifactContentId, rawArtifactId };
 }
 
 type IdentityFamily = "provider" | "dataset" | "feed" | "channel";
@@ -822,6 +1133,7 @@ function validateAcquisitionTransition(from: AcquisitionState, to: AcquisitionSt
 type DurableCheckpoint = Readonly<{
   schemaVersion: 1;
   marketAcquisitionJournalId: string;
+  runSessionNonce: string;
   acquisitionObservationId: string;
   marketAcquisitionId: string;
   admittedMarketAcquisitionIds: readonly string[];
@@ -839,7 +1151,10 @@ type DurableCheckpoint = Readonly<{
   currentResumableTokenMaterial: string | null;
   nextTokenHash: string | null;
   nextResumableTokenMaterial: string | null;
+  currentContinuationBindingHash: string | null;
+  nextContinuationBindingHash: string | null;
   attemptId: string;
+  retrievalAttemptId: string;
   attemptOrdinal: number;
   artifactObservationId: string | null;
   artifactDigest: string | null;
@@ -870,6 +1185,7 @@ type DurableCheckpoint = Readonly<{
 const CHECKPOINT_KEYS = Object.freeze([
   "schemaVersion",
   "marketAcquisitionJournalId",
+  "runSessionNonce",
   "acquisitionObservationId",
   "marketAcquisitionId",
   "admittedMarketAcquisitionIds",
@@ -887,7 +1203,10 @@ const CHECKPOINT_KEYS = Object.freeze([
   "currentResumableTokenMaterial",
   "nextTokenHash",
   "nextResumableTokenMaterial",
+  "currentContinuationBindingHash",
+  "nextContinuationBindingHash",
   "attemptId",
+  "retrievalAttemptId",
   "attemptOrdinal",
   "artifactObservationId",
   "artifactDigest",
@@ -941,13 +1260,14 @@ type ImmutableReceiptSidecars = Readonly<{
 }>;
 
 interface ContractJournal {
+  bindRequest(request: Preflight): void;
   append(event: ContractEvent, checkpoint: DurableCheckpoint): void;
   rows(): readonly JournalRow[];
   close(): void;
 }
 
 const PREDECESSORS: Readonly<Record<ContractEvent, readonly ContractEvent[]>> = {
-  "acquisition.declared": [],
+  "acquisition.declared": ["request.started", "request.succeeded", "checkpoint.advanced"],
   "request.started": [
     "acquisition.declared",
     "request.started",
@@ -960,7 +1280,7 @@ const PREDECESSORS: Readonly<Record<ContractEvent, readonly ContractEvent[]>> = 
   "checkpoint.advanced": ["artifact.verified"],
   "chain.complete": ["checkpoint.advanced"],
   "normalization.started": ["chain.complete"],
-  "normalization.emitted": ["normalization.started"],
+  "normalization.emitted": ["normalization.started", "normalization.emitted"],
   "selection.started": ["normalization.emitted"],
   "selection.recorded": ["selection.started"],
   "failure.recorded": [
@@ -982,7 +1302,6 @@ function validateJournalAppend(rows: readonly JournalRow[], event: ContractEvent
     if (event !== "acquisition.declared") throw rejection("illegal-transition");
     return;
   }
-  if (event === "acquisition.declared") throw rejection("illegal-transition");
   const prior = rows.at(-1)?.event;
   if (prior === undefined || !PREDECESSORS[event].includes(prior)) {
     throw rejection("illegal-transition");
@@ -1009,14 +1328,38 @@ function checkpointKindForEvent(event: ContractEvent): CheckpointKind {
 
 const CHECKPOINT_KIND_TRANSITIONS: Readonly<Record<CheckpointKind, readonly CheckpointKind[]>> = {
   "acquisition-declared": ["attempt-started", "stopped", "failed-clean", "quarantined"],
-  "attempt-started": ["attempt-started", "request-succeeded", "stopped", "failed-clean"],
-  "request-succeeded": ["attempt-started", "artifact-committed", "stopped", "failed-clean"],
+  "attempt-started": [
+    "acquisition-declared",
+    "attempt-started",
+    "request-succeeded",
+    "stopped",
+    "failed-clean",
+  ],
+  "request-succeeded": [
+    "acquisition-declared",
+    "attempt-started",
+    "artifact-committed",
+    "stopped",
+    "failed-clean",
+  ],
   "artifact-committed": ["artifact-verified", "stopped", "failed-clean", "quarantined"],
   "artifact-verified": ["page-checkpointed", "stopped", "failed-clean", "quarantined"],
-  "page-checkpointed": ["attempt-started", "chain-complete", "stopped", "failed-clean"],
+  "page-checkpointed": [
+    "acquisition-declared",
+    "attempt-started",
+    "chain-complete",
+    "stopped",
+    "failed-clean",
+  ],
   "chain-complete": ["normalization-started", "stopped", "failed-clean", "quarantined"],
   "normalization-started": ["normalization-complete", "stopped", "failed-clean", "quarantined"],
-  "normalization-complete": ["selection-started", "stopped", "failed-clean", "quarantined"],
+  "normalization-complete": [
+    "normalization-complete",
+    "selection-started",
+    "stopped",
+    "failed-clean",
+    "quarantined",
+  ],
   "selection-started": ["completed", "stopped", "failed-clean", "quarantined"],
   completed: [],
   stopped: [],
@@ -1037,11 +1380,130 @@ function validateCheckpointKindTransition(
   }
 }
 
+function journalEntryBody(checkpoint: DurableCheckpoint): JsonValue {
+  const {
+    checkpointKind: _checkpointKind,
+    journalEntryHash: _journalEntryHash,
+    journalSequence: _journalSequence,
+    marketAcquisitionJournalId: _marketAcquisitionJournalId,
+    priorJournalEntryHash: _priorJournalEntryHash,
+    ...body
+  } = checkpoint;
+  return body as unknown as JsonValue;
+}
+
 function deriveJournalEntryHash(checkpoint: DurableCheckpoint): string {
-  return canonicalHash("peas/p1-10-acquisition-journal-entry/v1", {
-    ...(checkpoint as unknown as Record<string, JsonValue>),
-    journalEntryHash: "",
-  });
+  const preimage = {
+    marketAcquisitionJournalId: checkpoint.marketAcquisitionJournalId,
+    journalSequence: checkpoint.journalSequence,
+    priorJournalEntryHash: checkpoint.priorJournalEntryHash,
+    entryKind: checkpoint.checkpointKind,
+    canonicalEntryBody: canonicalJson(journalEntryBody(checkpoint)),
+  } satisfies JsonValue;
+  const derived = canonicalHash("peas/market-acquisition-journal-entry/v1", preimage);
+  assert.equal(
+    derived,
+    independentCanonicalHash("peas/market-acquisition-journal-entry/v1", preimage),
+  );
+  return derived;
+}
+
+function ledgerFactId(
+  event: ContractEvent,
+  sequence: number,
+  checkpoint: DurableCheckpoint,
+): string | null {
+  if (
+    [
+      "checkpoint.advanced",
+      "chain.complete",
+      "normalization.started",
+      "selection.started",
+    ].includes(event)
+  ) {
+    return null;
+  }
+  return `ole1_${canonicalHash("peas/p1-10-synthetic-ledger-fact/v1", {
+    event,
+    sequence,
+    marketAcquisitionId: checkpoint.marketAcquisitionId,
+    artifactObservationId: checkpoint.artifactObservationId,
+  })}`;
+}
+
+function exactCausalParents(
+  rows: readonly JournalRow[],
+  event: ContractEvent,
+  checkpoint: DurableCheckpoint,
+): readonly string[] {
+  const matchingFact = (
+    candidateEvent: ContractEvent,
+    predicate: (row: JournalRow) => boolean = () => true,
+  ): string => {
+    const row = [...rows]
+      .reverse()
+      .find(
+        (candidate) =>
+          candidate.event === candidateEvent &&
+          candidate.checkpoint.stageLedgerFactId !== null &&
+          predicate(candidate),
+      );
+    if (
+      row?.checkpoint.stageLedgerFactId === null ||
+      row?.checkpoint.stageLedgerFactId === undefined
+    ) {
+      throw rejection("causal-parent-missing");
+    }
+    return row.checkpoint.stageLedgerFactId;
+  };
+  const sameAttempt = (row: JournalRow): boolean =>
+    row.checkpoint.marketAcquisitionId === checkpoint.marketAcquisitionId;
+  const sameArtifact = (row: JournalRow): boolean =>
+    row.checkpoint.artifactObservationId === checkpoint.artifactObservationId;
+  switch (event) {
+    case "acquisition.declared":
+      return [];
+    case "request.started":
+      return [matchingFact("acquisition.declared", sameAttempt)];
+    case "request.succeeded":
+      return [matchingFact("request.started", sameAttempt)];
+    case "artifact.committed":
+      return [
+        matchingFact("acquisition.declared", sameAttempt),
+        matchingFact("request.succeeded", sameAttempt),
+      ].sort();
+    case "artifact.verified":
+      return [matchingFact("artifact.committed", (row) => sameAttempt(row) && sameArtifact(row))];
+    case "normalization.emitted":
+      return [matchingFact("artifact.verified", sameArtifact)];
+    case "selection.recorded": {
+      const normalization = [...rows]
+        .reverse()
+        .find(
+          (row) =>
+            row.event === "normalization.emitted" && row.checkpoint.stageLedgerFactId !== null,
+        );
+      if (
+        normalization?.checkpoint.stageLedgerFactId === null ||
+        normalization?.checkpoint.stageLedgerFactId === undefined
+      ) {
+        throw rejection("causal-parent-missing");
+      }
+      const verified = matchingFact(
+        "artifact.verified",
+        (row) =>
+          row.checkpoint.artifactObservationId === normalization.checkpoint.artifactObservationId,
+      );
+      return [normalization.checkpoint.stageLedgerFactId, verified].sort();
+    }
+    case "failure.recorded": {
+      const lastFact = [...rows].reverse().find((row) => row.checkpoint.stageLedgerFactId !== null)
+        ?.checkpoint.stageLedgerFactId;
+      return lastFact === undefined || lastFact === null ? [] : [lastFact];
+    }
+    default:
+      return [];
+  }
 }
 
 function finalizeCheckpoint(
@@ -1051,24 +1513,10 @@ function finalizeCheckpoint(
 ): DurableCheckpoint {
   const prior = rows.at(-1)?.checkpoint;
   const journalSequence = rows.length;
-  const stageLedgerFactId = hash(`ledger:${journalSequence}:${event}`);
+  const stageLedgerFactId = ledgerFactId(event, journalSequence, checkpoint);
   const finalized = {
     ...checkpoint,
     checkpointKind: checkpointKindForEvent(event),
-    nextTokenHash:
-      event === "artifact.verified" ||
-      event === "checkpoint.advanced" ||
-      event === "chain.complete" ||
-      event === "normalization.started" ||
-      event === "normalization.emitted" ||
-      event === "selection.started" ||
-      event === "selection.recorded"
-        ? hash("terminal-token")
-        : checkpoint.nextTokenHash,
-    pageRecordCount:
-      event === "artifact.verified" && checkpoint.pageRecordCount === null
-        ? 3
-        : checkpoint.pageRecordCount,
     terminalState:
       event === "selection.recorded"
         ? "completed"
@@ -1086,10 +1534,7 @@ function finalizeCheckpoint(
         ? false
         : checkpoint.incomplete,
     stageLedgerFactId,
-    causalParentFactIds:
-      prior?.stageLedgerFactId === null || prior?.stageLedgerFactId === undefined
-        ? []
-        : [prior.stageLedgerFactId],
+    causalParentFactIds: exactCausalParents(rows, event, checkpoint),
     priorJournalEntryHash: prior?.journalEntryHash ?? "genesis",
     journalSequence,
     journalEntryHash: "",
@@ -1098,22 +1543,40 @@ function finalizeCheckpoint(
   return { ...finalized, journalEntryHash: deriveJournalEntryHash(finalized) };
 }
 
-function validateExactCheckpoint(checkpoint: DurableCheckpoint): void {
+function validateExactCheckpoint(
+  checkpoint: DurableCheckpoint,
+  expectedRequest: Preflight = exactBoundaryRequest(0n),
+): void {
   if (Object.keys(checkpoint).sort().join(",") !== [...CHECKPOINT_KEYS].sort().join(",")) {
     throw rejection("checkpoint-shape-invalid");
   }
   if (deriveJournalEntryHash(checkpoint) !== checkpoint.journalEntryHash) {
     throw rejection("checkpoint-hash-invalid");
   }
+  const expectedAttempt = attemptIdentity(
+    checkpoint.logicalPageIdentityHash,
+    checkpoint.attemptOrdinal,
+  );
+  const expectedAcquisitionObservationId = acquisitionObservationIdentity(
+    expectedRequest,
+    expectedAttempt.retrievalAttemptId,
+  );
   if (
-    checkpoint.marketAcquisitionId !==
-      hash(`market-acquisition:${checkpoint.acquisitionObservationId}`) ||
+    checkpoint.requestIdentityHash !== requestIdentity(expectedRequest) ||
+    checkpoint.acquisitionConfigurationHash !== configurationHash(expectedRequest) ||
+    checkpoint.marketAcquisitionJournalId !== marketAcquisitionJournalIdentity(expectedRequest) ||
     checkpoint.logicalPageIdentityHash !==
-      hash(
-        `logical-page:${checkpoint.pageOrdinal}:${
-          checkpoint.pageOrdinal === 0 ? "no-token" : checkpoint.currentTokenHash
-        }`,
+      logicalPageIdentityHash(
+        checkpoint.requestIdentityHash,
+        checkpoint.pageOrdinal,
+        checkpoint.pageOrdinal === 0 ? null : checkpoint.currentTokenHash,
       ) ||
+    checkpoint.runSessionNonce !== RUN_SESSION_NONCE ||
+    checkpoint.attemptId !== expectedAttempt.attemptId ||
+    checkpoint.retrievalAttemptId !== expectedAttempt.retrievalAttemptId ||
+    checkpoint.acquisitionObservationId !== expectedAcquisitionObservationId ||
+    checkpoint.marketAcquisitionId !==
+      marketAcquisitionIdentity(expectedRequest, expectedAcquisitionObservationId) ||
     checkpoint.quotaWindowEvidence.length !== checkpoint.cumulativeAttempts
   ) {
     throw rejection("checkpoint-identity-invalid");
@@ -1132,14 +1595,17 @@ function validateCheckpointSemantics(
   ];
   if (
     checkpoint.pageOrdinal === 0
-      ? checkpoint.currentTokenHash !== hash("no-token") ||
-        checkpoint.currentResumableTokenMaterial !== null
+      ? checkpoint.currentTokenHash !== "no-token" ||
+        checkpoint.currentResumableTokenMaterial !== null ||
+        checkpoint.currentContinuationBindingHash !== null
       : checkpoint.currentResumableTokenMaterial === null ||
-        checkpoint.currentTokenHash !== hash(checkpoint.currentResumableTokenMaterial)
+        checkpoint.currentTokenHash !==
+          privateTokenHash(checkpoint.currentResumableTokenMaterial) ||
+        checkpoint.currentContinuationBindingHash === null
   ) {
     throw rejection("checkpoint-current-token-invalid");
   }
-  const terminalTokenExpected = [
+  const verifiedPageKinds: readonly CheckpointKind[] = [
     "artifact-verified",
     "page-checkpointed",
     "chain-complete",
@@ -1147,14 +1613,30 @@ function validateCheckpointSemantics(
     "normalization-complete",
     "selection-started",
     "completed",
-  ].includes(checkpoint.checkpointKind);
+  ];
+  const requiresVerifiedToken = verifiedPageKinds.includes(checkpoint.checkpointKind);
+  const nextTokenRelationValid =
+    checkpoint.nextTokenHash === null
+      ? checkpoint.nextResumableTokenMaterial === null
+      : checkpoint.nextTokenHash === "terminal"
+        ? checkpoint.nextResumableTokenMaterial === null
+        : checkpoint.nextResumableTokenMaterial !== null &&
+          checkpoint.nextTokenHash === privateTokenHash(checkpoint.nextResumableTokenMaterial);
   if (
-    terminalTokenExpected
-      ? checkpoint.nextTokenHash !== hash("terminal-token") ||
-        checkpoint.nextResumableTokenMaterial !== null
-      : checkpoint.nextTokenHash !== null || checkpoint.nextResumableTokenMaterial !== null
+    !nextTokenRelationValid ||
+    (requiresVerifiedToken && checkpoint.nextTokenHash === null) ||
+    (checkpoint.checkpointKind === "chain-complete" && checkpoint.nextTokenHash !== "terminal")
   ) {
     throw rejection("checkpoint-next-token-invalid");
+  }
+  if (
+    checkpoint.nextTokenHash === null || checkpoint.nextTokenHash === "terminal"
+      ? checkpoint.nextContinuationBindingHash !== null
+      : checkpoint.cumulativeSuccessfulPages > checkpoint.pageOrdinal
+        ? checkpoint.nextContinuationBindingHash === null
+        : checkpoint.nextContinuationBindingHash !== null
+  ) {
+    throw rejection("checkpoint-continuation-binding-invalid");
   }
   const artifactFields = [
     checkpoint.artifactObservationId,
@@ -1171,10 +1653,35 @@ function validateCheckpointSemantics(
   if (
     hasArtifact &&
     (checkpoint.artifactObservationHash !==
-      hash(`observation:${checkpoint.artifactObservationId}`) ||
-      checkpoint.artifactContentId !== hash(`content:${checkpoint.artifactDigest}`) ||
+      artifactIdentities(
+        {
+          observationId: checkpoint.artifactObservationId as string,
+          digest: checkpoint.artifactDigest as string,
+          bytes: new Uint8Array(checkpoint.artifactSizeBytes as number),
+          deliveryOrdinal: checkpoint.pageOrdinal,
+        },
+        checkpoint.acquisitionObservationId,
+      ).artifactObservationHash ||
+      checkpoint.artifactContentId !==
+        artifactIdentities(
+          {
+            observationId: checkpoint.artifactObservationId as string,
+            digest: checkpoint.artifactDigest as string,
+            bytes: new Uint8Array(checkpoint.artifactSizeBytes as number),
+            deliveryOrdinal: checkpoint.pageOrdinal,
+          },
+          checkpoint.acquisitionObservationId,
+        ).artifactContentId ||
       checkpoint.rawArtifactId !==
-        hash(`raw:${checkpoint.artifactObservationId}:${checkpoint.artifactDigest}`))
+        artifactIdentities(
+          {
+            observationId: checkpoint.artifactObservationId as string,
+            digest: checkpoint.artifactDigest as string,
+            bytes: new Uint8Array(checkpoint.artifactSizeBytes as number),
+            deliveryOrdinal: checkpoint.pageOrdinal,
+          },
+          checkpoint.acquisitionObservationId,
+        ).rawArtifactId)
   ) {
     throw rejection("checkpoint-artifact-binding-invalid");
   }
@@ -1192,6 +1699,9 @@ function validateCheckpointSemantics(
   if (
     !tupleAuthorized ||
     checkpoint.authorizationMode !== "p1-09-approved" ||
+    (checkpoint.stageLedgerFactId !== null &&
+      !/^ole1_[0-9a-f]{64}$/u.test(checkpoint.stageLedgerFactId)) ||
+    checkpoint.causalParentFactIds.some((id) => !/^ole1_[0-9a-f]{64}$/u.test(id)) ||
     !/^[0-9a-f]{64}$/u.test(checkpoint.requestIdentityHash) ||
     !/^[0-9a-f]{64}$/u.test(checkpoint.acquisitionConfigurationHash)
   ) {
@@ -1215,7 +1725,9 @@ function validateCheckpointSemantics(
   }
   if (
     checkpoint.admittedMarketAcquisitionIds.length !== checkpoint.cumulativeSuccessfulPages ||
-    (checkpoint.cumulativeSuccessfulPages > 0 &&
+    new Set(checkpoint.admittedMarketAcquisitionIds).size !==
+      checkpoint.admittedMarketAcquisitionIds.length ||
+    (checkpoint.checkpointKind === "page-checkpointed" &&
       checkpoint.admittedMarketAcquisitionIds.at(-1) !== checkpoint.marketAcquisitionId)
   ) {
     throw rejection("checkpoint-admission-invalid");
@@ -1224,7 +1736,7 @@ function validateCheckpointSemantics(
     const shouldAdvance = checkpoint.checkpointKind === "page-checkpointed";
     if (
       shouldAdvance
-        ? checkpoint.pageChainHash === prior.pageChainHash
+        ? checkpoint.pageChainHash !== admittedPageChainHash(prior.pageChainHash, checkpoint)
         : checkpoint.pageChainHash !== prior.pageChainHash
     ) {
       throw rejection("checkpoint-page-chain-invalid");
@@ -1244,15 +1756,36 @@ function validateCheckpointSemantics(
   }
 }
 
-function validateJournalRows(rows: readonly JournalRow[]): void {
+function validateJournalRows(
+  rows: readonly JournalRow[],
+  expectedRequest: Preflight = exactBoundaryRequest(0n),
+): void {
   let expectedPages = 0;
   let expectedBytes = 0;
   let expectedRecords = 0;
   let expectedFacts = 0;
   let expectedAttempts = 0;
+  const admittedArtifactObservations = new Set<string>();
   for (const [index, row] of rows.entries()) {
-    validateExactCheckpoint(row.checkpoint);
+    validateExactCheckpoint(row.checkpoint, expectedRequest);
     validateCheckpointSemantics(row.checkpoint, rows[index - 1]?.checkpoint ?? null);
+    if (row.checkpoint.pageOrdinal > 0) {
+      const preceding = [...rows.slice(0, index)]
+        .reverse()
+        .find(
+          (candidate) =>
+            candidate.event === "checkpoint.advanced" &&
+            candidate.checkpoint.pageOrdinal === row.checkpoint.pageOrdinal - 1,
+        )?.checkpoint;
+      if (
+        preceding === undefined ||
+        row.checkpoint.currentTokenHash !== preceding.nextTokenHash ||
+        row.checkpoint.currentResumableTokenMaterial !== preceding.nextResumableTokenMaterial ||
+        row.checkpoint.currentContinuationBindingHash !== preceding.nextContinuationBindingHash
+      ) {
+        throw rejection("checkpoint-continuation-predecessor-invalid");
+      }
+    }
     if (
       row.sequence !== index ||
       row.checkpoint.journalSequence !== index ||
@@ -1261,16 +1794,40 @@ function validateJournalRows(rows: readonly JournalRow[]): void {
     ) {
       throw rejection("checkpoint-sequence-invalid");
     }
-    const priorFact = rows[index - 1]?.checkpoint.stageLedgerFactId;
     assert.deepEqual(
       row.checkpoint.causalParentFactIds,
-      priorFact === undefined || priorFact === null ? [] : [priorFact],
+      exactCausalParents(rows.slice(0, index), row.event, row.checkpoint),
     );
     if (row.event === "request.started") expectedAttempts += 1;
-    if (row.event === "artifact.committed") {
-      expectedBytes += row.checkpoint.artifactSizeBytes ?? 0;
-    }
     if (row.event === "checkpoint.advanced") {
+      if (row.checkpoint.pageOrdinal !== expectedPages) {
+        throw rejection("checkpoint-page-position-invalid");
+      }
+      const expectedNextBinding =
+        row.checkpoint.nextTokenHash === "terminal"
+          ? null
+          : continuationBindingHash({
+              precedingMarketAcquisitionId: row.checkpoint.marketAcquisitionId,
+              requestIdentityHash: row.checkpoint.requestIdentityHash,
+              precedingLogicalPageIdentityHash: row.checkpoint.logicalPageIdentityHash,
+              precedingPageOrdinal: row.checkpoint.pageOrdinal,
+              precedingArtifactObservationId: row.checkpoint.artifactObservationId as string,
+              precedingArtifactDigest: row.checkpoint.artifactDigest as string,
+              precedingPageChainHash: row.checkpoint.pageChainHash,
+              nextPageOrdinal: row.checkpoint.pageOrdinal + 1,
+              nextTokenHash: row.checkpoint.nextTokenHash as string,
+            });
+      if (row.checkpoint.nextContinuationBindingHash !== expectedNextBinding) {
+        throw rejection("checkpoint-next-continuation-binding-invalid");
+      }
+      if (
+        row.checkpoint.artifactObservationId === null ||
+        admittedArtifactObservations.has(row.checkpoint.artifactObservationId)
+      ) {
+        throw rejection("checkpoint-duplicate-page-invalid");
+      }
+      admittedArtifactObservations.add(row.checkpoint.artifactObservationId);
+      expectedBytes += row.checkpoint.artifactSizeBytes ?? 0;
       expectedPages += 1;
       expectedRecords += row.checkpoint.pageRecordCount ?? 0;
     }
@@ -1348,12 +1905,22 @@ function validateImmutableReceiptSidecars(
 
 class MemoryContractJournal implements ContractJournal {
   readonly #rows: JournalRow[] = [];
+  #expectedRequest = exactBoundaryRequest(0n);
+
+  bindRequest(request: Preflight): void {
+    this.#expectedRequest = request;
+    if (this.#rows.length > 0) validateJournalRows(this.#rows, request);
+  }
 
   append(event: ContractEvent, checkpoint: DurableCheckpoint): void {
     validateJournalAppend(this.#rows, event);
     const finalized = finalizeCheckpoint(this.#rows, event, checkpoint);
-    this.#rows.push({ sequence: this.#rows.length, event, checkpoint: finalized });
-    validateJournalRows(this.#rows);
+    const prospective = [
+      ...this.#rows,
+      { sequence: this.#rows.length, event, checkpoint: finalized },
+    ];
+    validateJournalRows(prospective, this.#expectedRequest);
+    this.#rows.push(prospective.at(-1) as JournalRow);
   }
 
   rows(): readonly JournalRow[] {
@@ -1365,41 +1932,75 @@ class MemoryContractJournal implements ContractJournal {
 
 class SqliteContractJournal implements ContractJournal {
   readonly #database: Database.Database;
+  readonly #enumerationPageSize: number;
+  readonly #enumerationDirection: "asc" | "desc";
+  #expectedRequest = exactBoundaryRequest(0n);
 
-  constructor(filename: string) {
+  constructor(
+    filename: string,
+    enumerationPageSize = 10_000,
+    enumerationDirection: "asc" | "desc" = "asc",
+  ) {
+    if (!Number.isSafeInteger(enumerationPageSize) || enumerationPageSize < 1) {
+      throw rejection("sqlite-enumeration-page-size");
+    }
+    this.#enumerationPageSize = enumerationPageSize;
+    this.#enumerationDirection = enumerationDirection;
     this.#database = new Database(filename);
+    this.#database.pragma("foreign_keys = ON");
+    this.#database.pragma("journal_mode = WAL");
+    this.#database.pragma("synchronous = FULL");
     this.#database.exec(
       "CREATE TABLE IF NOT EXISTS acquisition_journal (" +
         "sequence INTEGER PRIMARY KEY, event TEXT NOT NULL, checkpoint_json TEXT NOT NULL)",
     );
   }
 
+  bindRequest(request: Preflight): void {
+    this.#expectedRequest = request;
+    if (this.rows().length > 0) validateJournalRows(this.rows(), request);
+  }
+
   append(event: ContractEvent, checkpoint: DurableCheckpoint): void {
     const rows = this.rows();
     validateJournalAppend(rows, event);
     const finalized = finalizeCheckpoint(rows, event, checkpoint);
+    validateJournalRows(
+      [...rows, { sequence: rows.length, event, checkpoint: finalized }],
+      this.#expectedRequest,
+    );
     this.#database
       .prepare(
         "INSERT INTO acquisition_journal (sequence, event, checkpoint_json) VALUES (?, ?, ?)",
       )
       .run(rows.length, event, canonicalJson(finalized as unknown as JsonValue));
-    validateJournalRows(this.rows());
   }
 
   rows(): readonly JournalRow[] {
-    const rows = (
-      this.#database
+    const enumerated: { sequence: number; event: ContractEvent; checkpointJson: string }[] = [];
+    for (let offset = 0; ; offset += this.#enumerationPageSize) {
+      const batch = this.#database
         .prepare(
           "SELECT sequence, event, checkpoint_json AS checkpointJson " +
-            "FROM acquisition_journal ORDER BY sequence",
+            `FROM acquisition_journal ORDER BY sequence ${this.#enumerationDirection.toUpperCase()} ` +
+            "LIMIT ? OFFSET ?",
         )
-        .all() as readonly { sequence: number; event: ContractEvent; checkpointJson: string }[]
-    ).map((row) => ({
-      sequence: row.sequence,
-      event: row.event,
-      checkpoint: JSON.parse(row.checkpointJson) as DurableCheckpoint,
-    }));
-    validateJournalRows(rows);
+        .all(this.#enumerationPageSize, offset) as {
+        sequence: number;
+        event: ContractEvent;
+        checkpointJson: string;
+      }[];
+      enumerated.push(...batch);
+      if (batch.length < this.#enumerationPageSize) break;
+    }
+    const rows = enumerated
+      .sort((left, right) => left.sequence - right.sequence)
+      .map((row) => ({
+        sequence: row.sequence,
+        event: row.event,
+        checkpoint: JSON.parse(row.checkpointJson) as DurableCheckpoint,
+      }));
+    validateJournalRows(rows, this.#expectedRequest);
     return rows;
   }
 
@@ -1483,11 +2084,26 @@ class RollingQuota {
     readonly entitlementLimit: number,
   ) {}
 
-  admit(nowMs: number): boolean {
+  canAdmit(nowMs: number): boolean {
+    const cutoff = nowMs - LIMITS.rateWindowMs;
+    const active = this.#attempts.filter((attempt) => attempt > cutoff);
+    return active.length < Math.min(this.projectLimit, this.entitlementLimit);
+  }
+
+  commitAdmit(nowMs: number): void {
+    if (!this.canAdmit(nowMs)) throw rejection("quota-bound");
+    this.commitVerified(nowMs);
+  }
+
+  commitVerified(nowMs: number): void {
     const cutoff = nowMs - LIMITS.rateWindowMs;
     while ((this.#attempts[0] ?? Number.POSITIVE_INFINITY) <= cutoff) this.#attempts.shift();
-    if (this.#attempts.length >= Math.min(this.projectLimit, this.entitlementLimit)) return false;
     this.#attempts.push(nowMs);
+  }
+
+  admit(nowMs: number): boolean {
+    if (!this.canAdmit(nowMs)) return false;
+    this.commitAdmit(nowMs);
     return true;
   }
 }
@@ -1521,23 +2137,54 @@ class BodyResourceDouble {
 class ProviderDouble {
   resources: BodyResourceDouble[];
   requestCalls = 0;
+  readonly requestsByPage = new Map<number, number>();
   readonly #order: readonly string[];
+  readonly #pages = Object.freeze([
+    { glyphs: ["amber", "cobalt", "fern"], nextToken: "synthetic-private-continuation-one" },
+    { glyphs: ["amber", "cobalt", "fern"], nextToken: "synthetic-private-continuation-two" },
+    { glyphs: ["lilac", "umber"], nextToken: null },
+  ] as const);
 
   constructor(order: readonly string[] = ["amber", "cobalt", "fern"]) {
     this.#order = [...order];
-    this.resources = this.#newResources();
+    this.resources = this.#newResources(0);
   }
 
-  #newResources(): BodyResourceDouble[] {
-    return this.#order.map((glyph) => new BodyResourceDouble(glyph));
+  #newResources(pageOrdinal: number): BodyResourceDouble[] {
+    const page = this.#pages[pageOrdinal];
+    if (page === undefined) throw rejection("provider-page-after-terminal");
+    const rank = new Map(this.#order.map((glyph, index) => [glyph, index]));
+    return [...page.glyphs]
+      .sort(
+        (left, right) =>
+          (rank.get(left) ?? Number.MAX_SAFE_INTEGER) -
+          (rank.get(right) ?? Number.MAX_SAFE_INTEGER),
+      )
+      .map((glyph) => new BodyResourceDouble(glyph));
+  }
+
+  pageCount(): number {
+    return this.#pages.length;
+  }
+
+  nextToken(pageOrdinal: number): string | null {
+    return this.#pages[pageOrdinal]?.nextToken ?? null;
+  }
+
+  recordCount(pageOrdinal: number): number {
+    const page = this.#pages[pageOrdinal];
+    if (page === undefined) throw rejection("provider-page-after-terminal");
+    return page.glyphs.length;
   }
 
   async response(
     failAt: number | null = null,
     afterRead?: (index: number) => void,
+    pageOrdinal = 0,
   ): Promise<Uint8Array> {
-    if (this.resources.some((resource) => resource.aborted)) this.resources = this.#newResources();
+    this.resources = this.#newResources(pageOrdinal);
     this.requestCalls += 1;
+    this.requestsByPage.set(pageOrdinal, (this.requestsByPage.get(pageOrdinal) ?? 0) + 1);
     const chunks: Uint8Array[] = [];
     try {
       for (const [index, resource] of this.resources.entries()) {
@@ -1545,7 +2192,9 @@ class ProviderDouble {
         chunks.push(await resource.read());
         afterRead?.(index);
       }
-      return Buffer.concat(chunks);
+      return Buffer.concat(
+        chunks.sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))),
+      );
     } catch (error) {
       for (const resource of this.resources) resource.abortDestroy();
       await Promise.allSettled(this.resources.map((resource) => resource.read()));
@@ -1576,10 +2225,13 @@ type StoredReceipt = Readonly<{
   observationId: string;
   digest: string;
   bytes: Uint8Array;
+  deliveryOrdinal: number;
 }>;
 
 class ArtifactDouble {
-  receipt: StoredReceipt | null = null;
+  readonly #observations = new Map<string, StoredReceipt>();
+  readonly #physicalBytes = new Map<string, Uint8Array>();
+  readonly #observationOrder: string[] = [];
   storeCalls = 0;
   readCalls = 0;
   failStore = false;
@@ -1587,16 +2239,61 @@ class ArtifactDouble {
   readonly orphanDigests: string[] = [];
   orphanReconciliations = 0;
 
+  get receipt(): StoredReceipt | null {
+    const observationId = this.#observationOrder.at(-1);
+    return observationId === undefined ? null : (this.#observations.get(observationId) ?? null);
+  }
+
+  get receipts(): readonly StoredReceipt[] {
+    return this.#observationOrder
+      .map((id) => {
+        const receipt = this.#observations.get(id);
+        if (receipt === undefined) throw rejection("artifact-observation-missing");
+        return {
+          ...receipt,
+          bytes: Uint8Array.from(this.#physicalBytes.get(receipt.digest) ?? receipt.bytes),
+        };
+      })
+      .sort((left, right) => left.deliveryOrdinal - right.deliveryOrdinal);
+  }
+
   store(bytes: Uint8Array): StoredReceipt {
     this.storeCalls += 1;
     if (this.failStore) throw rejection("artifact-store-failure");
     const digest = hash(Buffer.from(bytes).toString("hex"));
-    this.receipt = {
-      observationId: `synthetic-observation-${digest}`,
+    const deliveryOrdinal = this.#observationOrder.length;
+    const receipt = {
+      observationId: `vault-observation-${canonicalHash("peas/synthetic-delivery-observation/v1", {
+        digest,
+        deliveryOrdinal,
+      })}`,
       digest,
       bytes: Uint8Array.from(bytes),
-    };
-    return this.receipt;
+      deliveryOrdinal,
+    } satisfies StoredReceipt;
+    this.#physicalBytes.set(digest, Uint8Array.from(bytes));
+    this.#observations.set(receipt.observationId, receipt);
+    this.#observationOrder.push(receipt.observationId);
+    this.orphanDigests.push(receipt.digest);
+    return receipt;
+  }
+
+  acknowledgeReceipt(receipt: StoredReceipt): void {
+    const index = this.orphanDigests.indexOf(receipt.digest);
+    if (index >= 0) this.orphanDigests.splice(index, 1);
+  }
+
+  restore(receipt: StoredReceipt): void {
+    const actualDigest = hash(Buffer.from(receipt.bytes).toString("hex"));
+    if (actualDigest !== receipt.digest) throw rejection("artifact-digest-mismatch");
+    this.#physicalBytes.set(receipt.digest, Uint8Array.from(receipt.bytes));
+    this.#observations.set(receipt.observationId, {
+      ...receipt,
+      bytes: Uint8Array.from(receipt.bytes),
+    });
+    if (!this.#observationOrder.includes(receipt.observationId)) {
+      this.#observationOrder.push(receipt.observationId);
+    }
   }
 
   storeOrphan(bytes: Uint8Array): void {
@@ -1610,28 +2307,58 @@ class ArtifactDouble {
     this.orphanReconciliations += 1;
   }
 
-  read(digest: string): Uint8Array {
+  readObservation(observationId: string, digest: string): Uint8Array {
     this.readCalls += 1;
     if (this.failRead) throw rejection("artifact-read-failure");
-    if (this.receipt === null || this.receipt.digest !== digest) {
+    const receipt = this.#observations.get(observationId);
+    const bytes = this.#physicalBytes.get(digest);
+    if (receipt === undefined || receipt.digest !== digest || bytes === undefined) {
       throw rejection("artifact-missing");
     }
-    if (hash(Buffer.from(this.receipt.bytes).toString("hex")) !== digest) {
+    if (hash(Buffer.from(bytes).toString("hex")) !== digest) {
       throw rejection("artifact-digest-mismatch");
     }
-    return Uint8Array.from(this.receipt.bytes);
+    return Uint8Array.from(bytes);
+  }
+
+  enumerateObservations(
+    pageSize: number,
+    direction: "asc" | "desc" = "asc",
+  ): readonly StoredReceipt[] {
+    if (!Number.isSafeInteger(pageSize) || pageSize < 1) {
+      throw rejection("artifact-enumeration-page-size");
+    }
+    const ordered = [...this.receipts].sort((left, right) =>
+      direction === "asc"
+        ? left.deliveryOrdinal - right.deliveryOrdinal
+        : right.deliveryOrdinal - left.deliveryOrdinal,
+    );
+    const enumerated: StoredReceipt[] = [];
+    for (let offset = 0; offset < ordered.length; offset += pageSize) {
+      enumerated.push(...ordered.slice(offset, offset + pageSize));
+    }
+    return enumerated;
+  }
+
+  read(digest: string): Uint8Array {
+    const receipt = this.receipts.find((candidate) => candidate.digest === digest);
+    if (receipt === undefined) throw rejection("artifact-missing");
+    return this.readObservation(receipt.observationId, digest);
   }
 }
 
-function normalizedFactsFromArtifact(artifact: ArtifactDouble): readonly string[] {
-  const bytes = artifact.receipt?.bytes;
-  if (bytes === undefined) throw rejection("artifact-missing");
-  const members =
-    Buffer.from(bytes)
+function normalizedFactsFromReceipt(receipt: StoredReceipt): readonly string[] {
+  return (
+    Buffer.from(receipt.bytes)
       .toString("utf8")
-      .match(/amber|cobalt|fern/gu) ?? [];
-  if (members.length !== 3) throw rejection("schema-failure");
-  return members.sort();
+      .match(/amber|cobalt|fern|lilac|umber/gu) ?? []
+  ).sort();
+}
+
+function normalizedFactsFromArtifact(artifact: ArtifactDouble): readonly string[] {
+  const members = artifact.receipts.flatMap(normalizedFactsFromReceipt);
+  if (members.length === 0) throw rejection("schema-failure");
+  return [...new Set(members)].sort();
 }
 
 function normalizedDigestFromArtifact(artifact: ArtifactDouble): string {
@@ -1645,14 +2372,125 @@ type AcquisitionFault = Readonly<{
   schemaFailure?: boolean;
   storeFailure?: boolean;
   readFailure?: boolean;
+  paginationFault?:
+    | "loop"
+    | "substitution"
+    | "gap"
+    | "duplicate-position"
+    | "duplicate-page"
+    | "page-after-terminal";
   crashAt?: string;
+}>;
+
+const ACQUISITION_EVENT_TARGETS = Object.freeze({
+  "begin-preflight": "preflighting",
+  "preflight-approved": "dispatch-ready",
+  "credentials-loaded": "credential-ready",
+  "dispatch-started": "attempt-active",
+  "response-headers-accepted": "response-accepted",
+  "artifact-store-started": "artifact-committing",
+  "artifact-store-committed": "artifact-committed",
+  "artifact-verification-started": "artifact-verifying",
+  "page-verification-passed": "page-verified",
+  "page-checkpoint-committed": "checkpointing",
+  "retry-cleanup-complete": "waiting-retry",
+  "terminal-token-admitted": "chain-complete",
+  "normalization-started": "normalizing",
+  "normalization-page-emitted": "normalizing",
+  "normalization-completed": "ready-for-selection",
+  "selection-started": "selecting",
+  "selection-completed": "completed",
+  "policy-stopped": "stopped",
+  "technical-failure-settled": "failed-clean",
+  "evidence-quarantined": "quarantined",
+} as const);
+type AcquisitionEventName = keyof typeof ACQUISITION_EVENT_TARGETS;
+type AcquisitionEventEvidence = Readonly<{
+  schemaVersion: 1;
+  requestIdentityHash: string;
+  acquisitionConfigurationHash: string;
+  marketAcquisitionJournalId: string;
+  runSessionNonce: string;
+  cumulativeAttempts: number;
+  cumulativeSuccessfulPages: number;
+  cumulativeVerifiedBytes: number;
+  cumulativeRecords: number;
+  cumulativeNormalizedFacts: number;
+  attemptElapsedMs: number;
+  acquisitionElapsedMs: number;
+  quotaWindowEvidence: readonly number[];
+  resourcesSettled: boolean;
+  tokenRelationValid: boolean;
+  pageChainValid: boolean;
+  retryDelayClockBasis: string | null;
+  retryDelayElapsedMs: number | null;
+  retryDelayMonotonicOrderValid: boolean | null;
+  retryContext: RetryEventContext | null;
+  retryDecision: RetryDecision | null;
+}>;
+type AcquisitionMutationPlan = Readonly<{
+  journalEvent?: ContractEvent;
+  budgetDelta?: Partial<AcquisitionBudgets>;
+  attemptTime?: number;
+  pageOrdinal?: number;
+  currentAttemptOrdinal?: number;
+  currentTokenMaterial?: string | null;
+  nextTokenMaterial?: string | null;
+  currentContinuationBindingHash?: string | null;
+  nextContinuationBindingHash?: string | null;
+  currentReceipt?: StoredReceipt | null;
+  pageTokenVerified?: boolean;
+  pageRecordCount?: number | null;
+  pageChainHash?: string;
+  appendAdmittedMarketAcquisitionId?: string;
+  normalizedFacts?: readonly string[];
+  pendingRetryDelayMs?: number | null;
+  selectionDigest?: string | null;
+  counterDelta?: Partial<SideEffectCounters>;
+  checkpointOverrides?: Partial<DurableCheckpoint>;
+}>;
+
+type MutableCoordinatorSnapshot = Readonly<{
+  state: AcquisitionState;
+  budget: AcquisitionBudgets;
+  currentPageOrdinal: number;
+  currentAttemptOrdinal: number;
+  currentTokenMaterial: string | null;
+  nextTokenMaterial: string | null;
+  currentContinuationBindingHash: string | null;
+  nextContinuationBindingHash: string | null;
+  currentReceipt: StoredReceipt | null;
+  pageTokenVerified: boolean;
+  pageRecordCount: number | null;
+  pageChainHash: string;
+  admittedMarketAcquisitionIds: string[];
+  attemptTimes: number[];
+  normalizedFacts: readonly string[];
+  pendingRetryDelayMs: number | null;
+  selectionDigest: string | null;
+  counters: SideEffectCounters;
 }>;
 
 class AcquisitionContractModel {
   readonly counters = zeroCounters();
   readonly budget = new ContractBudget();
   readonly activeClock = new ActiveClockBasisDouble();
+  readonly quota: RollingQuota;
+  currentState: AcquisitionState;
+  currentPageOrdinal = 0;
+  currentTokenMaterial: string | null = null;
+  nextTokenMaterial: string | null = null;
+  currentContinuationBindingHash: string | null = null;
+  nextContinuationBindingHash: string | null = null;
+  currentAttemptOrdinal = 0;
+  currentReceipt: StoredReceipt | null = null;
+  pageTokenVerified = false;
+  pageRecordCount: number | null = null;
+  pageChainHash = "genesis";
+  admittedMarketAcquisitionIds: string[] = [];
+  attemptTimes: number[] = [];
   normalizedFacts: readonly string[] = [];
+  pendingRetryDelayMs: number | null = null;
   selectionDigest: string | null = null;
 
   constructor(
@@ -1660,21 +2498,368 @@ class AcquisitionContractModel {
     readonly provider: ProviderDouble,
     readonly artifact: ArtifactDouble,
     readonly journal: ContractJournal,
-  ) {}
+    initialState: AcquisitionState = "declared",
+    quotaEntitlementLimit: number = LIMITS.rateAttempts,
+  ) {
+    this.currentState = initialState;
+    this.quota = new RollingQuota(LIMITS.rateAttempts, quotaEntitlementLimit);
+    this.journal.bindRequest(request);
+  }
 
-  checkpoint(overrides: Partial<DurableCheckpoint> = {}): DurableCheckpoint {
-    const currentResumableTokenMaterial = this.request.firstRequest
-      ? null
-      : Buffer.alloc(this.request.pageMaterialBytes ?? 0, 0x07).toString("base64");
-    const acquisitionObservationId = hash(`acquisition-observation:${this.budget.value.attempts}`);
-    const marketAcquisitionId = hash(`market-acquisition:${acquisitionObservationId}`);
-    const receipt = this.artifact.receipt;
+  exactEventEvidence(
+    retryContext: RetryEventContext | null = null,
+    overrides: Partial<AcquisitionEventEvidence> = {},
+  ): AcquisitionEventEvidence {
     return {
       schemaVersion: 1,
-      marketAcquisitionJournalId: hash("synthetic-acquisition-journal"),
+      requestIdentityHash: requestIdentity(this.request),
+      acquisitionConfigurationHash: configurationHash(this.request),
+      marketAcquisitionJournalId: marketAcquisitionJournalIdentity(this.request),
+      runSessionNonce: RUN_SESSION_NONCE,
+      cumulativeAttempts: this.budget.value.attempts,
+      cumulativeSuccessfulPages: this.budget.value.pages,
+      cumulativeVerifiedBytes: this.budget.value.bytes,
+      cumulativeRecords: this.budget.value.records,
+      cumulativeNormalizedFacts: this.budget.value.facts,
+      attemptElapsedMs: 0,
+      acquisitionElapsedMs: this.budget.value.attempts * 1_000,
+      quotaWindowEvidence: [...this.attemptTimes],
+      resourcesSettled: this.provider.resources.every((resource) => resource.pending === 0),
+      tokenRelationValid:
+        this.currentPageOrdinal === 0
+          ? this.currentTokenMaterial === null && this.currentContinuationBindingHash === null
+          : this.currentTokenMaterial !== null && this.currentContinuationBindingHash !== null,
+      pageChainValid:
+        this.pageChainHash === "genesis" || /^[0-9a-f]{64}$/u.test(this.pageChainHash),
+      retryDelayClockBasis: null,
+      retryDelayElapsedMs: null,
+      retryDelayMonotonicOrderValid: null,
+      retryContext,
+      retryDecision: retryContext === null ? null : retryEventDecision(retryContext),
+      ...overrides,
+    };
+  }
+
+  applyAcquisitionEvent(
+    event: AcquisitionEventName,
+    evidence: AcquisitionEventEvidence = this.exactEventEvidence(),
+    plan: AcquisitionMutationPlan = {},
+  ): void {
+    const exactKeys = [
+      "acquisitionConfigurationHash",
+      "acquisitionElapsedMs",
+      "attemptElapsedMs",
+      "cumulativeAttempts",
+      "cumulativeNormalizedFacts",
+      "cumulativeRecords",
+      "cumulativeSuccessfulPages",
+      "cumulativeVerifiedBytes",
+      "marketAcquisitionJournalId",
+      "pageChainValid",
+      "quotaWindowEvidence",
+      "requestIdentityHash",
+      "resourcesSettled",
+      "retryContext",
+      "retryDecision",
+      "retryDelayClockBasis",
+      "retryDelayElapsedMs",
+      "retryDelayMonotonicOrderValid",
+      "runSessionNonce",
+      "schemaVersion",
+      "tokenRelationValid",
+    ];
+    if (Object.keys(evidence).sort().join(",") !== exactKeys.join(",")) {
+      throw rejection("acquisition-event-evidence-shape");
+    }
+    const expected = this.exactEventEvidence(evidence.retryContext);
+    if (
+      evidence.schemaVersion !== expected.schemaVersion ||
+      evidence.requestIdentityHash !== expected.requestIdentityHash ||
+      evidence.acquisitionConfigurationHash !== expected.acquisitionConfigurationHash ||
+      evidence.marketAcquisitionJournalId !== expected.marketAcquisitionJournalId ||
+      evidence.runSessionNonce !== expected.runSessionNonce ||
+      evidence.cumulativeAttempts !== expected.cumulativeAttempts ||
+      evidence.cumulativeSuccessfulPages !== expected.cumulativeSuccessfulPages ||
+      evidence.cumulativeVerifiedBytes !== expected.cumulativeVerifiedBytes ||
+      evidence.cumulativeRecords !== expected.cumulativeRecords ||
+      evidence.cumulativeNormalizedFacts !== expected.cumulativeNormalizedFacts ||
+      evidence.quotaWindowEvidence.join(",") !== expected.quotaWindowEvidence.join(",") ||
+      canonicalJson(evidence.retryContext as unknown as JsonValue) !==
+        canonicalJson(expected.retryContext as unknown as JsonValue) ||
+      canonicalJson(evidence.retryDecision as unknown as JsonValue) !==
+        canonicalJson(expected.retryDecision as unknown as JsonValue) ||
+      evidence.attemptElapsedMs < 0 ||
+      evidence.attemptElapsedMs > LIMITS.attemptDeadlineMs ||
+      evidence.acquisitionElapsedMs < 0 ||
+      evidence.acquisitionElapsedMs > LIMITS.acquisitionDeadlineMs ||
+      !evidence.resourcesSettled ||
+      !evidence.tokenRelationValid ||
+      !evidence.pageChainValid
+    ) {
+      throw rejection("acquisition-event-proof-invalid");
+    }
+    const target = ACQUISITION_EVENT_TARGETS[event];
+    if (event === "normalization-page-emitted") {
+      if (this.currentState !== "normalizing") {
+        throw rejection("acquisition-transition-invalid");
+      }
+    } else {
+      validateAcquisitionTransition(this.currentState, target);
+    }
+    if (
+      target === "waiting-retry" &&
+      (evidence.retryContext === null ||
+        evidence.retryContext.acquisitionAttemptCount !== this.budget.value.attempts ||
+        evidence.retryContext.pageAttemptNumber !== this.currentAttemptOrdinal + 1 ||
+        evidence.retryDecision === null ||
+        evidence.retryDecision.kind !== "retry")
+    ) {
+      throw rejection("acquisition-event-retry-proof-invalid");
+    }
+    if (target !== "waiting-retry" && evidence.retryContext !== null) {
+      throw rejection("acquisition-event-unexpected-retry-proof");
+    }
+    const retryDelayProofAbsent =
+      evidence.retryDelayClockBasis === null &&
+      evidence.retryDelayElapsedMs === null &&
+      evidence.retryDelayMonotonicOrderValid === null;
+    let mutationPlan = plan;
+    if (target === "waiting-retry") {
+      if (!retryDelayProofAbsent || evidence.retryDecision?.kind !== "retry") {
+        throw rejection("acquisition-retry-delay-proof-unexpected");
+      }
+      mutationPlan = {
+        ...plan,
+        pendingRetryDelayMs: evidence.retryDecision.delayMs,
+      };
+    } else if (event === "begin-preflight" && this.currentState === "waiting-retry") {
+      if (
+        this.pendingRetryDelayMs === null ||
+        evidence.retryDelayClockBasis !== "same-session-monotonic" ||
+        evidence.retryDelayElapsedMs !== this.pendingRetryDelayMs ||
+        evidence.retryDelayMonotonicOrderValid !== true
+      ) {
+        throw rejection("acquisition-retry-delay-proof-invalid");
+      }
+      mutationPlan = { ...plan, pendingRetryDelayMs: null };
+    } else if (!retryDelayProofAbsent) {
+      throw rejection("acquisition-retry-delay-proof-unexpected");
+    }
+    const prospectiveBudget = { ...this.budget.value };
+    for (const [dimension, amount] of Object.entries(mutationPlan.budgetDelta ?? {}) as [
+      keyof AcquisitionBudgets,
+      number,
+    ][]) {
+      const maximum: Readonly<Record<keyof AcquisitionBudgets, number>> = {
+        pages: LIMITS.pages,
+        bytes: LIMITS.aggregateBytes,
+        records: LIMITS.pages * LIMITS.recordsPerPage,
+        facts: LIMITS.facts,
+        attempts: LIMITS.attempts,
+      };
+      const next = prospectiveBudget[dimension] + amount;
+      if (!Number.isSafeInteger(amount) || amount < 0 || next > maximum[dimension]) {
+        throw rejection(`acquisition-event-${dimension}-bound`);
+      }
+      prospectiveBudget[dimension] = next;
+    }
+    if (
+      mutationPlan.attemptTime !== undefined &&
+      (!Number.isSafeInteger(mutationPlan.attemptTime) ||
+        mutationPlan.attemptTime < 0 ||
+        !this.quota.canAdmit(mutationPlan.attemptTime))
+    ) {
+      throw rejection("acquisition-event-quota-bound");
+    }
+    for (const amount of Object.values(mutationPlan.counterDelta ?? {})) {
+      if (!Number.isSafeInteger(amount) || amount < 0) {
+        throw rejection("acquisition-event-counter-invalid");
+      }
+    }
+    const before = this.#mutableSnapshot();
+    try {
+      this.#applyMutationPlan(mutationPlan, prospectiveBudget, false);
+      const prospectiveCheckpoint = this.checkpoint(mutationPlan.checkpointOverrides);
+      this.#restoreMutableSnapshot(before);
+      if (mutationPlan.journalEvent !== undefined) {
+        this.journal.append(mutationPlan.journalEvent, prospectiveCheckpoint);
+      }
+      this.#applyMutationPlan(mutationPlan, prospectiveBudget, true);
+      this.currentState = target;
+    } catch (error) {
+      this.#restoreMutableSnapshot(before);
+      throw error;
+    }
+  }
+
+  #mutableSnapshot(): MutableCoordinatorSnapshot {
+    return {
+      state: this.currentState,
+      budget: { ...this.budget.value },
+      currentPageOrdinal: this.currentPageOrdinal,
+      currentAttemptOrdinal: this.currentAttemptOrdinal,
+      currentTokenMaterial: this.currentTokenMaterial,
+      nextTokenMaterial: this.nextTokenMaterial,
+      currentContinuationBindingHash: this.currentContinuationBindingHash,
+      nextContinuationBindingHash: this.nextContinuationBindingHash,
+      currentReceipt: this.currentReceipt,
+      pageTokenVerified: this.pageTokenVerified,
+      pageRecordCount: this.pageRecordCount,
+      pageChainHash: this.pageChainHash,
+      admittedMarketAcquisitionIds: [...this.admittedMarketAcquisitionIds],
+      attemptTimes: [...this.attemptTimes],
+      normalizedFacts: [...this.normalizedFacts],
+      pendingRetryDelayMs: this.pendingRetryDelayMs,
+      selectionDigest: this.selectionDigest,
+      counters: { ...this.counters },
+    };
+  }
+
+  #restoreMutableSnapshot(snapshot: MutableCoordinatorSnapshot): void {
+    this.currentState = snapshot.state;
+    Object.assign(this.budget.value, snapshot.budget);
+    this.currentPageOrdinal = snapshot.currentPageOrdinal;
+    this.currentAttemptOrdinal = snapshot.currentAttemptOrdinal;
+    this.currentTokenMaterial = snapshot.currentTokenMaterial;
+    this.nextTokenMaterial = snapshot.nextTokenMaterial;
+    this.currentContinuationBindingHash = snapshot.currentContinuationBindingHash;
+    this.nextContinuationBindingHash = snapshot.nextContinuationBindingHash;
+    this.currentReceipt = snapshot.currentReceipt;
+    this.pageTokenVerified = snapshot.pageTokenVerified;
+    this.pageRecordCount = snapshot.pageRecordCount;
+    this.pageChainHash = snapshot.pageChainHash;
+    this.admittedMarketAcquisitionIds = [...snapshot.admittedMarketAcquisitionIds];
+    this.attemptTimes = [...snapshot.attemptTimes];
+    this.normalizedFacts = [...snapshot.normalizedFacts];
+    this.pendingRetryDelayMs = snapshot.pendingRetryDelayMs;
+    this.selectionDigest = snapshot.selectionDigest;
+    Object.assign(this.counters, snapshot.counters);
+  }
+
+  #applyMutationPlan(
+    plan: AcquisitionMutationPlan,
+    prospectiveBudget: AcquisitionBudgets,
+    commitQuota: boolean,
+  ): void {
+    Object.assign(this.budget.value, prospectiveBudget);
+    if (plan.pageOrdinal !== undefined) this.currentPageOrdinal = plan.pageOrdinal;
+    if (plan.currentAttemptOrdinal !== undefined) {
+      this.currentAttemptOrdinal = plan.currentAttemptOrdinal;
+    }
+    if ("currentTokenMaterial" in plan) {
+      this.currentTokenMaterial = plan.currentTokenMaterial ?? null;
+    }
+    if ("nextTokenMaterial" in plan) {
+      this.nextTokenMaterial = plan.nextTokenMaterial ?? null;
+    }
+    if ("currentContinuationBindingHash" in plan) {
+      this.currentContinuationBindingHash = plan.currentContinuationBindingHash ?? null;
+    }
+    if ("nextContinuationBindingHash" in plan) {
+      this.nextContinuationBindingHash = plan.nextContinuationBindingHash ?? null;
+    }
+    if ("currentReceipt" in plan) this.currentReceipt = plan.currentReceipt ?? null;
+    if (plan.pageTokenVerified !== undefined) {
+      this.pageTokenVerified = plan.pageTokenVerified;
+    }
+    if ("pageRecordCount" in plan) this.pageRecordCount = plan.pageRecordCount ?? null;
+    if (plan.pageChainHash !== undefined) this.pageChainHash = plan.pageChainHash;
+    if (plan.appendAdmittedMarketAcquisitionId !== undefined) {
+      this.admittedMarketAcquisitionIds.push(plan.appendAdmittedMarketAcquisitionId);
+    }
+    if (plan.normalizedFacts !== undefined) this.normalizedFacts = [...plan.normalizedFacts];
+    if ("pendingRetryDelayMs" in plan) {
+      this.pendingRetryDelayMs = plan.pendingRetryDelayMs ?? null;
+    }
+    if ("selectionDigest" in plan) this.selectionDigest = plan.selectionDigest ?? null;
+    for (const [counter, amount] of Object.entries(plan.counterDelta ?? {}) as [
+      keyof SideEffectCounters,
+      number,
+    ][]) {
+      this.counters[counter] += amount;
+    }
+    if (plan.attemptTime !== undefined) {
+      this.attemptTimes.push(plan.attemptTime);
+      if (commitQuota) this.quota.commitVerified(plan.attemptTime);
+    }
+  }
+
+  coordinatorSnapshot(): JsonValue {
+    return {
+      state: this.currentState,
+      budget: { ...this.budget.value },
+      currentPageOrdinal: this.currentPageOrdinal,
+      currentAttemptOrdinal: this.currentAttemptOrdinal,
+      currentTokenMaterial: this.currentTokenMaterial,
+      nextTokenMaterial: this.nextTokenMaterial,
+      currentContinuationBindingHash: this.currentContinuationBindingHash,
+      nextContinuationBindingHash: this.nextContinuationBindingHash,
+      pageChainHash: this.pageChainHash,
+      admittedMarketAcquisitionIds: [...this.admittedMarketAcquisitionIds],
+      attemptTimes: [...this.attemptTimes],
+      normalizedFacts: [...this.normalizedFacts],
+      pendingRetryDelayMs: this.pendingRetryDelayMs,
+      selectionDigest: this.selectionDigest,
+      counters: { ...this.counters },
+      artifactObservationIds: this.artifact.receipts.map((receipt) => receipt.observationId),
+      artifactDigests: this.artifact.receipts.map((receipt) => receipt.digest),
+      artifactStoreCalls: this.artifact.storeCalls,
+      artifactReadCalls: this.artifact.readCalls,
+      artifactOrphanDigests: [...this.artifact.orphanDigests],
+      providerRequestCalls: this.provider.requestCalls,
+      journalRows: this.journal.rows().map((row) => ({
+        event: row.event,
+        hash: row.checkpoint.journalEntryHash,
+      })),
+    };
+  }
+
+  previewCheckpoint(plan: AcquisitionMutationPlan): DurableCheckpoint {
+    const prospectiveBudget = { ...this.budget.value };
+    for (const [dimension, amount] of Object.entries(plan.budgetDelta ?? {}) as [
+      keyof AcquisitionBudgets,
+      number,
+    ][]) {
+      prospectiveBudget[dimension] += amount;
+    }
+    const before = this.#mutableSnapshot();
+    try {
+      this.#applyMutationPlan(plan, prospectiveBudget, false);
+      return this.checkpoint(plan.checkpointOverrides);
+    } finally {
+      this.#restoreMutableSnapshot(before);
+    }
+  }
+
+  checkpoint(overrides: Partial<DurableCheckpoint> = {}): DurableCheckpoint {
+    const currentTokenHash =
+      this.currentTokenMaterial === null ? "no-token" : privateTokenHash(this.currentTokenMaterial);
+    const logicalPageHash = logicalPageIdentityHash(
+      requestIdentity(this.request),
+      this.currentPageOrdinal,
+      this.currentTokenMaterial === null ? null : currentTokenHash,
+    );
+    const attempt = attemptIdentity(logicalPageHash, this.currentAttemptOrdinal);
+    const acquisitionObservationId = acquisitionObservationIdentity(
+      this.request,
+      attempt.retrievalAttemptId,
+    );
+    const marketAcquisitionId = marketAcquisitionIdentity(this.request, acquisitionObservationId);
+    const receipt = this.currentReceipt;
+    const artifactIds =
+      receipt === null ? null : artifactIdentities(receipt, acquisitionObservationId);
+    const nextTokenHash = this.pageTokenVerified
+      ? this.nextTokenMaterial === null
+        ? "terminal"
+        : privateTokenHash(this.nextTokenMaterial)
+      : null;
+    return {
+      schemaVersion: JOURNAL_SCHEMA_VERSION,
+      marketAcquisitionJournalId: marketAcquisitionJournalIdentity(this.request),
+      runSessionNonce: RUN_SESSION_NONCE,
       acquisitionObservationId,
       marketAcquisitionId,
-      admittedMarketAcquisitionIds: this.budget.value.pages === 0 ? [] : [marketAcquisitionId],
+      admittedMarketAcquisitionIds: [...this.admittedMarketAcquisitionIds],
       requestIdentityHash: requestIdentity(this.request),
       acquisitionConfigurationHash: configurationHash(this.request),
       providerId: this.request.providerId,
@@ -1682,45 +2867,37 @@ class AcquisitionContractModel {
       feedId: this.request.feedId,
       endpointChannelId: this.request.endpointChannelId,
       authorizationMode: "p1-09-approved",
-      logicalPageIdentityHash: hash(
-        `logical-page:${this.request.firstRequest ? 0 : 1}:${
-          currentResumableTokenMaterial === null ? "no-token" : hash(currentResumableTokenMaterial)
-        }`,
-      ),
-      pageOrdinal: this.request.firstRequest ? 0 : 1,
+      logicalPageIdentityHash: logicalPageHash,
+      pageOrdinal: this.currentPageOrdinal,
       checkpointKind: "acquisition-declared",
-      currentTokenHash:
-        currentResumableTokenMaterial === null
-          ? hash("no-token")
-          : hash(currentResumableTokenMaterial),
-      currentResumableTokenMaterial,
-      nextTokenHash: null,
-      nextResumableTokenMaterial: null,
-      attemptId: hash(`attempt:${this.budget.value.attempts}`),
-      attemptOrdinal: Math.max(0, this.budget.value.attempts - 1),
+      currentTokenHash,
+      currentResumableTokenMaterial: this.currentTokenMaterial,
+      nextTokenHash,
+      nextResumableTokenMaterial:
+        this.pageTokenVerified && this.nextTokenMaterial !== null ? this.nextTokenMaterial : null,
+      currentContinuationBindingHash: this.currentContinuationBindingHash,
+      nextContinuationBindingHash: this.nextContinuationBindingHash,
+      attemptId: attempt.attemptId,
+      retrievalAttemptId: attempt.retrievalAttemptId,
+      attemptOrdinal: this.currentAttemptOrdinal,
       artifactObservationId: receipt?.observationId ?? null,
       artifactDigest: receipt?.digest ?? null,
       artifactSizeBytes: receipt?.bytes.byteLength ?? null,
-      artifactObservationHash:
-        receipt === null ? null : hash(`observation:${receipt.observationId}`),
-      artifactContentId: receipt === null ? null : hash(`content:${receipt.digest}`),
-      rawArtifactId:
-        receipt === null ? null : hash(`raw:${receipt.observationId}:${receipt.digest}`),
+      artifactObservationHash: artifactIds?.artifactObservationHash ?? null,
+      artifactContentId: artifactIds?.artifactContentId ?? null,
+      rawArtifactId: artifactIds?.rawArtifactId ?? null,
       stageLedgerFactId: null,
       causalParentFactIds: [],
-      pageRecordCount: this.budget.value.records === 0 ? null : this.budget.value.records,
-      pageNormalizedFactCount: this.budget.value.facts === 0 ? null : this.budget.value.facts,
-      pageChainHash: hash(`page-chain:${this.budget.value.pages}`),
+      pageRecordCount: this.pageRecordCount,
+      pageNormalizedFactCount: null,
+      pageChainHash: this.pageChainHash,
       cumulativeSuccessfulPages: this.budget.value.pages,
       cumulativeVerifiedBytes: this.budget.value.bytes,
       cumulativeRecords: this.budget.value.records,
       cumulativeNormalizedFacts: this.budget.value.facts,
       cumulativeAttempts: this.budget.value.attempts,
       acquisitionDeadlineBasis: "trusted-request-started-plus-300000ms",
-      quotaWindowEvidence: Array.from(
-        { length: this.budget.value.attempts },
-        (_, index) => index * 1_000,
-      ),
+      quotaWindowEvidence: [...this.attemptTimes],
       terminalState: null,
       terminalReasonCode: null,
       incomplete: true,
@@ -1731,74 +2908,285 @@ class AcquisitionContractModel {
     };
   }
 
+  loadDurableCoordinator(
+    checkpoint: DurableCheckpoint,
+    state: AcquisitionState,
+    receipt: StoredReceipt | null,
+    replayOutcome?: Readonly<{
+      normalizedFacts: readonly string[];
+      selectionDigest: string;
+    }>,
+  ): void {
+    Object.assign(this.budget.value, {
+      pages: checkpoint.cumulativeSuccessfulPages,
+      bytes: checkpoint.cumulativeVerifiedBytes,
+      records: checkpoint.cumulativeRecords,
+      facts: checkpoint.cumulativeNormalizedFacts,
+      attempts: checkpoint.cumulativeAttempts,
+    });
+    this.attemptTimes = [...checkpoint.quotaWindowEvidence];
+    this.pageChainHash = checkpoint.pageChainHash;
+    this.admittedMarketAcquisitionIds = [...checkpoint.admittedMarketAcquisitionIds];
+    this.currentPageOrdinal = checkpoint.pageOrdinal;
+    this.currentAttemptOrdinal = checkpoint.attemptOrdinal;
+    this.currentTokenMaterial = checkpoint.currentResumableTokenMaterial;
+    this.nextTokenMaterial = checkpoint.nextResumableTokenMaterial;
+    this.currentContinuationBindingHash = checkpoint.currentContinuationBindingHash;
+    this.nextContinuationBindingHash = checkpoint.nextContinuationBindingHash;
+    this.currentReceipt = receipt;
+    this.pageTokenVerified = checkpoint.nextTokenHash !== null;
+    this.pageRecordCount = checkpoint.pageRecordCount;
+    this.currentState = state;
+    if (replayOutcome !== undefined) {
+      this.normalizedFacts = [...replayOutcome.normalizedFacts];
+      this.selectionDigest = replayOutcome.selectionDigest;
+    }
+  }
+
   async run(fault: AcquisitionFault = {}): Promise<"complete" | "crashed" | "failed"> {
     try {
       guardedPreflight(this.request, this.counters);
-      this.journal.append("acquisition.declared", this.checkpoint());
-      if (fault.crashAt === "before-request") return "crashed";
-      this.budget.add("attempts", 1);
-      this.journal.append("request.started", this.checkpoint());
-      if (fault.crashAt === "request-started") return "crashed";
-      this.counters.dnsCalls += 1;
-      this.counters.networkCalls += 1;
-      this.counters.providerCalls += 1;
-      if (fault.timeoutBeforeHeaders) throw rejection("timeout-before-headers");
-      this.journal.append("request.succeeded", this.checkpoint());
-      if (fault.crashAt === "during-body") {
-        await assert.rejects(() => this.provider.response(1), /body-failure/u);
-        return "crashed";
-      }
-      const bytes = await this.provider.response(fault.bodyFailureAt ?? null, (index) => {
-        if (fault.activeClockRegression && index === 0) this.activeClock.regress();
-        this.activeClock.validate();
+      this.applyAcquisitionEvent("begin-preflight", this.exactEventEvidence(), {
+        journalEvent: "acquisition.declared",
+        pageOrdinal: 0,
+        currentAttemptOrdinal: 0,
+        currentReceipt: null,
+        currentTokenMaterial: null,
+        nextTokenMaterial: null,
+        currentContinuationBindingHash: null,
+        nextContinuationBindingHash: null,
+        pageTokenVerified: false,
+        pageRecordCount: null,
       });
-      if (fault.schemaFailure) throw rejection("schema-failure");
-      if (fault.crashAt === "vault-side-effect-before-receipt") {
-        this.artifact.storeOrphan(bytes);
-        return "crashed";
+      while (this.currentPageOrdinal < this.provider.pageCount()) {
+        if (fault.crashAt === "before-request" && this.currentPageOrdinal === 0) return "crashed";
+        this.applyAcquisitionEvent("preflight-approved");
+        this.applyAcquisitionEvent("credentials-loaded");
+        const attemptTime = (this.budget.value.attempts + 1) * 1_000;
+        new AcquisitionCeilingGate().validateDeadlines(LIMITS.attemptDeadlineMs, attemptTime);
+        this.applyAcquisitionEvent("dispatch-started", this.exactEventEvidence(), {
+          budgetDelta: { attempts: 1 },
+          attemptTime,
+          counterDelta: { dnsCalls: 1, networkCalls: 1, providerCalls: 1 },
+          journalEvent: "request.started",
+        });
+        if (fault.crashAt === "request-started" && this.currentPageOrdinal === 0) return "crashed";
+        if (fault.timeoutBeforeHeaders) throw rejection("timeout-before-headers");
+        this.applyAcquisitionEvent("response-headers-accepted", this.exactEventEvidence(), {
+          journalEvent: "request.succeeded",
+        });
+        if (fault.crashAt === "during-body" && this.currentPageOrdinal === 0) {
+          this.applyAcquisitionEvent("artifact-store-started");
+          await assert.rejects(
+            () => this.provider.response(1, undefined, this.currentPageOrdinal),
+            /body-failure/u,
+          );
+          return "crashed";
+        }
+        this.applyAcquisitionEvent("artifact-store-started");
+        const bytes = await this.provider.response(
+          fault.bodyFailureAt ?? null,
+          (index) => {
+            if (fault.activeClockRegression && index === 0) this.activeClock.regress();
+            this.activeClock.validate();
+          },
+          this.currentPageOrdinal,
+        );
+        if (fault.schemaFailure) throw rejection("schema-failure");
+        if (fault.crashAt === "vault-side-effect-before-receipt" && this.currentPageOrdinal === 0) {
+          this.artifact.storeOrphan(bytes);
+          return "crashed";
+        }
+        this.artifact.failStore = fault.storeFailure ?? false;
+        const immutableReceipt = this.artifact.store(bytes);
+        const admittedReceipt =
+          fault.paginationFault === "duplicate-page" && this.currentPageOrdinal === 1
+            ? (this.artifact.receipts[0] ?? immutableReceipt)
+            : immutableReceipt;
+        this.applyAcquisitionEvent("artifact-store-committed", this.exactEventEvidence(), {
+          currentReceipt: admittedReceipt,
+          counterDelta: { artifactCalls: 1 },
+          journalEvent: "artifact.committed",
+        });
+        this.artifact.acknowledgeReceipt(admittedReceipt);
+        if (fault.crashAt === "artifact-committed" && this.currentPageOrdinal === 0) {
+          return "crashed";
+        }
+        this.applyAcquisitionEvent("artifact-verification-started");
+        this.artifact.failRead = fault.readFailure ?? false;
+        this.artifact.readObservation(admittedReceipt.observationId, admittedReceipt.digest);
+        const pageRecordCount = this.provider.recordCount(this.currentPageOrdinal);
+        let nextTokenMaterial = this.provider.nextToken(this.currentPageOrdinal);
+        if (fault.paginationFault === "loop" && this.currentPageOrdinal === 1) {
+          nextTokenMaterial = this.provider.nextToken(0);
+        }
+        if (nextTokenMaterial !== null) {
+          const proposedTokenHash = privateTokenHash(nextTokenMaterial);
+          const previouslyReturned = new Set(
+            this.journal
+              .rows()
+              .filter((row) => row.event === "checkpoint.advanced")
+              .map((row) => row.checkpoint.nextTokenHash)
+              .filter((tokenHash): tokenHash is string => tokenHash !== null),
+          );
+          if (previouslyReturned.has(proposedTokenHash)) {
+            throw rejection("pagination-token-loop");
+          }
+        }
+        this.applyAcquisitionEvent("page-verification-passed", this.exactEventEvidence(), {
+          nextTokenMaterial,
+          pageTokenVerified: true,
+          pageRecordCount,
+          journalEvent: "artifact.verified",
+        });
+        if (fault.crashAt === "artifact-verified" && this.currentPageOrdinal === 0) {
+          return "crashed";
+        }
+        const preChainPlan: AcquisitionMutationPlan = {
+          budgetDelta: {
+            pages: 1,
+            bytes: admittedReceipt.bytes.byteLength,
+            records: pageRecordCount,
+          },
+          appendAdmittedMarketAcquisitionId: this.checkpoint().marketAcquisitionId,
+        };
+        const checkpointBeforeChainAdvance = this.previewCheckpoint(preChainPlan);
+        const prospectivePageChainHash = admittedPageChainHash(
+          this.pageChainHash,
+          checkpointBeforeChainAdvance,
+        );
+        const prospectiveNextBinding =
+          nextTokenMaterial === null
+            ? null
+            : continuationBindingHash({
+                precedingMarketAcquisitionId: checkpointBeforeChainAdvance.marketAcquisitionId,
+                requestIdentityHash: checkpointBeforeChainAdvance.requestIdentityHash,
+                precedingLogicalPageIdentityHash:
+                  checkpointBeforeChainAdvance.logicalPageIdentityHash,
+                precedingPageOrdinal: checkpointBeforeChainAdvance.pageOrdinal,
+                precedingArtifactObservationId:
+                  checkpointBeforeChainAdvance.artifactObservationId as string,
+                precedingArtifactDigest: checkpointBeforeChainAdvance.artifactDigest as string,
+                precedingPageChainHash: prospectivePageChainHash,
+                nextPageOrdinal: this.currentPageOrdinal + 1,
+                nextTokenHash: checkpointBeforeChainAdvance.nextTokenHash as string,
+              });
+        this.applyAcquisitionEvent("page-checkpoint-committed", this.exactEventEvidence(), {
+          ...preChainPlan,
+          pageChainHash: prospectivePageChainHash,
+          nextContinuationBindingHash: prospectiveNextBinding,
+          journalEvent: "checkpoint.advanced",
+        });
+        if (fault.crashAt === "checkpoint-advanced" && this.currentPageOrdinal === 0) {
+          return "crashed";
+        }
+        if (nextTokenMaterial !== null) {
+          const proposedToken =
+            fault.paginationFault === "substitution" && this.currentPageOrdinal === 0
+              ? `${nextTokenMaterial}-substituted`
+              : nextTokenMaterial;
+          const proposedPageOrdinal =
+            fault.paginationFault === "gap" && this.currentPageOrdinal === 0
+              ? this.currentPageOrdinal + 2
+              : fault.paginationFault === "duplicate-position" && this.currentPageOrdinal === 0
+                ? this.currentPageOrdinal
+                : this.currentPageOrdinal + 1;
+          this.applyAcquisitionEvent("begin-preflight", this.exactEventEvidence(), {
+            journalEvent: "acquisition.declared",
+            pageOrdinal: proposedPageOrdinal,
+            currentAttemptOrdinal: 0,
+            currentReceipt: null,
+            currentTokenMaterial: proposedToken,
+            nextTokenMaterial: null,
+            currentContinuationBindingHash: prospectiveNextBinding,
+            nextContinuationBindingHash: null,
+            pageTokenVerified: false,
+            pageRecordCount: null,
+          });
+          continue;
+        }
+        this.applyAcquisitionEvent("terminal-token-admitted", this.exactEventEvidence(), {
+          journalEvent: "chain.complete",
+        });
+        if (fault.paginationFault === "page-after-terminal") {
+          this.applyAcquisitionEvent("begin-preflight", this.exactEventEvidence(), {
+            journalEvent: "acquisition.declared",
+            pageOrdinal: this.currentPageOrdinal + 1,
+          });
+        }
+        break;
       }
-      this.artifact.failStore = fault.storeFailure ?? false;
-      this.counters.artifactCalls += 1;
-      const receipt = this.artifact.store(bytes);
-      this.budget.add("bytes", bytes.byteLength);
-      this.journal.append(
-        "artifact.committed",
-        this.checkpoint({
-          artifactObservationId: receipt.observationId,
-          artifactDigest: receipt.digest,
-        }),
-      );
-      if (fault.crashAt === "artifact-committed") return "crashed";
-      this.artifact.failRead = fault.readFailure ?? false;
-      this.artifact.read(receipt.digest);
-      this.journal.append("artifact.verified", this.checkpoint());
-      if (fault.crashAt === "artifact-verified") return "crashed";
-      this.budget.add("pages", 1);
-      this.budget.add("records", 3);
-      this.journal.append("checkpoint.advanced", this.checkpoint());
-      if (fault.crashAt === "checkpoint-advanced") return "crashed";
-      this.journal.append("chain.complete", this.checkpoint());
-      this.journal.append("normalization.started", this.checkpoint());
+      for (const receipt of this.artifact.receipts) {
+        this.artifact.readObservation(receipt.observationId, receipt.digest);
+      }
+      this.applyAcquisitionEvent("normalization-started", this.exactEventEvidence(), {
+        journalEvent: "normalization.started",
+        counterDelta: { normalizationCalls: 1 },
+      });
       if (fault.crashAt === "during-normalization") return "crashed";
-      this.counters.normalizationCalls += 1;
-      this.budget.add("facts", 3);
-      this.normalizedFacts = normalizedFactsFromArtifact(this.artifact);
-      this.selectionDigest = normalizedDigestFromArtifact(this.artifact);
-      this.journal.append("normalization.emitted", this.checkpoint());
-      this.journal.append("selection.started", this.checkpoint());
+      const emittedFacts = new Set<string>();
+      for (const receipt of this.artifact.receipts) {
+        const admittedCheckpoint = this.journal
+          .rows()
+          .find(
+            (row) =>
+              row.event === "checkpoint.advanced" &&
+              row.checkpoint.artifactObservationId === receipt.observationId,
+          )?.checkpoint;
+        if (admittedCheckpoint === undefined) throw rejection("admitted-page-missing");
+        const pageFacts = normalizedFactsFromReceipt(receipt).filter(
+          (fact) => !emittedFacts.has(fact),
+        );
+        for (const fact of pageFacts) emittedFacts.add(fact);
+        this.applyAcquisitionEvent("normalization-page-emitted", this.exactEventEvidence(), {
+          budgetDelta: { facts: pageFacts.length },
+          currentReceipt: receipt,
+          pageOrdinal: receipt.deliveryOrdinal,
+          currentTokenMaterial: admittedCheckpoint.currentResumableTokenMaterial,
+          currentContinuationBindingHash: admittedCheckpoint.currentContinuationBindingHash,
+          currentAttemptOrdinal: admittedCheckpoint.attemptOrdinal,
+          nextTokenMaterial: admittedCheckpoint.nextResumableTokenMaterial,
+          nextContinuationBindingHash: admittedCheckpoint.nextContinuationBindingHash,
+          pageTokenVerified: true,
+          pageRecordCount: this.provider.recordCount(receipt.deliveryOrdinal),
+          normalizedFacts: [...emittedFacts].sort(),
+          journalEvent: "normalization.emitted",
+          checkpointOverrides: { pageNormalizedFactCount: pageFacts.length },
+        });
+      }
+      this.applyAcquisitionEvent("normalization-completed", this.exactEventEvidence(), {
+        normalizedFacts: [...emittedFacts].sort(),
+        selectionDigest: hash([...emittedFacts].sort().join("|")),
+      });
+      this.applyAcquisitionEvent("selection-started", this.exactEventEvidence(), {
+        journalEvent: "selection.started",
+      });
       if (fault.crashAt === "before-selection") {
         return "crashed";
       }
-      this.counters.selectionCalls += 1;
-      this.journal.append(
-        "selection.recorded",
-        this.checkpoint({ terminalState: "completed", incomplete: false }),
-      );
+      this.applyAcquisitionEvent("selection-completed", this.exactEventEvidence(), {
+        counterDelta: { selectionCalls: 1 },
+        journalEvent: "selection.recorded",
+        checkpointOverrides: {
+          terminalState: "completed",
+          terminalReasonCode: "completed",
+          incomplete: false,
+        },
+      });
       return "complete";
     } catch {
       const rows = this.journal.rows();
       if (rows.length > 0 && rows.at(-1)?.event !== "selection.recorded") {
-        this.journal.append("failure.recorded", this.checkpoint());
+        if (ACQUISITION_TRANSITIONS[this.currentState].includes("failed-clean")) {
+          this.applyAcquisitionEvent("technical-failure-settled", this.exactEventEvidence(), {
+            journalEvent: "failure.recorded",
+            checkpointOverrides: {
+              terminalState: "failed-clean",
+              terminalReasonCode: "technical-failure",
+              incomplete: false,
+            },
+          });
+        }
       }
       return "failed";
     }
@@ -1806,92 +3194,297 @@ class AcquisitionContractModel {
 
   async resume(expectedConfigurationHash: string): Promise<"complete"> {
     let rows = this.journal.rows();
-    let latest = rows.at(-1);
+    const latest = rows.at(-1);
     if (latest === undefined) throw rejection("journal-empty");
     if (latest.checkpoint.acquisitionConfigurationHash !== expectedConfigurationHash) {
       throw rejection("restart-configuration-changed");
     }
-    Object.assign(this.budget.value, {
-      pages: latest.checkpoint.cumulativeSuccessfulPages,
-      bytes: latest.checkpoint.cumulativeVerifiedBytes,
-      records: latest.checkpoint.cumulativeRecords,
-      facts: latest.checkpoint.cumulativeNormalizedFacts,
-      attempts: latest.checkpoint.cumulativeAttempts,
-    });
-    const has = (event: ContractEvent): boolean => rows.some((row) => row.event === event);
-    if (!has("artifact.committed")) {
-      this.artifact.reconcileOrphans();
-      this.budget.add("attempts", 1);
-      this.journal.append("request.started", this.checkpoint());
-      this.counters.dnsCalls += 1;
-      this.counters.networkCalls += 1;
-      this.counters.providerCalls += 1;
-      const bytes = await this.provider.response();
-      this.journal.append("request.succeeded", this.checkpoint());
-      const receipt = this.artifact.store(bytes);
-      this.budget.add("bytes", bytes.byteLength);
-      this.journal.append(
-        "artifact.committed",
-        this.checkpoint({
-          artifactObservationId: receipt.observationId,
-          artifactDigest: receipt.digest,
-        }),
-      );
-      rows = this.journal.rows();
-      latest = rows.at(-1);
-      assert.ok(latest !== undefined);
-    }
+    validateJournalRows(rows, this.request);
     const committedRows = rows.filter((row) => row.event === "artifact.committed");
     for (const committed of committedRows) {
       const digest = committed.checkpoint.artifactDigest;
-      if (digest === null || digest === undefined) throw rejection("artifact-missing");
-      const receipt = this.artifact.receipt;
+      const observationId = committed.checkpoint.artifactObservationId;
+      if (digest === null || observationId === null) throw rejection("artifact-missing");
+      const receipt = this.artifact.receipts.find(
+        (candidate) => candidate.observationId === observationId,
+      );
       if (
-        receipt === null ||
-        receipt.observationId !== committed.checkpoint.artifactObservationId ||
+        receipt === undefined ||
         receipt.digest !== digest ||
         receipt.bytes.byteLength !== committed.checkpoint.artifactSizeBytes ||
-        hash(`observation:${receipt.observationId}`) !==
-          committed.checkpoint.artifactObservationHash
+        artifactIdentities(receipt, committed.checkpoint.acquisitionObservationId)
+          .artifactObservationHash !== committed.checkpoint.artifactObservationHash
       ) {
         throw rejection("artifact-receipt-mismatch");
       }
-      this.artifact.read(digest);
+      this.artifact.readObservation(observationId, digest);
     }
-    if (committedRows.length > 0) {
-      this.normalizedFacts = normalizedFactsFromArtifact(this.artifact);
-      this.selectionDigest = normalizedDigestFromArtifact(this.artifact);
-    }
-    if (!has("artifact.verified")) {
-      this.journal.append("artifact.verified", this.checkpoint());
-    }
-    if (!has("checkpoint.advanced")) {
-      this.budget.add("pages", 1);
-      this.budget.add("records", 3);
-      this.journal.append("checkpoint.advanced", this.checkpoint());
-    }
-    if (!has("chain.complete")) {
-      this.journal.append("chain.complete", this.checkpoint());
-    }
-    if (!has("normalization.started")) {
-      this.journal.append("normalization.started", this.checkpoint());
-    }
-    if (!has("normalization.emitted")) {
-      this.counters.normalizationCalls += 1;
-      this.budget.add("facts", 3);
-      this.normalizedFacts = normalizedFactsFromArtifact(this.artifact);
-      this.selectionDigest = normalizedDigestFromArtifact(this.artifact);
-      this.journal.append("normalization.emitted", this.checkpoint());
-    }
-    if (!has("selection.started")) {
-      this.journal.append("selection.started", this.checkpoint());
-    }
-    if (!has("selection.recorded")) {
-      this.counters.selectionCalls += 1;
-      this.journal.append(
-        "selection.recorded",
-        this.checkpoint({ terminalState: "completed", incomplete: false }),
+
+    if (latest.event === "selection.recorded") {
+      this.loadDurableCoordinator(
+        latest.checkpoint,
+        "completed",
+        this.artifact.receipts.at(-1) ?? null,
+        {
+          normalizedFacts: normalizedFactsFromArtifact(this.artifact),
+          selectionDigest: normalizedDigestFromArtifact(this.artifact),
+        },
       );
+      return "complete";
+    }
+
+    for (let pageOrdinal = 0; pageOrdinal < this.provider.pageCount(); pageOrdinal += 1) {
+      rows = this.journal.rows();
+      const checkpointed = rows.find(
+        (row) => row.event === "checkpoint.advanced" && row.checkpoint.pageOrdinal === pageOrdinal,
+      );
+      if (checkpointed !== undefined) continue;
+      const pageRows = rows.filter((row) => row.checkpoint.pageOrdinal === pageOrdinal);
+      const committed = [...pageRows].reverse().find((row) => row.event === "artifact.committed");
+      if (committed === undefined) {
+        this.artifact.reconcileOrphans();
+        const lastPageRow = pageRows.at(-1);
+        const lastWasUnusedDeclaration = lastPageRow?.event === "acquisition.declared";
+        const attemptOrdinal =
+          Math.max(-1, ...pageRows.map((row) => row.checkpoint.attemptOrdinal)) +
+          (lastWasUnusedDeclaration ? 0 : 1);
+        const latestCheckpoint = rows.at(-1)?.checkpoint ?? latest.checkpoint;
+        const precedingPageCheckpoint =
+          pageOrdinal === 0
+            ? null
+            : (rows.find(
+                (row) =>
+                  row.event === "checkpoint.advanced" &&
+                  row.checkpoint.pageOrdinal === pageOrdinal - 1,
+              )?.checkpoint ?? null);
+        if (pageOrdinal > 0 && precedingPageCheckpoint === null) {
+          throw rejection("restart-preceding-page-missing");
+        }
+        this.loadDurableCoordinator(
+          {
+            ...latestCheckpoint,
+            pageOrdinal,
+            attemptOrdinal,
+            currentResumableTokenMaterial:
+              pageOrdinal === 0
+                ? null
+                : (precedingPageCheckpoint as DurableCheckpoint).nextResumableTokenMaterial,
+            currentContinuationBindingHash:
+              pageOrdinal === 0
+                ? null
+                : (precedingPageCheckpoint as DurableCheckpoint).nextContinuationBindingHash,
+            nextResumableTokenMaterial: null,
+            nextContinuationBindingHash: null,
+            nextTokenHash: null,
+            artifactObservationId: null,
+            artifactDigest: null,
+            artifactSizeBytes: null,
+            artifactObservationHash: null,
+            artifactContentId: null,
+            rawArtifactId: null,
+            pageRecordCount: null,
+          },
+          "declared",
+          null,
+        );
+        if (!lastWasUnusedDeclaration) {
+          this.applyAcquisitionEvent("begin-preflight", this.exactEventEvidence(), {
+            journalEvent: "acquisition.declared",
+            currentAttemptOrdinal: attemptOrdinal,
+            currentReceipt: null,
+            nextTokenMaterial: null,
+            nextContinuationBindingHash: null,
+            pageTokenVerified: false,
+            pageRecordCount: null,
+          });
+        } else {
+          this.applyAcquisitionEvent("begin-preflight");
+        }
+        this.applyAcquisitionEvent("preflight-approved");
+        this.applyAcquisitionEvent("credentials-loaded");
+        const attemptTime = (this.budget.value.attempts + 1) * 1_000;
+        this.applyAcquisitionEvent("dispatch-started", this.exactEventEvidence(), {
+          budgetDelta: { attempts: 1 },
+          attemptTime,
+          counterDelta: { dnsCalls: 1, networkCalls: 1, providerCalls: 1 },
+          journalEvent: "request.started",
+        });
+        const bytes = await this.provider.response(null, undefined, pageOrdinal);
+        this.applyAcquisitionEvent("response-headers-accepted", this.exactEventEvidence(), {
+          journalEvent: "request.succeeded",
+        });
+        this.applyAcquisitionEvent("artifact-store-started");
+        const receipt = this.artifact.store(bytes);
+        this.applyAcquisitionEvent("artifact-store-committed", this.exactEventEvidence(), {
+          currentReceipt: receipt,
+          counterDelta: { artifactCalls: 1 },
+          journalEvent: "artifact.committed",
+        });
+        this.artifact.acknowledgeReceipt(receipt);
+      } else {
+        const receipt =
+          this.artifact.receipts.find(
+            (receipt) => receipt.observationId === committed.checkpoint.artifactObservationId,
+          ) ?? null;
+        if (receipt === null) throw rejection("artifact-receipt-mismatch");
+        this.loadDurableCoordinator(committed.checkpoint, "artifact-committed", receipt);
+      }
+      const activeReceipt = this.currentReceipt;
+      if (activeReceipt === null) throw rejection("artifact-receipt-mismatch");
+      const verified = this.journal
+        .rows()
+        .find(
+          (row) =>
+            row.event === "artifact.verified" &&
+            row.checkpoint.artifactObservationId === activeReceipt.observationId,
+        );
+      const nextTokenMaterial = this.provider.nextToken(pageOrdinal);
+      const pageRecordCount = this.provider.recordCount(pageOrdinal);
+      if (verified === undefined) {
+        this.applyAcquisitionEvent("artifact-verification-started");
+        this.artifact.readObservation(activeReceipt.observationId, activeReceipt.digest);
+        this.applyAcquisitionEvent("page-verification-passed", this.exactEventEvidence(), {
+          nextTokenMaterial,
+          pageRecordCount,
+          pageTokenVerified: true,
+          journalEvent: "artifact.verified",
+        });
+      } else {
+        this.loadDurableCoordinator(verified.checkpoint, "page-verified", activeReceipt);
+      }
+      const preChainPlan: AcquisitionMutationPlan = {
+        budgetDelta: {
+          pages: 1,
+          bytes: activeReceipt.bytes.byteLength,
+          records: pageRecordCount,
+        },
+        appendAdmittedMarketAcquisitionId: this.checkpoint().marketAcquisitionId,
+      };
+      const beforeAdvance = this.previewCheckpoint(preChainPlan);
+      const pageChainHash = admittedPageChainHash(this.pageChainHash, beforeAdvance);
+      const nextContinuationBindingHash =
+        nextTokenMaterial === null
+          ? null
+          : continuationBindingHash({
+              precedingMarketAcquisitionId: beforeAdvance.marketAcquisitionId,
+              requestIdentityHash: beforeAdvance.requestIdentityHash,
+              precedingLogicalPageIdentityHash: beforeAdvance.logicalPageIdentityHash,
+              precedingPageOrdinal: beforeAdvance.pageOrdinal,
+              precedingArtifactObservationId: beforeAdvance.artifactObservationId as string,
+              precedingArtifactDigest: beforeAdvance.artifactDigest as string,
+              precedingPageChainHash: pageChainHash,
+              nextPageOrdinal: pageOrdinal + 1,
+              nextTokenHash: beforeAdvance.nextTokenHash as string,
+            });
+      this.applyAcquisitionEvent("page-checkpoint-committed", this.exactEventEvidence(), {
+        ...preChainPlan,
+        pageChainHash,
+        nextContinuationBindingHash,
+        journalEvent: "checkpoint.advanced",
+      });
+    }
+
+    rows = this.journal.rows();
+    const finalPage = rows.filter((row) => row.event === "checkpoint.advanced").at(-1);
+    if (finalPage === undefined) throw rejection("checkpoint-page-missing");
+    const finalReceipt =
+      this.artifact.receipts.find(
+        (receipt) => receipt.observationId === finalPage.checkpoint.artifactObservationId,
+      ) ?? null;
+    this.loadDurableCoordinator(finalPage.checkpoint, "checkpointing", finalReceipt);
+    if (!rows.some((row) => row.event === "chain.complete")) {
+      this.applyAcquisitionEvent("terminal-token-admitted", this.exactEventEvidence(), {
+        journalEvent: "chain.complete",
+      });
+    } else {
+      const chainRow = rows.find((row) => row.event === "chain.complete");
+      if (chainRow === undefined) throw rejection("checkpoint-chain-missing");
+      this.loadDurableCoordinator(chainRow.checkpoint, "chain-complete", finalReceipt);
+    }
+    for (const receipt of this.artifact.receipts) {
+      this.artifact.readObservation(receipt.observationId, receipt.digest);
+    }
+    rows = this.journal.rows();
+    if (!rows.some((row) => row.event === "normalization.started")) {
+      this.applyAcquisitionEvent("normalization-started", this.exactEventEvidence(), {
+        journalEvent: "normalization.started",
+        counterDelta: { normalizationCalls: 1 },
+      });
+    } else {
+      const normalizedRows = rows.filter(
+        (row) => row.event === "normalization.started" || row.event === "normalization.emitted",
+      );
+      const normalizedLatest = normalizedRows.at(-1);
+      if (normalizedLatest === undefined) throw rejection("normalization-checkpoint-missing");
+      const normalizedReceipt =
+        this.artifact.receipts.find(
+          (receipt) => receipt.observationId === normalizedLatest.checkpoint.artifactObservationId,
+        ) ?? finalReceipt;
+      this.loadDurableCoordinator(normalizedLatest.checkpoint, "normalizing", normalizedReceipt);
+    }
+    const alreadyNormalized = new Set(
+      this.journal
+        .rows()
+        .filter((row) => row.event === "normalization.emitted")
+        .map((row) => row.checkpoint.artifactObservationId),
+    );
+    const emittedFacts = new Set<string>();
+    for (const receipt of this.artifact.receipts) {
+      const facts = normalizedFactsFromReceipt(receipt);
+      const pageFacts = facts.filter((fact) => !emittedFacts.has(fact));
+      for (const fact of facts) emittedFacts.add(fact);
+      if (alreadyNormalized.has(receipt.observationId)) continue;
+      const admittedCheckpoint = this.journal
+        .rows()
+        .find(
+          (row) =>
+            row.event === "checkpoint.advanced" &&
+            row.checkpoint.artifactObservationId === receipt.observationId,
+        )?.checkpoint;
+      if (admittedCheckpoint === undefined) throw rejection("admitted-page-missing");
+      this.applyAcquisitionEvent("normalization-page-emitted", this.exactEventEvidence(), {
+        budgetDelta: { facts: pageFacts.length },
+        currentReceipt: receipt,
+        pageOrdinal: receipt.deliveryOrdinal,
+        currentTokenMaterial: admittedCheckpoint.currentResumableTokenMaterial,
+        currentContinuationBindingHash: admittedCheckpoint.currentContinuationBindingHash,
+        currentAttemptOrdinal: admittedCheckpoint.attemptOrdinal,
+        nextTokenMaterial: admittedCheckpoint.nextResumableTokenMaterial,
+        nextContinuationBindingHash: admittedCheckpoint.nextContinuationBindingHash,
+        pageTokenVerified: true,
+        pageRecordCount: this.provider.recordCount(receipt.deliveryOrdinal),
+        normalizedFacts: [...emittedFacts].sort(),
+        journalEvent: "normalization.emitted",
+        checkpointOverrides: { pageNormalizedFactCount: pageFacts.length },
+      });
+    }
+    const normalizedFacts = [...emittedFacts].sort();
+    if (!this.journal.rows().some((row) => row.event === "selection.started")) {
+      this.applyAcquisitionEvent("normalization-completed", this.exactEventEvidence(), {
+        normalizedFacts,
+        selectionDigest: hash(normalizedFacts.join("|")),
+      });
+      this.applyAcquisitionEvent("selection-started", this.exactEventEvidence(), {
+        journalEvent: "selection.started",
+      });
+    } else {
+      const selectionStarted = this.journal.rows().find((row) => row.event === "selection.started");
+      if (selectionStarted === undefined) throw rejection("selection-checkpoint-missing");
+      this.loadDurableCoordinator(selectionStarted.checkpoint, "selecting", this.currentReceipt, {
+        normalizedFacts,
+        selectionDigest: hash(normalizedFacts.join("|")),
+      });
+    }
+    if (!this.journal.rows().some((row) => row.event === "selection.recorded")) {
+      this.applyAcquisitionEvent("selection-completed", this.exactEventEvidence(), {
+        counterDelta: { selectionCalls: 1 },
+        journalEvent: "selection.recorded",
+        checkpointOverrides: {
+          terminalState: "completed",
+          terminalReasonCode: "completed",
+          incomplete: false,
+        },
+      });
     }
     return "complete";
   }
@@ -2140,12 +3733,12 @@ test("every identity family rejects every hostile derivation/configuration mutat
       const factKinds = envelope.preimage["factKinds"];
       assert.ok(Array.isArray(factKinds));
       mutations.push([
-        "reordered-real-fact-kind-set",
+        "changed-fact-kind-membership",
         {
           ...envelope,
           preimage: {
             ...envelope.preimage,
-            factKinds: [...factKinds, "unauthorized-kind"].reverse(),
+            factKinds: [...factKinds, "unauthorized-kind"],
           },
         },
       ]);
@@ -2156,6 +3749,54 @@ test("every identity family rejects every hostile derivation/configuration mutat
       assertZeroSideEffects(counters);
     }
   }
+
+  const canonicalMultiMemberChannelPreimage = {
+    feedId: IDS.alpacaFeed,
+    channelKind: "historical-rest",
+    methodKind: "get",
+    safeRouteLabel: "synthetic-multi-fact-order-witness",
+    endpointDocumentationVersion: "synthetic-contract-v1",
+    paginationKind: "opaque-token",
+    factKinds: ["bar", "quote"],
+  } as const;
+  const controlledChannel: IdentityEnvelope = {
+    name: "controlled-multi-member-channel-order",
+    family: "channel",
+    preimage: canonicalMultiMemberChannelPreimage,
+    expectedId: deriveEndpointChannelId(canonicalMultiMemberChannelPreimage),
+    lane: "alpaca",
+  };
+  const canonicalCounters = zeroCounters();
+  assert.doesNotThrow(() => guardedIdentityConfiguration(controlledChannel, canonicalCounters));
+  assert.deepEqual(canonicalCounters, {
+    credentialReads: 1,
+    transportConstructions: 1,
+    dnsCalls: 1,
+    networkCalls: 1,
+    providerCalls: 1,
+    artifactCalls: 1,
+    normalizationCalls: 1,
+    selectionCalls: 1,
+    postReturnActivity: 1,
+  });
+  const reversedSameMembers: IdentityEnvelope = {
+    ...controlledChannel,
+    preimage: {
+      ...canonicalMultiMemberChannelPreimage,
+      factKinds: [...canonicalMultiMemberChannelPreimage.factKinds].reverse(),
+    },
+  };
+  assert.deepEqual(
+    [...(reversedSameMembers.preimage["factKinds"] as readonly string[])].sort(),
+    [...canonicalMultiMemberChannelPreimage.factKinds],
+    "the rejection vector changes only order, never membership",
+  );
+  const reversedCounters = zeroCounters();
+  assert.throws(
+    () => guardedIdentityConfiguration(reversedSameMembers, reversedCounters),
+    /market\.input-invalid/u,
+  );
+  assertZeroSideEffects(reversedCounters);
 
   const fmpBaseline: FmpPreflight = {
     method: "GET",
@@ -2419,6 +4060,117 @@ test("journal transition legality and rolling project/entitlement quota equality
       }
     }
   }
+  for (const from of ACQUISITION_STATES) {
+    for (const [event, to] of Object.entries(ACQUISITION_EVENT_TARGETS) as [
+      AcquisitionEventName,
+      AcquisitionState,
+    ][]) {
+      const isRetryEvent = event === "retry-cleanup-complete";
+      const needsIntegratedAttempt =
+        (isRetryEvent && from === "attempt-active") ||
+        (event === "begin-preflight" && from === "waiting-retry");
+      const transitionModel = needsIntegratedAttempt
+        ? new AcquisitionContractModel(
+            exactBoundaryRequest(0n),
+            new ProviderDouble(),
+            new ArtifactDouble(),
+            new MemoryContractJournal(),
+          )
+        : new AcquisitionContractModel(
+            exactBoundaryRequest(0n),
+            new ProviderDouble(),
+            new ArtifactDouble(),
+            new MemoryContractJournal(),
+            from,
+          );
+      if (needsIntegratedAttempt) {
+        transitionModel.applyAcquisitionEvent("begin-preflight");
+        transitionModel.applyAcquisitionEvent("preflight-approved");
+        transitionModel.applyAcquisitionEvent("credentials-loaded");
+        transitionModel.applyAcquisitionEvent(
+          "dispatch-started",
+          transitionModel.exactEventEvidence(),
+          { budgetDelta: { attempts: 1 }, attemptTime: 0 },
+        );
+      }
+      if (event === "begin-preflight" && from === "waiting-retry") {
+        const retryContext: RetryEventContext = {
+          failure: "pre-response",
+          pageAttemptNumber: 1,
+          acquisitionAttemptCount: 1,
+          retryAfter: null,
+          quotaClassification: "missing",
+        };
+        transitionModel.applyAcquisitionEvent(
+          "retry-cleanup-complete",
+          transitionModel.exactEventEvidence(retryContext),
+        );
+      }
+      const evidence = transitionModel.exactEventEvidence(
+        isRetryEvent
+          ? {
+              failure: "pre-response",
+              pageAttemptNumber: 1,
+              acquisitionAttemptCount: transitionModel.budget.value.attempts,
+              retryAfter: null,
+              quotaClassification: "missing",
+            }
+          : null,
+        event === "begin-preflight" && from === "waiting-retry"
+          ? {
+              retryDelayClockBasis: "same-session-monotonic",
+              retryDelayElapsedMs: 1_000,
+              retryDelayMonotonicOrderValid: true,
+            }
+          : {},
+      );
+      const eventAllowed =
+        event === "normalization-page-emitted"
+          ? from === "normalizing"
+          : ACQUISITION_TRANSITIONS[from].includes(to);
+      if (eventAllowed) {
+        assert.doesNotThrow(
+          () => transitionModel.applyAcquisitionEvent(event, evidence),
+          `${from}:${event}`,
+        );
+        assert.equal(transitionModel.currentState, to);
+      } else {
+        assert.throws(
+          () => transitionModel.applyAcquisitionEvent(event, evidence),
+          /acquisition-transition-invalid/u,
+          `${from}:${event}`,
+        );
+        assert.equal(transitionModel.currentState, from);
+      }
+    }
+  }
+  const evidenceModel = new AcquisitionContractModel(
+    exactBoundaryRequest(0n),
+    new ProviderDouble(),
+    new ArtifactDouble(),
+    new MemoryContractJournal(),
+    "declared",
+  );
+  const beforeRejectedProof = canonicalJson(evidenceModel.coordinatorSnapshot());
+  assert.throws(
+    () =>
+      evidenceModel.applyAcquisitionEvent(
+        "begin-preflight",
+        evidenceModel.exactEventEvidence(null, { pageChainValid: false }),
+        {
+          budgetDelta: { attempts: 1 },
+          attemptTime: 1_000,
+          counterDelta: { networkCalls: 1, providerCalls: 1 },
+          journalEvent: "acquisition.declared",
+        },
+      ),
+    /acquisition-event-proof-invalid/u,
+  );
+  assert.equal(
+    canonicalJson(evidenceModel.coordinatorSnapshot()),
+    beforeRejectedProof,
+    "a rejected pre-side-effect proof must leave coordinator, journal, budgets, and counters byte-equivalent",
+  );
   const allKinds = Object.keys(CHECKPOINT_KIND_TRANSITIONS) as CheckpointKind[];
   for (const prior of allKinds) {
     for (const next of allKinds) {
@@ -2440,20 +4192,87 @@ test("journal transition legality and rolling project/entitlement quota equality
     journal,
   );
   assert.throws(() => journal.append("request.started", model.checkpoint()), /illegal-transition/u);
-  journal.append("acquisition.declared", model.checkpoint());
+  model.applyAcquisitionEvent("begin-preflight", model.exactEventEvidence(), {
+    journalEvent: "acquisition.declared",
+  });
   assert.throws(
     () => journal.append("selection.recorded", model.checkpoint()),
     /illegal-transition/u,
   );
-  model.budget.add("attempts", 1);
-  journal.append("request.started", model.checkpoint());
-  journal.append("request.succeeded", model.checkpoint());
-  journal.append("failure.recorded", model.checkpoint());
-  model.budget.add("attempts", 1);
+  model.applyAcquisitionEvent("preflight-approved");
+  model.applyAcquisitionEvent("credentials-loaded");
+  model.applyAcquisitionEvent("dispatch-started", model.exactEventEvidence(), {
+    budgetDelta: { attempts: 1 },
+    attemptTime: 1_000,
+    journalEvent: "request.started",
+  });
+  model.applyAcquisitionEvent("response-headers-accepted", model.exactEventEvidence(), {
+    journalEvent: "request.succeeded",
+  });
+  model.applyAcquisitionEvent("technical-failure-settled", model.exactEventEvidence(), {
+    journalEvent: "failure.recorded",
+  });
   assert.throws(
     () => journal.append("request.started", model.checkpoint()),
     /checkpoint-transition-invalid/u,
   );
+
+  const postStoreJournal = new MemoryContractJournal();
+  const postStoreArtifact = new ArtifactDouble();
+  const postStoreModel = new AcquisitionContractModel(
+    exactBoundaryRequest(0n),
+    new ProviderDouble(),
+    postStoreArtifact,
+    postStoreJournal,
+  );
+  postStoreModel.applyAcquisitionEvent("begin-preflight", postStoreModel.exactEventEvidence(), {
+    journalEvent: "acquisition.declared",
+  });
+  postStoreModel.applyAcquisitionEvent("preflight-approved");
+  postStoreModel.applyAcquisitionEvent("credentials-loaded");
+  postStoreModel.applyAcquisitionEvent("dispatch-started", postStoreModel.exactEventEvidence(), {
+    budgetDelta: { attempts: 1 },
+    attemptTime: 1_000,
+    journalEvent: "request.started",
+  });
+  postStoreModel.applyAcquisitionEvent(
+    "response-headers-accepted",
+    postStoreModel.exactEventEvidence(),
+    { journalEvent: "request.succeeded" },
+  );
+  postStoreModel.applyAcquisitionEvent("artifact-store-started");
+  const orphanReceipt = postStoreArtifact.store(Buffer.from("synthetic-orphan-proof"));
+  const afterStoreBeforeRejectedCommit = canonicalJson(postStoreModel.coordinatorSnapshot());
+  assert.throws(
+    () =>
+      postStoreModel.applyAcquisitionEvent(
+        "artifact-store-committed",
+        postStoreModel.exactEventEvidence(),
+        {
+          currentReceipt: orphanReceipt,
+          counterDelta: { artifactCalls: 1 },
+          journalEvent: "artifact.committed",
+          checkpointOverrides: { artifactDigest: hash("forged-post-store-digest") },
+        },
+      ),
+    /checkpoint-artifact-binding-invalid/u,
+  );
+  assert.equal(
+    canonicalJson(postStoreModel.coordinatorSnapshot()),
+    afterStoreBeforeRejectedCommit,
+    "a failed durable receipt proof cannot invent a cross-store rollback",
+  );
+  assert.equal(postStoreModel.currentState, "artifact-committing");
+  assert.equal(
+    postStoreJournal.rows().some((row) => row.event === "artifact.committed"),
+    false,
+  );
+  assert.equal(postStoreArtifact.receipts.length, 1);
+  assert.equal(postStoreArtifact.orphanDigests.length, 1);
+  postStoreArtifact.reconcileOrphans();
+  assert.equal(postStoreArtifact.receipts.length, 1);
+  assert.equal(postStoreArtifact.orphanDigests.length, 0);
+  assert.equal(postStoreArtifact.orphanReconciliations, 1);
 
   const quota = new RollingQuota(30, 2);
   assert.equal(quota.admit(0), true);
@@ -2480,29 +4299,47 @@ test("checkpoint exact shape, canonical hash chain, causal parents, and receipt 
   assert.equal(await model.run(), "complete");
   const rows = journal.rows();
   assert.doesNotThrow(() => validateJournalRows(rows));
-  const receipt = artifact.receipt;
-  assert.ok(receipt !== null);
+  const request = exactBoundaryRequest(0n);
+  const attemptRows = rows.filter((row) => row.event === "request.started");
+  const committedRows = rows.filter((row) => row.event === "artifact.committed");
+  const admittedRows = rows.filter((row) => row.event === "checkpoint.advanced");
   const sidecars: ImmutableReceiptSidecars = {
-    attempts: [{ attemptId: hash("attempt:1"), ordinal: 0 }],
-    artifacts: [
-      {
+    attempts: attemptRows.map((row) => ({
+      attemptId: attemptIdentity(
+        logicalPageIdentityHash(
+          requestIdentity(request),
+          row.checkpoint.pageOrdinal,
+          row.checkpoint.pageOrdinal === 0 ? null : row.checkpoint.currentTokenHash,
+        ),
+        row.checkpoint.attemptOrdinal,
+      ).attemptId,
+      ordinal: row.checkpoint.attemptOrdinal,
+    })),
+    artifacts: artifact.receipts.map((receipt) => {
+      const committed = committedRows.find(
+        (row) => row.checkpoint.artifactObservationId === receipt.observationId,
+      );
+      assert.ok(committed !== undefined);
+      const identities = artifactIdentities(receipt, committed.checkpoint.acquisitionObservationId);
+      return {
         observationId: receipt.observationId,
         digest: receipt.digest,
         sizeBytes: receipt.bytes.byteLength,
-        observationHash: hash(`observation:${receipt.observationId}`),
-        contentId: hash(`content:${receipt.digest}`),
-        rawArtifactId: hash(`raw:${receipt.observationId}:${receipt.digest}`),
-      },
-    ],
-    admittedPages: [
-      {
-        marketAcquisitionId: hash(`market-acquisition:${hash("acquisition-observation:1")}`),
-        pageOrdinal: 0,
-        recordCount: 3,
-        artifactDigest: receipt.digest,
-      },
-    ],
-    normalizations: [{ factCount: 3 }],
+        observationHash: identities.artifactObservationHash,
+        contentId: identities.artifactContentId,
+        rawArtifactId: identities.rawArtifactId,
+      };
+    }),
+    admittedPages: admittedRows.map((row) => ({
+      marketAcquisitionId: marketAcquisitionIdentity(
+        request,
+        acquisitionObservationIdentity(request, row.checkpoint.retrievalAttemptId),
+      ),
+      pageOrdinal: row.checkpoint.pageOrdinal,
+      recordCount: new ProviderDouble().recordCount(row.checkpoint.pageOrdinal),
+      artifactDigest: row.checkpoint.artifactDigest as string,
+    })),
+    normalizations: [{ factCount: 3 }, { factCount: 0 }, { factCount: 2 }],
   };
   assert.doesNotThrow(() => validateImmutableReceiptSidecars(rows, sidecars));
   const finalRow = rows.at(-1);
@@ -2570,21 +4407,32 @@ test("checkpoint exact shape, canonical hash chain, causal parents, and receipt 
       },
     ]),
   );
-  const forgedJournal = new MemoryContractJournal();
+  const forgedRows: JournalRow[] = [];
+  const firstCommitIndex = rows.findIndex((candidate) => candidate.event === "artifact.committed");
+  const firstAdmissionIndex = rows.findIndex(
+    (candidate) => candidate.event === "checkpoint.advanced",
+  );
   for (const row of rows) {
-    const afterCommit =
-      rows.findIndex((candidate) => candidate.event === "artifact.committed") <= row.sequence;
-    forgedJournal.append(row.event, {
+    const afterCommit = firstCommitIndex <= row.sequence;
+    const afterAdmission = firstAdmissionIndex <= row.sequence;
+    const draft = {
       ...row.checkpoint,
       artifactSizeBytes:
         row.checkpoint.artifactSizeBytes === null
           ? null
           : row.checkpoint.artifactSizeBytes + (afterCommit ? 1 : 0),
-      cumulativeVerifiedBytes: row.checkpoint.cumulativeVerifiedBytes + (afterCommit ? 1 : 0),
-    });
+      cumulativeVerifiedBytes: row.checkpoint.cumulativeVerifiedBytes + (afterAdmission ? 1 : 0),
+      priorJournalEntryHash: forgedRows.at(-1)?.checkpoint.journalEntryHash ?? "genesis",
+      journalEntryHash: "",
+    };
+    const forgedCheckpoint = {
+      ...draft,
+      journalEntryHash: deriveJournalEntryHash(draft),
+    };
+    forgedRows.push({ sequence: row.sequence, event: row.event, checkpoint: forgedCheckpoint });
   }
-  assert.doesNotThrow(() => validateJournalRows(forgedJournal.rows()));
-  assert.throws(() => validateImmutableReceiptSidecars(forgedJournal.rows(), sidecars));
+  assert.throws(() => validateJournalRows(forgedRows), /checkpoint-artifact-binding-invalid/u);
+  assert.throws(() => validateImmutableReceiptSidecars(forgedRows, sidecars));
 });
 
 test("retry/status/timeout matrix is deterministic and Retry-After is closed", () => {
@@ -2633,6 +4481,338 @@ test("retry/status/timeout matrix is deterministic and Retry-After is closed", (
     kind: "retry",
     delayMs: 30_000,
   });
+
+  const activeAttemptModel = (quotaEntitlementLimit: number = LIMITS.rateAttempts) => {
+    const model = new AcquisitionContractModel(
+      exactBoundaryRequest(0n),
+      new ProviderDouble(),
+      new ArtifactDouble(),
+      new MemoryContractJournal(),
+      "declared",
+      quotaEntitlementLimit,
+    );
+    model.applyAcquisitionEvent("begin-preflight");
+    model.applyAcquisitionEvent("preflight-approved");
+    model.applyAcquisitionEvent("credentials-loaded");
+    model.applyAcquisitionEvent("dispatch-started", model.exactEventEvidence(), {
+      budgetDelta: { attempts: 1 },
+      attemptTime: 0,
+    });
+    return model;
+  };
+  const firstRetryContext: RetryEventContext = {
+    failure: "pre-response",
+    pageAttemptNumber: 1,
+    acquisitionAttemptCount: 1,
+    retryAfter: null,
+    quotaClassification: "missing",
+  };
+  const rejectedRetryContexts: readonly RetryEventContext[] = [
+    ...([400, 401, 403, 404, 409, 422] as const).map((status) => ({
+      ...firstRetryContext,
+      failure: `http-${status}` as const,
+    })),
+    ...(["quota-exhausted", "ambiguous", "missing"] as const).map(
+      (quotaClassification): RetryEventContext => ({
+        ...firstRetryContext,
+        failure: "http-429",
+        retryAfter: "1",
+        quotaClassification,
+      }),
+    ),
+    ...(["-1", "Wed, 21 Oct 2015 07:28:00 GMT", "1.5", "31"] as const).map(
+      (retryAfter): RetryEventContext => ({
+        ...firstRetryContext,
+        failure: "http-429",
+        retryAfter,
+        quotaClassification: "temporary-throttling-proved",
+      }),
+    ),
+    { ...firstRetryContext, failure: "schema" },
+    { ...firstRetryContext, failure: "artifact" },
+    { ...firstRetryContext, pageAttemptNumber: LIMITS.pageAttempts },
+    { ...firstRetryContext, acquisitionAttemptCount: LIMITS.attempts },
+  ];
+  for (const retryContext of rejectedRetryContexts) {
+    const model = activeAttemptModel();
+    const before = canonicalJson(model.coordinatorSnapshot());
+    assert.equal(retryEventDecision(retryContext).kind, "stop");
+    assert.throws(
+      () =>
+        model.applyAcquisitionEvent(
+          "retry-cleanup-complete",
+          model.exactEventEvidence(retryContext),
+        ),
+      /acquisition-event-retry-proof-invalid/u,
+      canonicalJson(retryContext as unknown as JsonValue),
+    );
+    assert.equal(canonicalJson(model.coordinatorSnapshot()), before);
+  }
+
+  const wrongDelayModel = activeAttemptModel();
+  const beforeWrongDelay = canonicalJson(wrongDelayModel.coordinatorSnapshot());
+  assert.throws(
+    () =>
+      wrongDelayModel.applyAcquisitionEvent(
+        "retry-cleanup-complete",
+        wrongDelayModel.exactEventEvidence(firstRetryContext, {
+          retryDecision: { kind: "retry", delayMs: 2_000 },
+        }),
+      ),
+    /acquisition-event-proof-invalid/u,
+  );
+  assert.equal(canonicalJson(wrongDelayModel.coordinatorSnapshot()), beforeWrongDelay);
+
+  const exactRetryAfterModel = activeAttemptModel();
+  const exactRetryAfterContext: RetryEventContext = {
+    ...firstRetryContext,
+    failure: "http-429",
+    retryAfter: "30",
+    quotaClassification: "temporary-throttling-proved",
+  };
+  const exactRetryAfterEvidence = exactRetryAfterModel.exactEventEvidence(exactRetryAfterContext);
+  assert.deepEqual(exactRetryAfterEvidence.retryDecision, {
+    kind: "retry",
+    delayMs: LIMITS.retryAfterMs,
+  });
+  assert.doesNotThrow(() =>
+    exactRetryAfterModel.applyAcquisitionEvent("retry-cleanup-complete", exactRetryAfterEvidence),
+  );
+  assert.equal(exactRetryAfterModel.currentState, "waiting-retry");
+  assert.equal(exactRetryAfterModel.pendingRetryDelayMs, LIMITS.retryAfterMs);
+  assert.doesNotThrow(() =>
+    exactRetryAfterModel.applyAcquisitionEvent(
+      "begin-preflight",
+      exactRetryAfterModel.exactEventEvidence(null, {
+        retryDelayClockBasis: "same-session-monotonic",
+        retryDelayElapsedMs: LIMITS.retryAfterMs,
+        retryDelayMonotonicOrderValid: true,
+      }),
+    ),
+  );
+  assert.equal(exactRetryAfterModel.pendingRetryDelayMs, null);
+
+  for (const retryDelayProof of [
+    {
+      retryDelayClockBasis: "same-session-monotonic",
+      retryDelayElapsedMs: 999,
+      retryDelayMonotonicOrderValid: true,
+    },
+    {
+      retryDelayClockBasis: "same-session-monotonic",
+      retryDelayElapsedMs: 1_001,
+      retryDelayMonotonicOrderValid: true,
+    },
+    {
+      retryDelayClockBasis: null,
+      retryDelayElapsedMs: null,
+      retryDelayMonotonicOrderValid: null,
+    },
+    {
+      retryDelayClockBasis: "wall-clock",
+      retryDelayElapsedMs: 1_000,
+      retryDelayMonotonicOrderValid: true,
+    },
+    {
+      retryDelayClockBasis: "same-session-monotonic",
+      retryDelayElapsedMs: 1_000,
+      retryDelayMonotonicOrderValid: false,
+    },
+  ] as const) {
+    const model = activeAttemptModel();
+    model.applyAcquisitionEvent(
+      "retry-cleanup-complete",
+      model.exactEventEvidence(firstRetryContext),
+    );
+    const before = canonicalJson(model.coordinatorSnapshot());
+    assert.throws(
+      () =>
+        model.applyAcquisitionEvent(
+          "begin-preflight",
+          model.exactEventEvidence(null, retryDelayProof),
+        ),
+      /acquisition-retry-delay-proof-invalid/u,
+    );
+    assert.equal(canonicalJson(model.coordinatorSnapshot()), before);
+  }
+
+  const exactDeadlineModel = new AcquisitionContractModel(
+    exactBoundaryRequest(0n),
+    new ProviderDouble(),
+    new ArtifactDouble(),
+    new MemoryContractJournal(),
+  );
+  assert.doesNotThrow(() =>
+    exactDeadlineModel.applyAcquisitionEvent(
+      "begin-preflight",
+      exactDeadlineModel.exactEventEvidence(null, {
+        attemptElapsedMs: LIMITS.attemptDeadlineMs,
+        acquisitionElapsedMs: LIMITS.acquisitionDeadlineMs,
+      }),
+    ),
+  );
+  const ordinaryPreflightModel = new AcquisitionContractModel(
+    exactBoundaryRequest(0n),
+    new ProviderDouble(),
+    new ArtifactDouble(),
+    new MemoryContractJournal(),
+  );
+  const beforeUnexpectedRetryProof = canonicalJson(ordinaryPreflightModel.coordinatorSnapshot());
+  assert.throws(
+    () =>
+      ordinaryPreflightModel.applyAcquisitionEvent(
+        "begin-preflight",
+        ordinaryPreflightModel.exactEventEvidence(null, {
+          retryDelayClockBasis: "same-session-monotonic",
+          retryDelayElapsedMs: 1_000,
+          retryDelayMonotonicOrderValid: true,
+        }),
+      ),
+    /acquisition-retry-delay-proof-unexpected/u,
+  );
+  assert.equal(
+    canonicalJson(ordinaryPreflightModel.coordinatorSnapshot()),
+    beforeUnexpectedRetryProof,
+  );
+  for (const elapsedOverrides of [
+    {
+      attemptElapsedMs: LIMITS.attemptDeadlineMs + 1,
+      acquisitionElapsedMs: LIMITS.acquisitionDeadlineMs,
+    },
+    {
+      attemptElapsedMs: LIMITS.attemptDeadlineMs,
+      acquisitionElapsedMs: LIMITS.acquisitionDeadlineMs + 1,
+    },
+  ]) {
+    const model = new AcquisitionContractModel(
+      exactBoundaryRequest(0n),
+      new ProviderDouble(),
+      new ArtifactDouble(),
+      new MemoryContractJournal(),
+    );
+    const before = canonicalJson(model.coordinatorSnapshot());
+    assert.throws(
+      () =>
+        model.applyAcquisitionEvent(
+          "begin-preflight",
+          model.exactEventEvidence(null, elapsedOverrides),
+        ),
+      /acquisition-event-proof-invalid/u,
+    );
+    assert.equal(canonicalJson(model.coordinatorSnapshot()), before);
+  }
+
+  const identityModel = activeAttemptModel();
+  const firstAttemptCheckpoint = identityModel.checkpoint();
+  identityModel.applyAcquisitionEvent(
+    "retry-cleanup-complete",
+    identityModel.exactEventEvidence(firstRetryContext),
+  );
+  identityModel.applyAcquisitionEvent(
+    "begin-preflight",
+    identityModel.exactEventEvidence(null, {
+      retryDelayClockBasis: "same-session-monotonic",
+      retryDelayElapsedMs: 1_000,
+      retryDelayMonotonicOrderValid: true,
+    }),
+    {
+      currentAttemptOrdinal: 1,
+    },
+  );
+  identityModel.applyAcquisitionEvent("preflight-approved");
+  identityModel.applyAcquisitionEvent("credentials-loaded");
+  identityModel.applyAcquisitionEvent("dispatch-started", identityModel.exactEventEvidence(), {
+    budgetDelta: { attempts: 1 },
+    attemptTime: 1_000,
+  });
+  const secondAttemptCheckpoint = identityModel.checkpoint();
+  assert.equal(
+    secondAttemptCheckpoint.logicalPageIdentityHash,
+    firstAttemptCheckpoint.logicalPageIdentityHash,
+  );
+  assert.notEqual(secondAttemptCheckpoint.attemptId, firstAttemptCheckpoint.attemptId);
+  assert.notEqual(
+    secondAttemptCheckpoint.retrievalAttemptId,
+    firstAttemptCheckpoint.retrievalAttemptId,
+  );
+  assert.notEqual(
+    secondAttemptCheckpoint.acquisitionObservationId,
+    firstAttemptCheckpoint.acquisitionObservationId,
+  );
+  assert.notEqual(
+    secondAttemptCheckpoint.marketAcquisitionId,
+    firstAttemptCheckpoint.marketAcquisitionId,
+  );
+  const secondRetryContext: RetryEventContext = {
+    ...firstRetryContext,
+    pageAttemptNumber: 2,
+    acquisitionAttemptCount: 2,
+  };
+  const secondRetryEvidence = identityModel.exactEventEvidence(secondRetryContext);
+  assert.deepEqual(secondRetryEvidence.retryDecision, { kind: "retry", delayMs: 2_000 });
+  identityModel.applyAcquisitionEvent("retry-cleanup-complete", secondRetryEvidence);
+  identityModel.applyAcquisitionEvent(
+    "begin-preflight",
+    identityModel.exactEventEvidence(null, {
+      retryDelayClockBasis: "same-session-monotonic",
+      retryDelayElapsedMs: 2_000,
+      retryDelayMonotonicOrderValid: true,
+    }),
+    {
+      currentAttemptOrdinal: 2,
+    },
+  );
+  identityModel.applyAcquisitionEvent("preflight-approved");
+  identityModel.applyAcquisitionEvent("credentials-loaded");
+  identityModel.applyAcquisitionEvent("dispatch-started", identityModel.exactEventEvidence(), {
+    budgetDelta: { attempts: 1 },
+    attemptTime: 2_000,
+  });
+  const exhaustedPageContext: RetryEventContext = {
+    ...firstRetryContext,
+    pageAttemptNumber: LIMITS.pageAttempts,
+    acquisitionAttemptCount: 3,
+  };
+  const beforeExhaustedPage = canonicalJson(identityModel.coordinatorSnapshot());
+  assert.equal(retryEventDecision(exhaustedPageContext).kind, "stop");
+  assert.throws(
+    () =>
+      identityModel.applyAcquisitionEvent(
+        "retry-cleanup-complete",
+        identityModel.exactEventEvidence(exhaustedPageContext),
+      ),
+    /acquisition-event-retry-proof-invalid/u,
+  );
+  assert.equal(canonicalJson(identityModel.coordinatorSnapshot()), beforeExhaustedPage);
+
+  const quotaModel = activeAttemptModel(1);
+  quotaModel.applyAcquisitionEvent(
+    "retry-cleanup-complete",
+    quotaModel.exactEventEvidence(firstRetryContext),
+  );
+  quotaModel.applyAcquisitionEvent(
+    "begin-preflight",
+    quotaModel.exactEventEvidence(null, {
+      retryDelayClockBasis: "same-session-monotonic",
+      retryDelayElapsedMs: 1_000,
+      retryDelayMonotonicOrderValid: true,
+    }),
+    {
+      currentAttemptOrdinal: 1,
+    },
+  );
+  quotaModel.applyAcquisitionEvent("preflight-approved");
+  quotaModel.applyAcquisitionEvent("credentials-loaded");
+  const beforeQuotaRejection = canonicalJson(quotaModel.coordinatorSnapshot());
+  assert.throws(
+    () =>
+      quotaModel.applyAcquisitionEvent("dispatch-started", quotaModel.exactEventEvidence(), {
+        budgetDelta: { attempts: 1 },
+        attemptTime: 1_000,
+      }),
+    /acquisition-event-quota-bound/u,
+  );
+  assert.equal(canonicalJson(quotaModel.coordinatorSnapshot()), beforeQuotaRejection);
 });
 
 test("provider/body/schema/store/read fault doubles enforce cleanup and causal journal writes", async () => {
@@ -2684,10 +4864,11 @@ test("provider/body/schema/store/read fault doubles enforce cleanup and causal j
   }
 });
 
-test("pagination rejects loops, gaps, duplicate positions, substitution, and post-terminal pages", () => {
+test("integrated pagination accepts physical dedup but rejects duplicate deliveries, positions, substitutions, loops, and post-terminal pages", async () => {
   const requestHash = hash("closed-logical-request");
   const first: Page = {
     ordinal: 0,
+    deliveryObservationId: "synthetic-delivery-observation-0",
     requestHash,
     precedingHash: null,
     nextHash: hash("continuation-1"),
@@ -2696,10 +4877,11 @@ test("pagination rejects loops, gaps, duplicate positions, substitution, and pos
   };
   const second: Page = {
     ordinal: 1,
+    deliveryObservationId: "synthetic-delivery-observation-1",
     requestHash,
     precedingHash: first.nextHash,
     nextHash: null,
-    digest: hash("page-1"),
+    digest: first.digest,
     records: 1,
   };
   assert.equal(verifyChain([first, second], requestHash).length, 2);
@@ -2707,7 +4889,7 @@ test("pagination rejects loops, gaps, duplicate positions, substitution, and pos
     [first, { ...second, precedingHash: hash("gap") }],
     [first, { ...second, ordinal: 0 }],
     [first, { ...second, requestHash: hash("substitution") }],
-    [first, { ...second, digest: first.digest }],
+    [first, { ...second, deliveryObservationId: first.deliveryObservationId }],
     [{ ...first, nextHash: first.digest }, second],
     [{ ...first, nextHash: null }, second],
   ];
@@ -2727,64 +4909,99 @@ test("pagination rejects loops, gaps, duplicate positions, substitution, and pos
     /token-loop/u,
     "the same returned continuation hash cannot appear twice",
   );
+  for (const [paginationFault, exactCalls] of [
+    ["loop", 2],
+    ["substitution", 1],
+    ["gap", 1],
+    ["duplicate-position", 1],
+    ["duplicate-page", 2],
+    ["page-after-terminal", 3],
+  ] as const) {
+    const provider = new ProviderDouble();
+    const journal = new MemoryContractJournal();
+    const model = new AcquisitionContractModel(
+      exactBoundaryRequest(0n),
+      provider,
+      new ArtifactDouble(),
+      journal,
+    );
+    const outcome = await model.run({ paginationFault }).catch(() => "closed-rejection" as const);
+    assert.notEqual(outcome, "complete", paginationFault);
+    assert.equal(provider.requestCalls, exactCalls, paginationFault);
+    const events = journal.rows().map((row) => row.event);
+    assert.equal(events.includes("selection.recorded"), false, paginationFault);
+    if (paginationFault === "page-after-terminal") {
+      const terminalIndex = events.indexOf("chain.complete");
+      assert.ok(terminalIndex >= 0);
+      assert.equal(
+        events.slice(terminalIndex + 1).includes("acquisition.declared"),
+        false,
+        "a terminal chain cannot be extended with another declared page",
+      );
+      assert.equal(
+        provider.requestCalls,
+        provider.pageCount(),
+        "the rejected page-after-terminal event performs zero additional dispatch",
+      );
+    }
+  }
+  const completedArtifact = new ArtifactDouble();
+  const completed = new AcquisitionContractModel(
+    exactBoundaryRequest(0n),
+    new ProviderDouble(),
+    completedArtifact,
+    new MemoryContractJournal(),
+  );
+  assert.equal(await completed.run(), "complete");
+  assert.equal(completedArtifact.receipts[0]?.digest, completedArtifact.receipts[1]?.digest);
+  assert.notEqual(
+    completedArtifact.receipts[0]?.observationId,
+    completedArtifact.receipts[1]?.observationId,
+    "identical physical bytes remain valid only as distinct delivery observations",
+  );
+  assert.throws(
+    () => completed.applyAcquisitionEvent("begin-preflight"),
+    /acquisition-transition-invalid/u,
+  );
 });
 
 test("frozen acquisition/request identities exclude page layout while private configuration and page hashes bind it", () => {
-  const marketAcquisitionId = (acquisitionObservationId: string): string =>
-    hash(
-      canonicalJson({
-        acquisitionObservationId,
-        source: "frozen-source-tuple",
-        interval: "frozen-query-interval",
-        sortOrder: "asc",
-        routePolicyVersion: "frozen-route-policy",
-      }),
-    );
-  const initialMarketAcquisitionId = marketAcquisitionId("physical-observation-0");
-  const retryMarketAcquisitionId = marketAcquisitionId("physical-observation-1");
-  assert.notEqual(initialMarketAcquisitionId, retryMarketAcquisitionId);
-  const requestIdentityHash = hash("closed-query-without-page-position-or-continuation");
-  const acquisitionConfigurationHash = (pageLimit: number): string =>
-    hash(canonicalJson({ requestIdentityHash, pageLimit, policy: "closed-project-ceilings-v1" }));
-  const acceptedConfigurationHash = acquisitionConfigurationHash(10_000);
-  const changedConfigurationHash = acquisitionConfigurationHash(7);
-  assert.notEqual(acceptedConfigurationHash, changedConfigurationHash);
-  assert.equal(
-    initialMarketAcquisitionId,
-    marketAcquisitionId("physical-observation-0"),
-    "page-limit configuration must not enter the frozen PR 2D market-acquisition preimage",
-  );
-  assert.equal(requestIdentityHash, hash("closed-query-without-page-position-or-continuation"));
-  assert.throws(() => {
-    if (changedConfigurationHash !== acceptedConfigurationHash) {
-      throw rejection("restart-configuration-conflict");
-    }
-  }, /restart-configuration-conflict/u);
-  const logicalPageIdentityHash = (
-    pageOrdinal: number,
-    currentContinuationHash: string | null,
-  ): string =>
-    hash(
-      canonicalJson({
-        requestIdentityHash,
-        pageOrdinal,
-        currentContinuationHash,
-      }),
-    );
-  const firstPage = logicalPageIdentityHash(0, null);
-  const secondPage = logicalPageIdentityHash(1, hash("continuation-material-hash"));
+  const request = exactBoundaryRequest(0n);
+  const changedLimitRequest = {
+    ...request,
+    fields: { ...request.fields, limit: "7" },
+  };
+  const requestIdentityHash = requestIdentity(request);
+  assert.equal(requestIdentity(changedLimitRequest), requestIdentityHash);
+  assert.notEqual(configurationHash(request), configurationHash(changedLimitRequest));
+  const firstPage = logicalPageIdentityHash(requestIdentityHash, 0, null);
+  const continuationHash = privateTokenHash("synthetic-private-continuation-one");
+  const secondPage = logicalPageIdentityHash(requestIdentityHash, 1, continuationHash);
   assert.notEqual(firstPage, secondPage);
-  const firstAttempt = hash(
-    canonicalJson({ logicalPageIdentityHash: secondPage, attemptOrdinal: 0 }),
+  const firstAttempt = attemptIdentity(secondPage, 0);
+  const retryAttempt = attemptIdentity(secondPage, 1);
+  assert.match(firstAttempt.attemptId, /^mat1_[0-9a-f]{64}$/u);
+  assert.match(firstAttempt.retrievalAttemptId, /^rat1_[0-9a-f]{64}$/u);
+  assert.notEqual(firstAttempt.attemptId, retryAttempt.attemptId);
+  const initialAcquisitionObservation = acquisitionObservationIdentity(
+    request,
+    firstAttempt.retrievalAttemptId,
   );
-  const retryAttempt = hash(
-    canonicalJson({ logicalPageIdentityHash: secondPage, attemptOrdinal: 1 }),
+  const retryAcquisitionObservation = acquisitionObservationIdentity(
+    request,
+    retryAttempt.retrievalAttemptId,
   );
-  assert.notEqual(firstAttempt, retryAttempt);
+  const initialMarketAcquisitionId = marketAcquisitionIdentity(
+    request,
+    initialAcquisitionObservation,
+  );
+  const retryMarketAcquisitionId = marketAcquisitionIdentity(request, retryAcquisitionObservation);
+  assert.match(initialMarketAcquisitionId, /^maq1_[0-9a-f]{64}$/u);
+  assert.notEqual(initialMarketAcquisitionId, retryMarketAcquisitionId);
   assert.equal(
-    requestIdentityHash,
-    hash("closed-query-without-page-position-or-continuation"),
-    "page advancement must not alter acquisition-wide request identity",
+    marketAcquisitionIdentity(changedLimitRequest, initialAcquisitionObservation),
+    initialMarketAcquisitionId,
+    "page-limit configuration must not enter the frozen PR 2D acquisition preimage",
   );
 });
 
@@ -2866,20 +5083,31 @@ test("restart from every crash boundary derives retry/resume from durable journa
       assert.equal(artifact.orphanDigests.length, 1);
     }
     const callsAtCrash = provider.requestCalls;
+    const callsByPageAtCrash = new Map(provider.requestsByPage);
+    const committedPagesAtCrash = new Set(
+      journal
+        .rows()
+        .filter((row) => row.event === "artifact.committed")
+        .map((row) => row.checkpoint.pageOrdinal),
+    );
     const readsAtCrash = artifact.readCalls;
     await model.resume(configurationHash(request));
     const events = journal.rows().map((row) => row.event);
     assert.equal(events.at(-1), "selection.recorded", crashAt);
     assert.equal(events.filter((event) => event === "selection.recorded").length, 1, crashAt);
-    if (
-      crashAt === "before-request" ||
-      crashAt === "request-started" ||
-      crashAt === "during-body" ||
-      crashAt === "vault-side-effect-before-receipt"
-    ) {
-      assert.equal(provider.requestCalls, callsAtCrash + 1, crashAt);
-    } else {
-      assert.equal(provider.requestCalls, callsAtCrash, crashAt);
+    const remainingDispatches = Array.from(
+      { length: provider.pageCount() },
+      (_, pageOrdinal) => pageOrdinal,
+    ).filter((pageOrdinal) => !committedPagesAtCrash.has(pageOrdinal)).length;
+    assert.equal(provider.requestCalls, callsAtCrash + remainingDispatches, crashAt);
+    for (const pageOrdinal of committedPagesAtCrash) {
+      assert.equal(
+        provider.requestsByPage.get(pageOrdinal),
+        callsByPageAtCrash.get(pageOrdinal),
+        `${crashAt}: verified/committed page ${pageOrdinal} must not redispatch`,
+      );
+    }
+    if (remainingDispatches === 0) {
       assert.ok(artifact.readCalls > readsAtCrash, `restart must reverify ${crashAt}`);
     }
     const committedIndex = events.indexOf("artifact.committed");
@@ -3002,34 +5230,54 @@ test("abstract replay is invariant at page sizes 1, 2, 7, and 10,000", () => {
 test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state", async () => {
   const request = exactBoundaryRequest(0n);
   const baselineJournal = new MemoryContractJournal();
+  const baselineArtifact = new ArtifactDouble();
   const baselineModel = new AcquisitionContractModel(
     request,
     new ProviderDouble(),
-    new ArtifactDouble(),
+    baselineArtifact,
     baselineJournal,
   );
   assert.equal(await baselineModel.run(), "complete");
   const baselineRows = baselineJournal.rows();
-  const durableBytes = Buffer.from("ambercobaltfern");
+  const durableObservationReceipts = baselineArtifact.receipts.map((receipt) => ({
+    ...receipt,
+    bytes: Uint8Array.from(receipt.bytes),
+  }));
+  assert.equal(durableObservationReceipts.length, 3);
+  assert.equal(new Set(durableObservationReceipts.map((receipt) => receipt.observationId)).size, 3);
+  assert.equal(
+    new Set(durableObservationReceipts.map((receipt) => receipt.digest)).size,
+    2,
+    "two distinct delivery observations physically deduplicate identical page bytes",
+  );
   const orders = [
     ["amber", "cobalt", "fern"],
     ["fern", "amber", "cobalt"],
     ["cobalt", "fern", "amber"],
   ] as const;
 
-  const restoreArtifact = (rows: readonly JournalRow[]): ArtifactDouble => {
+  const restoreArtifact = (
+    rows: readonly JournalRow[],
+    enumerationPageSize: number,
+    direction: "asc" | "desc",
+  ): ArtifactDouble => {
     const artifact = new ArtifactDouble();
-    const committed = [...rows].reverse().find((row) => row.event === "artifact.committed");
-    if (committed !== undefined) {
-      const checkpoint = committed.checkpoint;
-      assert.ok(checkpoint.artifactObservationId !== null);
-      assert.ok(checkpoint.artifactDigest !== null);
-      assert.equal(hash(durableBytes.toString("hex")), checkpoint.artifactDigest);
-      artifact.receipt = {
-        observationId: checkpoint.artifactObservationId,
-        digest: checkpoint.artifactDigest,
-        bytes: Uint8Array.from(durableBytes),
-      };
+    const committedObservationIds = new Set(
+      rows
+        .filter((row) => row.event === "artifact.committed")
+        .map((row) => row.checkpoint.artifactObservationId),
+    );
+    const selected = durableObservationReceipts
+      .filter((receipt) => committedObservationIds.has(receipt.observationId))
+      .sort((left, right) =>
+        direction === "asc"
+          ? left.deliveryOrdinal - right.deliveryOrdinal
+          : right.deliveryOrdinal - left.deliveryOrdinal,
+      );
+    for (let offset = 0; offset < selected.length; offset += enumerationPageSize) {
+      for (const receipt of selected.slice(offset, offset + enumerationPageSize)) {
+        artifact.restore(receipt);
+      }
     }
     return artifact;
   };
@@ -3059,11 +5307,12 @@ test("memory and SQLite close/reopen agree after every durable checkpoint with f
       const prefix = baselineRows.slice(0, cutoff);
       const backendPageSize = [1, 2, 7, 10_000][cutoff % 4] as number;
       const order = orders[cutoff % orders.length] as readonly string[];
+      const direction = cutoff % 2 === 0 ? "asc" : "desc";
 
       const memoryJournal = new MemoryContractJournal();
       appendRows(memoryJournal, prefix, backendPageSize);
       const memoryProvider = new ProviderDouble(order);
-      const memoryArtifact = restoreArtifact(prefix);
+      const memoryArtifact = restoreArtifact(prefix, backendPageSize, direction);
       const memoryModel = new AcquisitionContractModel(
         request,
         memoryProvider,
@@ -3074,13 +5323,17 @@ test("memory and SQLite close/reopen agree after every durable checkpoint with f
       await memoryModel.resume(configurationHash(request));
 
       const filename = join(directory, `checkpoint-${cutoff}.sqlite`);
-      let sqliteJournal = new SqliteContractJournal(filename);
+      let sqliteJournal = new SqliteContractJournal(filename, backendPageSize, direction);
       appendRows(sqliteJournal, prefix, backendPageSize);
       sqliteJournal.close();
-      sqliteJournal = new SqliteContractJournal(filename);
+      sqliteJournal = new SqliteContractJournal(filename, backendPageSize, direction);
       assert.equal(restartDecision(sqliteJournal.rows()), expectedDecision);
       const sqliteProvider = new ProviderDouble(order);
-      const sqliteArtifact = restoreArtifact(sqliteJournal.rows());
+      const sqliteArtifact = restoreArtifact(
+        sqliteJournal.rows(),
+        backendPageSize,
+        direction === "asc" ? "desc" : "asc",
+      );
       const sqliteModel = new AcquisitionContractModel(
         request,
         sqliteProvider,

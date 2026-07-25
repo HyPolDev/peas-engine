@@ -26,6 +26,8 @@ zero-call path rather than a skipped test.
 | Recompute FMP provider, dataset, feed, aftermarket-quote channel, aftermarket-trade channel | Exact equality with the five frozen IDs |
 | Any changed preimage member or endpoint-channel identity | `reject-zero-call` |
 | Every hostile class over all 11 real preimages, including a mutation of the real channel `factKinds` set-like member | integrated guarded rejection with credential, transport construction, DNS/network/provider, artifact, normalization, selection, and post-return counters all exactly zero |
+| Controlled valid synthetic channel with canonical multi-member `factKinds=["bar","quote"]` | exact derived identity and guarded positive path |
+| Same controlled valid members reversed to `["quote","bar"]` | integrated guarded rejection with every side-effect counter exactly zero; no member substitution |
 | Live acquisition default/flag absent or false | `reject-zero-call` |
 | Exact zero-spend preimage, `mzp1_b2f575e234dcd7f05eb5fcc03060420313b56e45aff87c961c3771d1c5cf3b9e`, run decision `allow`, `authorizationMode=p1-09-approved`, capability `historical-market-reference`, fallback `none` | accept |
 | Missing, forged, mutated, stale, unknown, or rejecting zero-spend proof; wrong authorization mode; unknown/account/subscription capability; or fallback | `reject-zero-call` |
@@ -113,6 +115,23 @@ Retry delay is exactly `1,000 ms` then `2,000 ms`; there is no jitter.
 Every retry preserves logical request/page identity and creates distinct retrieval-attempt,
 acquisition-observation, frozen PR 2D market-acquisition, and attempt identities.
 
+The executable coordinator accepts `waiting-retry` only from `attempt-active` with a closed retry
+context containing failure class, page-attempt number, cumulative acquisition attempts, raw
+`Retry-After`, and quota classification. It independently recomputes the exact retry/stop decision
+and 1,000/2,000 ms or accepted `Retry-After` delay; a caller-supplied wrong delay, nonretryable
+class, exhausted page/acquisition attempt budget, or unproved 429 leaves the coordinator, journal,
+budgets, and counters byte-equivalent. The same event API admits the exact 30,000 ms attempt and
+300,000 ms acquisition deadline and rejects one millisecond over. Its dispatch event applies the
+lesser entitlement/project rolling quota before mutating attempts or counters. A successful retry
+keeps the logical-page identity fixed while changing attempt, retrieval, acquisition-observation,
+and frozen PR 2D market-acquisition identities. The accepted retry event atomically stores the
+exact deterministic pending delay. Only exact elapsed equality on a valid same-session monotonic
+clock may clear it and move `waiting-retry -> preflighting`; one millisecond short or long, missing
+proof, wall-only proof, or monotonic regression rejects byte-equivalently. The executable paths
+exercise 1,000, 2,000, and accepted 30,000 ms delays without timers, sleeps, or jitter. Ordinary
+declaration and checkpoint-continuation preflight reject retry-delay proof and require no pending
+retry state.
+
 ## Pagination and completeness
 
 | Vector | Expected |
@@ -121,7 +140,8 @@ acquisition-observation, frozen PR 2D market-acquisition, and attempt identities
 | Token hash bound to preceding verified page and unchanged request identity | accept |
 | Repeated token or loop | terminal pagination failure |
 | Gap, skipped ordinal, or duplicate ordinal | terminal pagination failure |
-| Duplicate page digest at another position | quarantine/terminal |
+| Identical page bytes at another position with a distinct verified delivery observation | physical digest deduplication allowed; page admission remains distinct |
+| Duplicate asserted delivery observation or duplicate ordinal at another position | quarantine/terminal |
 | Cross-query token or query substitution | terminal pre-dispatch |
 | Page after terminal continuation | terminal |
 | Complete chain with every page committed then verified before checkpoint | eligible for normalization |
@@ -149,7 +169,7 @@ fields into the frozen PR 2D preimage.
 
 | Vector | Expected |
 | --- | --- |
-| Identical bytes redelivered for the same asserted delivery | physical deduplication allowed; delivery observation preserved |
+| Identical bytes redelivered as a distinct delivery observation | physical deduplication allowed; each delivery observation preserved |
 | Different bytes for the same asserted delivery/revision | quarantine; no primary selection |
 | Replacement with distinct supported revision evidence | distinct revision admitted under unchanged PR 2D rules |
 | Replacement without supported revision evidence | quarantine; never infer correction semantics |
@@ -213,8 +233,20 @@ states and every allowed edge in acquisition-state-machine sections 5 and 6. The
 complete 20-by-20 Cartesian transition matrix, and separately evaluates the complete 14-by-14
 checkpoint-kind matrix, accepting every listed edge and rejecting every unlisted edge.
 
+The acquisition coordinator additionally owns `currentState` and changes it only through
+`applyAcquisitionEvent(event, exactEvidence)`. That operation validates the closed evidence shape,
+stable request/configuration/journal identities, run nonce, cumulative budgets, quota evidence,
+attempt/acquisition deadlines, resource settlement, token relation, page chain, and retry proof
+before applying an edge. The executable Cartesian matrix invokes this same model operation for
+every event from every current state and proves failed evidence leaves state unchanged.
+
 Every checkpoint uses the exact closed field names from the artifact/replay contract, including
-`acquisitionConfigurationHash`. The executable validator rejects missing/unknown fields, sequence
+`runSessionNonce`, `retrievalAttemptId`, `acquisitionConfigurationHash`,
+`currentContinuationBindingHash`, and `nextContinuationBindingHash`. Request, configuration,
+logical-page, attempt-control, acquisition-observation, frozen PR 2D market-acquisition, journal,
+private-token, continuation-binding, journal-entry, and page-chain values use the exact frozen
+domains and object preimages and are independently recomputed with a separate canonicalizer and
+eight-byte length framing. The executable validator rejects missing/unknown fields, sequence
 or prior-hash breaks, canonical entry-hash mismatch, causal-parent mismatch, and cached cumulative
 budgets that do not reconcile to independently supplied immutable
 attempt/page/artifact/normalization receipts. It also validates state-dependent token semantics,
@@ -224,6 +256,14 @@ whose size differs from its immutable artifact receipt is rejected. Restart fres
 committed artifact before use, including terminal histories and normalization restarts. Canonical
 multi-artifact enumeration preserves each delivery observation, permits physical digest
 deduplication, and is invariant to backend enumeration order.
+
+The live synthetic chain has three pages and three distinct delivery observations. Pages zero and
+one intentionally share identical bytes and one physical digest while retaining separate
+attempt/acquisition/artifact observations; page two has a second physical digest and the terminal
+marker. Page-chain admission is computed first from the verified receipt and prospective admitted
+totals, then the nonterminal continuation binding is computed from that resulting page-chain hash,
+and both are persisted atomically. Restart re-verifies all committed observations, never
+redispatches a committed page, and requests only the next incomplete ordinal.
 
 ## Required validation
 

@@ -159,8 +159,68 @@ page, not a different acquisition-wide request.
 
 ### 3.2 Attempts and deliveries
 
-Every physical dispatch has a new `attemptId` that binds `logicalPageIdentityHash`, the zero-based
-attempt ordinal for that logical page, and a run/session nonce. A retry preserves
+The attempt-control identity uses the exact framing from the artifact/replay contract:
+
+```text
+utf8(s) = exact UTF-8 bytes of s
+lp(b) = uint64be(byteLength(b)) || b
+H(domain, preimage) =
+  SHA-256(lp(utf8(domain)) || lp(utf8(RFC8785(preimage))))
+
+attemptControlHash =
+  H("peas/market-acquisition-attempt-control/v1", {
+    logicalPageIdentityHash,
+    attemptOrdinal,
+    runSessionNonce
+  })
+
+attemptId = "mat1_" + attemptControlHash
+retrievalAttemptId = "rat1_" + attemptControlHash
+```
+
+The preimage is one exact inert JSON object with only the three shown fields.
+`logicalPageIdentityHash` is the exact lowercase 64-hex P1-10 page identity, `attemptOrdinal` is a
+non-negative canonical JSON safe integer, and `runSessionNonce` is the non-secret bounded
+identifier durably generated once for the run and preserved across restart. Missing, extra,
+inherited, accessor, proxy, symbol, unsafe-number, alternate-domain, alternate-prefix,
+alternate-canonicalization, and alternate-framing forms reject before credential read or dispatch.
+
+`attemptId` is the private P1-10 coordinator identity. `retrievalAttemptId` is a distinct string
+identity used only in the already frozen PR 2D `acquisitionObservationId` preimage. Sharing the
+same control digest does not make the prefixed identities interchangeable: stripping, changing,
+or substituting `mat1_`, `rat1_`, `aob1_`, or `maq1_` is invalid. `attemptId` never replaces
+`retrievalAttemptId`, `acquisitionObservationId`, or `marketAcquisitionId` and enters none of their
+accepted preimages. The accepted derivations remain:
+
+```text
+acquisitionObservationId =
+  "aob1_" + H("peas/acquisition-observation/v1", {
+    provider,
+    retrievalAttemptId,
+    sanitizedRequestIdentityHash,
+    routeLabel
+  })
+
+marketAcquisitionId =
+  "maq1_" + H("peas/market-acquisition-attempt/v1", {
+    acquisitionObservationId,
+    providerId,
+    datasetId,
+    feedId,
+    endpointChannelId,
+    entitlementSnapshotId,
+    instrumentIds,
+    requestedFactKinds,
+    queryStartNs,
+    queryEndNs,
+    sortOrder,
+    routePolicyVersion
+  })
+```
+
+PR 2E adds no field or alternate derivation to those accepted objects. Every physical dispatch
+increments the logical page's attempt ordinal and therefore has a new `attemptId` and
+`retrievalAttemptId`; an abandoned ordinal is never reused. A retry preserves
 `requestIdentityHash`, page ordinal, token hash, and `logicalPageIdentityHash`; it creates a new
 `retrievalAttemptId`, `acquisitionObservationId`, `marketAcquisitionId`, `attemptId`, trusted
 request-start evidence, and `acquisition.declared -> request.started` ledger chain.
@@ -287,6 +347,83 @@ Only these transitions exist:
 There is no transition from a partially verified page chain to `normalizing`,
 `ready-for-selection`, or `selecting`.
 
+### 6.1 Integrated executable-model obligation
+
+The executable contract model is one acquisition coordinator, not an adjacency table plus
+detached retry, quota, pagination, and journal helpers. Each model instance owns exactly one
+private `currentState`, initialized from the validated durable journal and changed only by one
+closed transition operation:
+
+```text
+applyAcquisitionEvent(currentModel, event, exactEvidence)
+  -> nextModel | closed rejection
+```
+
+The caller supplies neither `fromState` nor `toState`. The operation reads `currentState`, derives
+the only permitted target from the section 6 table, validates the edge-specific evidence, appends
+the required ledger/journal evidence atomically where applicable, and only then replaces
+`currentState`. An unknown event, a table-disallowed edge, missing/extra evidence, or failed proof
+returns a closed rejection without changing state, counters, hashes, token consumption, artifacts,
+credentials, transport, normalization, or selection.
+
+The same model owns and validates, at minimum:
+
+- `requestIdentityHash`, `acquisitionConfigurationHash`, `marketAcquisitionJournalId`, and
+  `runSessionNonce`;
+- exact `currentState`, terminal/lane-disabled status, and the last durable checkpoint;
+- current page ordinal, `logicalPageIdentityHash`, current token hash/material,
+  `currentContinuationBindingHash`, and all previously consumed token hashes;
+- current `attemptOrdinal`, exact `attemptId`, `retrievalAttemptId`,
+  `acquisitionObservationId`, and `marketAcquisitionId`;
+- cumulative acquisition/page attempts, admitted pages, verified bytes, records, and normalized
+  facts;
+- immutable acquisition-deadline basis, current attempt-deadline basis, deterministic retry
+  ordinal/delay, and rolling quota-window attempt starts;
+- active request/store/read/timer/listener/abort-resource ownership; and
+- admitted artifact receipts, page-chain hash, next token relation,
+  `nextContinuationBindingHash`, and complete-chain/normalization/selection receipts.
+
+No helper may mutate or decide one of those values outside `applyAcquisitionEvent`. Read-only pure
+derivation functions may recompute an exact identity or prospective counter, but the transition
+operation must compare the result to the full model and durable evidence before admitting an edge.
+
+Every edge integrates all applicable controls:
+
+1. `declared -> preflighting` reconstructs the exact request/configuration/journal identities,
+   original acquisition deadline, counters, and page/token authority from the journal.
+2. `preflighting -> dispatch-ready` validates the ordered section 7 gates through the same model,
+   reserves the next unused attempt ordinal, recomputes all four attempt/acquisition identities,
+   proves the per-page and acquisition attempt ceilings, admits the proposed start into the
+   rolling quota window, proves both deadline constraints and the trusted historical boundary,
+   and durably records `acquisition.declared -> request.started`.
+3. `credential-ready -> attempt-active` checks the single-concurrency ceiling and exact active
+   attempt identities immediately before the sole transport-call increment.
+4. Every edge to `waiting-retry` requires an allowed section 8 failure class, completely settled
+   resources, unchanged logical-page identity, remaining attempt budgets, and the exact next
+   deterministic delay. The return edge re-runs the entire preflight; elapsed delay alone grants
+   no authority.
+5. `artifact-verifying -> page-verified` validates the exact artifact receipt, consumed byte and
+   record bounds, page ordinal, current one-use continuation authority, returned token grammar,
+   non-repetition, and terminal relation without advancing admitted counters.
+6. `page-verified -> checkpointing` computes prospective admitted page/byte/record totals and
+   rejects one-over before mutation. `checkpointing` first computes the exact admitted
+   `pageChainHash`, then computes a nonterminal `nextContinuationBindingHash` from that resulting
+   hash, and atomically commits both with the counters. A terminal page stores a null next binding.
+7. `checkpointing -> preflighting` consumes the current binding exactly once and authorizes only
+   the immediately following page. `checkpointing -> chain-complete` proves one contiguous
+   terminal chain with no in-flight resource.
+8. No normalization edge is available until every admitted artifact is freshly verified and the
+   complete chain, ceilings, identities, and journal hashes reconcile. No selection edge is
+   available until the complete durable normalization corpus validates.
+9. Every terminal edge proves resource settlement and makes subsequent calls unable to dispatch,
+   normalize, select, consume a token, advance a counter, or append a nonterminal checkpoint.
+
+The executable matrix must drive every legal edge with its required evidence and every illegal
+ordered pair through this same state-owning operation. Merely checking the Cartesian product of a
+transcribed adjacency map, or testing retry/quota/deadline/ceiling/pagination helpers without
+calling the integrated operation, is insufficient. Crash/restart tests must reconstruct this same
+model from each durable prefix; they may not set `currentState` or counters directly.
+
 ## 7. Non-secret preflight order
 
 For each physical attempt, preflight evaluates this exact order without reading credentials:
@@ -401,36 +538,50 @@ method returns.
 Raw page tokens are secret-like private control material:
 
 - never logged, placed in an error, ledger fact, public evidence, fixture output, URL record,
-  identity preimage, or repository file;
+  public/semantic identity preimage, or repository file;
 - stored only in the private durable journal under the configured runtime root;
 - bounded before hashing or persistence;
 - passed back byte-for-byte without decoding, normalization, trimming, or interpretation; and
 - destroyed from transient memory when no longer needed.
 
-The private token hash is a domain-separated digest of private token bytes. Each continuation token
-record binds:
+The private token hash is the exact
+`H("peas/market-acquisition-private-token/v1",{opaqueTokenMaterial})` digest from the artifact/replay
+contract; this private control hash is the only identity preimage that contains raw token
+material. Each continuation record uses the exact
+`peas/market-acquisition-continuation-binding/v1` preimage and binds:
 
 ```text
 preceding successful page's attempt-scoped marketAcquisitionId
-unchanged request identity excluding page token
+unchanged requestIdentityHash
+preceding logicalPageIdentityHash
 preceding page ordinal
 preceding verified artifact observation ID and digest
-preceding page-chain hash
+preceding page's resulting admitted pageChainHash
 next page ordinal
-token hash
+next private token hash
 ```
 
-It is usable exactly once for that next page.
+The preceding checkpoint stores that result as `nextContinuationBindingHash`; the next page copies
+it unchanged to `currentContinuationBindingHash`, recomputes it from the preceding admitted
+receipt, and consumes it exactly once.
 
 ### 9.2 Page chain
 
 Pagination begins at ordinal zero with no token. A returned token becomes authoritative only after
 the page that returned it has been committed, verified, schema-validated, and checkpointed.
 
-The page-chain hash is a forward hash over the previous chain hash, page ordinal,
-`requestIdentityHash`, `logicalPageIdentityHash`, verified artifact observation ID and digest,
-current token hash, next token hash or the terminal marker, record count, and cumulative budgets.
+The page-chain hash is exactly the `peas/market-acquisition-page-chain/v1` object preimage in the
+artifact/replay contract. It binds the previous chain hash; attempt-scoped `marketAcquisitionId`;
+request and logical-page identities; page ordinal; verified artifact observation, digest, size,
+observation hash, artifact-content identity, and raw-artifact identity; current and next token
+hashes; record count; and prospective admitted page, byte, record, fact, and attempt counters.
 Provider response order or page size never substitutes for this identity.
+
+Computation is acyclic: admission first computes `pageChainHash`, without a continuation-binding
+field in that preimage. A nonterminal page then computes `nextContinuationBindingHash` using that
+newly resulting admitted-page hash. The model atomically persists both values and the admitted
+counters in the page checkpoint. A terminal page persists a null next binding. A provisional,
+self-referential, or prior-input substitution is `pagination-invalid`.
 
 Reject before further dispatch:
 
@@ -634,19 +785,22 @@ actions.
 
 PR 2E synthetic tests must prove, without credentials or network:
 
-1. every state has only the transitions above and every illegal transition rejects;
+1. one integrated model owns `currentState`; every legal and illegal ordered pair traverses its
+   single transition operation with the required edge proof, never a detached adjacency helper;
 2. exact/one-over behavior for every ceiling in section 2;
 3. boundary equality and one-nanosecond-newer rejection before credential access;
 4. wall and monotonic regression before dispatch and during an active response;
-5. all status and `Retry-After` classifications, retry delays, attempt identity changes, and
-   logical-page identity stability;
+5. all status and `Retry-After` classifications, retry delays, exact `mat1_` attempt-control
+   recomputation, distinct `rat1_`/`aob1_`/`maq1_` recomputation, and logical-page identity
+   stability;
 6. project and entitlement quota intersection, rolling-window boundary equality, and quota
    exhaustion;
 7. timeout before headers and during body with destruction, settlement, no post-return activity,
    and no partial output;
 8. first/middle/last sibling failures and store/read failures settle all resources;
 9. every pagination gap, loop, repeat, substitution, duplicate position, cross-query use, and
-   post-terminal page rejects;
+   post-terminal page rejects through the integrated model, including the exact acyclic page-chain
+   then continuation-binding order;
 10. commit/verify-before-checkpoint and complete-chain-before-selection;
 11. identical redelivery, conflicting delivery, supported revision, and unsupported mutation
     behavior independent of order;
@@ -655,7 +809,9 @@ PR 2E synthetic tests must prove, without credentials or network:
 14. missing credentials and every unauthorized capability produce zero transport calls;
 15. FMP cannot enter the production state machine, primary result, fallback, or public output; and
 16. public completion returns only after timers, streams, abort handlers, store work, and callbacks
-    have settled.
+    have settled; and
+17. retry, quota, deadline, ceiling, page-chain, token, journal, normalization, and selection
+    helpers cannot advance state or side effects without the integrated transition operation.
 
 The default CI network witness must throw on every unexpected access. Absence of provider
 credentials is the expected default and must not skip a test.

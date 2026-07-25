@@ -98,101 +98,201 @@ retention deletion is `HUMAN_AUTHORIZATION_REQUIRED`; until that authorization e
 
 ## 4. Identity separation
 
-### 4.1 Attempt-scoped acquisition and stable request identity
-
-`marketAcquisitionId` remains the exact frozen PR 2D identity:
+Every identity in this section uses the accepted PR 2D framing, without a second interpretation:
 
 ```text
-marketAcquisitionId =
-  H(
-    "peas/market-acquisition-attempt/v1",
-    acquisitionObservationId,
+utf8(s) = exact UTF-8 bytes of s
+lp(b) = uint64be(byteLength(b)) || b
+H(domain, preimage) =
+  SHA-256(lp(utf8(domain)) || lp(utf8(RFC8785(preimage))))
+```
+
+`uint64be` is exactly eight unsigned big-endian bytes. Each displayed preimage is one exact inert
+JSON object, not a positional argument list. It has exactly the shown field names and no inherited,
+missing, extra, accessor, symbol, sparse, proxy, cyclic, unsafe-number, or silently defaulted value.
+Set-like arrays are dense, unique, and sorted by unsigned UTF-8 bytes before hashing. The lowercase
+64-hex digest returned by `H` is used directly unless a literal prefix is shown.
+
+The P1-10-only domain strings are closed to these exact values:
+
+```text
+"peas/market-acquisition-request/v1"
+"peas/market-acquisition-configuration/v1"
+"peas/market-acquisition-logical-page/v1"
+"peas/market-acquisition-attempt-control/v1"
+"peas/market-acquisition-journal/v1"
+"peas/market-acquisition-private-token/v1"
+"peas/market-acquisition-continuation-binding/v1"
+"peas/market-acquisition-journal-entry/v1"
+"peas/market-acquisition-page-chain/v1"
+```
+
+An unknown version, domain, prefix, field, field spelling, enum value, canonicalizer, or framing
+fails closed before credential read or dispatch.
+
+### 4.1 Stable request and configuration identities
+
+`requestIdentityHash` is the acquisition-wide P1-10 hash of this exact non-secret object:
+
+```text
+requestIdentityHash =
+  H("peas/market-acquisition-request/v1", {
     providerId,
     datasetId,
     feedId,
     endpointChannelId,
     entitlementSnapshotId,
-    sorted unique instrumentIds,
-    sorted unique requestedFactKinds,
+    authorizationMode,
+    instrumentIds,
+    canonicalSymbols,
+    factFamily,
     queryStartNs,
     queryEndNs,
-    sortOrder,
+    semanticFixedFields: {
+      feed,
+      sort,
+      timeframe,
+      adjustment
+    },
     routePolicyVersion
-  )
+  })
 ```
 
-PR 2E adds no field to that preimage. Because `acquisitionObservationId` binds the retrieval
-attempt identity, `marketAcquisitionId` is attempt/observation-scoped. A retry or a different page
-has a new acquisition observation and therefore a new `marketAcquisitionId`, even when the
-logical query is unchanged. Page size, page ordinal, page token, response order, URL, query text,
-credentials, headers, account state, local path, backend, and wall-clock execution time remain
-excluded from the frozen preimage.
+`authorizationMode` is exactly `p1-09-approved`. `instrumentIds` and `canonicalSymbols` are
+independently validated, non-empty, sorted unique arrays with a one-to-one instrument/symbol
+mapping; neither array may be derived from the other by string convention. `factFamily` is exactly
+`quote`, `trade`, or `bar`, consistent with the endpoint channel. `queryStartNs` and `queryEndNs`
+are canonical unsigned base-10 epoch-nanosecond strings. `semanticFixedFields.feed` is exactly
+`sip`, and `semanticFixedFields.sort` is exactly `asc`. For `bar`,
+`semanticFixedFields.timeframe` is exactly `1Min` and `adjustment` is exactly `raw`; both values are
+JSON null for `quote` and `trade`. `routePolicyVersion` is exactly
+`p1-10-frozen-historical-multi-symbol-v1`.
 
-`requestIdentityHash` is the stable, acquisition-wide P1-10 hash of the complete closed,
-non-secret logical request:
-
-```text
-providerId
-datasetId
-feedId
-endpointChannelId
-entitlementSnapshotId
-authorizationMode
-exact sorted instrument identities
-exact fact family
-exact UTC start and end epoch nanoseconds
-feed, exactly `sip`
-sort, exactly `asc`
-bars timeframe exactly `1Min` and adjustment exactly `raw`, otherwise null
-route-policy version
-```
-
-It does not bind `acquisitionObservationId`, `marketAcquisitionId`, retrieval/transport attempt,
-raw token, token hash, page ordinal, provider page size, retry delay, response bytes, response
-order, response time, or backend. Every page and retry for the unchanged logical query retains
-exactly the same `requestIdentityHash`.
+The endpoint-channel identity plus the frozen route policy binds the one authorized `GET` route.
+Origin, URL, path, query serialization, headers, credentials, account state, response bytes, raw
+or hashed page token, requested page limit, page ordinal, attempt, backend, and execution time are
+not identity fields. Every page and retry for the unchanged logical query retains the same
+`requestIdentityHash`.
 
 The requested provider page limit and operational retry/quota/deadline ceilings are closed
-configuration, not PR 2D semantic acquisition or request identity. The journal therefore records:
+configuration, not PR 2D semantic identity. `acquisitionConfigurationHash` is exactly:
 
 ```text
 acquisitionConfigurationHash =
-  H(
-    "peas/market-acquisition-configuration/v1",
+  H("peas/market-acquisition-configuration/v1", {
     requestIdentityHash,
     requestedPageLimit,
-    effectiveLesserOfEntitlementAndProjectCeilings,
+    effectiveLesserOfEntitlementAndProjectCeilings: {
+      concurrentRequests,
+      rawArtifactBytes,
+      aggregateBytes,
+      pages,
+      recordsPerPage,
+      facts,
+      tokenBytes,
+      instruments,
+      spanDays,
+      attempts,
+      pageAttempts,
+      retryAfterMs,
+      attemptDeadlineMs,
+      acquisitionDeadlineMs,
+      rateAttempts,
+      rateWindowMs
+    },
     runScopedLiveEnableDecision,
-    zeroSpendPolicyIdAndDecision,
+    zeroSpendPolicyIdAndDecision: {
+      policyId,
+      decision
+    },
     retryPolicyVersion,
     quotaPolicyVersion,
     deadlinePolicyVersion,
     retentionPolicyReadiness,
     journalSchemaVersion
-  )
+  })
 ```
 
-Restart compares this hash exactly and rejects a changed limit or policy as `journal-conflict`.
-The configuration hash never enters a PR 2D provider-observation, fact, revision, selection, or
-missing-result identity. It contains no URL, credential, account, raw token, or provider bytes.
+`requestedPageLimit` is a canonical JSON integer from 1 through 10,000.
+`effectiveLesserOfEntitlementAndProjectCeilings` contains the effective value after taking the
+lesser of the entitlement limit and project ceiling for every shown field. The project values are,
+respectively, `1`, `10485760`, `67108864`, `16`, `10000`, `160000`, `4096`, `64`, `8`, `48`, `3`,
+`30000`, `30000`, `300000`, `30`, and `60000`. A stricter entitlement changes the corresponding
+effective field and therefore this hash.
+
+`runScopedLiveEnableDecision` is exactly boolean. `zeroSpendPolicyIdAndDecision.policyId` is the
+validated `mzp1_` identity and `decision` is exactly `allow` or `reject`; only `allow` can reach
+dispatch, and only after the separately validated cost status is exactly
+`zero-incremental-spend-approved`. Policy strings are exactly:
+
+```text
+retryPolicyVersion = "p1-10-deterministic-1s-2s-no-jitter-v1"
+quotaPolicyVersion = "p1-10-30-per-rolling-60s-v1"
+deadlinePolicyVersion = "p1-10-30s-attempt-300s-acquisition-v1"
+retentionPolicyReadiness =
+  "authorized" | "human-authorization-required-not-authorized"
+journalSchemaVersion = 1
+```
+
+The retry policy literal binds total-attempt ceilings and exact `1000`/`2000` ms delays in section
+12; the quota and deadline literals bind the exact values shown above. The current PR 2E value of
+`retentionPolicyReadiness` is `human-authorization-required-not-authorized`, so implementation
+remains `NO_GO`. Restart independently recomputes the complete object and rejects any changed
+value as `journal-conflict`. The configuration hash contains no URL, credential, account, raw
+token, or provider bytes and enters no PR 2D semantic identity.
 
 ### 4.2 Private logical-page identity
 
-Page control needs a separate private identity:
+The token hash, logical page, attempt-control identity, and continuation binding are exactly:
 
 ```text
+privateTokenHash =
+  H("peas/market-acquisition-private-token/v1", {
+    opaqueTokenMaterial
+  })
+
 logicalPageIdentityHash =
-  H(
-    "peas/market-acquisition-logical-page/v1",
+  H("peas/market-acquisition-logical-page/v1", {
     requestIdentityHash,
     pageOrdinal,
-    currentTokenHash | "no-token"
-  )
+    currentTokenHash
+  })
+
+attemptControlHash =
+  H("peas/market-acquisition-attempt-control/v1", {
+    logicalPageIdentityHash,
+    attemptOrdinal,
+    runSessionNonce
+  })
+
+attemptId = "mat1_" + attemptControlHash
+retrievalAttemptId = "rat1_" + attemptControlHash
+
+continuationBindingHash =
+  H("peas/market-acquisition-continuation-binding/v1", {
+    precedingMarketAcquisitionId,
+    requestIdentityHash,
+    precedingLogicalPageIdentityHash,
+    precedingPageOrdinal,
+    precedingArtifactObservationId,
+    precedingArtifactDigest,
+    precedingPageChainHash,
+    nextPageOrdinal,
+    nextTokenHash
+  })
 ```
 
-Page zero uses the literal domain value `no-token`. A continuation uses only the domain-separated
-hash of the exact opaque token authorized by the preceding verified checkpoint. The raw token is
-never an identity-preimage value outside the private journal.
+`opaqueTokenMaterial` is the exact unmodified provider token after the 4,096-byte bound passes.
+`pageOrdinal` and `attemptOrdinal` are non-negative canonical JSON safe integers. Page zero uses
+the literal JSON string `no-token` for `currentTokenHash`; a verified terminal page uses the
+literal JSON string `terminal` for `nextTokenHash`. Those markers are not hashes and cannot be
+provider token material. A continuation uses the lowercase 64-hex `privateTokenHash`.
+
+`runSessionNonce` is a new, non-secret, bounded identifier generated once when the run declaration
+is durably created. It is persisted in the private declaration, remains unchanged across restart,
+and is never regenerated for an existing journal. It prevents two independently declared runs
+from sharing physical attempt IDs. It is not wall-clock time, process ID, backend row ID, raw
+token, credential, or semantic provider evidence.
 
 Every retry for a logical page retains:
 
@@ -201,54 +301,125 @@ Every retry for a logical page retains:
 - page ordinal; and
 - private current-token binding.
 
-Every physical dispatch has a new attempt identity, acquisition observation, and
-`marketAcquisitionId`. Attempt/acquisition-observation identity, trusted request-start evidence,
-retry ordinal, and delivery observation must never be collapsed into logical request or
-logical-page identity.
+Every physical dispatch increments `attemptOrdinal` and therefore has a new `attemptId`,
+`retrievalAttemptId`, acquisition observation, and `marketAcquisitionId`. A crashed or abandoned
+ordinal is never reused. The continuation binding is created only by the verified preceding page
+checkpoint and is recomputed before constructing the next request. Attempt/acquisition-observation
+identity, trusted request-start evidence, retry ordinal, and delivery observation must never be
+collapsed into logical request or logical-page identity.
 
 This split is required for consistency with PR 2D page-layout invariance. Any sibling contract
 that uses `requestIdentityHash` to mean a page-and-token hash must be repaired before candidate
 freeze; the accepted package must use the acquisition-wide meaning above and the distinct
 `logicalPageIdentityHash`.
 
-### 4.3 Journal and checkpoint identities
+### 4.3 Frozen PR 2D acquisition identities
+
+The acquisition-observation preimage remains byte-for-byte the accepted PR 2D object:
+
+```text
+acquisitionObservationId =
+  "aob1_" + H("peas/acquisition-observation/v1", {
+    provider,
+    retrievalAttemptId,
+    sanitizedRequestIdentityHash,
+    routeLabel
+  })
+```
+
+For the Alpaca lane, `provider` is exactly `alpaca`,
+`sanitizedRequestIdentityHash` is exactly `requestIdentityHash`, and `routeLabel` is exactly one
+of `alpaca-v2-historical-quotes`, `alpaca-v2-historical-trades`, or
+`alpaca-v2-historical-bars`, matching the frozen endpoint channel. `retrievalAttemptId` is the
+exact `rat1_` value above. PR 2E adds no field and makes no alternate acquisition-observation
+derivation.
+
+`marketAcquisitionId` remains byte-for-byte the accepted PR 2D identity:
+
+```text
+marketAcquisitionId =
+  "maq1_" + H("peas/market-acquisition-attempt/v1", {
+    acquisitionObservationId,
+    providerId,
+    datasetId,
+    feedId,
+    endpointChannelId,
+    entitlementSnapshotId,
+    instrumentIds,
+    requestedFactKinds,
+    queryStartNs,
+    queryEndNs,
+    sortOrder,
+    routePolicyVersion
+  })
+```
+
+`instrumentIds` is the same sorted unique array used by request identity.
+`requestedFactKinds` is exactly the one-member array `["quote"]`, `["trade"]`, or `["bar"]`
+consistent with `factFamily`; `sortOrder` is exactly `asc`; the other shared fields equal the
+request preimage exactly. Because `acquisitionObservationId` binds the physical
+`retrievalAttemptId`, a retry or different page has a new `marketAcquisitionId`. Page size,
+ordinal, token, response order, URL, credentials, headers, account state, path, backend, and
+execution time remain excluded. No PR 2E hash may substitute for either accepted identity.
+
+### 4.4 Journal and checkpoint identities
 
 The journal is addressed by this inert identifier:
 
 ```text
 marketAcquisitionJournalId =
-  H(
-    "peas/market-acquisition-journal/v1",
+  H("peas/market-acquisition-journal/v1", {
     schemaVersion,
     requestIdentityHash,
     providerId,
     datasetId,
     feedId,
     endpointChannelId
-  )
+  })
 ```
+
+`schemaVersion` is the canonical JSON integer `1`; the remaining fields equal the request
+preimage. The ID is the lowercase 64-hex digest with no prefix.
 
 Each immutable journal entry has:
 
 ```text
 journalEntryHash =
-  H(
-    "peas/market-acquisition-journal-entry/v1",
+  H("peas/market-acquisition-journal-entry/v1", {
     marketAcquisitionJournalId,
     journalSequence,
-    priorJournalEntryHash | "genesis",
+    priorJournalEntryHash,
     entryKind,
     canonicalEntryBody
-  )
+  })
 ```
 
-`journalSequence` is validated as a contiguous non-negative integer, but it is not a semantic PR
-2D identity. Backend row IDs, insertion order, process IDs, filesystem paths, and SQLite sequence
-values are forbidden from every identity preimage.
+`entryKind` equals the closed `checkpointKind`. `canonicalEntryBody` is a JSON string whose bytes
+are exactly `utf8(RFC8785(body))`. `body` is the complete checkpoint object after removing exactly
+these envelope fields: `marketAcquisitionJournalId`, `journalSequence`,
+`priorJournalEntryHash`, `checkpointKind`, and `journalEntryHash`. No other field is removed.
+Sequence zero uses the literal JSON string `genesis`; every later
+`priorJournalEntryHash` is the exact lowercase 64-hex preceding hash.
+
+`journalSequence` is a contiguous non-negative canonical JSON safe integer, but it is not a
+semantic PR 2D identity. Validators independently reconstruct `body`, canonicalize it, recompute
+the exact entry envelope, and compare the hash. Hashing a checkpoint with an empty or omitted
+`journalEntryHash`, hashing a positional list, passing `body` as a JSON object instead of the
+canonical string, or including any envelope field in `body` is invalid. Backend row IDs, insertion
+order, process IDs, filesystem paths, and SQLite sequence values are forbidden from every identity
+preimage.
 
 The journal schema version, domain strings, canonical serialization, and hash algorithm are
 closed configuration. Unknown versions or fields fail closed; they are never ignored or
 best-effort upgraded.
+
+On every append, load, restart, and replay, the validator independently reconstructs and compares
+the request, configuration, logical-page, attempt-control, acquisition-observation,
+market-acquisition, journal, private-token where material is available, continuation-binding,
+page-chain, and journal-entry preimages. Comparing a stored identity to a second copied field,
+accepting a caller-supplied digest without its preimage, or rehashing a toy/partial preimage is not
+validation. Any single mismatch is terminal journal corruption before credential read, dispatch,
+normalization, or selection.
 
 ## 5. Private durable acquisition journal
 
@@ -282,6 +453,7 @@ missing fields are invalid.
 | --- | --- |
 | `schemaVersion` | exactly the accepted journal schema version |
 | `marketAcquisitionJournalId` | recomputed from the stable declaration |
+| `runSessionNonce` | exact non-secret run nonce persisted at declaration |
 | `acquisitionObservationId` | exact attempt-scoped acquisition observation for the entry |
 | `marketAcquisitionId` | exact PR 2D identity recomputed from that acquisition observation |
 | `admittedMarketAcquisitionIds` | canonical page-order IDs for durably admitted pages; empty before first admission |
@@ -297,18 +469,21 @@ missing fields are invalid.
 | `checkpointKind` | one closed value from section 5.3 |
 | `currentTokenHash` | private `no-token` marker for page zero or exact authorized hash |
 | `currentResumableTokenMaterial` | private null for page zero; exact opaque continuation material otherwise |
-| `nextTokenHash` | private exact hash, or explicit terminal marker only after page verification |
-| `nextResumableTokenMaterial` | private exact opaque material, or null only for a verified terminal page |
-| `attemptId` | immutable physical/retrieval attempt associated with this entry |
+| `nextTokenHash` | null before body verification; afterward exact private hash or explicit terminal marker |
+| `nextResumableTokenMaterial` | null before body verification and for a verified terminal page; otherwise exact opaque material |
+| `currentContinuationBindingHash` | null for page zero; otherwise exact preceding-page binding that authorized this page |
+| `nextContinuationBindingHash` | null before admission and for a terminal page; otherwise exact section 4.2 hash authorizing the next page |
+| `attemptId` | exact `mat1_` physical attempt-control identity associated with this entry |
+| `retrievalAttemptId` | exact `rat1_` identity used by the frozen acquisition-observation preimage |
 | `attemptOrdinal` | zero-based for this logical page; never decremented or reused |
 | `artifactObservationId` | null before a reconciled store receipt; exact observation afterward |
 | `artifactDigest` | null before a reconciled store receipt; exact digest afterward |
-| `artifactSizeBytes` | null before a reconciled store receipt; exact verified size afterward |
+| `artifactSizeBytes` | null before a reconciled store receipt; receipt size after commit; admitted size only after fresh verification and page checkpoint |
 | `artifactObservationHash` | null before a reconciled store receipt; exact observation hash afterward |
 | `artifactContentId` | null before commit; recomputed PR 2D content identity afterward |
 | `rawArtifactId` | null before commit; recomputed PR 2D raw-artifact identity afterward |
-| `stageLedgerFactId` | null when the stage has no ledger fact; exact execution-scoped fact ID otherwise |
-| `causalParentFactIds` | canonical empty/sorted exact ADR-0009 direct-parent fact IDs |
+| `stageLedgerFactId` | null for a journal-only stage; otherwise the exact `ole1_` ledger entry ID containing the stage fact |
+| `causalParentFactIds` | canonical empty/sorted exact causal `ole1_` parent entry IDs, excluding any required clock-basis declaration parent |
 | `pageRecordCount` | null before schema verification; exact count afterward |
 | `pageNormalizedFactCount` | null before normalization; exact admitted count afterward |
 | `pageChainHash` | prior value before admission; newly computed value after page checkpoint |
@@ -324,7 +499,7 @@ missing fields are invalid.
 | `incomplete` | true until one terminal checkpoint commits |
 | `priorJournalEntryHash` | `genesis` or exact preceding entry hash |
 | `journalSequence` | contiguous journal position |
-| `journalEntryHash` | recomputed over the complete canonical entry |
+| `journalEntryHash` | recomputed from the exact section 4.4 envelope and body split |
 
 Attempt/page entries contain the attempt-scoped `acquisitionObservationId` and
 `marketAcquisitionId` for that entry. Aggregate normalization and terminal entries carry the final
@@ -334,7 +509,9 @@ sidecar. Every persisted `marketAcquisitionId` is independently recomputed from 
 acquisition observation and the frozen PR 2D preimage.
 
 The cumulative fields are cached proofs, not independent sources of truth. On load they must equal
-the sum of the applicable immutable attempt, admitted-page, and normalization receipts.
+the sum of the applicable immutable attempt receipts, `page-checkpointed` admission receipts, and
+normalization receipts. `artifact-committed` and `artifact-verified` rows alone are not page
+admission receipts and contribute zero successful pages, verified bytes, and verified records.
 Arithmetic uses checked non-negative integers; overflow, decrease, mismatch, omission, or
 one-over value is terminal journal corruption. The lesser of the approved entitlement bound and
 project ceiling always wins.
@@ -388,9 +565,11 @@ For each page attempt the required order is:
 7. append `artifact-committed` with the returned observation, digest, size, and observation hash;
 8. read the artifact through `ArtifactStore.read` and consume the stream completely;
 9. verify digest, declared and consumed size, observation, request identity, schema, counts,
-   page position, and token relation;
+   page position, and token relation without advancing an admitted counter;
 10. append `artifact-verified`; and
-11. atomically append `page-checkpointed`, advance cumulative budgets, and authorize either the
+11. compute the prospective page, byte, and record totals from the prior admitted-page receipts
+    plus this verified receipt, reject one-over before mutation, then atomically append
+    `page-checkpointed`, advance those cumulative budgets exactly once, and authorize either the
     next page or terminal closure.
 
 `artifact-committed` is an acquisition state only when both the immutable vault result and its
@@ -402,7 +581,8 @@ the frozen `ArtifactStore` port.
 
 Once `artifact-committed` is durable, restart must use its observation and digest to verify the
 artifact; it must not redispatch that page. Once `artifact-verified` is durable, restart must
-reverify and write only the missing page checkpoint; it must not redispatch.
+reverify and write only the missing page checkpoint; it must not redispatch. Neither checkpoint
+may pre-increment `cumulativeSuccessfulPages`, `cumulativeVerifiedBytes`, or `cumulativeRecords`.
 
 Journal failure never deletes, mutates, or guesses artifact evidence. It records
 `failure.recorded` at the exact journal stage when possible, settles resources, and exposes no
@@ -439,7 +619,13 @@ normalization.*
 ```
 
 Together these are the required order projection; they do not permit page-local normalization or
-selection before chain completion. ADR-0009 remains authoritative for exact direct parents:
+selection before chain completion. `stageLedgerFactId` and `causalParentFactIds` are journal field
+names; their non-null values are actual observation-ledger `ole1_` entry IDs, not a second
+synthetic fact-ID family. For a non-null clock basis, the ledger entry also directly parents its
+matching `clock-basis.declared` entry as ADR-0009 requires. That clock parent is not a causal stage
+parent and is excluded from `causalParentFactIds`; validators reconstruct and validate both the
+causal set below and the clock-basis parent independently. ADR-0009 remains authoritative for the
+exact causal direct parents:
 
 | Fact | Exact direct-parent rule |
 | --- | --- |
@@ -453,6 +639,15 @@ selection before chain completion. ADR-0009 remains authoritative for exact dire
 | capture superseded/cancelled | its immediately preceding capture fact |
 | selection on capture basis | the authoritative capture appended/redelivered fact |
 | selection on retrieval basis | its `normalization.emitted` and selected `artifact.verified` |
+
+Journal-only kinds `page-checkpointed`, `chain-complete`, `normalization-started`, and
+`selection-started` have `stageLedgerFactId=null` and `causalParentFactIds=[]`; they do not invent
+ledger facts. A terminal checkpoint carrying `selection.recorded` uses only the exact parent set
+for its chosen basis. It does not parent every normalization or verification fact in the
+acquisition. A failure checkpoint carrying `failure.recorded` has exactly the one last valid
+stage parent required by section 6.3. Arrays are sorted unique by complete `ole1_` bytes, and an
+extra, missing, adjacent-row, cross-attempt, cross-artifact, or fabricated parent rejects even
+when journal hashes are otherwise self-consistent.
 
 Each physical request attempt has its own acquisition observation,
 attempt-scoped `marketAcquisitionId`, and `acquisition.declared` fact. Its `request.started` fact
@@ -522,7 +717,8 @@ token remains untrusted provider material until:
 The token is then usable exactly once and only for the next ordinal of the same request identity.
 It is passed byte-for-byte without parsing, trimming, decoding, normalization, or interpretation.
 
-The continuation binding contains:
+The continuation binding is the exact
+`peas/market-acquisition-continuation-binding/v1` hash in section 4.2. Its fields map as follows:
 
 ```text
 preceding successful page's marketAcquisitionId
@@ -531,10 +727,16 @@ preceding logicalPageIdentityHash
 preceding page ordinal
 preceding artifact observation ID
 preceding artifact digest
-preceding page-chain hash
+preceding page's resulting admitted page-chain hash
 next page ordinal
 next private token hash
 ```
+
+The resulting hash is durably stored as `nextContinuationBindingHash` on the preceding
+`page-checkpointed` entry. It is copied without change to the next page's
+`currentContinuationBindingHash` and recomputed from the preceding admitted receipt before the
+next `logicalPageIdentityHash` is admitted. A raw token, next-page request, or independently
+self-consistent token hash without that exact binding has no continuation authority.
 
 ### 7.2 Page-chain hash
 
@@ -542,9 +744,8 @@ Page zero starts with the closed `genesis` marker. Each admitted page computes:
 
 ```text
 pageChainHash =
-  H(
-    "peas/market-acquisition-page-chain/v1",
-    priorPageChainHash | "genesis",
+  H("peas/market-acquisition-page-chain/v1", {
+    priorPageChainHash,
     marketAcquisitionId,
     requestIdentityHash,
     logicalPageIdentityHash,
@@ -552,19 +753,44 @@ pageChainHash =
     artifactObservationId,
     artifactDigest,
     artifactSizeBytes,
-    currentTokenHash | "no-token",
-    nextTokenHash | "terminal",
+    artifactObservationHash,
+    artifactContentId,
+    rawArtifactId,
+    currentTokenHash,
+    nextTokenHash,
     pageRecordCount,
     cumulativeSuccessfulPages,
     cumulativeVerifiedBytes,
     cumulativeRecords,
     cumulativeNormalizedFacts,
     cumulativeAttempts
-  )
+  })
 ```
 
-Page size, provider response order, backend row order, local path, execution time, and raw token
-are not substituted for these values.
+For page zero, `priorPageChainHash` is the literal JSON string `genesis`. Later values are the
+lowercase 64-hex preceding page-chain hash. `currentTokenHash` is the literal `no-token` only for
+page zero and otherwise the exact private token hash. `nextTokenHash` is the literal `terminal`
+only for the terminal page and otherwise the exact next private token hash.
+`cumulativeSuccessfulPages`, `cumulativeVerifiedBytes`, and `cumulativeRecords` are the
+prospective admitted totals including this page. `cumulativeNormalizedFacts` is exactly zero
+because normalization cannot precede complete-chain admission. `cumulativeAttempts` includes
+every started physical attempt through this admission, including failed retries.
+
+The derivation order is acyclic and mandatory:
+
+1. compute `pageChainHash` from the exact object above, which includes the admitted page's
+   `nextTokenHash` but does not include a continuation-binding hash;
+2. for a nonterminal page, compute `nextContinuationBindingHash` from section 4.2 with
+   `precedingPageChainHash` equal to that newly computed admitted-page `pageChainHash`; for a
+   terminal page, set `nextContinuationBindingHash` to JSON null; and
+3. atomically persist the page admission, resulting `pageChainHash`, and resulting
+   `nextContinuationBindingHash` in one `page-checkpointed` entry.
+
+Computing either hash from a provisional, self-referential, or prior-input substitution is
+invalid. An `artifact-committed` or `artifact-verified` entry retains the prior admitted
+page-chain hash and cannot advance any admission total. Page size, provider response order,
+backend row order, local path, execution time, and raw token are not substituted for the exact
+values.
 
 ### 7.3 Complete-chain proof
 

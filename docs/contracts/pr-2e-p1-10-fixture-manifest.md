@@ -51,8 +51,9 @@ persisted.
 - route, method, identity, field, value, clock, cost, and authorization mutations;
 - exact zero-spend preimage/ID and missing, forged, mutated, stale, and unknown run decisions;
 - all 11 frozen provider, dataset, feed, and channel preimages under one guarded parser, covering
-  one-field mutation, missing/extra fields, mutation/reordering of the real channel `factKinds`
-  member, forged IDs, URL/path and header/credential insertion, and provider-default substitution;
+  one-field mutation, missing/extra fields, changed membership of the real channel `factKinds`
+  member, a controlled valid multi-member channel set in canonical and reversed order, forged IDs,
+  URL/path and header/credential insertion, and provider-default substitution;
 - retry status and `Retry-After` variations;
 - malformed, truncated, schema-drift, and declared-length failure classifications;
 - loop, gap, duplicate, substitution, and page-after-terminal attacks;
@@ -88,6 +89,12 @@ The executable test must verify:
 11. A synthetic three-delivery/two-physical-digest enumeration preserves delivery observations,
     deduplicates only physical content, and has one canonical page chain and cumulative projection
     in forward or reverse backend enumeration order.
+12. The production-free coordinator executes a three-page continuation chain, with two
+    byte-identical redeliveries retaining distinct immutable observations, through the same
+    state-owning event API, journals, restart, normalization, and selection path.
+13. SQLite query enumeration actually runs with ascending/descending order and page limits `1`,
+    `2`, `7`, and `10,000`; durable observation receipts are restored independently in both
+    directions rather than from hard-coded bytes.
 
 Any future fixture that contains provider material, provider-derived structure, a secret, raw token,
 account fact, or query-bearing URL is outside this manifest and is an immediate `NO_GO`.
