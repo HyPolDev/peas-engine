@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import Database from "better-sqlite3";
 
+import { canonicalHash } from "../src/core/hash.js";
 import { canonicalJson, type JsonValue } from "../src/core/json.js";
 import {
   deriveEndpointChannelId,
@@ -15,7 +18,6 @@ import {
 
 const NS_PER_MINUTE = 60_000_000_000n;
 const HISTORY_DELAY_NS = 15n * NS_PER_MINUTE;
-const DAY_NS = 86_400_000_000_000n;
 const ORIGINAL_FETCH = globalThis.fetch;
 let unexpectedNetworkCalls = 0;
 globalThis.fetch = (() => {
@@ -59,6 +61,21 @@ const IDS = Object.freeze({
   fmpTrade: "mec1_feb9f3a3deab6dbabd6fcc204c8ced63d88a2ca14d8f235b1fec2dab49df6bdf",
 });
 
+const ZERO_SPEND_POLICY_PREIMAGE = Object.freeze({
+  schemaVersion: 1,
+  policyVersion: "p1-10-zero-spend-policy-v1",
+  p109AuthorityCandidate: "36dcf92b465fc5708614718b4312631fb5dbf544",
+  maximumIncrementalSpend: "0",
+  existingEntitlementsOnly: true,
+  accountInspection: "forbidden",
+  accountMutation: "forbidden",
+  subscriptionMutation: "forbidden",
+  unknownCostBehavior: "reject-before-credential-read",
+  fallbackKind: "none",
+});
+const ZERO_SPEND_POLICY_ID =
+  "mzp1_b2f575e234dcd7f05eb5fcc03060420313b56e45aff87c961c3771d1c5cf3b9e";
+
 type AlpacaKind = "bars" | "quotes" | "trades";
 type Preflight = Readonly<{
   kind: AlpacaKind;
@@ -80,7 +97,10 @@ type Preflight = Readonly<{
   capability: string;
   fallbackKind: string;
   zeroIncrementalSpend: boolean;
-  costStatus: "zero-spend" | "unknown";
+  costStatus: "zero-incremental-spend-approved" | "unknown" | "stale";
+  zeroSpendPolicyId: string | null;
+  zeroSpendPolicyPreimage: Readonly<Record<string, JsonValue>> | null;
+  runDecision: "allow" | "reject" | null;
   firstRequest: boolean;
   pageMaterialBytes: number | null;
 }>;
@@ -124,7 +144,10 @@ function baseRequest(kind: AlpacaKind = "quotes"): Preflight {
     capability: "historical-market-reference",
     fallbackKind: "none",
     zeroIncrementalSpend: true,
-    costStatus: "zero-spend",
+    costStatus: "zero-incremental-spend-approved",
+    zeroSpendPolicyId: ZERO_SPEND_POLICY_ID,
+    zeroSpendPolicyPreimage: ZERO_SPEND_POLICY_PREIMAGE,
+    runDecision: "allow",
     firstRequest: true,
     pageMaterialBytes: null,
   };
@@ -165,7 +188,18 @@ function preflight(value: Preflight): void {
     throw rejection("clock-unavailable");
   }
   if (value.maximumClockErrorNs < 0n) throw rejection("clock-unprovable");
-  if (value.costStatus !== "zero-spend") throw rejection("cost-unproven");
+  if (
+    value.zeroSpendPolicyId !== ZERO_SPEND_POLICY_ID ||
+    value.zeroSpendPolicyPreimage === null ||
+    `mzp1_${canonicalHash(
+      "peas/market-zero-spend-policy/v1",
+      value.zeroSpendPolicyPreimage as JsonValue,
+    )}` !== ZERO_SPEND_POLICY_ID ||
+    value.runDecision !== "allow" ||
+    value.costStatus !== "zero-incremental-spend-approved"
+  ) {
+    throw rejection("cost-unproven");
+  }
   const allowed = new Set(["symbols", "start", "end", "limit", "feed", "sort"]);
   if (value.kind === "bars") {
     allowed.add("timeframe");
@@ -180,7 +214,17 @@ function preflight(value: Preflight): void {
   }
   if (value.fields["feed"] !== "sip") throw rejection("feed-not-authorized");
   if (value.fields["sort"] !== "asc") throw rejection("sort-not-authorized");
-  if (value.fields["limit"] !== "10000") throw rejection("limit-not-authorized");
+  const limitText = value.fields["limit"] as string;
+  if (!/^[1-9]\d{0,4}$/u.test(limitText)) throw rejection("limit-not-authorized");
+  const parsedLimit = Number(limitText);
+  if (
+    !Number.isSafeInteger(parsedLimit) ||
+    parsedLimit < 1 ||
+    parsedLimit > LIMITS.recordsPerPage ||
+    String(parsedLimit) !== limitText
+  ) {
+    throw rejection("limit-not-authorized");
+  }
   if (value.firstRequest && value.pageMaterialBytes !== null) throw rejection("first-page-token");
   if (!value.firstRequest) {
     if (
@@ -239,11 +283,6 @@ function exactBoundaryBarsRequest(): Preflight {
   };
 }
 
-function checkBound(name: string, value: number, maximum: number): void {
-  if (!Number.isSafeInteger(value) || value < 0 || value > maximum)
-    throw rejection(`${name}-bound`);
-}
-
 type RetryDecision = "retry-1000" | "retry-2000" | "stop";
 
 function retryDecision(
@@ -286,7 +325,8 @@ function hash(text: string): string {
 }
 
 function verifyChain(pages: readonly Page[], requestHash: string): readonly Page[] {
-  const seen = new Set<string>();
+  const seenDigests = new Set<string>();
+  const returnedTokenHashes = new Set<string>();
   let expectedPreceding: string | null = null;
   let terminal = false;
   for (const [index, page] of pages.entries()) {
@@ -294,10 +334,19 @@ function verifyChain(pages: readonly Page[], requestHash: string): readonly Page
     if (page.ordinal !== index) throw rejection("page-position");
     if (page.requestHash !== requestHash) throw rejection("query-substitution");
     if (page.precedingHash !== expectedPreceding) throw rejection("token-gap");
-    if (seen.has(page.digest)) throw rejection("duplicate-page");
-    seen.add(page.digest);
-    checkBound("records", page.records, LIMITS.recordsPerPage);
-    if (page.nextHash !== null && seen.has(page.nextHash)) throw rejection("token-loop");
+    if (seenDigests.has(page.digest)) throw rejection("duplicate-page");
+    seenDigests.add(page.digest);
+    if (
+      !Number.isSafeInteger(page.records) ||
+      page.records < 0 ||
+      page.records > LIMITS.recordsPerPage
+    ) {
+      throw rejection("records-bound");
+    }
+    if (page.nextHash !== null) {
+      if (returnedTokenHashes.has(page.nextHash)) throw rejection("token-loop");
+      returnedTokenHashes.add(page.nextHash);
+    }
     expectedPreceding = page.nextHash;
     terminal = page.nextHash === null;
   }
@@ -390,36 +439,688 @@ function withoutField(
   return Object.fromEntries(Object.entries(fields).filter(([key]) => key !== omitted));
 }
 
-const CHECKPOINTS = Object.freeze([
-  "before-request",
-  "request-started",
-  "during-body",
-  "artifact-store-side-effect-before-commit-receipt",
-  "artifact-committed",
-  "artifact-verified",
-  "checkpoint-advanced",
-  "during-normalization",
-  "before-selection",
-]);
+type SideEffectCounters = {
+  credentialReads: number;
+  transportConstructions: number;
+  dnsCalls: number;
+  networkCalls: number;
+  providerCalls: number;
+  artifactCalls: number;
+  normalizationCalls: number;
+  selectionCalls: number;
+  postReturnActivity: number;
+};
 
-function replayAfterCrash(crashAt: string): readonly string[] {
-  const durableCommit = CHECKPOINTS.indexOf(crashAt) >= CHECKPOINTS.indexOf("artifact-committed");
-  if (!durableCommit) {
-    return [
-      "reconcile-orphan",
-      "new-attempt",
-      "request-same-page",
-      "commit",
-      "verify",
-      "checkpoint",
-      "normalize",
-      "select",
-    ];
+function zeroCounters(): SideEffectCounters {
+  return {
+    credentialReads: 0,
+    transportConstructions: 0,
+    dnsCalls: 0,
+    networkCalls: 0,
+    providerCalls: 0,
+    artifactCalls: 0,
+    normalizationCalls: 0,
+    selectionCalls: 0,
+    postReturnActivity: 0,
+  };
+}
+
+function assertZeroSideEffects(counters: SideEffectCounters): void {
+  assert.deepEqual(counters, zeroCounters());
+}
+
+function guardedPreflight(request: Preflight, counters: SideEffectCounters): void {
+  preflight(request);
+  counters.credentialReads += 1;
+  counters.transportConstructions += 1;
+}
+
+function requestIdentity(request: Preflight): string {
+  return canonicalHash("peas/p1-10-request-identity/v1", {
+    providerId: request.providerId,
+    datasetId: request.datasetId,
+    feedId: request.feedId,
+    endpointChannelId: request.endpointChannelId,
+    kind: request.kind,
+    start: request.fields["start"] as string,
+    end: request.fields["end"] as string,
+    sort: request.fields["sort"] as string,
+    authorizationMode: request.authorizationMode,
+  });
+}
+
+function configurationHash(request: Preflight): string {
+  return canonicalHash("peas/p1-10-private-configuration/v1", {
+    requestIdentityHash: requestIdentity(request),
+    requestedPageLimit: request.fields["limit"] as string,
+    zeroSpendPolicyId: request.zeroSpendPolicyId,
+    zeroSpendRunDecision: request.runDecision,
+  });
+}
+
+type IdentityFamily = "provider" | "dataset" | "feed" | "channel";
+type IdentityEnvelope = Readonly<{
+  family: IdentityFamily;
+  preimage: Readonly<Record<string, unknown>>;
+  expectedId: string;
+  orderedCapabilities: readonly string[];
+}>;
+
+const IDENTITY_ENVELOPES: readonly IdentityEnvelope[] = [
+  {
+    family: "provider",
+    preimage: { providerCode: "alpaca", serviceOperatorCode: "alpaca-markets" },
+    expectedId: IDS.alpacaProvider,
+    orderedCapabilities: ["acquire", "replay"],
+  },
+  {
+    family: "dataset",
+    preimage: {
+      providerId: IDS.alpacaProvider,
+      assetClass: "us-equity",
+      coverageRegion: "united-states",
+      productFamily: "historical-stock-market-data",
+      apiGeneration: "v2",
+      recordFamily: "quotes-trades-bars",
+      datasetDocumentationVersion: "official-reference-2026-07-25",
+    },
+    expectedId: IDS.alpacaDataset,
+    orderedCapabilities: ["acquire", "replay"],
+  },
+  {
+    family: "feed",
+    preimage: {
+      datasetId: IDS.alpacaDataset,
+      providerFeedCode: "sip",
+      consolidationKind: "sip-consolidated",
+      delayClass: "historical",
+      adjustmentMode: "raw",
+      correctionRepresentation: "unknown",
+    },
+    expectedId: IDS.alpacaFeed,
+    orderedCapabilities: ["acquire", "replay"],
+  },
+  {
+    family: "channel",
+    preimage: {
+      feedId: IDS.alpacaFeed,
+      channelKind: "historical-rest",
+      methodKind: "get",
+      safeRouteLabel: "alpaca-v2-historical-quotes",
+      endpointDocumentationVersion: "official-reference-2026-07-25",
+      paginationKind: "opaque-token",
+      factKinds: ["quote"],
+    },
+    expectedId: IDS.alpacaQuotes,
+    orderedCapabilities: ["acquire", "replay"],
+  },
+];
+
+function validateIdentityEnvelope(value: IdentityEnvelope): void {
+  const exactKeys = ["expectedId", "family", "orderedCapabilities", "preimage"];
+  if (
+    Object.keys(value).sort().join(",") !== exactKeys.join(",") ||
+    canonicalJson(value.orderedCapabilities as unknown as JsonValue) !==
+      canonicalJson(["acquire", "replay"])
+  ) {
+    throw rejection("identity-envelope-invalid");
   }
-  if (crashAt === "artifact-committed" || crashAt === "artifact-verified") {
-    return ["verify-artifact", "checkpoint", "normalize", "select"];
+  let derived: string;
+  switch (value.family) {
+    case "provider":
+      derived = deriveMarketProviderId(value.preimage as never);
+      break;
+    case "dataset":
+      derived = deriveMarketDatasetId(value.preimage as never);
+      break;
+    case "feed":
+      derived = deriveMarketFeedId(value.preimage as never);
+      break;
+    case "channel":
+      derived = deriveEndpointChannelId(value.preimage as never);
+      break;
   }
-  return ["verify-artifact", "resume-next-page", "normalize", "select"];
+  if (derived !== value.expectedId) throw rejection("identity-envelope-invalid");
+}
+
+type ContractEvent =
+  | "acquisition.declared"
+  | "request.started"
+  | "request.succeeded"
+  | "artifact.committed"
+  | "artifact.verified"
+  | "checkpoint.advanced"
+  | "normalization.emitted"
+  | "selection.recorded"
+  | "failure.recorded";
+
+type AcquisitionBudgets = {
+  pages: number;
+  bytes: number;
+  records: number;
+  facts: number;
+  attempts: number;
+};
+
+type DurableCheckpoint = Readonly<{
+  schemaVersion: 1;
+  marketAcquisitionId: string;
+  requestIdentityHash: string;
+  configurationHash: string;
+  providerId: string;
+  datasetId: string;
+  feedId: string;
+  endpointChannelId: string;
+  pageOrdinal: number;
+  currentTokenHash: string | null;
+  nextTokenHash: string | null;
+  privateResumableTokenMaterial: string | null;
+  artifactObservationId: string | null;
+  artifactDigest: string | null;
+  budgets: Readonly<AcquisitionBudgets>;
+  terminal: boolean;
+  incomplete: boolean;
+}>;
+
+type JournalRow = Readonly<{
+  sequence: number;
+  event: ContractEvent;
+  checkpoint: DurableCheckpoint;
+}>;
+
+interface ContractJournal {
+  append(event: ContractEvent, checkpoint: DurableCheckpoint): void;
+  rows(): readonly JournalRow[];
+  close(): void;
+}
+
+const PREDECESSORS: Readonly<Record<ContractEvent, readonly ContractEvent[]>> = {
+  "acquisition.declared": [],
+  "request.started": ["acquisition.declared", "failure.recorded"],
+  "request.succeeded": ["request.started"],
+  "artifact.committed": ["request.succeeded"],
+  "artifact.verified": ["artifact.committed"],
+  "checkpoint.advanced": ["artifact.verified"],
+  "normalization.emitted": ["checkpoint.advanced"],
+  "selection.recorded": ["normalization.emitted"],
+  "failure.recorded": [
+    "acquisition.declared",
+    "request.started",
+    "request.succeeded",
+    "artifact.committed",
+    "artifact.verified",
+    "checkpoint.advanced",
+    "normalization.emitted",
+  ],
+};
+
+function validateJournalAppend(rows: readonly JournalRow[], event: ContractEvent): void {
+  if (rows.length === 0) {
+    if (event !== "acquisition.declared") throw rejection("illegal-transition");
+    return;
+  }
+  if (event === "acquisition.declared") throw rejection("illegal-transition");
+  const prior = rows.at(-1)?.event;
+  if (prior === undefined || !PREDECESSORS[event].includes(prior)) {
+    throw rejection("illegal-transition");
+  }
+}
+
+class MemoryContractJournal implements ContractJournal {
+  readonly #rows: JournalRow[] = [];
+
+  append(event: ContractEvent, checkpoint: DurableCheckpoint): void {
+    validateJournalAppend(this.#rows, event);
+    this.#rows.push({ sequence: this.#rows.length, event, checkpoint });
+  }
+
+  rows(): readonly JournalRow[] {
+    return structuredClone(this.#rows);
+  }
+
+  close(): void {}
+}
+
+class SqliteContractJournal implements ContractJournal {
+  readonly #database: Database.Database;
+
+  constructor(filename: string) {
+    this.#database = new Database(filename);
+    this.#database.exec(
+      "CREATE TABLE IF NOT EXISTS acquisition_journal (" +
+        "sequence INTEGER PRIMARY KEY, event TEXT NOT NULL, checkpoint_json TEXT NOT NULL)",
+    );
+  }
+
+  append(event: ContractEvent, checkpoint: DurableCheckpoint): void {
+    const rows = this.rows();
+    validateJournalAppend(rows, event);
+    this.#database
+      .prepare(
+        "INSERT INTO acquisition_journal (sequence, event, checkpoint_json) VALUES (?, ?, ?)",
+      )
+      .run(rows.length, event, canonicalJson(checkpoint as unknown as JsonValue));
+  }
+
+  rows(): readonly JournalRow[] {
+    return (
+      this.#database
+        .prepare(
+          "SELECT sequence, event, checkpoint_json AS checkpointJson " +
+            "FROM acquisition_journal ORDER BY sequence",
+        )
+        .all() as readonly { sequence: number; event: ContractEvent; checkpointJson: string }[]
+    ).map((row) => ({
+      sequence: row.sequence,
+      event: row.event,
+      checkpoint: JSON.parse(row.checkpointJson) as DurableCheckpoint,
+    }));
+  }
+
+  close(): void {
+    this.#database.close();
+  }
+}
+
+class ContractBudget {
+  readonly value: AcquisitionBudgets = { pages: 0, bytes: 0, records: 0, facts: 0, attempts: 0 };
+
+  add(dimension: keyof AcquisitionBudgets, amount: number): void {
+    const maxima: Readonly<Record<keyof AcquisitionBudgets, number>> = {
+      pages: LIMITS.pages,
+      bytes: LIMITS.aggregateBytes,
+      records: LIMITS.pages * LIMITS.recordsPerPage,
+      facts: LIMITS.facts,
+      attempts: LIMITS.attempts,
+    };
+    const next = this.value[dimension] + amount;
+    if (!Number.isSafeInteger(amount) || amount < 0 || next > maxima[dimension]) {
+      throw rejection(`${dimension}-bound`);
+    }
+    this.value[dimension] = next;
+  }
+}
+
+class AcquisitionCeilingGate {
+  activeRequests = 0;
+  pageAttempts = 0;
+  readonly budget = new ContractBudget();
+
+  beginRequest(): void {
+    if (this.activeRequests >= LIMITS.concurrentRequests) throw rejection("concurrency-bound");
+    this.activeRequests += 1;
+  }
+
+  finishRequest(): void {
+    this.activeRequests -= 1;
+  }
+
+  acceptArtifact(bytes: Uint8Array): void {
+    if (bytes.byteLength > LIMITS.rawArtifactBytes) throw rejection("artifact-bound");
+    this.budget.add("bytes", bytes.byteLength);
+  }
+
+  acceptPage(records: number, facts: number): void {
+    if (records > LIMITS.recordsPerPage) throw rejection("records-bound");
+    this.budget.add("pages", 1);
+    this.budget.add("records", records);
+    this.budget.add("facts", facts);
+  }
+
+  beginAttempt(): void {
+    this.pageAttempts += 1;
+    if (this.pageAttempts > LIMITS.pageAttempts) throw rejection("page-attempts-bound");
+    this.budget.add("attempts", 1);
+  }
+
+  validatePrivateMaterial(bytes: Uint8Array): void {
+    if (bytes.byteLength > LIMITS.tokenBytes) throw rejection("token-bound");
+  }
+
+  validateInstruments(count: number): void {
+    if (count > LIMITS.instruments) throw rejection("symbols-bound");
+  }
+
+  validateDeadlines(attemptMs: number, acquisitionMs: number): void {
+    if (attemptMs > LIMITS.attemptDeadlineMs) throw rejection("attempt-deadline-bound");
+    if (acquisitionMs > LIMITS.acquisitionDeadlineMs) {
+      throw rejection("acquisition-deadline-bound");
+    }
+  }
+}
+
+class RollingQuota {
+  readonly #attempts: number[] = [];
+
+  constructor(
+    readonly projectLimit: number,
+    readonly entitlementLimit: number,
+  ) {}
+
+  admit(nowMs: number): boolean {
+    const cutoff = nowMs - LIMITS.rateWindowMs;
+    while ((this.#attempts[0] ?? Number.POSITIVE_INFINITY) <= cutoff) this.#attempts.shift();
+    if (this.#attempts.length >= Math.min(this.projectLimit, this.entitlementLimit)) return false;
+    this.#attempts.push(nowMs);
+    return true;
+  }
+}
+
+class BodyResourceDouble {
+  aborted = false;
+  destroyed = false;
+  settled = false;
+  pending = 0;
+
+  constructor(readonly glyph: string) {}
+
+  async read(): Promise<Uint8Array> {
+    this.pending += 1;
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      if (this.aborted) throw rejection("body-aborted");
+      return Buffer.from(this.glyph);
+    } finally {
+      this.pending -= 1;
+      this.settled = true;
+    }
+  }
+
+  abortDestroy(): void {
+    this.aborted = true;
+    this.destroyed = true;
+  }
+}
+
+class ProviderDouble {
+  resources: BodyResourceDouble[];
+  requestCalls = 0;
+  readonly #order: readonly string[];
+
+  constructor(order: readonly string[] = ["amber", "cobalt", "fern"]) {
+    this.#order = [...order];
+    this.resources = this.#newResources();
+  }
+
+  #newResources(): BodyResourceDouble[] {
+    return this.#order.map((glyph) => new BodyResourceDouble(glyph));
+  }
+
+  async response(
+    failAt: number | null = null,
+    afterRead?: (index: number) => void,
+  ): Promise<Uint8Array> {
+    if (this.resources.some((resource) => resource.aborted)) this.resources = this.#newResources();
+    this.requestCalls += 1;
+    const chunks: Uint8Array[] = [];
+    try {
+      for (const [index, resource] of this.resources.entries()) {
+        if (failAt === index) throw rejection("body-failure");
+        chunks.push(await resource.read());
+        afterRead?.(index);
+      }
+      return Buffer.concat(chunks);
+    } catch (error) {
+      for (const resource of this.resources) resource.abortDestroy();
+      await Promise.allSettled(this.resources.map((resource) => resource.read()));
+      throw error;
+    }
+  }
+}
+
+class ActiveClockBasisDouble {
+  priorMonotonicNs = 10n;
+  currentMonotonicNs = 11n;
+  wallAvailable = true;
+
+  validate(): void {
+    if (!this.wallAvailable || this.currentMonotonicNs <= this.priorMonotonicNs) {
+      throw rejection("clock-unavailable");
+    }
+    this.priorMonotonicNs = this.currentMonotonicNs;
+    this.currentMonotonicNs += 1n;
+  }
+
+  regress(): void {
+    this.currentMonotonicNs = this.priorMonotonicNs - 1n;
+  }
+}
+
+type StoredReceipt = Readonly<{
+  observationId: string;
+  digest: string;
+  bytes: Uint8Array;
+}>;
+
+class ArtifactDouble {
+  receipt: StoredReceipt | null = null;
+  storeCalls = 0;
+  readCalls = 0;
+  failStore = false;
+  failRead = false;
+  readonly orphanDigests: string[] = [];
+  orphanReconciliations = 0;
+
+  store(bytes: Uint8Array): StoredReceipt {
+    this.storeCalls += 1;
+    if (this.failStore) throw rejection("artifact-store-failure");
+    const digest = hash(Buffer.from(bytes).toString("hex"));
+    this.receipt = {
+      observationId: `synthetic-observation-${digest}`,
+      digest,
+      bytes: Uint8Array.from(bytes),
+    };
+    return this.receipt;
+  }
+
+  storeOrphan(bytes: Uint8Array): void {
+    this.storeCalls += 1;
+    this.orphanDigests.push(hash(Buffer.from(bytes).toString("hex")));
+  }
+
+  reconcileOrphans(): void {
+    if (this.orphanDigests.length === 0) return;
+    this.orphanDigests.length = 0;
+    this.orphanReconciliations += 1;
+  }
+
+  read(digest: string): Uint8Array {
+    this.readCalls += 1;
+    if (this.failRead) throw rejection("artifact-read-failure");
+    if (this.receipt === null || this.receipt.digest !== digest) {
+      throw rejection("artifact-missing");
+    }
+    return Uint8Array.from(this.receipt.bytes);
+  }
+}
+
+type AcquisitionFault = Readonly<{
+  timeoutBeforeHeaders?: boolean;
+  bodyFailureAt?: number;
+  activeClockRegression?: boolean;
+  schemaFailure?: boolean;
+  storeFailure?: boolean;
+  readFailure?: boolean;
+  crashAt?: string;
+}>;
+
+class AcquisitionContractModel {
+  readonly counters = zeroCounters();
+  readonly budget = new ContractBudget();
+  readonly activeClock = new ActiveClockBasisDouble();
+  selectionDigest: string | null = null;
+
+  constructor(
+    readonly request: Preflight,
+    readonly provider: ProviderDouble,
+    readonly artifact: ArtifactDouble,
+    readonly journal: ContractJournal,
+  ) {}
+
+  checkpoint(overrides: Partial<DurableCheckpoint> = {}): DurableCheckpoint {
+    const privateResumableTokenMaterial = this.request.firstRequest
+      ? null
+      : Buffer.alloc(this.request.pageMaterialBytes ?? 0, 0x07).toString("base64");
+    return {
+      schemaVersion: 1,
+      marketAcquisitionId: hash("synthetic-acquisition"),
+      requestIdentityHash: requestIdentity(this.request),
+      configurationHash: configurationHash(this.request),
+      providerId: this.request.providerId,
+      datasetId: this.request.datasetId,
+      feedId: this.request.feedId,
+      endpointChannelId: this.request.endpointChannelId,
+      pageOrdinal: this.request.firstRequest ? 0 : 1,
+      currentTokenHash:
+        privateResumableTokenMaterial === null ? null : hash(privateResumableTokenMaterial),
+      nextTokenHash: null,
+      privateResumableTokenMaterial,
+      artifactObservationId: this.artifact.receipt?.observationId ?? null,
+      artifactDigest: this.artifact.receipt?.digest ?? null,
+      budgets: { ...this.budget.value },
+      terminal: false,
+      incomplete: true,
+      ...overrides,
+    };
+  }
+
+  async run(fault: AcquisitionFault = {}): Promise<"complete" | "crashed" | "failed"> {
+    try {
+      guardedPreflight(this.request, this.counters);
+      this.journal.append("acquisition.declared", this.checkpoint());
+      if (fault.crashAt === "before-request") return "crashed";
+      this.budget.add("attempts", 1);
+      this.journal.append("request.started", this.checkpoint());
+      if (fault.crashAt === "request-started") return "crashed";
+      this.counters.dnsCalls += 1;
+      this.counters.networkCalls += 1;
+      this.counters.providerCalls += 1;
+      if (fault.timeoutBeforeHeaders) throw rejection("timeout-before-headers");
+      this.journal.append("request.succeeded", this.checkpoint());
+      if (fault.crashAt === "during-body") {
+        await assert.rejects(() => this.provider.response(1), /body-failure/u);
+        return "crashed";
+      }
+      const bytes = await this.provider.response(fault.bodyFailureAt ?? null, (index) => {
+        if (fault.activeClockRegression && index === 0) this.activeClock.regress();
+        this.activeClock.validate();
+      });
+      if (fault.schemaFailure) throw rejection("schema-failure");
+      if (fault.crashAt === "vault-side-effect-before-receipt") {
+        this.artifact.storeOrphan(bytes);
+        return "crashed";
+      }
+      this.artifact.failStore = fault.storeFailure ?? false;
+      this.counters.artifactCalls += 1;
+      const receipt = this.artifact.store(bytes);
+      this.budget.add("bytes", bytes.byteLength);
+      this.journal.append(
+        "artifact.committed",
+        this.checkpoint({
+          artifactObservationId: receipt.observationId,
+          artifactDigest: receipt.digest,
+        }),
+      );
+      if (fault.crashAt === "artifact-committed") return "crashed";
+      this.artifact.failRead = fault.readFailure ?? false;
+      this.artifact.read(receipt.digest);
+      this.journal.append("artifact.verified", this.checkpoint());
+      if (fault.crashAt === "artifact-verified") return "crashed";
+      this.budget.add("pages", 1);
+      this.budget.add("records", 3);
+      this.journal.append("checkpoint.advanced", this.checkpoint());
+      if (fault.crashAt === "checkpoint-advanced") return "crashed";
+      this.counters.normalizationCalls += 1;
+      this.budget.add("facts", 3);
+      this.selectionDigest = hash(
+        this.provider.resources
+          .map((resource) => resource.glyph)
+          .sort()
+          .join("|"),
+      );
+      this.journal.append("normalization.emitted", this.checkpoint());
+      if (fault.crashAt === "during-normalization" || fault.crashAt === "before-selection") {
+        return "crashed";
+      }
+      this.counters.selectionCalls += 1;
+      this.journal.append(
+        "selection.recorded",
+        this.checkpoint({ terminal: true, incomplete: false }),
+      );
+      return "complete";
+    } catch {
+      const rows = this.journal.rows();
+      if (rows.length > 0 && rows.at(-1)?.event !== "selection.recorded") {
+        this.journal.append("failure.recorded", this.checkpoint());
+      }
+      return "failed";
+    }
+  }
+
+  async resume(expectedConfigurationHash: string): Promise<"complete"> {
+    let rows = this.journal.rows();
+    let latest = rows.at(-1);
+    if (latest === undefined) throw rejection("journal-empty");
+    if (latest.checkpoint.configurationHash !== expectedConfigurationHash) {
+      throw rejection("restart-configuration-changed");
+    }
+    Object.assign(this.budget.value, latest.checkpoint.budgets);
+    const has = (event: ContractEvent): boolean => rows.some((row) => row.event === event);
+    if (!has("artifact.committed")) {
+      this.artifact.reconcileOrphans();
+      this.journal.append("failure.recorded", this.checkpoint());
+      this.budget.add("attempts", 1);
+      this.journal.append("request.started", this.checkpoint());
+      this.counters.dnsCalls += 1;
+      this.counters.networkCalls += 1;
+      this.counters.providerCalls += 1;
+      const bytes = await this.provider.response();
+      this.journal.append("request.succeeded", this.checkpoint());
+      const receipt = this.artifact.store(bytes);
+      this.budget.add("bytes", bytes.byteLength);
+      this.journal.append(
+        "artifact.committed",
+        this.checkpoint({
+          artifactObservationId: receipt.observationId,
+          artifactDigest: receipt.digest,
+        }),
+      );
+      rows = this.journal.rows();
+      latest = rows.at(-1);
+      assert.ok(latest !== undefined);
+    }
+    if (!has("artifact.verified")) {
+      const committed = [...rows].reverse().find((row) => row.event === "artifact.committed");
+      const digest = committed?.checkpoint.artifactDigest;
+      if (digest === null || digest === undefined) throw rejection("artifact-missing");
+      this.artifact.read(digest);
+      this.journal.append("artifact.verified", this.checkpoint());
+    }
+    if (!has("checkpoint.advanced")) {
+      this.budget.add("pages", 1);
+      this.budget.add("records", 3);
+      this.journal.append("checkpoint.advanced", this.checkpoint());
+    }
+    if (!has("normalization.emitted")) {
+      this.counters.normalizationCalls += 1;
+      this.budget.add("facts", 3);
+      this.selectionDigest = hash(
+        this.provider.resources
+          .map((resource) => resource.glyph)
+          .sort()
+          .join("|"),
+      );
+      this.journal.append("normalization.emitted", this.checkpoint());
+    }
+    if (!has("selection.recorded")) {
+      this.counters.selectionCalls += 1;
+      this.journal.append(
+        "selection.recorded",
+        this.checkpoint({ terminal: true, incomplete: false }),
+      );
+    }
+    return "complete";
+  }
 }
 
 function safeProjection(value: unknown): JsonValue {
@@ -584,6 +1285,140 @@ test("all eleven frozen identities recompute from accepted inert PR 2D preimages
   }
 });
 
+test("zero-spend policy recomputes exactly and every invalid decision is a zero-side-effect rejection", () => {
+  assert.equal(
+    `mzp1_${canonicalHash(
+      "peas/market-zero-spend-policy/v1",
+      ZERO_SPEND_POLICY_PREIMAGE as JsonValue,
+    )}`,
+    ZERO_SPEND_POLICY_ID,
+  );
+  const mutatedPolicy = {
+    ...ZERO_SPEND_POLICY_PREIMAGE,
+    maximumIncrementalSpend: "1",
+  };
+  const negatives: readonly Preflight[] = [
+    { ...exactBoundaryRequest(0n), zeroSpendPolicyId: null },
+    { ...exactBoundaryRequest(0n), zeroSpendPolicyId: `mzp1_${"0".repeat(64)}` },
+    { ...exactBoundaryRequest(0n), zeroSpendPolicyPreimage: mutatedPolicy },
+    { ...exactBoundaryRequest(0n), zeroSpendPolicyPreimage: null },
+    { ...exactBoundaryRequest(0n), runDecision: null },
+    { ...exactBoundaryRequest(0n), runDecision: "reject" },
+    { ...exactBoundaryRequest(0n), costStatus: "stale" },
+    { ...exactBoundaryRequest(0n), costStatus: "unknown" },
+  ];
+  for (const request of negatives) {
+    const counters = zeroCounters();
+    assert.throws(() => guardedPreflight(request, counters), /cost-unproven/u);
+    assertZeroSideEffects(counters);
+  }
+});
+
+test("every identity family rejects every hostile derivation/configuration mutation with zero effects", () => {
+  for (const envelope of IDENTITY_ENVELOPES) {
+    assert.doesNotThrow(() => validateIdentityEnvelope(envelope), envelope.family);
+    const preimageEntries = Object.entries(envelope.preimage);
+    const firstKey = preimageEntries[0]?.[0];
+    assert.ok(firstKey !== undefined);
+    const withoutFirst = Object.fromEntries(preimageEntries.slice(1));
+    const mutations: readonly [string, IdentityEnvelope][] = [
+      [
+        "one-field",
+        {
+          ...envelope,
+          preimage: { ...envelope.preimage, [firstKey]: "mutated" },
+        },
+      ],
+      ["missing", { ...envelope, preimage: withoutFirst }],
+      ["extra", { ...envelope, preimage: { ...envelope.preimage, unexpected: true } }],
+      [
+        "reordered-set",
+        { ...envelope, orderedCapabilities: [...envelope.orderedCapabilities].reverse() },
+      ],
+      [
+        "forged-id",
+        {
+          ...envelope,
+          expectedId: `${envelope.expectedId.slice(0, -1)}${
+            envelope.expectedId.endsWith("0") ? "1" : "0"
+          }`,
+        },
+      ],
+      ["url-path", { ...envelope, preimage: { ...envelope.preimage, url: "forbidden" } }],
+      [
+        "header-credential",
+        { ...envelope, preimage: { ...envelope.preimage, authorizationHeader: "forbidden" } },
+      ],
+      [
+        "provider-default",
+        { ...envelope, preimage: { ...envelope.preimage, providerDefault: true } },
+      ],
+    ];
+    for (const [_name, mutation] of mutations) {
+      const counters = zeroCounters();
+      assert.throws(() => {
+        validateIdentityEnvelope(mutation);
+        counters.credentialReads += 1;
+      }, /(?:identity|market)/u);
+      assertZeroSideEffects(counters);
+    }
+  }
+});
+
+test("closed request limits 1..10000 are canonical and bind configuration but not request identity", async () => {
+  const requestHashes = new Set<string>();
+  const configHashes = new Set<string>();
+  for (const limit of ["1", "2", "7", "10000"]) {
+    const request = {
+      ...exactBoundaryRequest(0n),
+      fields: { ...exactBoundaryRequest(0n).fields, limit },
+    };
+    assert.doesNotThrow(() => preflight(request), limit);
+    requestHashes.add(requestIdentity(request));
+    configHashes.add(configurationHash(request));
+  }
+  assert.equal(requestHashes.size, 1);
+  assert.equal(configHashes.size, 4);
+  for (const limit of ["0", "10001", "-1", "+1", "01", "1.0", " 1", "1 ", "1e1", "NaN"]) {
+    const request = {
+      ...exactBoundaryRequest(0n),
+      fields: { ...exactBoundaryRequest(0n).fields, limit },
+    };
+    assert.throws(() => preflight(request), /limit-not-authorized/u, limit);
+  }
+  const frozen = configurationHash({
+    ...exactBoundaryRequest(0n),
+    fields: { ...exactBoundaryRequest(0n).fields, limit: "1" },
+  });
+  for (const changed of ["2", "7", "10000"]) {
+    const resumed = configurationHash({
+      ...exactBoundaryRequest(0n),
+      fields: { ...exactBoundaryRequest(0n).fields, limit: changed },
+    });
+    assert.notEqual(resumed, frozen, `restart must reject changed page limit ${changed}`);
+  }
+  const frozenRequest = {
+    ...exactBoundaryRequest(0n),
+    fields: { ...exactBoundaryRequest(0n).fields, limit: "1" },
+  };
+  const journal = new MemoryContractJournal();
+  const model = new AcquisitionContractModel(
+    frozenRequest,
+    new ProviderDouble(),
+    new ArtifactDouble(),
+    journal,
+  );
+  assert.equal(await model.run({ crashAt: "artifact-committed" }), "crashed");
+  const changedRequest = {
+    ...frozenRequest,
+    fields: { ...frozenRequest.fields, limit: "2" },
+  };
+  await assert.rejects(
+    () => model.resume(configurationHash(changedRequest)),
+    /restart-configuration-changed/u,
+  );
+});
+
 test("closed Alpaca route, value, capability, and one-nanosecond time gates fail before dispatch", () => {
   assert.doesNotThrow(() => preflight(exactBoundaryRequest(0n)));
   assert.throws(() => preflight(exactBoundaryRequest(1n)), /history-boundary/u);
@@ -677,31 +1512,57 @@ test("clock, first-page, cost, credential ordering, and active-response regressi
 });
 
 test("every frozen project ceiling has an exact and one-over executable vector", () => {
-  const vectors = [
-    ["concurrency", LIMITS.concurrentRequests],
-    ["artifact", LIMITS.rawArtifactBytes],
-    ["aggregate", LIMITS.aggregateBytes],
-    ["pages", LIMITS.pages],
-    ["records", LIMITS.recordsPerPage],
-    ["facts", LIMITS.facts],
-    ["token", LIMITS.tokenBytes],
-    ["symbols", LIMITS.instruments],
-    ["attempts", LIMITS.attempts],
-    ["page-attempts", LIMITS.pageAttempts],
-    ["retry-after", LIMITS.retryAfterMs],
-    ["attempt-deadline", LIMITS.attemptDeadlineMs],
-    ["acquisition-deadline", LIMITS.acquisitionDeadlineMs],
-    ["rate-attempts", LIMITS.rateAttempts],
-    ["rate-window", LIMITS.rateWindowMs],
-  ] as const;
-  for (const [name, limit] of vectors) {
-    assert.doesNotThrow(() => checkBound(name, limit, limit), name);
-    assert.throws(() => checkBound(name, limit + 1, limit), /bound/u, name);
-  }
-  assert.doesNotThrow(() =>
-    checkBound("window", Number(BigInt(LIMITS.spanDays) * DAY_NS), Number(8n * DAY_NS)),
+  const concurrency = new AcquisitionCeilingGate();
+  concurrency.beginRequest();
+  assert.throws(() => concurrency.beginRequest(), /concurrency-bound/u);
+  concurrency.finishRequest();
+
+  const artifactExact = new AcquisitionCeilingGate();
+  artifactExact.acceptArtifact(Buffer.alloc(LIMITS.rawArtifactBytes));
+  assert.throws(
+    () => new AcquisitionCeilingGate().acceptArtifact(Buffer.alloc(LIMITS.rawArtifactBytes + 1)),
+    /artifact-bound/u,
   );
-  assert.throws(() => checkBound("window", LIMITS.spanDays + 1, LIMITS.spanDays), /bound/u);
+
+  for (const [dimension, maximum] of [
+    ["pages", LIMITS.pages],
+    ["bytes", LIMITS.aggregateBytes],
+    ["records", LIMITS.pages * LIMITS.recordsPerPage],
+    ["facts", LIMITS.facts],
+    ["attempts", LIMITS.attempts],
+  ] as const) {
+    const budget = new ContractBudget();
+    budget.add(dimension, maximum);
+    assert.equal(budget.value[dimension], maximum);
+    assert.throws(() => budget.add(dimension, 1), new RegExp(`${dimension}-bound`, "u"));
+  }
+
+  const page = new AcquisitionCeilingGate();
+  page.acceptPage(LIMITS.recordsPerPage, LIMITS.facts);
+  assert.throws(
+    () => new AcquisitionCeilingGate().acceptPage(LIMITS.recordsPerPage + 1, 0),
+    /records-bound/u,
+  );
+  const material = new AcquisitionCeilingGate();
+  material.validatePrivateMaterial(Buffer.alloc(LIMITS.tokenBytes));
+  assert.throws(
+    () => material.validatePrivateMaterial(Buffer.alloc(LIMITS.tokenBytes + 1)),
+    /token-bound/u,
+  );
+  material.validateInstruments(LIMITS.instruments);
+  assert.throws(() => material.validateInstruments(LIMITS.instruments + 1), /symbols-bound/u);
+  const pageAttempts = new AcquisitionCeilingGate();
+  for (let index = 0; index < LIMITS.pageAttempts; index += 1) pageAttempts.beginAttempt();
+  assert.throws(() => pageAttempts.beginAttempt(), /page-attempts-bound/u);
+  material.validateDeadlines(LIMITS.attemptDeadlineMs, LIMITS.acquisitionDeadlineMs);
+  assert.throws(
+    () => material.validateDeadlines(LIMITS.attemptDeadlineMs + 1, 0),
+    /attempt-deadline-bound/u,
+  );
+  assert.throws(
+    () => material.validateDeadlines(0, LIMITS.acquisitionDeadlineMs + 1),
+    /acquisition-deadline-bound/u,
+  );
   const exactWindow = exactBoundaryRequest(0n);
   const endDate = exactWindow.fields["end"] as string;
   const endMs = Date.parse(`${endDate.slice(0, 23)}Z`);
@@ -714,6 +1575,38 @@ test("every frozen project ceiling has an exact and one-over executable vector",
     () => preflight({ ...exactWindow, fields: { ...exactWindow.fields, start: oneOverStart } }),
     /window-invalid/u,
   );
+});
+
+test("journal transition legality and rolling project/entitlement quota equality are executable", () => {
+  const journal = new MemoryContractJournal();
+  const model = new AcquisitionContractModel(
+    exactBoundaryRequest(0n),
+    new ProviderDouble(),
+    new ArtifactDouble(),
+    journal,
+  );
+  assert.throws(() => journal.append("request.started", model.checkpoint()), /illegal-transition/u);
+  journal.append("acquisition.declared", model.checkpoint());
+  assert.throws(
+    () => journal.append("selection.recorded", model.checkpoint()),
+    /illegal-transition/u,
+  );
+  journal.append("request.started", model.checkpoint());
+  journal.append("request.succeeded", model.checkpoint());
+  journal.append("failure.recorded", model.checkpoint());
+  journal.append("request.started", model.checkpoint());
+
+  const quota = new RollingQuota(30, 2);
+  assert.equal(quota.admit(0), true);
+  assert.equal(quota.admit(0), true);
+  assert.equal(quota.admit(59_999), false);
+  assert.equal(quota.admit(60_000), true, "oldest attempt expires at exact rolling boundary");
+  const projectCeiling = new RollingQuota(LIMITS.rateAttempts, 100);
+  for (let attempt = 0; attempt < LIMITS.rateAttempts; attempt += 1) {
+    assert.equal(projectCeiling.admit(0), true);
+  }
+  assert.equal(projectCeiling.admit(59_999), false);
+  assert.equal(projectCeiling.admit(LIMITS.rateWindowMs), true);
 });
 
 test("retry/status/timeout matrix is deterministic and Retry-After is closed", () => {
@@ -741,21 +1634,52 @@ test("retry/status/timeout matrix is deterministic and Retry-After is closed", (
   assert.equal(retryDecision("http-429", 1, "30", true), "retry-1000");
 });
 
-test("malformed/truncated/declared-length and response timeout cases never commit", async () => {
-  const cases = ["malformed-json", "schema-drift", "truncated", "declared-length-mismatch"];
-  for (const reason of cases) {
-    const events = ["request.started", "request.succeeded", `failure.${reason}`];
-    assert.equal(
-      events.some((event) => event.startsWith("artifact.")),
-      false,
-      reason,
+test("provider/body/schema/store/read fault doubles enforce cleanup and causal journal writes", async () => {
+  const cases: readonly [string, AcquisitionFault][] = [
+    ["timeout-before-headers", { timeoutBeforeHeaders: true }],
+    ["timeout-during-body", { bodyFailureAt: 0 }],
+    ["active-clock-regression", { activeClockRegression: true }],
+    ["truncated-middle-body", { bodyFailureAt: 1 }],
+    ["declared-length-last-body", { bodyFailureAt: 2 }],
+    ["malformed-schema", { schemaFailure: true }],
+    ["store-failure", { storeFailure: true }],
+    ["read-failure", { readFailure: true }],
+  ];
+  for (const [name, fault] of cases) {
+    const provider = new ProviderDouble();
+    const artifact = new ArtifactDouble();
+    const journal = new MemoryContractJournal();
+    const model = new AcquisitionContractModel(
+      exactBoundaryRequest(0n),
+      provider,
+      artifact,
+      journal,
     );
-  }
-  for (const stage of ["before-headers", "during-body"]) {
-    const active = new Set(["body", "sibling"]);
-    active.clear();
-    await Promise.resolve();
-    assert.equal(active.size, 0, stage);
+    assert.equal(await model.run(fault), "failed", name);
+    const events = journal.rows().map((row) => row.event);
+    assert.equal(events.at(-1), "failure.recorded", name);
+    assert.equal(events.includes("selection.recorded"), false, name);
+    if (fault.bodyFailureAt !== undefined || fault.activeClockRegression) {
+      for (const resource of provider.resources) {
+        assert.equal(resource.aborted, true, name);
+        assert.equal(resource.destroyed, true, name);
+        assert.equal(resource.settled, true, name);
+        assert.equal(resource.pending, 0, name);
+      }
+    }
+    if (
+      fault.timeoutBeforeHeaders ||
+      fault.bodyFailureAt !== undefined ||
+      fault.activeClockRegression ||
+      fault.schemaFailure
+    ) {
+      assert.equal(events.includes("artifact.committed"), false, name);
+    }
+    if (fault.storeFailure) assert.equal(events.includes("artifact.committed"), false, name);
+    if (fault.readFailure) {
+      assert.equal(events.includes("artifact.committed"), true, name);
+      assert.equal(events.includes("artifact.verified"), false, name);
+    }
   }
 });
 
@@ -787,6 +1711,21 @@ test("pagination rejects loops, gaps, duplicate positions, substitution, and pos
     [{ ...first, nextHash: null }, second],
   ];
   for (const attack of attacks) assert.throws(() => verifyChain(attack, requestHash));
+  assert.throws(
+    () =>
+      verifyChain(
+        [
+          first,
+          {
+            ...second,
+            nextHash: first.nextHash,
+          },
+        ],
+        requestHash,
+      ),
+    /token-loop/u,
+    "the same returned continuation hash cannot appear twice",
+  );
 });
 
 test("frozen acquisition/request identities exclude page layout while private configuration and page hashes bind it", () => {
@@ -876,16 +1815,78 @@ test("redelivery, mutation, and correction semantics preserve observations or qu
   );
 });
 
-test("restart from every crash point reuses verified pages and replaces only in-flight attempts", () => {
-  for (const checkpoint of CHECKPOINTS) {
-    const steps = replayAfterCrash(checkpoint);
-    if (CHECKPOINTS.indexOf(checkpoint) >= CHECKPOINTS.indexOf("artifact-committed")) {
-      assert.equal(steps.includes("request-same-page"), false, checkpoint);
-    } else {
-      assert.equal(steps.includes("new-attempt"), true, checkpoint);
+test("restart from every crash boundary derives retry/resume from durable journal state", async () => {
+  const baseline = new AcquisitionContractModel(
+    exactBoundaryRequest(0n),
+    new ProviderDouble(),
+    new ArtifactDouble(),
+    new MemoryContractJournal(),
+  );
+  assert.equal(await baseline.run(), "complete");
+  assert.ok(baseline.selectionDigest !== null);
+  const crashPoints = [
+    "before-request",
+    "request-started",
+    "during-body",
+    "vault-side-effect-before-receipt",
+    "artifact-committed",
+    "artifact-verified",
+    "checkpoint-advanced",
+    "during-normalization",
+    "before-selection",
+  ] as const;
+  for (const crashAt of crashPoints) {
+    const request = exactBoundaryRequest(0n);
+    const provider = new ProviderDouble();
+    const artifact = new ArtifactDouble();
+    const journal = new MemoryContractJournal();
+    const model = new AcquisitionContractModel(request, provider, artifact, journal);
+    assert.equal(await model.run({ crashAt }), "crashed", crashAt);
+    const crashedResources = [...provider.resources];
+    if (crashAt === "during-body") {
+      assert.ok(
+        crashedResources.every(
+          (resource) =>
+            resource.aborted && resource.destroyed && resource.settled && resource.pending === 0,
+        ),
+      );
     }
-    assert.equal(steps.at(-1), "select", checkpoint);
+    if (crashAt === "vault-side-effect-before-receipt") {
+      assert.equal(artifact.orphanDigests.length, 1);
+    }
+    const callsAtCrash = provider.requestCalls;
+    await model.resume(configurationHash(request));
+    const events = journal.rows().map((row) => row.event);
+    assert.equal(events.at(-1), "selection.recorded", crashAt);
+    assert.equal(events.filter((event) => event === "selection.recorded").length, 1, crashAt);
+    if (
+      crashAt === "before-request" ||
+      crashAt === "request-started" ||
+      crashAt === "during-body" ||
+      crashAt === "vault-side-effect-before-receipt"
+    ) {
+      assert.equal(provider.requestCalls, callsAtCrash + 1, crashAt);
+    } else {
+      assert.equal(provider.requestCalls, callsAtCrash, crashAt);
+    }
+    const committedIndex = events.indexOf("artifact.committed");
+    const verifiedIndex = events.indexOf("artifact.verified");
+    const checkpointIndex = events.indexOf("checkpoint.advanced");
+    assert.ok(committedIndex >= 0 && committedIndex < verifiedIndex, crashAt);
+    assert.ok(verifiedIndex < checkpointIndex, crashAt);
+    assert.equal(model.selectionDigest, baseline.selectionDigest, crashAt);
+    assert.equal(model.counters.postReturnActivity, 0, crashAt);
+    assert.ok(
+      provider.resources.every((resource) => resource.pending === 0),
+      crashAt,
+    );
+    if (crashAt === "vault-side-effect-before-receipt") {
+      assert.equal(artifact.orphanDigests.length, 0);
+      assert.equal(artifact.orphanReconciliations, 1);
+    }
   }
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(baseline.counters.postReturnActivity, 0);
 });
 
 test("default CI network witness and missing credentials prove zero transport calls", async () => {
@@ -985,49 +1986,86 @@ test("abstract replay is invariant at page sizes 1, 2, 7, and 10,000", () => {
   }
 });
 
-test("memory and SQLite journals produce canonical checkpoint equivalence", () => {
-  const rows = CHECKPOINTS.map((stage, ordinal) => ({ ordinal, stage, digest: hash(stage) }));
-  const memory = canonicalJson(rows as unknown as JsonValue);
-  const database = new Database(":memory:");
+test("memory and real SQLite close/reopen preserve the complete journal and restart decision", async () => {
+  const request = exactBoundaryRequest(0n);
+  const memoryJournal = new MemoryContractJournal();
+  const memoryModel = new AcquisitionContractModel(
+    request,
+    new ProviderDouble(),
+    new ArtifactDouble(),
+    memoryJournal,
+  );
+  assert.equal(await memoryModel.run(), "complete");
+  const expected = canonicalJson(memoryJournal.rows() as unknown as JsonValue);
+
+  const directory = mkdtempSync(join(tmpdir(), "peas-p1-10-journal-"));
+  const filename = join(directory, "journal.sqlite");
+  const provider = new ProviderDouble();
+  const artifact = new ArtifactDouble();
   try {
-    database.exec(
-      "CREATE TABLE journal (ordinal INTEGER PRIMARY KEY, stage TEXT NOT NULL, digest TEXT NOT NULL)",
-    );
-    const insert = database.prepare(
-      "INSERT INTO journal (ordinal, stage, digest) VALUES (?, ?, ?)",
-    );
-    const transaction = database.transaction(() => {
-      for (const row of rows) insert.run(row.ordinal, row.stage, row.digest);
+    let sqliteJournal = new SqliteContractJournal(filename);
+    const crashing = new AcquisitionContractModel(request, provider, artifact, sqliteJournal);
+    assert.equal(await crashing.run({ crashAt: "artifact-committed" }), "crashed");
+    sqliteJournal.close();
+
+    sqliteJournal = new SqliteContractJournal(filename);
+    const restarted = new AcquisitionContractModel(request, provider, artifact, sqliteJournal);
+    const providerCallsBefore = provider.requestCalls;
+    assert.equal(await restarted.resume(configurationHash(request)), "complete");
+    assert.equal(provider.requestCalls, providerCallsBefore);
+    const sqliteProjection = canonicalJson(sqliteJournal.rows() as unknown as JsonValue);
+    assert.equal(sqliteProjection, expected);
+    const checkpoint = sqliteJournal.rows().at(-1)?.checkpoint;
+    assert.ok(checkpoint !== undefined);
+    assert.deepEqual(checkpoint.budgets, {
+      pages: 1,
+      bytes: 15,
+      records: 3,
+      facts: 3,
+      attempts: 1,
     });
-    transaction();
-    const sqlite = database
-      .prepare("SELECT ordinal, stage, digest FROM journal ORDER BY ordinal")
-      .all() as typeof rows;
-    assert.equal(canonicalJson(sqlite as unknown as JsonValue), memory);
+    assert.equal(checkpoint.requestIdentityHash, requestIdentity(request));
+    assert.equal(checkpoint.configurationHash, configurationHash(request));
+    assert.equal(checkpoint.terminal, true);
+    assert.equal(checkpoint.incomplete, false);
+    sqliteJournal.close();
   } finally {
-    database.close();
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 
-test("all sibling work settles and no asynchronous activity occurs after return", async () => {
-  let active = 0;
-  let afterReturn = 0;
-  const sibling = async (fail: boolean): Promise<void> => {
-    active += 1;
-    try {
-      await Promise.resolve();
-      if (fail) throw rejection("synthetic-sibling-failure");
-    } finally {
-      active -= 1;
-    }
-  };
-  await Promise.allSettled([sibling(true), sibling(false), sibling(false)]);
-  assert.equal(active, 0);
+test("response order, repeat run, replay page size, and post-return activity are invariant", async () => {
+  const outputs: string[] = [];
+  for (const order of [
+    ["amber", "cobalt", "fern"],
+    ["fern", "amber", "cobalt"],
+    ["cobalt", "fern", "amber"],
+  ]) {
+    const provider = new ProviderDouble(order);
+    const journal = new MemoryContractJournal();
+    const model = new AcquisitionContractModel(
+      exactBoundaryRequest(0n),
+      provider,
+      new ArtifactDouble(),
+      journal,
+    );
+    assert.equal(await model.run(), "complete");
+    assert.ok(model.selectionDigest !== null);
+    outputs.push(model.selectionDigest);
+    assert.equal(
+      provider.resources.reduce((sum, resource) => sum + resource.pending, 0),
+      0,
+    );
+    assert.ok(provider.resources.every((resource) => resource.settled));
+  }
+  assert.equal(new Set(outputs).size, 1);
+  const baseline = normalizedFixtureProjection(1);
+  for (const pageSize of [1, 2, 7, 10_000]) {
+    assert.equal(normalizedFixtureProjection(pageSize), baseline);
+  }
+  const callsBefore = unexpectedNetworkCalls;
   await new Promise<void>((resolve) => {
-    setImmediate(() => {
-      afterReturn = active;
-      resolve();
-    });
+    setImmediate(resolve);
   });
-  assert.equal(afterReturn, 0);
+  assert.equal(unexpectedNetworkCalls, callsBefore);
 });

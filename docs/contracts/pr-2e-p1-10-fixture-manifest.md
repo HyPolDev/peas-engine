@@ -49,6 +49,10 @@ persisted.
 - exact 15-minute history-boundary and one-nanosecond-newer timestamps;
 - bounded opaque continuation material represented only by byte length;
 - route, method, identity, field, value, clock, cost, and authorization mutations;
+- exact zero-spend preimage/ID and missing, forged, mutated, stale, and unknown run decisions;
+- provider, dataset, feed, and channel negative identity envelopes covering one-field mutation,
+  missing/extra fields, set reordering, forged IDs, URL/path and header/credential insertion, and
+  provider-default substitution;
 - retry status and `Retry-After` variations;
 - malformed, truncated, schema-drift, and declared-length failure classifications;
 - loop, gap, duplicate, substitution, and page-after-terminal attacks;
@@ -64,11 +68,16 @@ The executable test must verify:
 
 1. `manifest.json` declares `original-project-authored-synthetic`, `providerEvidence=false`, and
    `networkAuthorized=false`.
-2. The page projection is deterministic and independent of replay page size.
+2. The page projection is deterministic and independent of request/replay page limits `1`, `2`,
+   `7`, and `10,000`; those values pass canonical preflight while coercive and out-of-range values
+   fail.
 3. No default test can reach `fetch`; a global witness throws on unexpected access.
 4. Missing credentials fail after non-secret preflight and before transport.
 5. Redaction tests compare only closed safe projections and never retain hostile source text.
 6. FMP cannot become primary, fallback, or public evidence.
+7. A production-free acquisition model drives causal journal transitions, provider-body and
+   store/read failures, actual cleanup, complete checkpoints, crash recovery, and memory/SQLite
+   close/reopen equivalence.
 
 Any future fixture that contains provider material, provider-derived structure, a secret, raw token,
 account fact, or query-bearing URL is outside this manifest and is an immediate `NO_GO`.

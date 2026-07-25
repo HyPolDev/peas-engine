@@ -26,14 +26,15 @@ zero-call path rather than a skipped test.
 | Recompute FMP provider, dataset, feed, aftermarket-quote channel, aftermarket-trade channel | Exact equality with the five frozen IDs |
 | Any changed preimage member or endpoint-channel identity | `reject-zero-call` |
 | Live acquisition default/flag absent or false | `reject-zero-call` |
-| `authorizationMode=p1-09-approved`, zero-spend decision true, capability `historical-market-reference`, fallback `none` | accept |
-| Wrong authorization mode, unknown capability, account/subscription mutation, nonzero/unknown spend, or any fallback | `reject-zero-call` |
+| Exact zero-spend preimage, `mzp1_b2f575e234dcd7f05eb5fcc03060420313b56e45aff87c961c3771d1c5cf3b9e`, run decision `allow`, `authorizationMode=p1-09-approved`, capability `historical-market-reference`, fallback `none` | accept |
+| Missing, forged, mutated, stale, unknown, or rejecting zero-spend proof; wrong authorization mode; unknown/account/subscription capability; or fallback | `reject-zero-call` |
 | Alpaca historical multi-symbol quotes/trades/bars GET route with exact channel | accept |
 | Unauthorized origin, method, path, single-symbol route, latest, snapshot, stream, or capability | `reject-zero-call` |
 | Omitted/default, empty, or non-`sip` feed | `reject-zero-call` |
 | Missing or noncanonical `start`/`end`; unbounded range | `reject-zero-call` |
-| `sort=asc`; bounded `limit=10000` | accept |
-| Other sort, limit, or query field | `reject-zero-call` |
+| `sort=asc`; canonical decimal integer `limit` from `1` through `10000` inclusive | accept |
+| Limits `1`, `2`, `7`, and `10000` through preflight/configuration/restart | accept with one stable request identity and four distinct configuration hashes |
+| Limit `0`, `10001`, sign, leading/trailing whitespace, leading zero, decimal, exponent, non-number, other sort, or other query field | `reject-zero-call` |
 | Bars `timeframe=1Min` and `adjustment=raw` | accept |
 | Other/omitted timeframe or adjustment | `reject-zero-call` |
 | First request without continuation material | accept |
@@ -192,11 +193,19 @@ or vault-semantic change.
 | Vector | Expected |
 | --- | --- |
 | Replay page sizes `1`, `2`, `7`, `10,000` | byte-identical canonical projection |
-| Memory journal versus SQLite journal | byte-identical ordered checkpoint projection |
+| Memory journal versus SQLite file after close/reopen | byte-identical complete checkpoint projection, including identities, private configuration, budgets, artifact receipt, token slots, and terminal state |
 | Provider response order permutation | same normalized facts and selection |
 | Restart from every durable checkpoint | same final projection |
 | Failure with active siblings | all abort/destroy/settle before return |
 | Event-loop probe after return | zero asynchronous activity |
+
+The executable model drives real legal and illegal journal transitions and uses deterministic
+provider-body, artifact-store/read, memory-journal, and SQLite-journal doubles. Faults are injected
+before headers; at the first, middle, and last body member; at schema validation; in store and read;
+before an artifact receipt is journaled; and after each durable checkpoint. Assertions inspect
+actual causal journal rows, resource abort/destroy/settle state, complete checkpoint bodies, provider
+call counts, and close/reopen restart behavior. No outcome is supplied to the assertion as a
+preselected step list.
 
 ## Required validation
 

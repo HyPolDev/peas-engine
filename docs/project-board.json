@@ -275,11 +275,16 @@
           "id": "P1-10",
           "title": "Delayed historical market-reference adapter",
           "status": "in-progress",
-          "preparationStatus": "pr-2e-contract-in-progress",
+          "preparationStatus": "pr-2e-contract-repair-candidate-validation",
           "authorization": "P1-09 COMPLETE; PR 2E contract-only work authorized; PR 2F NO_GO pending exact-candidate contract GO and human retention authorization",
+          "contractCandidate": "72164f8d15ff073325232c652ec33ea6573e40de",
+          "contractReview": "NO_GO",
+          "contractReviewDocument": "docs/audit/pr-2e-p1-10-contract-review.md",
+          "repairStatus": "F-001..F-004 integrated; pending new exact candidate SHA, complete offline validation, same-SHA CI, and fresh independent review",
           "owner": "agent",
           "dependsOn": ["P1-08", "P1-09"],
           "blocker": "ArtifactStore has no deletion API and migration 005 installs no-delete triggers; retention implementation requires separately authorized port, migration, reconciliation, or vault-semantic changes",
+          "contractBlocker": "Initial candidate 72164f8d15ff073325232c652ec33ea6573e40de received independent NO_GO F-001..F-004; repaired package requires a new exact candidate SHA and fresh independent GO",
           "preparationScope": "Agents may prepare the file-ownership map, accepted-contract mapping, synthetic and recorded acceptance vectors, bounded retry/quota/restart plan, secret-redaction tests, and pre-implementation audit without credentials, provider calls, live transport, or provider bytes.",
           "acceptance": "A bounded no-new-spend adapter stores private raw artifacts, verifies reads, normalizes market facts, deterministically selects references around the PR 2C observation anchor, and emits marketReferenceJoinKey or a stable missing reason while paid-plan activation is disabled.",
           "evidence": [
@@ -291,7 +296,9 @@
             "docs/contracts/pr-2e-p1-10-artifact-replay.md",
             "docs/contracts/pr-2e-p1-10-fixture-manifest.md",
             "docs/contracts/pr-2e-p1-10-acceptance-matrix.md",
-            "test/p1-10-contract.test.ts"
+            "test/p1-10-contract.test.ts",
+            "contract-no-go@72164f8d15ff073325232c652ec33ea6573e40de",
+            "docs/audit/pr-2e-p1-10-contract-review.md"
           ]
         },
         {
