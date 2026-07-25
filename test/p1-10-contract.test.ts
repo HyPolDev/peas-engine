@@ -12,13 +12,17 @@ import { canonicalJson, type JsonValue } from "../src/core/json.js";
 import {
   deriveArtifactContentId,
   deriveEndpointChannelId,
+  deriveInstrumentId,
   deriveMarketAcquisitionId,
   deriveMarketDatasetId,
   deriveMarketFeedId,
   deriveMarketProviderId,
   deriveRawArtifactId,
 } from "../src/providers/market-reference/identity.js";
-import { deriveAcquisitionObservationId } from "../src/providers/observation-ledger.js";
+import {
+  deriveAcquisitionObservationId,
+  deriveIssuerMappingId,
+} from "../src/providers/observation-ledger.js";
 
 const NS_PER_MINUTE = 60_000_000_000n;
 const HISTORY_DELAY_NS = 15n * NS_PER_MINUTE;
@@ -83,33 +87,152 @@ const ENTITLEMENT_SNAPSHOT_ID = `ent1_${"a".repeat(64)}`;
 const ROUTE_POLICY_VERSION = "p1-10-frozen-historical-multi-symbol-v1";
 const JOURNAL_SCHEMA_VERSION = 1;
 const RUN_SESSION_NONCE = "synthetic-run-session-v1";
-const CANONICAL_SYMBOLS = Object.freeze(["glyph-amber", "glyph-cobalt"]);
+const CANONICAL_SYMBOLS = Object.freeze(["GA", "GC"]);
 type InstrumentMember = Readonly<{ canonicalSymbol: string; instrumentId: string }>;
-const syntheticInstrument = (canonicalSymbol: string): InstrumentMember =>
-  Object.freeze({
-    canonicalSymbol,
-    instrumentId: `min1_${createHash("sha256").update(canonicalSymbol).digest("hex")}`,
+type IssuerMappingPreimage = Readonly<{
+  issuerCik: string;
+  symbols: readonly string[];
+  selectedSymbol: string;
+  mappingAuthority: string;
+  mappingVersion: string;
+  effectiveFromMs: number;
+  effectiveToMs: number | null;
+}>;
+type SyntheticInstrumentPreimage = Readonly<{
+  issuerMappingId: string;
+  securityAuthority: string;
+  securityKey: string;
+  issueType: string;
+  shareClass: string;
+  primaryListingVenueCode: string;
+  currency: string;
+  roundLotSize: number;
+  effectiveFromNs: string;
+  effectiveToNs: string | null;
+  predecessorInstrumentId: string | null;
+  transitionReason: string | null;
+}>;
+type SymbolAliasPreimage = Readonly<{
+  instrumentId: string;
+  symbol: string;
+  mappingAuthority: string;
+  mappingVersion: string;
+  mappingArtifactDigest: string;
+  effectiveFromNs: string;
+  effectiveToNs: string | null;
+}>;
+type FrozenAliasAuthorityRecord = Readonly<{
+  canonicalSymbol: string;
+  issuerMappingPreimage: IssuerMappingPreimage;
+  issuerMappingId: string;
+  instrumentPreimage: SyntheticInstrumentPreimage;
+  instrumentId: string;
+  symbolAliasPreimage: SymbolAliasPreimage;
+  symbolAliasId: string;
+}>;
+
+function syntheticAliasAuthorityRecord(
+  canonicalSymbol: string,
+  ordinal: number,
+  options: Readonly<{
+    effectiveFromNs?: string;
+    effectiveToNs?: string | null;
+    effectiveFromMs?: number;
+    effectiveToMs?: number | null;
+    securityVersion?: string;
+  }> = {},
+): FrozenAliasAuthorityRecord {
+  const issuerMappingPreimage: IssuerMappingPreimage = Object.freeze({
+    issuerCik: (ordinal + 1).toString().padStart(10, "0"),
+    symbols: Object.freeze([canonicalSymbol]),
+    selectedSymbol: canonicalSymbol,
+    mappingAuthority: "peas-p1-10-original-synthetic",
+    mappingVersion: `v${ordinal + 1}`,
+    effectiveFromMs: options.effectiveFromMs ?? 0,
+    effectiveToMs: options.effectiveToMs ?? null,
   });
+  const issuerMappingId = deriveIssuerMappingId(issuerMappingPreimage);
+  assert.equal(
+    issuerMappingId,
+    `imap1_${independentCanonicalHash(
+      "peas/issuer-mapping/v1",
+      issuerMappingPreimage as unknown as JsonValue,
+    )}`,
+  );
+  const instrumentPreimage: SyntheticInstrumentPreimage = Object.freeze({
+    issuerMappingId,
+    securityAuthority: "peas-p1-10-original-synthetic",
+    securityKey: `fictional-security-${ordinal}-${options.securityVersion ?? "base"}`,
+    issueType: "common-share",
+    shareClass: "A",
+    primaryListingVenueCode: "XNAS",
+    currency: "USD",
+    roundLotSize: 100,
+    effectiveFromNs: options.effectiveFromNs ?? "0",
+    effectiveToNs: options.effectiveToNs ?? null,
+    predecessorInstrumentId: null,
+    transitionReason: null,
+  });
+  const instrumentId = deriveInstrumentId(instrumentPreimage);
+  assert.equal(
+    instrumentId,
+    `min1_${independentCanonicalHash(
+      "peas/market-instrument/v1",
+      instrumentPreimage as unknown as JsonValue,
+    )}`,
+  );
+  const symbolAliasPreimage: SymbolAliasPreimage = Object.freeze({
+    instrumentId,
+    symbol: canonicalSymbol,
+    mappingAuthority: "peas-p1-10-original-synthetic",
+    mappingVersion: `v${ordinal + 1}`,
+    mappingArtifactDigest: createHash("sha256")
+      .update(`p1-10-original-synthetic-alias-authority:${ordinal}:${canonicalSymbol}`)
+      .digest("hex"),
+    effectiveFromNs: options.effectiveFromNs ?? "0",
+    effectiveToNs: options.effectiveToNs ?? null,
+  });
+  const symbolAliasId = `msa1_${canonicalHash(
+    "peas/market-symbol-alias/v1",
+    symbolAliasPreimage as unknown as JsonValue,
+  )}`;
+  assert.equal(
+    symbolAliasId,
+    `msa1_${independentCanonicalHash(
+      "peas/market-symbol-alias/v1",
+      symbolAliasPreimage as unknown as JsonValue,
+    )}`,
+  );
+  return Object.freeze({
+    canonicalSymbol,
+    issuerMappingPreimage,
+    issuerMappingId,
+    instrumentPreimage,
+    instrumentId,
+    symbolAliasPreimage,
+    symbolAliasId,
+  });
+}
+
 const FROZEN_INSTRUMENT_REGISTRY = Object.freeze(
   [
-    CANONICAL_SYMBOLS.map(syntheticInstrument),
-    ...Array.from({ length: 63 }, (_, index) => [
-      syntheticInstrument(`glyph-synthetic-${index.toString().padStart(3, "0")}`),
-    ]),
+    CANONICAL_SYMBOLS,
+    ...Array.from({ length: 63 }, (_, index) => [`S${index.toString().padStart(3, "0")}`]),
   ]
     .flat()
+    .map((symbol, index) => syntheticAliasAuthorityRecord(symbol, index))
     .sort((left, right) =>
       Buffer.compare(Buffer.from(left.canonicalSymbol), Buffer.from(right.canonicalSymbol)),
     ),
 );
-const FROZEN_INSTRUMENT_BY_ALIAS = new Map(
-  FROZEN_INSTRUMENT_REGISTRY.map((member) => [member.canonicalSymbol, member.instrumentId]),
-);
+const VALIDATED_ALIAS_AUTHORITIES = new WeakSet<object>();
 const BASE_INSTRUMENTS = Object.freeze(
   CANONICAL_SYMBOLS.map((symbol) => {
-    const instrumentId = FROZEN_INSTRUMENT_BY_ALIAS.get(symbol);
-    if (instrumentId === undefined) throw rejection("synthetic-instrument-registry-invalid");
-    return Object.freeze({ canonicalSymbol: symbol, instrumentId });
+    const authority = FROZEN_INSTRUMENT_REGISTRY.find(
+      (record) => record.canonicalSymbol === symbol,
+    );
+    if (authority === undefined) throw rejection("synthetic-instrument-registry-invalid");
+    return Object.freeze({ canonicalSymbol: symbol, instrumentId: authority.instrumentId });
   }),
 );
 const EFFECTIVE_CEILINGS = Object.freeze({
@@ -149,7 +272,6 @@ type ContinuationMaterial = Readonly<{
   binding: ContinuationBindingPreimage;
   bindingHash: string;
   priorTokenHashes: readonly string[];
-  precedingPageVerified: boolean;
 }>;
 type Preflight = Readonly<{
   kind: AlpacaKind;
@@ -233,7 +355,97 @@ function baseRequest(kind: AlpacaKind = "quotes"): Preflight {
   };
 }
 
-function validateInstrumentMembership(value: Preflight): Readonly<{
+function validateAliasAuthorityRecord(record: FrozenAliasAuthorityRecord): void {
+  const recomputedIssuerMappingId = deriveIssuerMappingId(record.issuerMappingPreimage);
+  const independentIssuerMappingId = `imap1_${independentCanonicalHash(
+    "peas/issuer-mapping/v1",
+    record.issuerMappingPreimage as unknown as JsonValue,
+  )}`;
+  const recomputedInstrumentId = deriveInstrumentId(record.instrumentPreimage);
+  const independentInstrumentId = `min1_${independentCanonicalHash(
+    "peas/market-instrument/v1",
+    record.instrumentPreimage as unknown as JsonValue,
+  )}`;
+  const recomputedSymbolAliasId = `msa1_${canonicalHash(
+    "peas/market-symbol-alias/v1",
+    record.symbolAliasPreimage as unknown as JsonValue,
+  )}`;
+  const independentSymbolAliasId = `msa1_${independentCanonicalHash(
+    "peas/market-symbol-alias/v1",
+    record.symbolAliasPreimage as unknown as JsonValue,
+  )}`;
+  const canonicalNs = (value: string): boolean => /^(0|[1-9]\d*)$/u.test(value);
+  if (
+    !canonicalNs(record.instrumentPreimage.effectiveFromNs) ||
+    (record.instrumentPreimage.effectiveToNs !== null &&
+      !canonicalNs(record.instrumentPreimage.effectiveToNs)) ||
+    !canonicalNs(record.symbolAliasPreimage.effectiveFromNs) ||
+    (record.symbolAliasPreimage.effectiveToNs !== null &&
+      !canonicalNs(record.symbolAliasPreimage.effectiveToNs)) ||
+    !Number.isSafeInteger(record.issuerMappingPreimage.effectiveFromMs) ||
+    record.issuerMappingPreimage.effectiveFromMs < 0 ||
+    (record.issuerMappingPreimage.effectiveToMs !== null &&
+      (!Number.isSafeInteger(record.issuerMappingPreimage.effectiveToMs) ||
+        record.issuerMappingPreimage.effectiveToMs <= record.issuerMappingPreimage.effectiveFromMs))
+  ) {
+    throw rejection("instrument-alias-authority-interval-invalid");
+  }
+  const instrumentFrom = BigInt(record.instrumentPreimage.effectiveFromNs);
+  const instrumentTo =
+    record.instrumentPreimage.effectiveToNs === null
+      ? null
+      : BigInt(record.instrumentPreimage.effectiveToNs);
+  const aliasFrom = BigInt(record.symbolAliasPreimage.effectiveFromNs);
+  const aliasTo =
+    record.symbolAliasPreimage.effectiveToNs === null
+      ? null
+      : BigInt(record.symbolAliasPreimage.effectiveToNs);
+  const issuerFrom = BigInt(record.issuerMappingPreimage.effectiveFromMs) * 1_000_000n;
+  const issuerTo =
+    record.issuerMappingPreimage.effectiveToMs === null
+      ? null
+      : BigInt(record.issuerMappingPreimage.effectiveToMs) * 1_000_000n;
+  if (
+    record.issuerMappingId !== recomputedIssuerMappingId ||
+    record.issuerMappingId !== independentIssuerMappingId ||
+    record.instrumentId !== recomputedInstrumentId ||
+    record.instrumentId !== independentInstrumentId ||
+    record.symbolAliasId !== recomputedSymbolAliasId ||
+    record.symbolAliasId !== independentSymbolAliasId ||
+    record.instrumentPreimage.issuerMappingId !== record.issuerMappingId ||
+    record.symbolAliasPreimage.instrumentId !== record.instrumentId ||
+    record.symbolAliasPreimage.symbol !== record.canonicalSymbol ||
+    record.issuerMappingPreimage.selectedSymbol !== record.canonicalSymbol ||
+    record.issuerMappingPreimage.symbols.length !== 1 ||
+    record.issuerMappingPreimage.symbols[0] !== record.canonicalSymbol ||
+    (instrumentTo !== null && instrumentFrom >= instrumentTo) ||
+    (aliasTo !== null && aliasFrom >= aliasTo) ||
+    aliasFrom < instrumentFrom ||
+    (instrumentTo !== null && (aliasTo === null || aliasTo > instrumentTo)) ||
+    issuerFrom > instrumentFrom ||
+    (issuerTo !== null && (instrumentTo === null || instrumentTo > issuerTo))
+  ) {
+    throw rejection("instrument-alias-authority-invalid");
+  }
+}
+
+function intervalContainsQuery(
+  effectiveFromNs: string,
+  effectiveToNs: string | null,
+  queryStartNs: bigint,
+  queryEndNs: bigint,
+): boolean {
+  if (!/^(0|[1-9]\d*)$/u.test(effectiveFromNs)) return false;
+  if (effectiveToNs !== null && !/^(0|[1-9]\d*)$/u.test(effectiveToNs)) return false;
+  const from = BigInt(effectiveFromNs);
+  const to = effectiveToNs === null ? null : BigInt(effectiveToNs);
+  return from <= queryStartNs && (to === null || queryEndNs < to);
+}
+
+function validateInstrumentMembership(
+  value: Preflight,
+  authorityRecords: readonly FrozenAliasAuthorityRecord[] = FROZEN_INSTRUMENT_REGISTRY,
+): Readonly<{
   canonicalSymbols: readonly string[];
   instrumentIds: readonly string[];
 }> {
@@ -249,6 +461,19 @@ function validateInstrumentMembership(value: Preflight): Readonly<{
   let priorSymbol: string | null = null;
   const seenSymbols = new Set<string>();
   const seenInstrumentIds = new Set<string>();
+  const queryStartNs = parseCanonicalNs(value.fields["start"] as string);
+  const queryEndNs = parseCanonicalNs(value.fields["end"] as string);
+  const authorityByAlias = new Map<string, FrozenAliasAuthorityRecord[]>();
+  const authorityAlreadyValidated = VALIDATED_ALIAS_AUTHORITIES.has(authorityRecords);
+  for (const record of authorityRecords) {
+    if (!authorityAlreadyValidated) validateAliasAuthorityRecord(record);
+    const records = authorityByAlias.get(record.canonicalSymbol) ?? [];
+    records.push(record);
+    authorityByAlias.set(record.canonicalSymbol, records);
+  }
+  if (!authorityAlreadyValidated && Object.isFrozen(authorityRecords)) {
+    VALIDATED_ALIAS_AUTHORITIES.add(authorityRecords);
+  }
   for (const member of value.instruments) {
     if (
       member === null ||
@@ -268,10 +493,42 @@ function validateInstrumentMembership(value: Preflight): Readonly<{
     ) {
       throw rejection("instrument-alias-invalid");
     }
-    const frozenInstrumentId = FROZEN_INSTRUMENT_BY_ALIAS.get(symbol);
-    if (frozenInstrumentId === undefined) throw rejection("instrument-unmapped");
+    const aliasAuthority = authorityByAlias.get(symbol) ?? [];
+    const matchingAuthority = aliasAuthority.filter((record) => {
+      const issuerFromNs = BigInt(record.issuerMappingPreimage.effectiveFromMs) * 1_000_000n;
+      const issuerToNs =
+        record.issuerMappingPreimage.effectiveToMs === null
+          ? null
+          : BigInt(record.issuerMappingPreimage.effectiveToMs) * 1_000_000n;
+      const issuerContains =
+        issuerFromNs <= queryStartNs && (issuerToNs === null || queryEndNs < issuerToNs);
+      return (
+        issuerContains &&
+        intervalContainsQuery(
+          record.instrumentPreimage.effectiveFromNs,
+          record.instrumentPreimage.effectiveToNs,
+          queryStartNs,
+          queryEndNs,
+        ) &&
+        intervalContainsQuery(
+          record.symbolAliasPreimage.effectiveFromNs,
+          record.symbolAliasPreimage.effectiveToNs,
+          queryStartNs,
+          queryEndNs,
+        )
+      );
+    });
+    if (matchingAuthority.length === 0) {
+      throw rejection(
+        aliasAuthority.length > 0 ? "instrument-effective-interval-gap" : "instrument-unmapped",
+      );
+    }
+    if (matchingAuthority.length !== 1) {
+      throw rejection("instrument-effective-interval-ambiguous");
+    }
+    const frozenInstrumentId = (matchingAuthority[0] as FrozenAliasAuthorityRecord).instrumentId;
     if (member.instrumentId !== frozenInstrumentId) {
-      throw rejection("instrument-alias-ambiguous-or-injected");
+      throw rejection("instrument-alias-instrument-mismatch");
     }
     if (seenSymbols.has(symbol) || seenInstrumentIds.has(member.instrumentId)) {
       throw rejection("instrument-duplicate");
@@ -316,7 +573,11 @@ function parseCanonicalNs(text: string): bigint {
   return BigInt(milliseconds) * 1_000_000n + (BigInt(text.slice(20, 29)) % 1_000_000n);
 }
 
-function preflight(value: Preflight): void {
+function preflight(
+  value: Preflight,
+  precedingCheckpoint: DurableCheckpoint | null = null,
+  authorityRecords: readonly FrozenAliasAuthorityRecord[] = FROZEN_INSTRUMENT_REGISTRY,
+): void {
   if (!value.liveEnabled) throw rejection("live-run-not-enabled");
   if (value.authorizationMode !== "p1-09-approved") {
     throw rejection("authorization-mode-not-authorized");
@@ -356,7 +617,7 @@ function preflight(value: Preflight): void {
   ) {
     throw rejection("cost-unproven");
   }
-  validateInstrumentMembership(value);
+  validateInstrumentMembership(value, authorityRecords);
   const allowed = new Set(["symbols", "start", "end", "limit", "feed", "sort"]);
   if (value.kind === "bars") {
     allowed.add("timeframe");
@@ -390,27 +651,59 @@ function preflight(value: Preflight): void {
     throw rejection("page-ordinal-invalid");
   }
   if (value.pageOrdinal === 0) {
-    if (value.continuation !== null || value.fields["page_token"] !== undefined) {
+    if (
+      value.continuation !== null ||
+      value.fields["page_token"] !== undefined ||
+      precedingCheckpoint !== null
+    ) {
       throw rejection("first-page-token");
     }
   } else {
     const continuation = value.continuation;
+    const durableTokenHash = precedingCheckpoint?.nextTokenHash;
+    const durableBinding: ContinuationBindingPreimage | null =
+      precedingCheckpoint === null
+        ? null
+        : {
+            precedingMarketAcquisitionId: precedingCheckpoint.marketAcquisitionId,
+            requestIdentityHash: precedingCheckpoint.requestIdentityHash,
+            precedingLogicalPageIdentityHash: precedingCheckpoint.logicalPageIdentityHash,
+            precedingPageOrdinal: precedingCheckpoint.pageOrdinal,
+            precedingArtifactObservationId: precedingCheckpoint.artifactObservationId as string,
+            precedingArtifactDigest: precedingCheckpoint.artifactDigest as string,
+            precedingPageChainHash: precedingCheckpoint.pageChainHash,
+            nextPageOrdinal: precedingCheckpoint.pageOrdinal + 1,
+            nextTokenHash: durableTokenHash as string,
+          };
     if (
+      precedingCheckpoint === null ||
+      precedingCheckpoint.checkpointKind !== "page-checkpointed" ||
+      precedingCheckpoint.artifactObservationId === null ||
+      precedingCheckpoint.artifactDigest === null ||
+      precedingCheckpoint.nextResumableTokenMaterial === null ||
+      precedingCheckpoint.nextContinuationBindingHash === null ||
+      durableTokenHash === null ||
+      durableTokenHash === "terminal" ||
       continuation === null ||
       Object.keys(continuation).sort().join(",") !==
-        "binding,bindingHash,opaqueMaterial,precedingPageVerified,priorTokenHashes,tokenHash" ||
+        "binding,bindingHash,opaqueMaterial,priorTokenHashes,tokenHash" ||
       Object.keys(continuation.binding).sort().join(",") !==
         "nextPageOrdinal,nextTokenHash,precedingArtifactDigest,precedingArtifactObservationId,precedingLogicalPageIdentityHash,precedingMarketAcquisitionId,precedingPageChainHash,precedingPageOrdinal,requestIdentityHash" ||
       continuation.opaqueMaterial.length === 0 ||
       Buffer.byteLength(continuation.opaqueMaterial, "utf8") > LIMITS.tokenBytes ||
       value.fields["page_token"] !== continuation.opaqueMaterial ||
+      precedingCheckpoint.nextResumableTokenMaterial !== continuation.opaqueMaterial ||
       continuation.tokenHash !== privateTokenHash(continuation.opaqueMaterial) ||
-      continuation.precedingPageVerified !== true ||
+      durableTokenHash !== continuation.tokenHash ||
+      value.pageOrdinal !== precedingCheckpoint.pageOrdinal + 1 ||
       continuation.binding.requestIdentityHash !== requestIdentity(value) ||
-      continuation.binding.precedingPageOrdinal !== value.pageOrdinal - 1 ||
-      continuation.binding.nextPageOrdinal !== value.pageOrdinal ||
       continuation.binding.nextTokenHash !== continuation.tokenHash ||
+      durableBinding === null ||
+      canonicalJson(continuation.binding as unknown as JsonValue) !==
+        canonicalJson(durableBinding as unknown as JsonValue) ||
       continuation.bindingHash !== continuationBindingHash(continuation.binding) ||
+      continuation.bindingHash !== continuationBindingHash(durableBinding) ||
+      continuation.bindingHash !== precedingCheckpoint.nextContinuationBindingHash ||
       new Set(continuation.priorTokenHashes).size !== continuation.priorTokenHashes.length ||
       continuation.priorTokenHashes.some((tokenHash) => !/^[0-9a-f]{64}$/u.test(tokenHash)) ||
       continuation.priorTokenHashes.includes(continuation.tokenHash)
@@ -696,15 +989,28 @@ function assertZeroSideEffects(counters: SideEffectCounters): void {
   assert.deepEqual(counters, zeroCounters());
 }
 
-function guardedPreflight(request: Preflight, counters: SideEffectCounters): void {
-  preflight(request);
+function guardedPreflight(
+  request: Preflight,
+  counters: SideEffectCounters,
+  precedingCheckpoint: DurableCheckpoint | null = null,
+  authorityRecords: readonly FrozenAliasAuthorityRecord[] = FROZEN_INSTRUMENT_REGISTRY,
+): void {
+  preflight(request, precedingCheckpoint, authorityRecords);
   counters.credentialReads += 1;
   counters.transportConstructions += 1;
 }
 
-function assertGuardedPreflightReject(request: Preflight, pattern: RegExp): void {
+function assertGuardedPreflightReject(
+  request: Preflight,
+  pattern: RegExp,
+  precedingCheckpoint: DurableCheckpoint | null = null,
+  authorityRecords: readonly FrozenAliasAuthorityRecord[] = FROZEN_INSTRUMENT_REGISTRY,
+): void {
   const counters = zeroCounters();
-  assert.throws(() => guardedPreflight(request, counters), pattern);
+  assert.throws(
+    () => guardedPreflight(request, counters, precedingCheckpoint, authorityRecords),
+    pattern,
+  );
   assertZeroSideEffects(counters);
 }
 
@@ -954,7 +1260,6 @@ function continuationRequestForVerifiedPage(
       binding,
       bindingHash: continuationBindingHash(binding),
       priorTokenHashes: [...priorTokenHashes],
-      precedingPageVerified: true,
     },
   };
 }
@@ -2576,6 +2881,7 @@ type AcquisitionFault = Readonly<{
   schemaFailure?: boolean;
   storeFailure?: boolean;
   readFailure?: boolean;
+  continuationMutation?: (request: Preflight) => Preflight;
   paginationFault?:
     | "loop"
     | "substitution"
@@ -3147,13 +3453,19 @@ class AcquisitionContractModel {
     }
   }
 
-  currentPagePreflightRequest(): Preflight {
+  currentPagePreflightAdmission(): Readonly<{
+    request: Preflight;
+    precedingCheckpoint: DurableCheckpoint | null;
+  }> {
     if (this.currentPageOrdinal === 0) {
       return {
-        ...this.request,
-        fields: withoutField(this.request.fields, "page_token"),
-        pageOrdinal: 0,
-        continuation: null,
+        request: {
+          ...this.request,
+          fields: withoutField(this.request.fields, "page_token"),
+          pageOrdinal: 0,
+          continuation: null,
+        },
+        precedingCheckpoint: null,
       };
     }
     if (this.currentTokenMaterial === null || this.currentContinuationBindingHash === null) {
@@ -3186,7 +3498,7 @@ class AcquisitionContractModel {
     if (pageRequest.continuation?.bindingHash !== this.currentContinuationBindingHash) {
       throw rejection("page-token-binding-mismatch");
     }
-    return pageRequest;
+    return { request: pageRequest, precedingCheckpoint: preceding };
   }
 
   async run(fault: AcquisitionFault = {}): Promise<"complete" | "crashed" | "failed"> {
@@ -3205,7 +3517,12 @@ class AcquisitionContractModel {
       });
       while (this.currentPageOrdinal < this.provider.pageCount()) {
         if (fault.crashAt === "before-request" && this.currentPageOrdinal === 0) return "crashed";
-        guardedPreflight(this.currentPagePreflightRequest(), this.counters);
+        const admission = this.currentPagePreflightAdmission();
+        const admittedRequest =
+          this.currentPageOrdinal > 0 && fault.continuationMutation !== undefined
+            ? fault.continuationMutation(admission.request)
+            : admission.request;
+        guardedPreflight(admittedRequest, this.counters, admission.precedingCheckpoint);
         this.applyAcquisitionEvent("preflight-approved");
         this.applyAcquisitionEvent("credentials-loaded");
         const attemptTime = (this.budget.value.attempts + 1) * 1_000;
@@ -3438,7 +3755,10 @@ class AcquisitionContractModel {
     }
   }
 
-  async resume(expectedConfigurationHash: string): Promise<"complete"> {
+  async resume(
+    expectedConfigurationHash: string,
+    fault: Pick<AcquisitionFault, "continuationMutation"> = {},
+  ): Promise<"complete"> {
     let rows = this.journal.rows();
     const latest = rows.at(-1);
     if (latest === undefined) throw rejection("journal-empty");
@@ -3546,7 +3866,12 @@ class AcquisitionContractModel {
         } else {
           this.applyAcquisitionEvent("begin-preflight");
         }
-        guardedPreflight(this.currentPagePreflightRequest(), this.counters);
+        const admission = this.currentPagePreflightAdmission();
+        const admittedRequest =
+          pageOrdinal > 0 && fault.continuationMutation !== undefined
+            ? fault.continuationMutation(admission.request)
+            : admission.request;
+        guardedPreflight(admittedRequest, this.counters, admission.precedingCheckpoint);
         this.applyAcquisitionEvent("preflight-approved");
         this.applyAcquisitionEvent("credentials-loaded");
         const attemptTime = (this.budget.value.attempts + 1) * 1_000;
@@ -4145,7 +4470,11 @@ test("typed instrument membership, continuation material, and canonical nanoseco
       symbols: instruments.map((member) => member.canonicalSymbol).join(","),
     },
   });
-  const exact64 = FROZEN_INSTRUMENT_REGISTRY.slice(0, LIMITS.instruments);
+  const allAuthorityMembers = FROZEN_INSTRUMENT_REGISTRY.map((record) => ({
+    canonicalSymbol: record.canonicalSymbol,
+    instrumentId: record.instrumentId,
+  }));
+  const exact64 = allAuthorityMembers.slice(0, LIMITS.instruments);
   const exact64Request = requestWithInstruments(exact64);
   const exact64Counters = zeroCounters();
   assert.doesNotThrow(() => guardedPreflight(exact64Request, exact64Counters));
@@ -4169,12 +4498,12 @@ test("typed instrument membership, continuation material, and canonical nanoseco
   const baselineSecond = BASE_INSTRUMENTS[1] as InstrumentMember;
   const invalidInstrumentRequests: readonly Preflight[] = [
     requestWithInstruments([]),
-    requestWithInstruments(FROZEN_INSTRUMENT_REGISTRY),
+    requestWithInstruments(allAuthorityMembers),
     requestWithInstruments([{ canonicalSymbol: "", instrumentId: baselineFirst.instrumentId }]),
     requestWithInstruments([baselineFirst, baselineFirst]),
     requestWithInstruments([
       {
-        canonicalSymbol: "glyph-unmapped",
+        canonicalSymbol: "ZZZ",
         instrumentId: `min1_${"f".repeat(64)}`,
       },
     ]),
@@ -4202,6 +4531,33 @@ test("typed instrument membership, continuation material, and canonical nanoseco
   for (const request of invalidInstrumentRequests) {
     assertGuardedPreflightReject(request, /instrument/u);
   }
+  const intervalRequest = exactBoundaryRequest(0n);
+  const queryStartNs = parseCanonicalNs(intervalRequest.fields["start"] as string);
+  const queryStartMs = Number(queryStartNs / 1_000_000n);
+  const gapRecord = syntheticAliasAuthorityRecord("GA", 0, {
+    effectiveToNs: queryStartNs.toString(),
+    effectiveToMs: queryStartMs,
+    securityVersion: "gap",
+  });
+  const gapAuthority = [
+    gapRecord,
+    ...FROZEN_INSTRUMENT_REGISTRY.filter((record) => record.canonicalSymbol !== "GA"),
+  ];
+  assertGuardedPreflightReject(
+    exactBoundaryRequest(0n),
+    /instrument-effective-interval-gap/u,
+    null,
+    gapAuthority,
+  );
+  const overlappingRecord = syntheticAliasAuthorityRecord("GA", 0, {
+    securityVersion: "overlap",
+  });
+  assertGuardedPreflightReject(
+    exactBoundaryRequest(0n),
+    /instrument-effective-interval-ambiguous/u,
+    null,
+    [...FROZEN_INSTRUMENT_REGISTRY, overlappingRecord],
+  );
 
   const seedRequest = exactBoundaryRequest(0n);
   const seedJournal = new MemoryContractJournal();
@@ -4226,7 +4582,9 @@ test("typed instrument membership, continuation material, and canonical nanoseco
     preceding.nextResumableTokenMaterial,
   );
   const continuationCounters = zeroCounters();
-  assert.doesNotThrow(() => guardedPreflight(validContinuationRequest, continuationCounters));
+  assert.doesNotThrow(() =>
+    guardedPreflight(validContinuationRequest, continuationCounters, preceding),
+  );
   assert.equal(continuationCounters.credentialReads, 1);
   assert.equal(continuationCounters.transportConstructions, 1);
 
@@ -4307,7 +4665,166 @@ test("typed instrument membership, continuation material, and canonical nanoseco
     withContinuationMaterial("t".repeat(LIMITS.tokenBytes + 1)),
   ];
   for (const request of invalidContinuationRequests) {
-    assertGuardedPreflightReject(request, /page-token/u);
+    assertGuardedPreflightReject(request, /page-token/u, preceding);
+  }
+
+  const mutateDurableBinding = (
+    request: Preflight,
+    mutate: (
+      binding: ContinuationBindingPreimage,
+      continuation: ContinuationMaterial,
+    ) => Readonly<{
+      binding: ContinuationBindingPreimage;
+      opaqueMaterial?: string;
+      pageOrdinal?: number;
+    }>,
+  ): Preflight => {
+    const continuation = request.continuation as ContinuationMaterial;
+    const mutation = mutate(continuation.binding, continuation);
+    const opaqueMaterial = mutation.opaqueMaterial ?? continuation.opaqueMaterial;
+    const tokenHash = privateTokenHash(opaqueMaterial);
+    const binding = {
+      ...mutation.binding,
+      nextTokenHash:
+        mutation.opaqueMaterial === undefined ? mutation.binding.nextTokenHash : tokenHash,
+    };
+    return {
+      ...request,
+      pageOrdinal: mutation.pageOrdinal ?? request.pageOrdinal,
+      fields: { ...request.fields, page_token: opaqueMaterial },
+      continuation: {
+        ...continuation,
+        opaqueMaterial,
+        tokenHash,
+        binding,
+        bindingHash: continuationBindingHash(binding),
+      },
+    };
+  };
+  const durableBindingMutations: readonly [string, (request: Preflight) => Preflight][] = [
+    [
+      "next-page-ordinal",
+      (request) =>
+        mutateDurableBinding(request, (binding) => ({
+          binding: { ...binding, nextPageOrdinal: binding.nextPageOrdinal + 1 },
+          pageOrdinal: request.pageOrdinal + 1,
+        })),
+    ],
+    [
+      "preceding-market-acquisition",
+      (request) =>
+        mutateDurableBinding(request, (binding) => ({
+          binding: { ...binding, precedingMarketAcquisitionId: `maq1_${"f".repeat(64)}` },
+        })),
+    ],
+    [
+      "preceding-logical-page",
+      (request) =>
+        mutateDurableBinding(request, (binding) => ({
+          binding: { ...binding, precedingLogicalPageIdentityHash: "f".repeat(64) },
+        })),
+    ],
+    [
+      "preceding-artifact-observation",
+      (request) =>
+        mutateDurableBinding(request, (binding) => ({
+          binding: {
+            ...binding,
+            precedingArtifactObservationId: "vault-observation-hostile-self-consistent",
+          },
+        })),
+    ],
+    [
+      "preceding-artifact-digest",
+      (request) =>
+        mutateDurableBinding(request, (binding) => ({
+          binding: { ...binding, precedingArtifactDigest: "e".repeat(64) },
+        })),
+    ],
+    [
+      "preceding-page-chain",
+      (request) =>
+        mutateDurableBinding(request, (binding) => ({
+          binding: { ...binding, precedingPageChainHash: "d".repeat(64) },
+        })),
+    ],
+    [
+      "preceding-page-ordinal",
+      (request) =>
+        mutateDurableBinding(request, (binding) => ({
+          binding: { ...binding, precedingPageOrdinal: binding.precedingPageOrdinal + 1 },
+        })),
+    ],
+    [
+      "request-identity",
+      (request) =>
+        mutateDurableBinding(request, (binding) => ({
+          binding: { ...binding, requestIdentityHash: "c".repeat(64) },
+        })),
+    ],
+    [
+      "opaque-token-relation",
+      (request) =>
+        mutateDurableBinding(request, (binding, continuation) => ({
+          binding,
+          opaqueMaterial: `${continuation.opaqueMaterial}-hostile`,
+        })),
+    ],
+  ];
+  for (const [name, mutate] of durableBindingMutations) {
+    assertGuardedPreflightReject(mutate(validContinuationRequest), /page-token/u, preceding);
+
+    const uninterruptedProvider = new ProviderDouble();
+    const uninterruptedModel = new AcquisitionContractModel(
+      seedRequest,
+      uninterruptedProvider,
+      new ArtifactDouble(),
+      new MemoryContractJournal(),
+    );
+    assert.equal(
+      await uninterruptedModel.run({ continuationMutation: mutate }),
+      "failed",
+      `${name}:uninterrupted`,
+    );
+    assert.deepEqual(
+      uninterruptedModel.counters,
+      seedModel.counters,
+      `${name}:uninterrupted-zero-dispatch-delta`,
+    );
+    assert.equal(uninterruptedProvider.requestCalls, 1, `${name}:uninterrupted-provider`);
+
+    const restartProvider = new ProviderDouble();
+    const restartModel = new AcquisitionContractModel(
+      seedRequest,
+      restartProvider,
+      new ArtifactDouble(),
+      new MemoryContractJournal(),
+    );
+    assert.equal(
+      await restartModel.run({ crashAt: "checkpoint-advanced" }),
+      "crashed",
+      `${name}:restart-seed`,
+    );
+    const beforeRestartCounters = { ...restartModel.counters };
+    const beforeRestartProviderCalls = restartProvider.requestCalls;
+    await assert.rejects(
+      () =>
+        restartModel.resume(configurationHash(seedRequest), {
+          continuationMutation: mutate,
+        }),
+      /page-token/u,
+      `${name}:restart`,
+    );
+    assert.deepEqual(
+      restartModel.counters,
+      beforeRestartCounters,
+      `${name}:restart-zero-dispatch-delta`,
+    );
+    assert.equal(
+      restartProvider.requestCalls,
+      beforeRestartProviderCalls,
+      `${name}:restart-provider`,
+    );
   }
 
   const integratedCountersModel = new AcquisitionContractModel(

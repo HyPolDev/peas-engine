@@ -49,10 +49,16 @@ persisted.
 - exact 15-minute history-boundary and one-nanosecond-newer timestamps;
 - strict timestamp round-trip vectors for valid leap instants, impossible dates, invalid leap days,
   overflow, and normalized-but-different instants;
-- typed frozen instrument memberships covering exact 64/65 bounds, blank, duplicate, unmapped,
-  ambiguous-ID, delimiter-injected, reordered, and query/membership mismatch;
+- original-synthetic frozen uppercase alias-authority rows with complete issuer-mapping,
+  market-instrument, and symbol-alias preimages, displayed `imap1_`/`min1_`/`msa1_`, accepted-domain
+  and independent framed-hash recomputation, inclusive/exclusive effective intervals, and typed
+  memberships covering exact 64/65 bounds, blank, duplicate, unmapped, wrong-instrument,
+  delimiter-injected, reordered, query/membership mismatch, interval gap, and true overlapping
+  effective-version ambiguity;
 - original synthetic opaque continuation material held only in memory, including exact 4,096/4,097
-  byte bounds and missing, empty, repeated, cross-query, substituted, and post-terminal mutations;
+  byte bounds and missing, empty, repeated, cross-query, substituted, post-terminal, next-ordinal,
+  and every preceding durable binding-member mutation, self-consistently rehashed and executed
+  through standalone, uninterrupted, and restart pre-dispatch admission;
 - route, method, identity, field, value, clock, cost, and authorization mutations;
 - exact zero-spend preimage/ID and missing, forged, mutated, stale, and unknown run decisions;
 - all 11 frozen provider, dataset, feed, and channel preimages under one guarded parser, covering

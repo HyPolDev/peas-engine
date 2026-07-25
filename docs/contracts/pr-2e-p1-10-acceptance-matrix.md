@@ -37,8 +37,9 @@ zero-call path rather than a skipped test.
 | Missing or noncanonical `start`/`end`; unbounded range | `reject-zero-call` |
 | Exact parse/re-encode equality for a valid leap-day nanosecond instant | accept |
 | Impossible month day, invalid leap day, month/day/hour/second overflow, or any normalized non-round-trip timestamp | guarded rejection with every side-effect counter exactly zero |
-| Typed frozen instrument membership: nonempty, unique canonical unsigned-UTF-8 order, and exact alias-to-instrument mapping | accept; `canonicalSymbols` and `instrumentIds` derive from the same membership |
-| Blank, duplicate, unmapped, ambiguous-ID, delimiter-injected, reordered, or query/membership-mismatched instrument | guarded rejection with every side-effect counter exactly zero |
+| Original-synthetic frozen alias authority with complete issuer-mapping, instrument, and symbol-alias preimages and displayed `imap1_`/`min1_`/`msa1_` | accepted-domain recomputation and independent framed-hash equality before resolution |
+| Typed frozen instrument membership: nonempty, unique canonical unsigned-UTF8 order, exact alias-to-instrument linkage, and one effective version covering the inclusive query interval | accept; `canonicalSymbols` and `instrumentIds` derive from the same resolved membership |
+| Blank, duplicate, unmapped, wrong instrument, delimiter-injected, reordered, query/membership mismatch, effective-interval gap, or overlapping effective-version ambiguity | guarded rejection with every side-effect counter exactly zero |
 | Exactly 64 valid frozen instruments | accept through guarded preflight |
 | 65 valid frozen instruments | guarded rejection with every side-effect counter exactly zero |
 | `sort=asc`; canonical decimal integer `limit` from `1` through `10000` inclusive | accept |
@@ -48,9 +49,9 @@ zero-call path rather than a skipped test.
 | Other/omitted timeframe or adjustment | `reject-zero-call` |
 | First request without continuation material | accept |
 | First request with continuation material | `reject-zero-call` |
-| Later request with exact typed material/hash, immediately preceding verified page, unchanged request, next ordinal, binding hash, and byte-identical `fields.page_token` | accept; integrated acquisition preflights every page before credential or dispatch |
+| Later request plus separately supplied durable preceding checkpoint with exact typed material/hash, unchanged request, next ordinal, every preceding-page binding member, stored expected binding hash, and byte-identical `fields.page_token` | accept; uninterrupted and restart acquisition use this same pre-dispatch admission API |
 | Exactly 4,096 bytes of preceding-page-returned opaque continuation material | accept through guarded preflight |
-| Missing field/material, empty, repeated, 4,097-byte, cross-query, substituted, ordinal-changed, or binding-changed continuation | guarded rejection with every side-effect counter exactly zero |
+| Missing field/material, empty, repeated, 4,097-byte, cross-query, substituted, next-ordinal change, token relation change, or change to preceding acquisition/page/artifact/digest/page-chain/ordinal binding | self-consistently rehashed request rejects against durable evidence in standalone, uninterrupted, and restart paths; rejected logical dispatch has zero credential/transport/DNS/network/provider/artifact/normalization/selection/post-return delta |
 | FMP private discrepancy role with exact quote/trade channel | contract-valid but transport disabled |
 | FMP as primary, fallback, public output, or any other endpoint | `reject-zero-call` |
 
