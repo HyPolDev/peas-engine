@@ -130,6 +130,42 @@ type FrozenAliasAuthorityRecord = Readonly<{
   symbolAliasPreimage: SymbolAliasPreimage;
   symbolAliasId: string;
 }>;
+type FrozenAliasAuthorityCatalog = Readonly<{
+  schemaVersion: string;
+  classification: string;
+  providerEvidence: boolean;
+  networkAuthorized: boolean;
+  records: readonly FrozenAliasAuthorityRecord[];
+  catalogId: string;
+}>;
+type DeepMutable<T> = T extends readonly (infer Element)[]
+  ? DeepMutable<Element>[]
+  : T extends object
+    ? { -readonly [Key in keyof T]: DeepMutable<T[Key]> }
+    : T;
+
+const ALIAS_AUTHORITY_CATALOG_SCHEMA = "peas-p1-10-synthetic-alias-authority-catalog-v1";
+const ALIAS_AUTHORITY_CATALOG_ID =
+  "maac1_361de0d202a39899c369c10da3c5bb43e98305c91749f1bee6b7cab5eac685dd";
+const ALIAS_AUTHORITY_CATALOG_DOMAIN = "peas/market-acquisition-alias-authority-catalog/v1";
+
+function recursivelyDeepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const nested of Object.values(value as Record<string, unknown>)) {
+      recursivelyDeepFreeze(nested);
+    }
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function assertRecursivelyFrozen(value: unknown): void {
+  if (value === null || typeof value !== "object") return;
+  if (!Object.isFrozen(value)) throw rejection("instrument-authority-catalog-mutable");
+  for (const nested of Object.values(value as Record<string, unknown>)) {
+    assertRecursivelyFrozen(nested);
+  }
+}
 
 function syntheticAliasAuthorityRecord(
   canonicalSymbol: string,
@@ -214,18 +250,21 @@ function syntheticAliasAuthorityRecord(
   });
 }
 
-const FROZEN_INSTRUMENT_REGISTRY = Object.freeze(
-  [
-    CANONICAL_SYMBOLS,
-    ...Array.from({ length: 63 }, (_, index) => [`S${index.toString().padStart(3, "0")}`]),
-  ]
-    .flat()
-    .map((symbol, index) => syntheticAliasAuthorityRecord(symbol, index))
-    .sort((left, right) =>
-      Buffer.compare(Buffer.from(left.canonicalSymbol), Buffer.from(right.canonicalSymbol)),
-    ),
+const MODULE_ALIAS_AUTHORITY_CATALOG = recursivelyDeepFreeze(
+  JSON.parse(
+    readFileSync("fixtures/market-acquisition/v1/synthetic-alias-authority-catalog.json", "utf8"),
+  ) as FrozenAliasAuthorityCatalog,
 );
-const VALIDATED_ALIAS_AUTHORITIES = new WeakSet<object>();
+const FROZEN_INSTRUMENT_REGISTRY = MODULE_ALIAS_AUTHORITY_CATALOG.records;
+const MODULE_ALIAS_AUTHORITY_CATALOG_VALIDATED = (() => {
+  assertRecursivelyFrozen(MODULE_ALIAS_AUTHORITY_CATALOG);
+  validateAliasAuthorityCatalogStructureAndRows(MODULE_ALIAS_AUTHORITY_CATALOG);
+  validateAliasAuthorityCatalogIdentity(MODULE_ALIAS_AUTHORITY_CATALOG, ALIAS_AUTHORITY_CATALOG_ID);
+  if (MODULE_ALIAS_AUTHORITY_CATALOG.records.length !== 65) {
+    throw rejection("instrument-authority-catalog-count-invalid");
+  }
+  return true;
+})();
 const BASE_INSTRUMENTS = Object.freeze(
   CANONICAL_SYMBOLS.map((symbol) => {
     const authority = FROZEN_INSTRUMENT_REGISTRY.find(
@@ -284,6 +323,7 @@ type Preflight = Readonly<{
   endpointChannelId: string;
   entitlementSnapshotId: string;
   routePolicyVersion: string;
+  aliasAuthorityCatalogId: string;
   instruments: readonly InstrumentMember[];
   fields: Readonly<Record<string, string>>;
   requestStartedNs: bigint;
@@ -334,6 +374,7 @@ function baseRequest(kind: AlpacaKind = "quotes"): Preflight {
     endpointChannelId: ROUTES[kind].channel,
     entitlementSnapshotId: ENTITLEMENT_SNAPSHOT_ID,
     routePolicyVersion: ROUTE_POLICY_VERSION,
+    aliasAuthorityCatalogId: ALIAS_AUTHORITY_CATALOG_ID,
     instruments: BASE_INSTRUMENTS,
     fields: kind === "bars" ? { ...common, timeframe: "1Min", adjustment: "raw" } : common,
     requestStartedNs: 1_000_000_000_000_000_000n,
@@ -355,7 +396,107 @@ function baseRequest(kind: AlpacaKind = "quotes"): Preflight {
   };
 }
 
+function assertExactObjectKeys(
+  value: unknown,
+  expectedKeys: readonly string[],
+  code: string,
+): asserts value is Record<string, unknown> {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).sort().join(",") !== [...expectedKeys].sort().join(",")
+  ) {
+    throw rejection(code);
+  }
+}
+
 function validateAliasAuthorityRecord(record: FrozenAliasAuthorityRecord): void {
+  assertExactObjectKeys(
+    record,
+    [
+      "canonicalSymbol",
+      "issuerMappingPreimage",
+      "issuerMappingId",
+      "instrumentPreimage",
+      "instrumentId",
+      "symbolAliasPreimage",
+      "symbolAliasId",
+    ],
+    "instrument-alias-authority-shape-invalid",
+  );
+  assertExactObjectKeys(
+    record.issuerMappingPreimage,
+    [
+      "issuerCik",
+      "symbols",
+      "selectedSymbol",
+      "mappingAuthority",
+      "mappingVersion",
+      "effectiveFromMs",
+      "effectiveToMs",
+    ],
+    "instrument-alias-authority-shape-invalid",
+  );
+  assertExactObjectKeys(
+    record.instrumentPreimage,
+    [
+      "issuerMappingId",
+      "securityAuthority",
+      "securityKey",
+      "issueType",
+      "shareClass",
+      "primaryListingVenueCode",
+      "currency",
+      "roundLotSize",
+      "effectiveFromNs",
+      "effectiveToNs",
+      "predecessorInstrumentId",
+      "transitionReason",
+    ],
+    "instrument-alias-authority-shape-invalid",
+  );
+  assertExactObjectKeys(
+    record.symbolAliasPreimage,
+    [
+      "instrumentId",
+      "symbol",
+      "mappingAuthority",
+      "mappingVersion",
+      "mappingArtifactDigest",
+      "effectiveFromNs",
+      "effectiveToNs",
+    ],
+    "instrument-alias-authority-shape-invalid",
+  );
+  if (
+    typeof record.canonicalSymbol !== "string" ||
+    typeof record.issuerMappingId !== "string" ||
+    typeof record.instrumentId !== "string" ||
+    typeof record.symbolAliasId !== "string" ||
+    !Array.isArray(record.issuerMappingPreimage.symbols) ||
+    typeof record.issuerMappingPreimage.issuerCik !== "string" ||
+    typeof record.issuerMappingPreimage.selectedSymbol !== "string" ||
+    typeof record.issuerMappingPreimage.mappingAuthority !== "string" ||
+    typeof record.issuerMappingPreimage.mappingVersion !== "string" ||
+    typeof record.instrumentPreimage.issuerMappingId !== "string" ||
+    typeof record.instrumentPreimage.securityAuthority !== "string" ||
+    typeof record.instrumentPreimage.securityKey !== "string" ||
+    typeof record.instrumentPreimage.issueType !== "string" ||
+    typeof record.instrumentPreimage.shareClass !== "string" ||
+    typeof record.instrumentPreimage.primaryListingVenueCode !== "string" ||
+    typeof record.instrumentPreimage.currency !== "string" ||
+    !Number.isSafeInteger(record.instrumentPreimage.roundLotSize) ||
+    typeof record.instrumentPreimage.effectiveFromNs !== "string" ||
+    typeof record.symbolAliasPreimage.instrumentId !== "string" ||
+    typeof record.symbolAliasPreimage.symbol !== "string" ||
+    typeof record.symbolAliasPreimage.mappingAuthority !== "string" ||
+    typeof record.symbolAliasPreimage.mappingVersion !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(record.symbolAliasPreimage.mappingArtifactDigest) ||
+    typeof record.symbolAliasPreimage.effectiveFromNs !== "string"
+  ) {
+    throw rejection("instrument-alias-authority-shape-invalid");
+  }
   const recomputedIssuerMappingId = deriveIssuerMappingId(record.issuerMappingPreimage);
   const independentIssuerMappingId = `imap1_${independentCanonicalHash(
     "peas/issuer-mapping/v1",
@@ -429,6 +570,104 @@ function validateAliasAuthorityRecord(record: FrozenAliasAuthorityRecord): void 
   }
 }
 
+function aliasAuthorityCatalogPreimage(catalog: FrozenAliasAuthorityCatalog): JsonValue {
+  return {
+    schemaVersion: catalog.schemaVersion,
+    classification: catalog.classification,
+    providerEvidence: catalog.providerEvidence,
+    networkAuthorized: catalog.networkAuthorized,
+    records: catalog.records,
+  } as unknown as JsonValue;
+}
+
+function validateAliasAuthorityCatalogStructureAndRows(catalog: FrozenAliasAuthorityCatalog): void {
+  assertExactObjectKeys(
+    catalog,
+    [
+      "schemaVersion",
+      "classification",
+      "providerEvidence",
+      "networkAuthorized",
+      "records",
+      "catalogId",
+    ],
+    "instrument-authority-catalog-shape-invalid",
+  );
+  if (
+    catalog.schemaVersion !== ALIAS_AUTHORITY_CATALOG_SCHEMA ||
+    catalog.classification !== "original-project-authored-synthetic" ||
+    catalog.providerEvidence !== false ||
+    catalog.networkAuthorized !== false ||
+    !Array.isArray(catalog.records) ||
+    catalog.records.length === 0 ||
+    typeof catalog.catalogId !== "string"
+  ) {
+    throw rejection("instrument-authority-catalog-shape-invalid");
+  }
+  for (const record of catalog.records) validateAliasAuthorityRecord(record);
+}
+
+function validateAliasAuthorityCatalogIdentity(
+  catalog: FrozenAliasAuthorityCatalog,
+  configuredCatalogId: string,
+): void {
+  const preimage = aliasAuthorityCatalogPreimage(catalog);
+  const acceptedCatalogId = `maac1_${canonicalHash(ALIAS_AUTHORITY_CATALOG_DOMAIN, preimage)}`;
+  const independentCatalogId = `maac1_${independentCanonicalHash(
+    ALIAS_AUTHORITY_CATALOG_DOMAIN,
+    preimage,
+  )}`;
+  if (
+    catalog.catalogId !== ALIAS_AUTHORITY_CATALOG_ID ||
+    configuredCatalogId !== ALIAS_AUTHORITY_CATALOG_ID ||
+    catalog.catalogId !== acceptedCatalogId ||
+    catalog.catalogId !== independentCatalogId
+  ) {
+    throw rejection("instrument-authority-catalog-identity-invalid");
+  }
+}
+
+function authorityCatalogSnapshotForUse(
+  catalog: FrozenAliasAuthorityCatalog,
+): FrozenAliasAuthorityCatalog {
+  if (catalog === MODULE_ALIAS_AUTHORITY_CATALOG) {
+    if (!MODULE_ALIAS_AUTHORITY_CATALOG_VALIDATED) {
+      throw rejection("instrument-authority-catalog-unvalidated");
+    }
+    return catalog;
+  }
+  let snapshot: FrozenAliasAuthorityCatalog;
+  try {
+    snapshot = JSON.parse(
+      canonicalJson(catalog as unknown as JsonValue),
+    ) as FrozenAliasAuthorityCatalog;
+  } catch {
+    throw rejection("instrument-authority-catalog-snapshot-invalid");
+  }
+  validateAliasAuthorityCatalogStructureAndRows(snapshot);
+  return snapshot;
+}
+
+function authorityCatalogWithRecords(
+  records: readonly FrozenAliasAuthorityRecord[],
+  catalogId = ALIAS_AUTHORITY_CATALOG_ID,
+): FrozenAliasAuthorityCatalog {
+  return {
+    schemaVersion: ALIAS_AUTHORITY_CATALOG_SCHEMA,
+    classification: "original-project-authored-synthetic",
+    providerEvidence: false,
+    networkAuthorized: false,
+    records,
+    catalogId,
+  };
+}
+
+function mutableAliasAuthorityCatalogClone(): DeepMutable<FrozenAliasAuthorityCatalog> {
+  return JSON.parse(
+    canonicalJson(MODULE_ALIAS_AUTHORITY_CATALOG as unknown as JsonValue),
+  ) as DeepMutable<FrozenAliasAuthorityCatalog>;
+}
+
 function intervalContainsQuery(
   effectiveFromNs: string,
   effectiveToNs: string | null,
@@ -444,7 +683,7 @@ function intervalContainsQuery(
 
 function validateInstrumentMembership(
   value: Preflight,
-  authorityRecords: readonly FrozenAliasAuthorityRecord[] = FROZEN_INSTRUMENT_REGISTRY,
+  authorityCatalog: FrozenAliasAuthorityCatalog = MODULE_ALIAS_AUTHORITY_CATALOG,
 ): Readonly<{
   canonicalSymbols: readonly string[];
   instrumentIds: readonly string[];
@@ -464,15 +703,11 @@ function validateInstrumentMembership(
   const queryStartNs = parseCanonicalNs(value.fields["start"] as string);
   const queryEndNs = parseCanonicalNs(value.fields["end"] as string);
   const authorityByAlias = new Map<string, FrozenAliasAuthorityRecord[]>();
-  const authorityAlreadyValidated = VALIDATED_ALIAS_AUTHORITIES.has(authorityRecords);
-  for (const record of authorityRecords) {
-    if (!authorityAlreadyValidated) validateAliasAuthorityRecord(record);
+  const catalogSnapshot = authorityCatalogSnapshotForUse(authorityCatalog);
+  for (const record of catalogSnapshot.records) {
     const records = authorityByAlias.get(record.canonicalSymbol) ?? [];
     records.push(record);
     authorityByAlias.set(record.canonicalSymbol, records);
-  }
-  if (!authorityAlreadyValidated && Object.isFrozen(authorityRecords)) {
-    VALIDATED_ALIAS_AUTHORITIES.add(authorityRecords);
   }
   for (const member of value.instruments) {
     if (
@@ -549,6 +784,7 @@ function validateInstrumentMembership(
   if (value.fields["symbols"] !== encodedSymbols) {
     throw rejection("instrument-query-membership-mismatch");
   }
+  validateAliasAuthorityCatalogIdentity(catalogSnapshot, value.aliasAuthorityCatalogId);
   return {
     canonicalSymbols,
     instrumentIds: instrumentIds.sort((left, right) =>
@@ -576,7 +812,7 @@ function parseCanonicalNs(text: string): bigint {
 function preflight(
   value: Preflight,
   precedingCheckpoint: DurableCheckpoint | null = null,
-  authorityRecords: readonly FrozenAliasAuthorityRecord[] = FROZEN_INSTRUMENT_REGISTRY,
+  authorityCatalog: FrozenAliasAuthorityCatalog = MODULE_ALIAS_AUTHORITY_CATALOG,
 ): void {
   if (!value.liveEnabled) throw rejection("live-run-not-enabled");
   if (value.authorizationMode !== "p1-09-approved") {
@@ -597,7 +833,8 @@ function preflight(
     value.feedId !== IDS.alpacaFeed ||
     value.endpointChannelId !== route.channel ||
     value.entitlementSnapshotId !== ENTITLEMENT_SNAPSHOT_ID ||
-    value.routePolicyVersion !== ROUTE_POLICY_VERSION
+    value.routePolicyVersion !== ROUTE_POLICY_VERSION ||
+    value.aliasAuthorityCatalogId !== ALIAS_AUTHORITY_CATALOG_ID
   ) {
     throw rejection("identity-not-authorized");
   }
@@ -617,7 +854,7 @@ function preflight(
   ) {
     throw rejection("cost-unproven");
   }
-  validateInstrumentMembership(value, authorityRecords);
+  validateInstrumentMembership(value, authorityCatalog);
   const allowed = new Set(["symbols", "start", "end", "limit", "feed", "sort"]);
   if (value.kind === "bars") {
     allowed.add("timeframe");
@@ -993,9 +1230,9 @@ function guardedPreflight(
   request: Preflight,
   counters: SideEffectCounters,
   precedingCheckpoint: DurableCheckpoint | null = null,
-  authorityRecords: readonly FrozenAliasAuthorityRecord[] = FROZEN_INSTRUMENT_REGISTRY,
+  authorityCatalog: FrozenAliasAuthorityCatalog = MODULE_ALIAS_AUTHORITY_CATALOG,
 ): void {
-  preflight(request, precedingCheckpoint, authorityRecords);
+  preflight(request, precedingCheckpoint, authorityCatalog);
   counters.credentialReads += 1;
   counters.transportConstructions += 1;
 }
@@ -1004,11 +1241,11 @@ function assertGuardedPreflightReject(
   request: Preflight,
   pattern: RegExp,
   precedingCheckpoint: DurableCheckpoint | null = null,
-  authorityRecords: readonly FrozenAliasAuthorityRecord[] = FROZEN_INSTRUMENT_REGISTRY,
+  authorityCatalog: FrozenAliasAuthorityCatalog = MODULE_ALIAS_AUTHORITY_CATALOG,
 ): void {
   const counters = zeroCounters();
   assert.throws(
-    () => guardedPreflight(request, counters, precedingCheckpoint, authorityRecords),
+    () => guardedPreflight(request, counters, precedingCheckpoint, authorityCatalog),
     pattern,
   );
   assertZeroSideEffects(counters);
@@ -1084,6 +1321,7 @@ function configurationPreimage(request: Preflight): JsonValue {
       policyId: request.zeroSpendPolicyId,
       decision: request.runDecision,
     },
+    aliasAuthorityCatalogId: request.aliasAuthorityCatalogId,
     retryPolicyVersion: "p1-10-deterministic-1s-2s-no-jitter-v1",
     quotaPolicyVersion: "p1-10-30-per-rolling-60s-v1",
     deadlinePolicyVersion: "p1-10-30s-attempt-300s-acquisition-v1",
@@ -4119,12 +4357,19 @@ test("fixture manifest is original, inert, and closed to provider evidence", () 
     classification: string;
     providerEvidence: boolean;
     networkAuthorized: boolean;
+    files: readonly string[];
     cases: readonly string[];
   };
   assert.equal(manifest.schemaVersion, "peas-p1-10-synthetic-acquisition-v1");
   assert.equal(manifest.classification, "original-project-authored-synthetic");
   assert.equal(manifest.providerEvidence, false);
   assert.equal(manifest.networkAuthorized, false);
+  assert.deepEqual(manifest.files, [
+    "README.md",
+    "manifest.json",
+    "synthetic-alias-authority-catalog.json",
+    "synthetic-pages.json",
+  ]);
   assert.deepEqual(manifest.cases, [
     "verified-chain",
     "identical-redelivery",
@@ -4547,7 +4792,7 @@ test("typed instrument membership, continuation material, and canonical nanoseco
     exactBoundaryRequest(0n),
     /instrument-effective-interval-gap/u,
     null,
-    gapAuthority,
+    authorityCatalogWithRecords(gapAuthority),
   );
   const overlappingRecord = syntheticAliasAuthorityRecord("GA", 0, {
     securityVersion: "overlap",
@@ -4556,7 +4801,7 @@ test("typed instrument membership, continuation material, and canonical nanoseco
     exactBoundaryRequest(0n),
     /instrument-effective-interval-ambiguous/u,
     null,
-    [...FROZEN_INSTRUMENT_REGISTRY, overlappingRecord],
+    authorityCatalogWithRecords([...FROZEN_INSTRUMENT_REGISTRY, overlappingRecord]),
   );
 
   const seedRequest = exactBoundaryRequest(0n);
@@ -4864,6 +5109,158 @@ test("typed instrument membership, continuation material, and canonical nanoseco
       },
     };
     assertGuardedPreflightReject(request, /timestamp/u);
+  }
+});
+
+test("literal alias-authority catalog roots every preimage, displayed ID, and closed configuration", () => {
+  assert.equal(MODULE_ALIAS_AUTHORITY_CATALOG.catalogId, ALIAS_AUTHORITY_CATALOG_ID);
+  assert.equal(MODULE_ALIAS_AUTHORITY_CATALOG.records.length, 65);
+  assert.equal(MODULE_ALIAS_AUTHORITY_CATALOG_VALIDATED, true);
+  assertRecursivelyFrozen(MODULE_ALIAS_AUTHORITY_CATALOG);
+  assert.doesNotThrow(() =>
+    validateAliasAuthorityCatalogIdentity(
+      MODULE_ALIAS_AUTHORITY_CATALOG,
+      ALIAS_AUTHORITY_CATALOG_ID,
+    ),
+  );
+  const baselineRequest = exactBoundaryRequest(0n);
+  assert.equal(
+    (configurationPreimage(baselineRequest) as Readonly<Record<string, JsonValue>>)[
+      "aliasAuthorityCatalogId"
+    ],
+    ALIAS_AUTHORITY_CATALOG_ID,
+  );
+
+  const firstRow = (catalog: DeepMutable<FrozenAliasAuthorityCatalog>) =>
+    catalog.records[0] as DeepMutable<FrozenAliasAuthorityRecord>;
+  const literalMutations: readonly Readonly<{
+    name: string;
+    mutate: (catalog: DeepMutable<FrozenAliasAuthorityCatalog>) => void;
+  }>[] = [
+    {
+      name: "issuer-mapping-preimage",
+      mutate: (catalog) => {
+        firstRow(catalog).issuerMappingPreimage.mappingVersion = "v1-mutated";
+      },
+    },
+    {
+      name: "instrument-preimage",
+      mutate: (catalog) => {
+        firstRow(catalog).instrumentPreimage.securityKey = "fictional-security-mutated";
+      },
+    },
+    {
+      name: "symbol-alias-preimage",
+      mutate: (catalog) => {
+        firstRow(catalog).symbolAliasPreimage.mappingVersion = "v1-mutated";
+      },
+    },
+    {
+      name: "displayed-issuer-mapping-id",
+      mutate: (catalog) => {
+        firstRow(catalog).issuerMappingId = `imap1_${"f".repeat(64)}`;
+      },
+    },
+    {
+      name: "displayed-instrument-id",
+      mutate: (catalog) => {
+        firstRow(catalog).instrumentId = `min1_${"f".repeat(64)}`;
+      },
+    },
+    {
+      name: "displayed-symbol-alias-id",
+      mutate: (catalog) => {
+        firstRow(catalog).symbolAliasId = `msa1_${"f".repeat(64)}`;
+      },
+    },
+    {
+      name: "displayed-catalog-id",
+      mutate: (catalog) => {
+        catalog.catalogId = `maac1_${"f".repeat(64)}`;
+      },
+    },
+  ];
+  for (const mutation of literalMutations) {
+    const catalog = mutableAliasAuthorityCatalogClone();
+    mutation.mutate(catalog);
+    assertGuardedPreflightReject(baselineRequest, /instrument/u, null, catalog);
+  }
+
+  const changedConfiguration = {
+    ...baselineRequest,
+    aliasAuthorityCatalogId: `maac1_${"f".repeat(64)}`,
+  };
+  const baselineConfigurationPreimage = configurationPreimage(baselineRequest) as Readonly<
+    Record<string, JsonValue>
+  >;
+  const changedConfigurationPreimage = {
+    ...baselineConfigurationPreimage,
+    aliasAuthorityCatalogId: changedConfiguration.aliasAuthorityCatalogId,
+  } satisfies JsonValue;
+  assert.notEqual(
+    canonicalHash("peas/market-acquisition-configuration/v1", changedConfigurationPreimage),
+    configurationHash(baselineRequest),
+  );
+  assertGuardedPreflightReject(changedConfiguration, /identity-not-authorized/u);
+});
+
+test("outer-frozen mutable-inner external catalogs are snapshotted and revalidated every use", () => {
+  const firstRow = (catalog: DeepMutable<FrozenAliasAuthorityCatalog>) =>
+    catalog.records[0] as DeepMutable<FrozenAliasAuthorityRecord>;
+  const mutationCases: readonly Readonly<{
+    name: string;
+    mutate: (catalog: DeepMutable<FrozenAliasAuthorityCatalog>) => void;
+  }>[] = [
+    {
+      name: "row",
+      mutate: (catalog) => {
+        firstRow(catalog).canonicalSymbol = "GX";
+      },
+    },
+    {
+      name: "nested-preimage",
+      mutate: (catalog) => {
+        firstRow(catalog).issuerMappingPreimage.mappingAuthority =
+          "peas-p1-10-original-synthetic-mutated";
+      },
+    },
+    {
+      name: "interval",
+      mutate: (catalog) => {
+        firstRow(catalog).symbolAliasPreimage.effectiveFromNs = "1";
+      },
+    },
+    {
+      name: "linkage",
+      mutate: (catalog) => {
+        firstRow(catalog).symbolAliasPreimage.instrumentId = `min1_${"e".repeat(64)}`;
+      },
+    },
+    {
+      name: "displayed-id",
+      mutate: (catalog) => {
+        firstRow(catalog).symbolAliasId = `msa1_${"e".repeat(64)}`;
+      },
+    },
+  ];
+  for (const mutationCase of mutationCases) {
+    const mutableCatalog = mutableAliasAuthorityCatalogClone();
+    const externalCatalog = Object.freeze({
+      ...mutableCatalog,
+      records: Object.freeze([...mutableCatalog.records]),
+    }) as unknown as FrozenAliasAuthorityCatalog;
+    assert.equal(Object.isFrozen(externalCatalog), true, mutationCase.name);
+    assert.equal(Object.isFrozen(externalCatalog.records), true, mutationCase.name);
+    assert.equal(Object.isFrozen(externalCatalog.records[0]), false, mutationCase.name);
+    const admittedCounters = zeroCounters();
+    assert.doesNotThrow(
+      () => guardedPreflight(exactBoundaryRequest(0n), admittedCounters, null, externalCatalog),
+      mutationCase.name,
+    );
+    assert.equal(admittedCounters.credentialReads, 1, mutationCase.name);
+    assert.equal(admittedCounters.transportConstructions, 1, mutationCase.name);
+    mutationCase.mutate(mutableCatalog);
+    assertGuardedPreflightReject(exactBoundaryRequest(0n), /instrument/u, null, externalCatalog);
   }
 });
 

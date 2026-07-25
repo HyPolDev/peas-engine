@@ -21,6 +21,7 @@ credentials, dispatch a request, inspect an account, or be uploaded as provider 
 | --- | --- | --- |
 | `README.md` | original synthetic documentation | States provenance, exclusions, and safe use |
 | `manifest.json` | original synthetic inventory | Names the eight abstract behavior cases |
+| `synthetic-alias-authority-catalog.json` | original synthetic literal authority | Freezes 65 complete invented issuer-mapping/instrument/alias preimages, displayed IDs, and one catalog identity |
 | `synthetic-pages.json` | original synthetic projection | Five invented color glyphs distributed across three abstract pages |
 
 The abstract page members are intentionally unlike a quote, trade, bar, FMP response, or provider
@@ -49,12 +50,19 @@ persisted.
 - exact 15-minute history-boundary and one-nanosecond-newer timestamps;
 - strict timestamp round-trip vectors for valid leap instants, impossible dates, invalid leap days,
   overflow, and normalized-but-different instants;
-- original-synthetic frozen uppercase alias-authority rows with complete issuer-mapping,
-  market-instrument, and symbol-alias preimages, displayed `imap1_`/`min1_`/`msa1_`, accepted-domain
-  and independent framed-hash recomputation, inclusive/exclusive effective intervals, and typed
-  memberships covering exact 64/65 bounds, blank, duplicate, unmapped, wrong-instrument,
-  delimiter-injected, reordered, query/membership mismatch, interval gap, and true overlapping
-  effective-version ambiguity;
+- mutations of the literal original-synthetic uppercase alias-authority catalog. The fixture owns
+  all 65 complete issuer-mapping, market-instrument, and symbol-alias preimages, displayed
+  `imap1_`/`min1_`/`msa1_` identities, and the literal
+  `maac1_361de0d202a39899c369c10da3c5bb43e98305c91749f1bee6b7cab5eac685dd`
+  catalog identity. Tests independently recompute every displayed identity and the complete
+  catalog identity, bind it into configuration, and mutate each preimage family, each displayed-ID
+  family, the displayed catalog identity, and the configuration binding separately;
+- inclusive/exclusive effective-interval and typed-membership mutations covering exact 64/65
+  bounds, blank, duplicate, unmapped, wrong-instrument, delimiter-injected, reordered,
+  query/membership mismatch, an interval gap, and true overlapping effective-version ambiguity;
+- outer-frozen/mutable-inner external catalog vectors that first admit, then separately mutate a
+  row, nested preimage, interval, linkage, or displayed ID and must reject on the next guarded call
+  with all side-effect counters zero;
 - original synthetic opaque continuation material held only in memory, including exact 4,096/4,097
   byte bounds and missing, empty, repeated, cross-query, substituted, post-terminal, next-ordinal,
   and every preceding durable binding-member mutation, self-consistently rehashed and executed
@@ -78,8 +86,8 @@ contract package.
 
 The executable test must verify:
 
-1. `manifest.json` declares `original-project-authored-synthetic`, `providerEvidence=false`, and
-   `networkAuthorized=false`.
+1. `manifest.json` declares `original-project-authored-synthetic`, `providerEvidence=false`,
+   `networkAuthorized=false`, and the exact four-file fixture inventory.
 2. The page projection is deterministic and independent of request/replay page limits `1`, `2`,
    `7`, and `10,000`; those values pass canonical preflight while coercive and out-of-range values
    fail.

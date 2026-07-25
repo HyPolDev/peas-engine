@@ -1,0 +1,2479 @@
+{
+  "schemaVersion": "peas-p1-10-synthetic-alias-authority-catalog-v1",
+  "classification": "original-project-authored-synthetic",
+  "providerEvidence": false,
+  "networkAuthorized": false,
+  "records": [
+    {
+      "canonicalSymbol": "GA",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000001",
+        "symbols": ["GA"],
+        "selectedSymbol": "GA",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v1",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_f31410cd268dff7928dc29df37d1dde373bad5c56e3cbaeceaa700cc29482a0f",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_f31410cd268dff7928dc29df37d1dde373bad5c56e3cbaeceaa700cc29482a0f",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-0-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_3b467b21098f87d8080d2ead6b24e22d24a5b995dfb7b107cf197efe806ef800",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_3b467b21098f87d8080d2ead6b24e22d24a5b995dfb7b107cf197efe806ef800",
+        "symbol": "GA",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v1",
+        "mappingArtifactDigest": "593b170cf3360c84a87773f41ea7da272d7ed62b82806fd51c3af572265174ff",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_d53850b61421a9f7dfebcef3b4d2b4aeca4bd5b45630a5e2ce55e59ea4651f98"
+    },
+    {
+      "canonicalSymbol": "GC",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000002",
+        "symbols": ["GC"],
+        "selectedSymbol": "GC",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v2",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_9d21c04cf5986ab0014fd262ce51ef7b4a50ff09c0446be7c510a1e4fd40cc77",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_9d21c04cf5986ab0014fd262ce51ef7b4a50ff09c0446be7c510a1e4fd40cc77",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-1-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_85a46217de3c19e2a04486c73c1f638d4b64dfc55b2e26ca7bbe9493bd112eac",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_85a46217de3c19e2a04486c73c1f638d4b64dfc55b2e26ca7bbe9493bd112eac",
+        "symbol": "GC",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v2",
+        "mappingArtifactDigest": "ac43dcbe1212e59b87ef095dcfd9c87360c13d8915e9e43cdc23820b154fb078",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_189f5a860c60b1699ca3c416cba6c0200f3ae6ac06a889a9cc322978eaf8811a"
+    },
+    {
+      "canonicalSymbol": "S000",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000003",
+        "symbols": ["S000"],
+        "selectedSymbol": "S000",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v3",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_37d7e1363923c0befe23bbd239a9bf67c80f20fc857f94444a4507f4163a65bc",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_37d7e1363923c0befe23bbd239a9bf67c80f20fc857f94444a4507f4163a65bc",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-2-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_1b245664a2cc279c9f98c877fd7bcae16a86fd4a34d39c274d48be058a7d57c6",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_1b245664a2cc279c9f98c877fd7bcae16a86fd4a34d39c274d48be058a7d57c6",
+        "symbol": "S000",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v3",
+        "mappingArtifactDigest": "97d18d68e4c664a1180673759e0b0f5aefaa0f462f44964a0c9e392adf8e27f9",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_c7870d35536698f9e08fc34efc268ae933ec95f0f9e922a86a287427759b9e09"
+    },
+    {
+      "canonicalSymbol": "S001",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000004",
+        "symbols": ["S001"],
+        "selectedSymbol": "S001",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v4",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_e3a85ecf1483f5e3c8e790d4b10a5baec07d35afeab49b0514a26a5d7e30377c",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_e3a85ecf1483f5e3c8e790d4b10a5baec07d35afeab49b0514a26a5d7e30377c",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-3-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_e863938a68fc7ddba64dca3543e90fb9e69415db06ea22e643fef9975405acd0",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_e863938a68fc7ddba64dca3543e90fb9e69415db06ea22e643fef9975405acd0",
+        "symbol": "S001",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v4",
+        "mappingArtifactDigest": "afd11fdd8c639da45b7ee3469364ab042d257841cb89c1cac899608ef40a9f55",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_e02906a4d965df3fd42fe80fe13fe92d28ea258e3dfe98d14fa16f2a036b84ca"
+    },
+    {
+      "canonicalSymbol": "S002",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000005",
+        "symbols": ["S002"],
+        "selectedSymbol": "S002",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v5",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_666e7b214237acb7e899bb9d95a02f7b298ae144c9aaa7e6749d4c6fa7da8b2e",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_666e7b214237acb7e899bb9d95a02f7b298ae144c9aaa7e6749d4c6fa7da8b2e",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-4-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_d68ece79f1bbf7aeeed3ae290e80da9fc7de9f396132db8fd354949e63968bda",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_d68ece79f1bbf7aeeed3ae290e80da9fc7de9f396132db8fd354949e63968bda",
+        "symbol": "S002",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v5",
+        "mappingArtifactDigest": "f20eb8eb798dcf3d3a7a434c8a1c2c55f4b828f1d90cddf21c2db26f64ddcc3d",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_90e130af072c39b1033197b0b8e8bfa7f80d093fa9f75aa5d417602d6da9eec3"
+    },
+    {
+      "canonicalSymbol": "S003",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000006",
+        "symbols": ["S003"],
+        "selectedSymbol": "S003",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v6",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_0e7849f434f6b4a8ae425c4408f7c7997605df5282c3ce91062b23ef16529bbf",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_0e7849f434f6b4a8ae425c4408f7c7997605df5282c3ce91062b23ef16529bbf",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-5-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_85d0cb92cd5d46e6665401b6744f37ca3ff616cc9399738ecbd1651dcd84a0a6",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_85d0cb92cd5d46e6665401b6744f37ca3ff616cc9399738ecbd1651dcd84a0a6",
+        "symbol": "S003",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v6",
+        "mappingArtifactDigest": "8dd2fbf57f58801ac9d710769b925fd1aaab97e493fe9f0dfb58fae8b34b2a2d",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_d553cd2d87aeee9321fc42c0dc52cabef25df9d1dcc89aa76a7b8806e9d3316d"
+    },
+    {
+      "canonicalSymbol": "S004",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000007",
+        "symbols": ["S004"],
+        "selectedSymbol": "S004",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v7",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_59d64b1a9a827a4da04bad3005143e94c7d3a166d3515bcf4eb23063242a1932",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_59d64b1a9a827a4da04bad3005143e94c7d3a166d3515bcf4eb23063242a1932",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-6-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_2fb36f1cd195aeb65c5893579d79aa35aeb991f2db1efaffd2757711a0074338",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_2fb36f1cd195aeb65c5893579d79aa35aeb991f2db1efaffd2757711a0074338",
+        "symbol": "S004",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v7",
+        "mappingArtifactDigest": "38b62506d35ebda7881aadef439295430cecfdd845b31945c3f5130f0c331e16",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_db715fe40879899d6947bcd3e95069a315af6894cd2b0a1edaba4c3cee1bd67f"
+    },
+    {
+      "canonicalSymbol": "S005",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000008",
+        "symbols": ["S005"],
+        "selectedSymbol": "S005",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v8",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_ff18b719f26742b5d89863f57b766e2c14cdb0af5a5a3bc79bf38bcd33124da6",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_ff18b719f26742b5d89863f57b766e2c14cdb0af5a5a3bc79bf38bcd33124da6",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-7-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_d71a0d389df925d2e048299fe8aa006bee4f67e0052241b9e2bee562870495be",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_d71a0d389df925d2e048299fe8aa006bee4f67e0052241b9e2bee562870495be",
+        "symbol": "S005",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v8",
+        "mappingArtifactDigest": "b07412428decf40bdce5a1fbf923c6e36de4ee620575a5b374d7220bef980f96",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_4c143c97f9cf19f0968e3044342d67d2496df98cf179065b0ef978303fbaf3b2"
+    },
+    {
+      "canonicalSymbol": "S006",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000009",
+        "symbols": ["S006"],
+        "selectedSymbol": "S006",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v9",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_f0bc21f5a444e5c54e350fbb854c1570b59e2151a765831df02e5135559b831f",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_f0bc21f5a444e5c54e350fbb854c1570b59e2151a765831df02e5135559b831f",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-8-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_a66d3910145262023375fe63b025592d01a804c1d5c17016faeb05ba463aa8a0",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_a66d3910145262023375fe63b025592d01a804c1d5c17016faeb05ba463aa8a0",
+        "symbol": "S006",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v9",
+        "mappingArtifactDigest": "c9c710d95006cd4235f58244876268aad6152079713cde3dfe1cc1155ec1cc45",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_b3e01672c5d4a8d37086c46e9f564db1a24dfe11d6ae5d950bbfa9bb5492c1b3"
+    },
+    {
+      "canonicalSymbol": "S007",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000010",
+        "symbols": ["S007"],
+        "selectedSymbol": "S007",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v10",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_303afbaf347b8f0b3fec819f31b3363e54db73870a956b3e6cc20adc774609fd",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_303afbaf347b8f0b3fec819f31b3363e54db73870a956b3e6cc20adc774609fd",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-9-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_de6a42599d861a532c9392971e6f6a79b9a64c293409397d6250f89fc88d5a1f",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_de6a42599d861a532c9392971e6f6a79b9a64c293409397d6250f89fc88d5a1f",
+        "symbol": "S007",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v10",
+        "mappingArtifactDigest": "746afb63b174e87c820c917f94a4f206c4fc16a4ad7b458cb903757d184bbd51",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_56786a10c6ecf55c5b8216bad09f73bd92a8c571c3cb30798fd95c70a36d3fd3"
+    },
+    {
+      "canonicalSymbol": "S008",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000011",
+        "symbols": ["S008"],
+        "selectedSymbol": "S008",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v11",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_25e0fcdbad1026e173d58a36d6f079ec48f20e80e5025cc37a83337e17c08804",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_25e0fcdbad1026e173d58a36d6f079ec48f20e80e5025cc37a83337e17c08804",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-10-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_f23ffa4b809c9d4bd2b4da9badd3c21a7b817825ad0132fd361c06089440f7cd",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_f23ffa4b809c9d4bd2b4da9badd3c21a7b817825ad0132fd361c06089440f7cd",
+        "symbol": "S008",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v11",
+        "mappingArtifactDigest": "cd1926e6eb6f81c6f90c671a4069db97ff1f76526a3719d663db8e5270056347",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_91328b1c9fbf3f066d6b7df148ea3f49edf226931b19f0cb4b7445e967310f93"
+    },
+    {
+      "canonicalSymbol": "S009",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000012",
+        "symbols": ["S009"],
+        "selectedSymbol": "S009",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v12",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_7f39406949e0001b5c3db8b6dfdc9cbf466e573d3aec745c9f560ff45f587177",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_7f39406949e0001b5c3db8b6dfdc9cbf466e573d3aec745c9f560ff45f587177",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-11-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_c6362503fc6af970fe4d7f82a51737f58fe131b08f00e45cff0c3b78e8d3aa7c",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_c6362503fc6af970fe4d7f82a51737f58fe131b08f00e45cff0c3b78e8d3aa7c",
+        "symbol": "S009",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v12",
+        "mappingArtifactDigest": "38305d33bf26de6918c90aa0ee5e3a9ba3c7d52fce5c9955df48a7c8f015a6d1",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_a4c76f6dd8ca88afa751d9ce88d7128697c1513878161b9d194f3d1e0044c7ad"
+    },
+    {
+      "canonicalSymbol": "S010",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000013",
+        "symbols": ["S010"],
+        "selectedSymbol": "S010",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v13",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_3e2f0cc3e9e6078de53f269d7f0f18a9bd3ce042d0f10ed8d8aca708d2cbb412",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_3e2f0cc3e9e6078de53f269d7f0f18a9bd3ce042d0f10ed8d8aca708d2cbb412",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-12-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_fe88386a722d97918a9746bb8fc2053d4567c9f313ad1538577a997566e58109",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_fe88386a722d97918a9746bb8fc2053d4567c9f313ad1538577a997566e58109",
+        "symbol": "S010",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v13",
+        "mappingArtifactDigest": "bcd46bd6876dff088ec9bc4cb40917fd8f4309bb6b63fb70115ec602bd359c20",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_c9d1511833e47af6edff4d5b21e2918354e2d42f241f86b9368b1667163f7f3f"
+    },
+    {
+      "canonicalSymbol": "S011",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000014",
+        "symbols": ["S011"],
+        "selectedSymbol": "S011",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v14",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_20276fcac3b92796bc499267817c21d630d1b31d128272077c21c2cfd77ab92e",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_20276fcac3b92796bc499267817c21d630d1b31d128272077c21c2cfd77ab92e",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-13-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_11e309e9f7cdcf9efe6a4ceb90c3e4427724950f37452d4c09184a529c56ba79",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_11e309e9f7cdcf9efe6a4ceb90c3e4427724950f37452d4c09184a529c56ba79",
+        "symbol": "S011",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v14",
+        "mappingArtifactDigest": "d162c0fd65768f7891a533fccce4677e19889bcdb9334241e51e4a4f9557a6ae",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_f63f0725ea43cd890c14c72b91f9a065d7ae07a4a4a469512d4b5645069fdd00"
+    },
+    {
+      "canonicalSymbol": "S012",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000015",
+        "symbols": ["S012"],
+        "selectedSymbol": "S012",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v15",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_20cd011b52769371fc2417ececae7ecd3094f7c8ccb6fe34d2f6d20d08499a4d",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_20cd011b52769371fc2417ececae7ecd3094f7c8ccb6fe34d2f6d20d08499a4d",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-14-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_41e171961a817ddb753f40203583500d8b1a52e4d9131857459880d71aac6639",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_41e171961a817ddb753f40203583500d8b1a52e4d9131857459880d71aac6639",
+        "symbol": "S012",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v15",
+        "mappingArtifactDigest": "3e3134e5062526565786c15ec12f7d1db4a1debea22dc8eb5ad743875a6ac5f4",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_011d9d97142e93ceb5884de92a2ee276b12fa1e68643d3b08832c576e0da16de"
+    },
+    {
+      "canonicalSymbol": "S013",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000016",
+        "symbols": ["S013"],
+        "selectedSymbol": "S013",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v16",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_f661c48fa02d14641d97de109bac037a123a014a0748283c7a36f5990377b530",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_f661c48fa02d14641d97de109bac037a123a014a0748283c7a36f5990377b530",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-15-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_b4abb3941de143aa63403a8221a7aab8b1b74393cf20a4b0bd594217ce4f7ea5",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_b4abb3941de143aa63403a8221a7aab8b1b74393cf20a4b0bd594217ce4f7ea5",
+        "symbol": "S013",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v16",
+        "mappingArtifactDigest": "ef247892fd661081883f0b2a45d3c1f81297a654f350472e9efa5b04eb0fea46",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_356ca50185a0d7fe058add320e7a953d11341e20b0447a5fda42494bfe7c8972"
+    },
+    {
+      "canonicalSymbol": "S014",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000017",
+        "symbols": ["S014"],
+        "selectedSymbol": "S014",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v17",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_d05231d2efc6374c3331561f8e12970dcd2c0bda4ba2b09e638468e4ffeec0d4",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_d05231d2efc6374c3331561f8e12970dcd2c0bda4ba2b09e638468e4ffeec0d4",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-16-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_760e00703fdd276915b65e8ae9494dc2df593c7b7266b6885de8bab034405a38",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_760e00703fdd276915b65e8ae9494dc2df593c7b7266b6885de8bab034405a38",
+        "symbol": "S014",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v17",
+        "mappingArtifactDigest": "f04d3243deac3362ece5bd82d8014b1407ea992a49a21c8c03cd78df6901ae3d",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_6278a8acd0bac6ee4e460ee3f09ebb96cbaa06cc835e4db4f6907692864903dc"
+    },
+    {
+      "canonicalSymbol": "S015",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000018",
+        "symbols": ["S015"],
+        "selectedSymbol": "S015",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v18",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_12d9596497e4427f3fb6d1d9843e653f96a69279d95ee853cac7708bc64cd106",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_12d9596497e4427f3fb6d1d9843e653f96a69279d95ee853cac7708bc64cd106",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-17-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_8e9535667cbf756fe00536ad1cd5ff0e915e544864a6d77b1275270c9073f689",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_8e9535667cbf756fe00536ad1cd5ff0e915e544864a6d77b1275270c9073f689",
+        "symbol": "S015",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v18",
+        "mappingArtifactDigest": "fc799ca4537a8d09e5376cfd938471848f727f99767dae2eee0b0387faa298a7",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_2dee4aa601803c874c5020ec3dbb35492d1302fdc9b04476d82e10cb875fcb90"
+    },
+    {
+      "canonicalSymbol": "S016",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000019",
+        "symbols": ["S016"],
+        "selectedSymbol": "S016",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v19",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_e8e748661b63dd2aec7a6aea742714b571c6292fda73ffa8ed325ac92d1bbeec",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_e8e748661b63dd2aec7a6aea742714b571c6292fda73ffa8ed325ac92d1bbeec",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-18-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_a606654ecb25f9f9c54627d42d8bf2e3455b5222c0e927de0491ab0417ebf47e",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_a606654ecb25f9f9c54627d42d8bf2e3455b5222c0e927de0491ab0417ebf47e",
+        "symbol": "S016",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v19",
+        "mappingArtifactDigest": "61798fa5901c83ec3a399c26296a325d15e3a0ac608f9bf0443f83dcc8c6b389",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_a587b470af5da8aec50783ed6a3a155a74da297b20ace7c2c9941eecbe7a9034"
+    },
+    {
+      "canonicalSymbol": "S017",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000020",
+        "symbols": ["S017"],
+        "selectedSymbol": "S017",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v20",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_3eb78ac383e54696658dca00067403e16683ed55ecdf1538d861b1f3849f21a0",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_3eb78ac383e54696658dca00067403e16683ed55ecdf1538d861b1f3849f21a0",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-19-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_15113ac1ac262913d0690ec879bd6aa764b3ecde3ac3260d0ae88c1f469aef92",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_15113ac1ac262913d0690ec879bd6aa764b3ecde3ac3260d0ae88c1f469aef92",
+        "symbol": "S017",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v20",
+        "mappingArtifactDigest": "440194fb42fb085d5cb4c15cebf9abddf2a13091488b4b0ca018384936f746d6",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_7802d03a4d8e2739a053972dc438b166376ca244c045865cb931fe8d175f7fa5"
+    },
+    {
+      "canonicalSymbol": "S018",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000021",
+        "symbols": ["S018"],
+        "selectedSymbol": "S018",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v21",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_ac413dc585427c933251ab35462e994591f643f44d2552102ab538e182ddadc8",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_ac413dc585427c933251ab35462e994591f643f44d2552102ab538e182ddadc8",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-20-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_c97530b9df775496826b47e74745af936b906b8dfd83a8a9fc23fedfd3d4bc9b",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_c97530b9df775496826b47e74745af936b906b8dfd83a8a9fc23fedfd3d4bc9b",
+        "symbol": "S018",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v21",
+        "mappingArtifactDigest": "81b2a56725d8b742a7661acd46e0696392df987d6ca81883d7557912b1623295",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_c0f9c320e4f74deaf7c91388980c653de154e22b8dce3dd185cfce38a48883d7"
+    },
+    {
+      "canonicalSymbol": "S019",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000022",
+        "symbols": ["S019"],
+        "selectedSymbol": "S019",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v22",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_637474a364aea3517342dcddaf9fe63a703a62c45c4bd191d8b3c5adefb5e0d9",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_637474a364aea3517342dcddaf9fe63a703a62c45c4bd191d8b3c5adefb5e0d9",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-21-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_89e491e94a5f62377516583970f2efae11eed74ec157c5e6a2a550526b9c50e8",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_89e491e94a5f62377516583970f2efae11eed74ec157c5e6a2a550526b9c50e8",
+        "symbol": "S019",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v22",
+        "mappingArtifactDigest": "fe5eb98abb8b4fc07d9f5af3e82387e002c47e12dcbec690be9ee4e4d3a9a2a3",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_3a5581ee173ecedf70dfdd20e0a16fc428292dd6890cc46ccad6577840833033"
+    },
+    {
+      "canonicalSymbol": "S020",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000023",
+        "symbols": ["S020"],
+        "selectedSymbol": "S020",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v23",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_d2fc4d572ce743372dd3dc4ccb0b9df847b5fe0124fe50ba661582e2fce37ce5",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_d2fc4d572ce743372dd3dc4ccb0b9df847b5fe0124fe50ba661582e2fce37ce5",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-22-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_3f08a17a90d79867895ebdfc6cd2961d1047d36a4ee1b5a9996e0d13df79afe0",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_3f08a17a90d79867895ebdfc6cd2961d1047d36a4ee1b5a9996e0d13df79afe0",
+        "symbol": "S020",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v23",
+        "mappingArtifactDigest": "03a8feab2b87baef22fa9a6549fd24eb3f57450b24749a2842e320f4cc2024fb",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_b47d346ed3d7287966717472d98cd1efe5e59cbfbdc6e524681bc854434ca63d"
+    },
+    {
+      "canonicalSymbol": "S021",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000024",
+        "symbols": ["S021"],
+        "selectedSymbol": "S021",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v24",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_686020391a1477e965e9de897265faf2cef9f5ff7a6cc16a0e0f5f86d46d9d23",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_686020391a1477e965e9de897265faf2cef9f5ff7a6cc16a0e0f5f86d46d9d23",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-23-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_e3798291ab363982f747139eba8f3469dc459f7bf6a229428233676fe3acd611",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_e3798291ab363982f747139eba8f3469dc459f7bf6a229428233676fe3acd611",
+        "symbol": "S021",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v24",
+        "mappingArtifactDigest": "76dc53e536259f5ba94647fc7c2e8adecf20ffcca2374538faa92f41d55d473f",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_7c23c8582907249641e5072a300a243ae50ec8b895b72335ffef39b735a6fe0b"
+    },
+    {
+      "canonicalSymbol": "S022",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000025",
+        "symbols": ["S022"],
+        "selectedSymbol": "S022",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v25",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_d131e6b168ec184baee83e0b19fd51ab07b8b6e9900af6b2e71fb80bc5f591e3",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_d131e6b168ec184baee83e0b19fd51ab07b8b6e9900af6b2e71fb80bc5f591e3",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-24-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_e7c0b9e942bc3a64f2582c6a52d3c52b4c055f642d6a8a10e7902fb022171496",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_e7c0b9e942bc3a64f2582c6a52d3c52b4c055f642d6a8a10e7902fb022171496",
+        "symbol": "S022",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v25",
+        "mappingArtifactDigest": "79c588e03334ba09f181ae7626d6cb7a3cba7080fb1606a19645a0bd9bac1e77",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_9321df12400172fde2a39b15f3899e34249df3b0a8a9ddb7da976aff40ec668a"
+    },
+    {
+      "canonicalSymbol": "S023",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000026",
+        "symbols": ["S023"],
+        "selectedSymbol": "S023",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v26",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_e045a88a3d4567fcae33015a844724d5df9f846d95095c1481db41819a550fdf",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_e045a88a3d4567fcae33015a844724d5df9f846d95095c1481db41819a550fdf",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-25-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_6baac62efd7be6f39bec01185086b9ad934f9e2f24000906feca75952c88ac70",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_6baac62efd7be6f39bec01185086b9ad934f9e2f24000906feca75952c88ac70",
+        "symbol": "S023",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v26",
+        "mappingArtifactDigest": "22280cfda0c16ca9055f5d93c18f7c66ab090624ca6e880772d2d7c0d70dbba3",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_db3aca45d72456a032647b8ee793c2847faf7c309930de30e98eb2b381734c63"
+    },
+    {
+      "canonicalSymbol": "S024",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000027",
+        "symbols": ["S024"],
+        "selectedSymbol": "S024",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v27",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_af08529fc09677dbee0797be637111a6922972617a75436f3b370e055d16fb5a",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_af08529fc09677dbee0797be637111a6922972617a75436f3b370e055d16fb5a",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-26-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_34768bbb3fe6f656e7705e7eff35bee889c5f397f151e46a4a438610d89686b1",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_34768bbb3fe6f656e7705e7eff35bee889c5f397f151e46a4a438610d89686b1",
+        "symbol": "S024",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v27",
+        "mappingArtifactDigest": "e30fac84eab238a5d390c1d760d9fc3c854ab983e28bcbc43389e504bcfe4530",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_04b7eb3d67df5cc06a05dc6faca88663f18058e2c78736472d64e7fffab58506"
+    },
+    {
+      "canonicalSymbol": "S025",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000028",
+        "symbols": ["S025"],
+        "selectedSymbol": "S025",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v28",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_5a70fb3942450a99560ea79f93d71ace6e4e825dab49e96c0723f6ce1edf6801",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_5a70fb3942450a99560ea79f93d71ace6e4e825dab49e96c0723f6ce1edf6801",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-27-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_ef41445821c9166e47878f9fe4164fca9acc296ae3f474d2ad8095848be51afe",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_ef41445821c9166e47878f9fe4164fca9acc296ae3f474d2ad8095848be51afe",
+        "symbol": "S025",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v28",
+        "mappingArtifactDigest": "089770d9c32e513a61afabea00875fee6d257df8917817119fb08e588fe3ac3a",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_1edd3e5b352b82b173fbe0bbb25608dc229da1d8fa789e0301d9d8ec1ebb9cdf"
+    },
+    {
+      "canonicalSymbol": "S026",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000029",
+        "symbols": ["S026"],
+        "selectedSymbol": "S026",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v29",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_d3d048926fa36f4eae194a3c41b4f04646a8e3e3283136924de79065495e89f0",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_d3d048926fa36f4eae194a3c41b4f04646a8e3e3283136924de79065495e89f0",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-28-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_a2c7a7e99bef35477df271475ed0b1f18cefd016c4cf4e2b184513a509b52b68",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_a2c7a7e99bef35477df271475ed0b1f18cefd016c4cf4e2b184513a509b52b68",
+        "symbol": "S026",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v29",
+        "mappingArtifactDigest": "57e8d5259efee2b928c4f9d640402f81fbb33a3710cc7b16e2ebd749b563b142",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_bb5eec0f842115fc30ca4e94bd898ed8c463346395b637e6d80e6d376af8456f"
+    },
+    {
+      "canonicalSymbol": "S027",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000030",
+        "symbols": ["S027"],
+        "selectedSymbol": "S027",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v30",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_686f205c7060a92d7f2baae41770b49b7ed6ad22f35dfb6800c0464975b318cc",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_686f205c7060a92d7f2baae41770b49b7ed6ad22f35dfb6800c0464975b318cc",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-29-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_0fcc3245ae6c9ffec2c89ececa0e79c9981acd971f4ac1e66801f532e3695ec6",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_0fcc3245ae6c9ffec2c89ececa0e79c9981acd971f4ac1e66801f532e3695ec6",
+        "symbol": "S027",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v30",
+        "mappingArtifactDigest": "8224bc9b6287a4f3de98a813bd130e6dc54c26d6ae250de5b876d640d63d1d89",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_e7435bd7bf5521d753df45112d11cd348b2c05ee8cb01737ab0c0925dd541908"
+    },
+    {
+      "canonicalSymbol": "S028",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000031",
+        "symbols": ["S028"],
+        "selectedSymbol": "S028",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v31",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_b228983651fd1d98ad836b9ec9c1ad3c2f83e609aeb102653ba5107462c14a6e",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_b228983651fd1d98ad836b9ec9c1ad3c2f83e609aeb102653ba5107462c14a6e",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-30-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_658dba6f638c7397fc792c250cab2f6795d2d5d91f4fd731b1795f81ffcaa315",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_658dba6f638c7397fc792c250cab2f6795d2d5d91f4fd731b1795f81ffcaa315",
+        "symbol": "S028",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v31",
+        "mappingArtifactDigest": "e52813248842e7c209c49d1fc7285eff5507d2d953bf1b4c016a82f4502e4619",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_a2454a3b3d8ed9cc92bf4bd65c2c87cc3ab007c671150dbfd8a4256bee2f2d99"
+    },
+    {
+      "canonicalSymbol": "S029",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000032",
+        "symbols": ["S029"],
+        "selectedSymbol": "S029",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v32",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_ebfa428d37dd03d4f71e116510e8e83cf42b5408532f7ebc38d54cdde9efbf0b",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_ebfa428d37dd03d4f71e116510e8e83cf42b5408532f7ebc38d54cdde9efbf0b",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-31-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_6fe056b2e1a7a302219a217fbb988a0847b9b11b722215fb895147e218fe3fdf",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_6fe056b2e1a7a302219a217fbb988a0847b9b11b722215fb895147e218fe3fdf",
+        "symbol": "S029",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v32",
+        "mappingArtifactDigest": "23e480f1be1b603c45b9b0ac2e32673f46a8e206cef64e5b744cb097eba2fb05",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_c9716c1725843131b490d4d1020e8fa744563d324eb2645163f9e76ce2ea9a75"
+    },
+    {
+      "canonicalSymbol": "S030",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000033",
+        "symbols": ["S030"],
+        "selectedSymbol": "S030",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v33",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_ce99edb72397225a9700c29386efcbabefa9437ebd528efd6d31313dd5dd1a9f",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_ce99edb72397225a9700c29386efcbabefa9437ebd528efd6d31313dd5dd1a9f",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-32-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_81930f1be84eb69cabc5cde63a0bc0dba15b353f10493d60bc61ab97d1454f1c",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_81930f1be84eb69cabc5cde63a0bc0dba15b353f10493d60bc61ab97d1454f1c",
+        "symbol": "S030",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v33",
+        "mappingArtifactDigest": "e480de7d429273b1ce33fae89063122106aa73badad54280c9cad6df94f84235",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_00d5093168f8985aaff551806c8e042126ffaba34f3a84a231055ab229550d0c"
+    },
+    {
+      "canonicalSymbol": "S031",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000034",
+        "symbols": ["S031"],
+        "selectedSymbol": "S031",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v34",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_e3aa8f8521e106c0e60f66cfd53988c8b416cb3734c56cd96257e22551242a4f",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_e3aa8f8521e106c0e60f66cfd53988c8b416cb3734c56cd96257e22551242a4f",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-33-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_d1f47a1355132f8309633fb006de45c2c48a4e4f402d9b3e55095fd58f444406",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_d1f47a1355132f8309633fb006de45c2c48a4e4f402d9b3e55095fd58f444406",
+        "symbol": "S031",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v34",
+        "mappingArtifactDigest": "e8b28506fa5c564391355e21cbd305a1d2c910f45cb418ab5b9608e72b485c13",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_b70a5b287060d9149f51a2775eb1b6a7abf8660ade3ca506ec55d57314d9fcf5"
+    },
+    {
+      "canonicalSymbol": "S032",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000035",
+        "symbols": ["S032"],
+        "selectedSymbol": "S032",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v35",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_da77419c0562dbe36fd0b1c7742f2a8a12bb99bb97375fed08c1b8f9d737be5b",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_da77419c0562dbe36fd0b1c7742f2a8a12bb99bb97375fed08c1b8f9d737be5b",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-34-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_7c166e37de4bce0375bd59737c21faf8becbc40451f7c87ab3eba2521f3dd7c1",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_7c166e37de4bce0375bd59737c21faf8becbc40451f7c87ab3eba2521f3dd7c1",
+        "symbol": "S032",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v35",
+        "mappingArtifactDigest": "cf6ce05575fa52cb30cd8ce7e0015082870849cf9d03d2a749a3b960d8a415d7",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_6754500198f5b10df865073946f4864114fbf98e66672d2ce16c6d9a52bdd6c6"
+    },
+    {
+      "canonicalSymbol": "S033",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000036",
+        "symbols": ["S033"],
+        "selectedSymbol": "S033",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v36",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_1558298bab2d4da7c03d24bfc20d1bd190d5e27c261d5a2d4a33a12c35698eaa",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_1558298bab2d4da7c03d24bfc20d1bd190d5e27c261d5a2d4a33a12c35698eaa",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-35-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_be5e2993e45eeb549c5a85ff7678bde9ec841c164f22af36daac931ddef9ccb8",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_be5e2993e45eeb549c5a85ff7678bde9ec841c164f22af36daac931ddef9ccb8",
+        "symbol": "S033",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v36",
+        "mappingArtifactDigest": "0718d3e4111bf3b0e4440eae21efc65e723731a1c95f550d6171c6048b373a49",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_32d71175faced76ebeed1c16eb0ab7adf1b152f56267261f83c00b976fe1038a"
+    },
+    {
+      "canonicalSymbol": "S034",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000037",
+        "symbols": ["S034"],
+        "selectedSymbol": "S034",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v37",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_6f9b5bb7c0481f61c57c07c8ddeaff5e3c80fb76dc4793ea61555e5a19055648",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_6f9b5bb7c0481f61c57c07c8ddeaff5e3c80fb76dc4793ea61555e5a19055648",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-36-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_429166838c02a7f5a7725fa874da3de1a81303ce4812c7992ebca72adb28f03a",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_429166838c02a7f5a7725fa874da3de1a81303ce4812c7992ebca72adb28f03a",
+        "symbol": "S034",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v37",
+        "mappingArtifactDigest": "0c97625aed083b1f7a6ef306370a8468af00385564994bf4c7ffdb478c1b79ab",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_04578b81867c9e69f362a8ae695ac30891b3a572f02b515498f1628794a4ede0"
+    },
+    {
+      "canonicalSymbol": "S035",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000038",
+        "symbols": ["S035"],
+        "selectedSymbol": "S035",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v38",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_f0e1d68fa676fe094a73f8c138bca610a4d658a0ec9c01d7a1bf20b1be52435b",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_f0e1d68fa676fe094a73f8c138bca610a4d658a0ec9c01d7a1bf20b1be52435b",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-37-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_f886ce5b22e1a31727891125def62510554a104d08fb6e7f11d23bb6ca47aa67",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_f886ce5b22e1a31727891125def62510554a104d08fb6e7f11d23bb6ca47aa67",
+        "symbol": "S035",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v38",
+        "mappingArtifactDigest": "47d581ab2bb483728509e032b0259b063ff34b43321c474b2e681e670fe38d1b",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_fe6a53b84092dd7af330199c9639f1d452e07dcc78a19c9d7d3cf7a03ae6e26e"
+    },
+    {
+      "canonicalSymbol": "S036",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000039",
+        "symbols": ["S036"],
+        "selectedSymbol": "S036",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v39",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_1162f83d665419fd42cd56c2f06974f9bf86372f44c29d73f8b399a1544d4fd0",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_1162f83d665419fd42cd56c2f06974f9bf86372f44c29d73f8b399a1544d4fd0",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-38-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_c0a9bbea11107803dbec0b29e1008e98c7dac1b086f30340e5fa3d00a920c31c",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_c0a9bbea11107803dbec0b29e1008e98c7dac1b086f30340e5fa3d00a920c31c",
+        "symbol": "S036",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v39",
+        "mappingArtifactDigest": "b7fa89fd42bff0a127e018fad05caf0f85f35dce24f84d09cb359251ae01ccd3",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_7cf8b311575cfcb5d8d5cf1ad46378845a7ef911d36d56ef80ec521194a5baff"
+    },
+    {
+      "canonicalSymbol": "S037",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000040",
+        "symbols": ["S037"],
+        "selectedSymbol": "S037",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v40",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_b355abc1829f75d161df065e046cbd3038c4288ab831959990a8b526668929f8",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_b355abc1829f75d161df065e046cbd3038c4288ab831959990a8b526668929f8",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-39-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_21919f4c86cb1357819e7f184a8e749f950660aa50fdfce9b9f1eae1d085c977",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_21919f4c86cb1357819e7f184a8e749f950660aa50fdfce9b9f1eae1d085c977",
+        "symbol": "S037",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v40",
+        "mappingArtifactDigest": "10c0c815540df24aa71bc7fe6224c52540aca4d860ba711475844ed217bc9737",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_ebda6c8af7b1608eb0b72a54d12d4b40ce3d371a503b6bb6922f624074b59400"
+    },
+    {
+      "canonicalSymbol": "S038",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000041",
+        "symbols": ["S038"],
+        "selectedSymbol": "S038",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v41",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_942e3e231b8ef72745c2fd8fc2025ca32af63162de889d7896e7dbc47032cc6b",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_942e3e231b8ef72745c2fd8fc2025ca32af63162de889d7896e7dbc47032cc6b",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-40-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_60653c875dc08ffd7875b4aeac92344a5d7f103ec614c7d88cd080860e82f2eb",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_60653c875dc08ffd7875b4aeac92344a5d7f103ec614c7d88cd080860e82f2eb",
+        "symbol": "S038",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v41",
+        "mappingArtifactDigest": "1a180a0dede325ba1eb3160fb0098d12e74d27c0cde2745ce335f52f4a990dd1",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_d66cdc6a7703583d97ac8c35730088a2ed1f9bd7a3d311d08745a8b5a81203ca"
+    },
+    {
+      "canonicalSymbol": "S039",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000042",
+        "symbols": ["S039"],
+        "selectedSymbol": "S039",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v42",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_f7ed9479d5bcb0814f9264ac34b930164ab52543acf3d0258f5bdf71f2d8e996",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_f7ed9479d5bcb0814f9264ac34b930164ab52543acf3d0258f5bdf71f2d8e996",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-41-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_79cffa8971cf8a092c0caa1f58f059497c228367e876f50fd9af3e1827f43465",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_79cffa8971cf8a092c0caa1f58f059497c228367e876f50fd9af3e1827f43465",
+        "symbol": "S039",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v42",
+        "mappingArtifactDigest": "1303a5bdf5cb5bed7c034ad96d39833932190d8b07c5e3c15f3ca3a365993340",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_22d4832fdd924920b2e7000c5fd2170f67fda81cc27c3200631508bc218f82e0"
+    },
+    {
+      "canonicalSymbol": "S040",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000043",
+        "symbols": ["S040"],
+        "selectedSymbol": "S040",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v43",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_80f7ead409abb3aac63eeeb338cece5b24414879cb504f45d06efa0455426414",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_80f7ead409abb3aac63eeeb338cece5b24414879cb504f45d06efa0455426414",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-42-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_a56ad24d2610b3c7e8bb35c2639e8364ae501b82b6b2ef40e7a0826d1ca8c751",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_a56ad24d2610b3c7e8bb35c2639e8364ae501b82b6b2ef40e7a0826d1ca8c751",
+        "symbol": "S040",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v43",
+        "mappingArtifactDigest": "418f04ff6c905f535fe0a5e41f557509184efd80cfd132de9e6000d057541ba1",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_099daa1b191730334a82e6ff6e4792fd796e83e4505376590daea02b168b67a6"
+    },
+    {
+      "canonicalSymbol": "S041",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000044",
+        "symbols": ["S041"],
+        "selectedSymbol": "S041",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v44",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_a9a914f9aed7b5f3eec24eb30817cbb52aaaf97bae932222a2f4ec37ff731022",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_a9a914f9aed7b5f3eec24eb30817cbb52aaaf97bae932222a2f4ec37ff731022",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-43-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_085f316964e5b16d71cfeb2279d3199d707f3faf37cd069ce4e273faf13412a9",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_085f316964e5b16d71cfeb2279d3199d707f3faf37cd069ce4e273faf13412a9",
+        "symbol": "S041",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v44",
+        "mappingArtifactDigest": "fb97b8714bf72dbb7907ff56f4bd57b045bbc9862efc46b16ccb63f39a2d8b71",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_cde1a8c49d172ac196ea7c3e99d24028d6e80dc8073135bb4805ff11a20a36cf"
+    },
+    {
+      "canonicalSymbol": "S042",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000045",
+        "symbols": ["S042"],
+        "selectedSymbol": "S042",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v45",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_a1f9db88d1f37b2eded4fc22de474ee31f39cba0e964e0752aac60cd24d5b3b1",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_a1f9db88d1f37b2eded4fc22de474ee31f39cba0e964e0752aac60cd24d5b3b1",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-44-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_8224f7bfb7880e2d9a470035101ca077c827849b76cebfc07d0c33d6bcd3a9d1",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_8224f7bfb7880e2d9a470035101ca077c827849b76cebfc07d0c33d6bcd3a9d1",
+        "symbol": "S042",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v45",
+        "mappingArtifactDigest": "6a5872f4df271a215a10e86465b93d9c3f041acc14e593d37c2761f19535b3d3",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_ed9737c4140118062c6ce0e4151ed01d30e357695afd0651c46c44257bdbf934"
+    },
+    {
+      "canonicalSymbol": "S043",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000046",
+        "symbols": ["S043"],
+        "selectedSymbol": "S043",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v46",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_822cc833ac298365137580843d32ac35fd39b5d537127d9d4fc4934cc394eab8",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_822cc833ac298365137580843d32ac35fd39b5d537127d9d4fc4934cc394eab8",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-45-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_6fdd95e0fe16caff22f3012e1d087328893dcfe4979c67d874f4e135d4eb2831",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_6fdd95e0fe16caff22f3012e1d087328893dcfe4979c67d874f4e135d4eb2831",
+        "symbol": "S043",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v46",
+        "mappingArtifactDigest": "8943ef2fed28e2bdaff558f813f1bc05f2772f4b306629f44b74ef3a8217ef30",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_f8fc42865aa480b7813726a1cddb2824a08e5e22900f7d15f166ee091b118e92"
+    },
+    {
+      "canonicalSymbol": "S044",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000047",
+        "symbols": ["S044"],
+        "selectedSymbol": "S044",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v47",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_8fea0125543fd0ef4d08220660e079a78159385232c348d4cdda8bfc5df124c5",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_8fea0125543fd0ef4d08220660e079a78159385232c348d4cdda8bfc5df124c5",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-46-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_23de454f7225efde67427f2dc0cf092781630f5f91bd9eb2500c028544598b03",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_23de454f7225efde67427f2dc0cf092781630f5f91bd9eb2500c028544598b03",
+        "symbol": "S044",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v47",
+        "mappingArtifactDigest": "570850dcd4b9c1a6ef0aef73263ddcd07971eb7a957e20d60fbe7c8a30ab4f89",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_907099d7a9accd12e6f6fa4529f781092852b63f8b2ce90b32d52f92674300ee"
+    },
+    {
+      "canonicalSymbol": "S045",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000048",
+        "symbols": ["S045"],
+        "selectedSymbol": "S045",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v48",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_6931535871d3b85de99782924f1b5252db84c089ea7e1facd20716b4acdcdb05",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_6931535871d3b85de99782924f1b5252db84c089ea7e1facd20716b4acdcdb05",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-47-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_92202669178da4a5f6dc85c6a51182b8895f251131575a0def807d47925c37be",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_92202669178da4a5f6dc85c6a51182b8895f251131575a0def807d47925c37be",
+        "symbol": "S045",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v48",
+        "mappingArtifactDigest": "2bad4fc4a366fde2cec33f93b89fffbd99304d6cb11514c99359a94c2a9aed2d",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_ae5431eebb19dafef5e8b6b30fb76071f4e25c2dcfc5ad22baaea5ad85a98ddd"
+    },
+    {
+      "canonicalSymbol": "S046",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000049",
+        "symbols": ["S046"],
+        "selectedSymbol": "S046",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v49",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_0f0f0f82dab20014ea6c7fe6c7dea19090a8f29698d4a0306be058421addeb16",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_0f0f0f82dab20014ea6c7fe6c7dea19090a8f29698d4a0306be058421addeb16",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-48-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_6701975692e39a5f14e19090af29d4066257a3351828590c786c49ccf63b8ab0",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_6701975692e39a5f14e19090af29d4066257a3351828590c786c49ccf63b8ab0",
+        "symbol": "S046",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v49",
+        "mappingArtifactDigest": "1f7cb0d53ddbc1738428876f51704b95084183ffeace4516691e942f52b64e43",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_3c68cdb7e50dc3235a4c57baecfb0f7c0a3cb803853e6de9f6edaddd37f6c229"
+    },
+    {
+      "canonicalSymbol": "S047",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000050",
+        "symbols": ["S047"],
+        "selectedSymbol": "S047",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v50",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_cb6079d9dd49ebef6da7946318af4c3710b77f398bbb54e04c4ec7d0d62dd4a9",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_cb6079d9dd49ebef6da7946318af4c3710b77f398bbb54e04c4ec7d0d62dd4a9",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-49-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_3a52c882e05c69775bb7a105824fb0215679a111bf052a7e91fa364dcf6502c8",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_3a52c882e05c69775bb7a105824fb0215679a111bf052a7e91fa364dcf6502c8",
+        "symbol": "S047",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v50",
+        "mappingArtifactDigest": "9f3f09a19f1a28248d73c6b2737c6c14484460c411a538b1da57aad8ac3f73d2",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_34f09f88f5ccda885cf24d3791572c3a2e2466eeb548c7623ecc58c5246b3725"
+    },
+    {
+      "canonicalSymbol": "S048",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000051",
+        "symbols": ["S048"],
+        "selectedSymbol": "S048",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v51",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_2f64a0507c89e8f950f38b5a728c0d08d069e423295ba3d6281412a64573b51e",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_2f64a0507c89e8f950f38b5a728c0d08d069e423295ba3d6281412a64573b51e",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-50-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_db279b91e8caa16c41a34c42116ea44417474b60e4898925529120e1cdc5138d",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_db279b91e8caa16c41a34c42116ea44417474b60e4898925529120e1cdc5138d",
+        "symbol": "S048",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v51",
+        "mappingArtifactDigest": "c9ea844765fe0b30e932860287e045f2d9175a841c8fe6eaf8617dc93fa5dc9f",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_498f036d74d28673c928792591ae52cad3ff4aaa14172aa18e41644539f86a73"
+    },
+    {
+      "canonicalSymbol": "S049",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000052",
+        "symbols": ["S049"],
+        "selectedSymbol": "S049",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v52",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_5ddaf48a6c83ad8863f8fcf08b97fa59da157ef05a087c5b7e640e3ae4edc167",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_5ddaf48a6c83ad8863f8fcf08b97fa59da157ef05a087c5b7e640e3ae4edc167",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-51-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_6936cb7a95dbf6b08b9cef55549a88dc73f4371c9e639f268a1b80e30e1799cd",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_6936cb7a95dbf6b08b9cef55549a88dc73f4371c9e639f268a1b80e30e1799cd",
+        "symbol": "S049",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v52",
+        "mappingArtifactDigest": "906bdeb56f4fc877fc7b9a228eda7a7563ac52221b33c68d6331c3dca1ce26df",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_3bcab795d1799f8c9e5a39cbcaf2ef087b6991ace22155c8975efb5a600e9b3d"
+    },
+    {
+      "canonicalSymbol": "S050",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000053",
+        "symbols": ["S050"],
+        "selectedSymbol": "S050",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v53",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_09669fd644af15d3f3fa72429a7b64a88ecccfaa5c146b5f594131529277d0d1",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_09669fd644af15d3f3fa72429a7b64a88ecccfaa5c146b5f594131529277d0d1",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-52-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_1f8d02159449ee8faea99c0256ff59030de2b7c7d10de13f47ca4329155ad933",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_1f8d02159449ee8faea99c0256ff59030de2b7c7d10de13f47ca4329155ad933",
+        "symbol": "S050",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v53",
+        "mappingArtifactDigest": "232fdf06e7b207219c77790a80c88671fbc05a5969d5f9f38da7f254305db085",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_aad8df691b342964306b7c623bd5d71c646ee83fed1cd6d959177bf1abe2cc96"
+    },
+    {
+      "canonicalSymbol": "S051",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000054",
+        "symbols": ["S051"],
+        "selectedSymbol": "S051",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v54",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_5fb321b5f5e5308c3e0fce44993fe48f0a6c6b1ffbec7ec1d95046c22f5336e9",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_5fb321b5f5e5308c3e0fce44993fe48f0a6c6b1ffbec7ec1d95046c22f5336e9",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-53-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_047ce1992de297303bc1134af360fb0d6f74d8d9f869e92dc716b200dd9b9cca",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_047ce1992de297303bc1134af360fb0d6f74d8d9f869e92dc716b200dd9b9cca",
+        "symbol": "S051",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v54",
+        "mappingArtifactDigest": "4918d99c48f90d39c46c2235078e961b11a71b0b34ce9ac436fa9870f6f71f1d",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_0bcde1f621e91f1cf717dddcf081440307c20f2a4123c3d70929da3b4f224c68"
+    },
+    {
+      "canonicalSymbol": "S052",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000055",
+        "symbols": ["S052"],
+        "selectedSymbol": "S052",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v55",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_41479c740f8aee1d144b5b214e0c385924b71fcb639af54ba935fe552475691b",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_41479c740f8aee1d144b5b214e0c385924b71fcb639af54ba935fe552475691b",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-54-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_87b783769be4440c8611a17c454207d4aaa56f7bbff90c943834e64fe4f513ed",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_87b783769be4440c8611a17c454207d4aaa56f7bbff90c943834e64fe4f513ed",
+        "symbol": "S052",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v55",
+        "mappingArtifactDigest": "70307a312085796f9b553d3ac2374139bc46cd36d749d3fb16e6035051d8d053",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_04376636506997783053155c645fb046065c26cabfc642bcbc85ffccbe14fbe9"
+    },
+    {
+      "canonicalSymbol": "S053",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000056",
+        "symbols": ["S053"],
+        "selectedSymbol": "S053",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v56",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_c8af3087d4ff851c3c8504ad337cddef8c1133409d390e856bcbd6aa74d4a739",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_c8af3087d4ff851c3c8504ad337cddef8c1133409d390e856bcbd6aa74d4a739",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-55-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_28e91806caea03f572af9de1ce21f921b98188a494926ceb9c70a0375bd4510e",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_28e91806caea03f572af9de1ce21f921b98188a494926ceb9c70a0375bd4510e",
+        "symbol": "S053",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v56",
+        "mappingArtifactDigest": "28eb8cfb7b2c74329d7dc7c644cbe4412733cea9cd390e8b8ecfeec31595b6a3",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_9f014e7ac73ca740edbe34d57647a8919561d617a7630be4b81d18ca157b854f"
+    },
+    {
+      "canonicalSymbol": "S054",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000057",
+        "symbols": ["S054"],
+        "selectedSymbol": "S054",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v57",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_57c251c33dbabb885e4ef2688dfceef0a1e262f26d72a99efdc84941ae90b811",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_57c251c33dbabb885e4ef2688dfceef0a1e262f26d72a99efdc84941ae90b811",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-56-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_04660420db74800965d149354417a14aef9ee023ed5897dd31b7260ddbc1c913",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_04660420db74800965d149354417a14aef9ee023ed5897dd31b7260ddbc1c913",
+        "symbol": "S054",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v57",
+        "mappingArtifactDigest": "f71650c45382470bdf9be4a31eac5e2371a2cb33757214b9bf65eef3683c07ff",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_ecccdb3fec60422175f42348c2ff04e9b67777a103cd56752525b99dd4215fed"
+    },
+    {
+      "canonicalSymbol": "S055",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000058",
+        "symbols": ["S055"],
+        "selectedSymbol": "S055",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v58",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_dfd0b82d83eb7785688b18403cc202627930b0d994e1bff91c4bd5375492f47c",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_dfd0b82d83eb7785688b18403cc202627930b0d994e1bff91c4bd5375492f47c",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-57-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_4ebc9db926c347c92711b83c140775d8e3be597a3600e3634b63cc71245f3377",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_4ebc9db926c347c92711b83c140775d8e3be597a3600e3634b63cc71245f3377",
+        "symbol": "S055",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v58",
+        "mappingArtifactDigest": "7fb25aa0e5cde93cdb621988501b1cdfbce3bd593d75f6ddd01fc57dc021a46a",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_f69116a6147dee09ff24f694a38a46e48d250851f1c6c1287f6fe20dcb0867c3"
+    },
+    {
+      "canonicalSymbol": "S056",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000059",
+        "symbols": ["S056"],
+        "selectedSymbol": "S056",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v59",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_25cce4bf1b1d2b3b9b99701a54b386cc4e85ee7e6ee76064471543cd4004268a",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_25cce4bf1b1d2b3b9b99701a54b386cc4e85ee7e6ee76064471543cd4004268a",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-58-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_c5f2570ffda1065943345867e71fb3bbea31714c1a51fe4a319e116374a2520a",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_c5f2570ffda1065943345867e71fb3bbea31714c1a51fe4a319e116374a2520a",
+        "symbol": "S056",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v59",
+        "mappingArtifactDigest": "0257906b78fcb387e3940efceb96931e0386c1648811b0c000a7e904dff9bc58",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_72142b2dff3b56c5b00a00b4670eaad560e580dd29c300fecb042f6cb683e9e3"
+    },
+    {
+      "canonicalSymbol": "S057",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000060",
+        "symbols": ["S057"],
+        "selectedSymbol": "S057",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v60",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_c3a61d51df2ac2d66afcbf35401457cae333772485133d47ffbf2a5d0ea52c37",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_c3a61d51df2ac2d66afcbf35401457cae333772485133d47ffbf2a5d0ea52c37",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-59-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_0f6345204cccc65f6e078112e1b5b2114909a7215dddb15fa776a3216a1fa783",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_0f6345204cccc65f6e078112e1b5b2114909a7215dddb15fa776a3216a1fa783",
+        "symbol": "S057",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v60",
+        "mappingArtifactDigest": "0d3b180ffd177e173111f4180240e61a00819ec29738efaae9504daffdd1749b",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_92bdc68fb04360ae8271c0710872d8ace96992af97ed52a704d634afa2db841d"
+    },
+    {
+      "canonicalSymbol": "S058",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000061",
+        "symbols": ["S058"],
+        "selectedSymbol": "S058",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v61",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_3bdf7b8bba637e554bcdee108e51438daa007767df931e7a8b1aef83fa09cd5c",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_3bdf7b8bba637e554bcdee108e51438daa007767df931e7a8b1aef83fa09cd5c",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-60-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_96a42581a962d6711dec7992b7ddf81b36b20ec093c3505eeba24c2e1e9fb12c",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_96a42581a962d6711dec7992b7ddf81b36b20ec093c3505eeba24c2e1e9fb12c",
+        "symbol": "S058",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v61",
+        "mappingArtifactDigest": "cee23a1c9b9c943f809643fbb184fc1c18041a6ccdb7ce6eb0332e1b69f6b4fb",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_d5fea0b144b1c0352a56ccccae703d47b358c6d667989cba220a608423dd2e97"
+    },
+    {
+      "canonicalSymbol": "S059",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000062",
+        "symbols": ["S059"],
+        "selectedSymbol": "S059",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v62",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_fedf46e3219a19269461cdabe64980b0336265fcfbe0dc95ad57daaa5477f82b",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_fedf46e3219a19269461cdabe64980b0336265fcfbe0dc95ad57daaa5477f82b",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-61-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_e8978c8f24c70d2003ed29d3e39756247c20702a043645a25539ad4b886fad62",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_e8978c8f24c70d2003ed29d3e39756247c20702a043645a25539ad4b886fad62",
+        "symbol": "S059",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v62",
+        "mappingArtifactDigest": "572dc722dc08739dc94081ed7c808061ec2325115a7fd157df974871bf421a77",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_ccf07d5ded7222c4d78f7b820f40883f990a22b003b4fc855a50a2a38cd3683a"
+    },
+    {
+      "canonicalSymbol": "S060",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000063",
+        "symbols": ["S060"],
+        "selectedSymbol": "S060",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v63",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_24aaf1b5df7e16b17d8385c072572ddbd0280a2ccfff3a32e752ae065d950562",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_24aaf1b5df7e16b17d8385c072572ddbd0280a2ccfff3a32e752ae065d950562",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-62-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_1a58e5a5bb89bded245de3a5fde04f6dbae59bff47f8d23e743da94ce99797a5",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_1a58e5a5bb89bded245de3a5fde04f6dbae59bff47f8d23e743da94ce99797a5",
+        "symbol": "S060",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v63",
+        "mappingArtifactDigest": "7d2a192d78b83397f05ea7379ea0c5c3a8f8e098564c756a48dc70acc08a3a3b",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_cb51d38270e667b243afc5f4854b70bc027126e344640729fe883474eec38633"
+    },
+    {
+      "canonicalSymbol": "S061",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000064",
+        "symbols": ["S061"],
+        "selectedSymbol": "S061",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v64",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_33b1f8037a5cb787bd3450e38a82d0ae4a558c490113d71731ca3aa8bec8ca3a",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_33b1f8037a5cb787bd3450e38a82d0ae4a558c490113d71731ca3aa8bec8ca3a",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-63-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_a46da29fe6658d6a746bac8bcd4b19394cd10ce4e88d63bdc6779964c2e1ed3a",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_a46da29fe6658d6a746bac8bcd4b19394cd10ce4e88d63bdc6779964c2e1ed3a",
+        "symbol": "S061",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v64",
+        "mappingArtifactDigest": "9cef3382d6f99f263ee8929cd482dff97a2673dc53737e43af9df90bb2708a5f",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_3b7ef822379ca077121e8d6eac5b0026f1dd5e257beda7e0496735d63051bffe"
+    },
+    {
+      "canonicalSymbol": "S062",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000000065",
+        "symbols": ["S062"],
+        "selectedSymbol": "S062",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v65",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_b34c463cbf4d6eb73bb02762840d1a0733b741356f6f131a20a6e4ba73d7d1a4",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_b34c463cbf4d6eb73bb02762840d1a0733b741356f6f131a20a6e4ba73d7d1a4",
+        "securityAuthority": "peas-p1-10-original-synthetic",
+        "securityKey": "fictional-security-64-base",
+        "issueType": "common-share",
+        "shareClass": "A",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_5425cde56d2a1bfbd9c864f629ab17cd8940b9da1a6433b4b39f1da8e73685be",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_5425cde56d2a1bfbd9c864f629ab17cd8940b9da1a6433b4b39f1da8e73685be",
+        "symbol": "S062",
+        "mappingAuthority": "peas-p1-10-original-synthetic",
+        "mappingVersion": "v65",
+        "mappingArtifactDigest": "2c7ae2e97ebe7919ddc4eb12dfcb82db6eb9ff888e6e8ab53de707e0637c65e9",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_597acb7f76343333b26120520d49e956698d6de53b4e9b82ff17178c6e661b0b"
+    }
+  ],
+  "catalogId": "maac1_361de0d202a39899c369c10da3c5bb43e98305c91749f1bee6b7cab5eac685dd"
+}

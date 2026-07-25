@@ -9,5 +9,8 @@ quarantine, restart behavior, and replay page-size invariance. It is not evidenc
 behavior and it is not authorized for use as a live request or response template.
 
 `manifest.json` records the closed scenario inventory. `synthetic-pages.json` supplies three
-abstract verified-page projections. Tests construct all hostile and exact-limit values in memory so
-that no credential-shaped value, raw pagination material, or provider-like payload is persisted.
+abstract verified-page projections. `synthetic-alias-authority-catalog.json` is a literal,
+original-synthetic authority root: it contains 65 invented issuer-mapping, instrument, and alias
+preimages, their displayed identities, and one catalog identity. It contains no provider-derived
+symbol or market fact. Tests construct all hostile and exact-limit values in memory so that no
+credential-shaped value, raw pagination material, or provider-like payload is persisted.

@@ -3,6 +3,12 @@
   "classification": "original-project-authored-synthetic",
   "providerEvidence": false,
   "networkAuthorized": false,
+  "files": [
+    "README.md",
+    "manifest.json",
+    "synthetic-alias-authority-catalog.json",
+    "synthetic-pages.json"
+  ],
   "cases": [
     "verified-chain",
     "identical-redelivery",
