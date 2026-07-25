@@ -155,12 +155,12 @@ repository assertion and a separately labeled lower-evidence discrepancy candida
 authorized or SIP-equivalent fallback. Paid Alpaca, FMP Ultimate, IBKR, Databento, Massive, and every
 other new subscription remain deferred.
 
-The entitlement delay does not block official-document research, provider-neutral contracts,
-original synthetic fixtures, recorded implementation, offline tests, or preparation of the P1-10
-ownership map and acceptance harness. It does block live P1-10 implementation and P2 collection.
-Agents must not inspect accounts or credentials, call a
-provider, retrieve provider bytes, activate a plan, or silently choose a fallback while the gate is
-pending. An IBKR live witness is not required for P2 and remains deferred.
+The preceding `P1-09 PENDING` descriptions are preserved historical status from PR 2D planning.
+They are superseded operationally by the exact-candidate P1-09 final `GO` at
+`36dcf92b465fc5708614718b4312631fb5dbf544` and closure on current baseline
+`1061d0171b24d957214dbdeaf19d39b9f0e2fa6a`. They must not be treated as live authorization prose.
+P1-09 completion permits the separately gated PR 2E contract-only wave. It does not authorize
+transport, credentials, provider calls, a witness, retention-semantics changes, PR 2F, or merge.
 
 ### Post-PR 2D next actions
 
@@ -171,12 +171,13 @@ must follow the order below; parallel preparation does not waive a gate.
 | --- | --- | --- | --- | --- |
 | 1 | Close the P1-09 evidence package | Human owner | Complete | Sanitized owner attestation, private Alpaca/FMP responses represented by opaque digest, explicit source/fallback decision, and zero-spend confirmation are recorded |
 | 2 | Independently audit the frozen P1-09 authorization | Integration owner plus fresh independent reviewer | Complete | Exact candidate `36dcf92b...` received `GO`; P1-09 is complete |
-| 3 | Prepare the P1-10 implementation package | Agents with non-overlapping ownership | Yes, recorded/offline only | File-ownership map, exact approved-contract mapping, synthetic/recorded acceptance vectors, bounded retry/quota/restart plan, secret-redaction tests, and an independent pre-implementation review; no credentials, provider calls, or real provider bytes |
-| 4 | Implement P1-10 against the frozen entitlement snapshot | Agents after P1-09 `GO` | No | Only the approved zero-spend provider/dataset/feed; private content-addressed raw artifacts; verified loading; deterministic normalization/selection; stable missing reasons; no silent fallback or paid-plan path; independent implementation `GO` |
-| 5 | Complete live read-only source capture and calendar prewarming | Non-overlapping source and calendar owners | Only where provider/account authorization is already explicit; market-data portions wait for P1-09/P1-10 | Bounded SEC/FMP/issuer-IR capture as authorized, issuer allowlist, schedule provenance, restart/backfill evidence, and no dispatchable financial effects |
-| 6 | Run P1-06 integrated readiness drill | Integration owner plus fresh auditor | After P1-03, P1-04, P1-05, and P1-10 are complete | At least one complete scheduled window; restart/reconciliation, correction, quota, outage, clock-regression, memory/SQLite replay-equivalence, completeness, and zero-effects evidence; binary readiness `GO` |
-| 7 | Collect and freeze P2 | Collection agents, then research owner | Only after P1-06 and P1-09 are complete | Exactly the prospectively frozen 180-cluster cohort, fixed denominators, immutable dataset manifest, code/config/entitlement identities, and completeness report before conclusions |
-| 8 | Execute the event-validation analysis | Research owner plus independent reviewer | After the dataset freeze | Reproducible frozen-metric report and binary decision on whether the evidence justifies any later data, model, or market-access investment |
+| 3 | Prepare PR 2E, the P1-10 contract package | Agents with non-overlapping ownership | In progress, recorded/offline only | File-ownership map, exact approved-contract mapping, original synthetic acceptance vectors, bounded retry/quota/restart plan, secret/redaction/retention contract, exact clean candidate, and fresh independent contract `GO`; no credentials, provider calls, transport, or provider bytes |
+| 4 | Resolve the retention architecture authorization gate | Human owner | Required after PR 2E review | Explicit authorization or rejection of any required ArtifactStore port, migration, reconciliation, and vault-semantics change; PR 2F remains `NO_GO` while unresolved |
+| 5 | Implement PR 2F against the accepted PR 2E exact candidate | Agents after PR 2E `GO`, orchestration acknowledgement, and retention authorization | No | Only the approved zero-spend provider/dataset/feed; private content-addressed raw artifacts; verified loading; deterministic normalization/selection; stable missing reasons; no FMP transport, silent fallback, or paid-plan path; independent implementation `GO` |
+| 6 | Complete live read-only source capture and calendar prewarming | Non-overlapping source and calendar owners | Only where provider/account authorization is already explicit; market-data portions wait for P1-10 | Bounded SEC/FMP/issuer-IR capture as authorized, issuer allowlist, schedule provenance, restart/backfill evidence, and no dispatchable financial effects |
+| 7 | Run P1-06 integrated readiness drill | Integration owner plus fresh auditor | After P1-03, P1-04, P1-05, and P1-10 are independently complete | Same-SHA Linux/Windows and 10k evidence; complete synthetic matrix; retention enforcement; restart/replay and memory/SQLite equivalence; binary readiness `GO` |
+| 8 | Collect and freeze P2 | Collection agents, then research owner | Blocked until P1-06 independent `GO` | Exactly the prospectively frozen 180-cluster cohort, fixed denominators, immutable dataset manifest, code/config/entitlement identities, and completeness report before conclusions |
+| 9 | Execute the event-validation analysis | Research owner plus independent reviewer | Blocked until the dataset freeze | Reproducible frozen-metric report and binary decision on whether the evidence justifies any later data, model, or market-access investment |
 
 Immediate agent-safe preparation in item 3 must remain a separate recorded/offline change. It may
 define interfaces around the frozen Alpaca historical REST `feed=sip` boundary, but it must not add
@@ -185,9 +186,11 @@ examples, select `delayed_sip`, or encode an FMP fallback. If review changes the
 identity or scientific meaning, repair and re-audit the preparation package before live
 implementation.
 
-The next action is the P1-10 recorded/offline implementation package and its independent
-pre-implementation review. Live acquisition may begin only after that review and only within the
-exact accepted endpoint allowlist.
+The next action is PR 2E: freeze the P1-10 recorded/offline contract package at an exact candidate,
+run the complete offline matrix, and obtain a fresh independent binary contract decision. The
+current ArtifactStore has no deletion API and migration 005 installs no-delete triggers. Therefore
+retention implementation is `HUMAN_AUTHORIZATION_REQUIRED`; PR 2F may not begin until the human
+owner separately authorizes the necessary architecture after PR 2E review.
 
 ### Work-session plan through dataset collection
 

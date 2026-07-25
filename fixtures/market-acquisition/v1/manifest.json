@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "peas-p1-10-synthetic-acquisition-v1",
+  "classification": "original-project-authored-synthetic",
+  "providerEvidence": false,
+  "networkAuthorized": false,
+  "cases": [
+    "verified-chain",
+    "identical-redelivery",
+    "conflicting-redelivery",
+    "supported-revision",
+    "unknown-revision",
+    "restart-every-checkpoint",
+    "page-size-invariance",
+    "memory-sqlite-equivalence"
+  ]
+}

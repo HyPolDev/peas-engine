@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "project": "PEAS Engine",
-  "lastReviewed": "2026-07-24",
+  "lastReviewed": "2026-07-25",
   "operatingModel": {
     "execution": "GitHub Issues/Projects",
     "specification": "Repository docs, ADRs, fixtures, and evidence",
@@ -11,8 +11,8 @@
   "current": {
     "stage": "P1",
     "status": "in-progress",
-    "branch": "main",
-    "codeBaselineCommit": "ebe959324e48faf73c325a97ed9200bd6c76c9a6",
+    "branch": "dev/pr-2e-p1-10-historical-sip-acquisition-contract",
+    "codeBaselineCommit": "1061d0171b24d957214dbdeaf19d39b9f0e2fa6a",
     "planningBaselineCommit": "c51758a1058b86730e19185b98fcd448d9ff533a",
     "pr2cAuditPublicationCommit": "aaabdb416368aa349872bc5f1d6621362f6f3cde",
     "readinessIntegrationCommit": "e42300a42743143db4979d7103a31e9957c48b58",
@@ -21,8 +21,8 @@
     "pr2dPublishedHead": "fb150828c0fe5e1272c246f1889be02aab8b0d90",
     "pr2dMergeCommit": "ebe959324e48faf73c325a97ed9200bd6c76c9a6",
     "release": "v0.2.0-kernel-rc.2",
-    "focus": "Prepare and implement P1-10 strictly within the independently accepted zero-spend endpoint allowlist",
-    "nextGate": "Obtain P1-10 contract/pre-implementation GO, implement the exact allowlisted routes, and obtain independent implementation GO; P2 remains blocked",
+    "focus": "Freeze and independently audit the PR 2E P1-10 historical market-acquisition contract package; no production transport",
+    "nextGate": "Obtain exact-candidate PR 2E contract GO and separate human authorization for any retention port, migration, reconciliation, or vault-semantic change before PR 2F; P1-06 and P2 remain blocked",
     "estimatedWorkSessionsToP2Collection": 9,
     "elapsedTimeExclusions": [
       "Human and provider response time for P1-09",
@@ -274,22 +274,33 @@
         {
           "id": "P1-10",
           "title": "Delayed historical market-reference adapter",
-          "status": "ready",
-          "preparationStatus": "ready",
-          "authorization": "P1-09 COMPLETE; exact frozen routes and capabilities only",
+          "status": "in-progress",
+          "preparationStatus": "pr-2e-contract-in-progress",
+          "authorization": "P1-09 COMPLETE; PR 2E contract-only work authorized; PR 2F NO_GO pending exact-candidate contract GO and human retention authorization",
           "owner": "agent",
           "dependsOn": ["P1-08", "P1-09"],
-          "blocker": null,
+          "blocker": "ArtifactStore has no deletion API and migration 005 installs no-delete triggers; retention implementation requires separately authorized port, migration, reconciliation, or vault-semantic changes",
           "preparationScope": "Agents may prepare the file-ownership map, accepted-contract mapping, synthetic and recorded acceptance vectors, bounded retry/quota/restart plan, secret-redaction tests, and pre-implementation audit without credentials, provider calls, live transport, or provider bytes.",
           "acceptance": "A bounded no-new-spend adapter stores private raw artifacts, verifies reads, normalizes market facts, deterministically selects references around the PR 2C observation anchor, and emits marketReferenceJoinKey or a stable missing reason while paid-plan activation is disabled.",
-          "evidence": []
+          "evidence": [
+            "base@1061d0171b24d957214dbdeaf19d39b9f0e2fa6a",
+            "docs/goals/pr-2e-p1-10-orchestration.md",
+            "docs/contracts/pr-2e-p1-10-entitlement-identity.md",
+            "docs/contracts/pr-2e-p1-10-acquisition-state-machine.md",
+            "docs/contracts/pr-2e-p1-10-credential-privacy-retention.md",
+            "docs/contracts/pr-2e-p1-10-artifact-replay.md",
+            "docs/contracts/pr-2e-p1-10-fixture-manifest.md",
+            "docs/contracts/pr-2e-p1-10-acceptance-matrix.md",
+            "test/p1-10-contract.test.ts"
+          ]
         },
         {
           "id": "P1-06",
           "title": "Forward-run readiness drill",
-          "status": "planned",
+          "status": "blocked",
           "owner": "integration-owner",
           "dependsOn": ["P1-03", "P1-04", "P1-05", "P1-10"],
+          "blocker": "Requires independently accepted PR 2E and PR 2F exact-SHA evidence, authorized and proven retention enforcement, green same-SHA Linux/Windows and 10k evidence, and independent completion of P1-03/P1-04",
           "acceptance": "A sustained read-only dry run survives restart, reconciliation, missed-window backfill, provider corrections, and clock regression; exports complete telemetry; recomputes identical frozen market references in memory and SQLite; respects quotas; records stable missing reasons; and creates zero dispatchable financial effects.",
           "evidence": []
         }
@@ -298,7 +309,8 @@
     {
       "id": "P2",
       "name": "Forward observation run",
-      "status": "planned",
+      "status": "blocked",
+      "blocker": "P2 collection and outcome calculation remain prohibited until P1-06 receives its independent readiness GO",
       "goal": "Collect and freeze 100-200 precommitted forward clusters, then validate source quality, first-observation latency, and reproducible event-time price movement before authorizing new data spend.",
       "tasks": [
         {
