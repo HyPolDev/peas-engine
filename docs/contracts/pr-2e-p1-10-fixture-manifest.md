@@ -50,9 +50,9 @@ persisted.
 - bounded opaque continuation material represented only by byte length;
 - route, method, identity, field, value, clock, cost, and authorization mutations;
 - exact zero-spend preimage/ID and missing, forged, mutated, stale, and unknown run decisions;
-- provider, dataset, feed, and channel negative identity envelopes covering one-field mutation,
-  missing/extra fields, set reordering, forged IDs, URL/path and header/credential insertion, and
-  provider-default substitution;
+- all 11 frozen provider, dataset, feed, and channel preimages under one guarded parser, covering
+  one-field mutation, missing/extra fields, mutation/reordering of the real channel `factKinds`
+  member, forged IDs, URL/path and header/credential insertion, and provider-default substitution;
 - retry status and `Retry-After` variations;
 - malformed, truncated, schema-drift, and declared-length failure classifications;
 - loop, gap, duplicate, substitution, and page-after-terminal attacks;
@@ -78,6 +78,16 @@ The executable test must verify:
 7. A production-free acquisition model drives causal journal transitions, provider-body and
    store/read failures, actual cleanup, complete checkpoints, crash recovery, and memory/SQLite
    close/reopen equivalence.
+8. SQLite is closed and reopened from every durable checkpoint prefix using fresh reconstructed
+   provider/artifact doubles; every committed artifact is reverified before normalization,
+   selection, or terminal return.
+9. The complete acquisition-state and checkpoint-kind Cartesian products reject every unlisted
+   transition, while every listed transition remains executable.
+10. Independent immutable attempt, artifact, admitted-page, and normalization receipt sidecars
+    defeat coherently rehashed cached-total forgeries.
+11. A synthetic three-delivery/two-physical-digest enumeration preserves delivery observations,
+    deduplicates only physical content, and has one canonical page chain and cumulative projection
+    in forward or reverse backend enumeration order.
 
 Any future fixture that contains provider material, provider-derived structure, a secret, raw token,
 account fact, or query-bearing URL is outside this manifest and is an immediate `NO_GO`.

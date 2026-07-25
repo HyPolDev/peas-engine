@@ -25,6 +25,7 @@ zero-call path rather than a skipped test.
 | Recompute Alpaca provider, dataset, feed, quotes channel, trades channel, bars channel | Exact equality with the six frozen IDs |
 | Recompute FMP provider, dataset, feed, aftermarket-quote channel, aftermarket-trade channel | Exact equality with the five frozen IDs |
 | Any changed preimage member or endpoint-channel identity | `reject-zero-call` |
+| Every hostile class over all 11 real preimages, including a mutation of the real channel `factKinds` set-like member | integrated guarded rejection with credential, transport construction, DNS/network/provider, artifact, normalization, selection, and post-return counters all exactly zero |
 | Live acquisition default/flag absent or false | `reject-zero-call` |
 | Exact zero-spend preimage, `mzp1_b2f575e234dcd7f05eb5fcc03060420313b56e45aff87c961c3771d1c5cf3b9e`, run decision `allow`, `authorizationMode=p1-09-approved`, capability `historical-market-reference`, fallback `none` | accept |
 | Missing, forged, mutated, stale, unknown, or rejecting zero-spend proof; wrong authorization mode; unknown/account/subscription capability; or fallback | `reject-zero-call` |
@@ -97,11 +98,11 @@ Retry delay is exactly `1,000 ms` then `2,000 ms`; there is no jitter.
 | Fully cleaned partial-body transport failure | `retry-same-page` if budgets permit |
 | Timeout during body, truncated body, or declared-length mismatch | destroy all partial bytes; retry only as cleaned partial transport failure |
 | HTTP 408, 500, 502, 503, 504 | retry under deterministic delay and all budgets |
-| HTTP 429 with temporary quota and valid bounded delay | retry under quota/budget rules |
-| Quota-exhausted 429 | terminal |
+| HTTP 429 with `temporary-throttling-proved` and valid bounded integer-seconds `Retry-After` | retry after `max(projectDelay, Retry-After)`; exact 30 seconds means 30,000 ms |
+| Missing, ambiguous, or quota-exhausted 429 classification | terminal |
 | HTTP 400, 404, 409, 422 | terminal, no retry |
 | HTTP 401 or 403 | terminal and lane disabled for the run |
-| Missing `Retry-After` | ordinary deterministic delay if the 429 is otherwise retryable |
+| Missing `Retry-After` with proved temporary-throttling classification | ordinary deterministic delay |
 | Negative, date-form, fractional, malformed, excessive `Retry-After` | terminal |
 | Malformed JSON, duplicate structural ambiguity, or schema drift | terminal schema failure; no retry |
 | Identity, entitlement, feed, clock, bound, pagination, redaction, artifact, or zero-spend failure | terminal; no retry |
@@ -193,7 +194,7 @@ or vault-semantic change.
 | Vector | Expected |
 | --- | --- |
 | Replay page sizes `1`, `2`, `7`, `10,000` | byte-identical canonical projection |
-| Memory journal versus SQLite file after close/reopen | byte-identical complete checkpoint projection, including identities, private configuration, budgets, artifact receipt, token slots, and terminal state |
+| Memory journal versus SQLite file closed/reopened after every durable row | byte-identical exact closed checkpoint, restart decision, counters, normalized digest, and selection across response, duplicate, replay-page, and backend-page permutations |
 | Provider response order permutation | same normalized facts and selection |
 | Restart from every durable checkpoint | same final projection |
 | Failure with active siblings | all abort/destroy/settle before return |
@@ -206,6 +207,23 @@ before an artifact receipt is journaled; and after each durable checkpoint. Asse
 actual causal journal rows, resource abort/destroy/settle state, complete checkpoint bodies, provider
 call counts, and close/reopen restart behavior. No outcome is supplied to the assertion as a
 preselected step list.
+
+The executable state vocabulary and transition adjacency are an exact transcription of the 20
+states and every allowed edge in acquisition-state-machine sections 5 and 6. The test evaluates the
+complete 20-by-20 Cartesian transition matrix, and separately evaluates the complete 14-by-14
+checkpoint-kind matrix, accepting every listed edge and rejecting every unlisted edge.
+
+Every checkpoint uses the exact closed field names from the artifact/replay contract, including
+`acquisitionConfigurationHash`. The executable validator rejects missing/unknown fields, sequence
+or prior-hash breaks, canonical entry-hash mismatch, causal-parent mismatch, and cached cumulative
+budgets that do not reconcile to independently supplied immutable
+attempt/page/artifact/normalization receipts. It also validates state-dependent token semantics,
+artifact ID bindings, frozen lane tuples, bounds, admission order, page-chain movement, and
+terminal-state consistency. A forged journal whose own hashes and cached byte totals agree but
+whose size differs from its immutable artifact receipt is rejected. Restart freshly verifies every
+committed artifact before use, including terminal histories and normalization restarts. Canonical
+multi-artifact enumeration preserves each delivery observation, permits physical digest
+deduplication, and is invariant to backend enumeration order.
 
 ## Required validation
 

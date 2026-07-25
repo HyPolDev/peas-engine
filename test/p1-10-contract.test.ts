@@ -283,15 +283,22 @@ function exactBoundaryBarsRequest(): Preflight {
   };
 }
 
-type RetryDecision = "retry-1000" | "retry-2000" | "stop";
+type QuotaClassification =
+  | "temporary-throttling-proved"
+  | "quota-exhausted"
+  | "missing"
+  | "ambiguous";
+type RetryDecision =
+  | Readonly<{ kind: "retry"; delayMs: number }>
+  | Readonly<{ kind: "stop"; delayMs: null }>;
 
 function retryDecision(
   failure: "pre-response" | "clean-partial" | `http-${number}` | "schema" | "artifact",
   attempt: number,
   retryAfter: string | null,
-  quotaRemaining: boolean,
+  quotaClassification: QuotaClassification,
 ): RetryDecision {
-  if (attempt >= LIMITS.pageAttempts || !quotaRemaining) return "stop";
+  if (attempt >= LIMITS.pageAttempts) return { kind: "stop", delayMs: null };
   const retryable = new Set([
     "pre-response",
     "clean-partial",
@@ -302,13 +309,21 @@ function retryDecision(
     "http-503",
     "http-504",
   ]);
-  if (!retryable.has(failure)) return "stop";
-  if (failure === "http-429" && retryAfter !== null) {
-    if (!/^(0|[1-9]\d*)$/u.test(retryAfter)) return "stop";
+  if (!retryable.has(failure)) return { kind: "stop", delayMs: null };
+  const projectDelayMs = attempt === 1 ? 1_000 : 2_000;
+  if (failure === "http-429") {
+    if (quotaClassification !== "temporary-throttling-proved") {
+      return { kind: "stop", delayMs: null };
+    }
+    if (retryAfter === null) return { kind: "retry", delayMs: projectDelayMs };
+    if (!/^(0|[1-9]\d*)$/u.test(retryAfter)) return { kind: "stop", delayMs: null };
     const delay = Number(retryAfter) * 1_000;
-    if (!Number.isSafeInteger(delay) || delay < 0 || delay > LIMITS.retryAfterMs) return "stop";
+    if (!Number.isSafeInteger(delay) || delay < 0 || delay > LIMITS.retryAfterMs) {
+      return { kind: "stop", delayMs: null };
+    }
+    return { kind: "retry", delayMs: Math.max(projectDelayMs, delay) };
   }
-  return attempt === 1 ? "retry-1000" : "retry-2000";
+  return { kind: "retry", delayMs: projectDelayMs };
 }
 
 type Page = Readonly<{
@@ -500,20 +515,33 @@ function configurationHash(request: Preflight): string {
 
 type IdentityFamily = "provider" | "dataset" | "feed" | "channel";
 type IdentityEnvelope = Readonly<{
+  name: string;
   family: IdentityFamily;
   preimage: Readonly<Record<string, unknown>>;
   expectedId: string;
-  orderedCapabilities: readonly string[];
+  lane: "alpaca" | "fmp";
 }>;
 
 const IDENTITY_ENVELOPES: readonly IdentityEnvelope[] = [
   {
+    name: "alpaca-provider",
     family: "provider",
     preimage: { providerCode: "alpaca", serviceOperatorCode: "alpaca-markets" },
     expectedId: IDS.alpacaProvider,
-    orderedCapabilities: ["acquire", "replay"],
+    lane: "alpaca",
   },
   {
+    name: "fmp-provider",
+    family: "provider",
+    preimage: {
+      providerCode: "financial-modeling-prep",
+      serviceOperatorCode: "financial-modeling-prep",
+    },
+    expectedId: IDS.fmpProvider,
+    lane: "fmp",
+  },
+  {
+    name: "alpaca-dataset",
     family: "dataset",
     preimage: {
       providerId: IDS.alpacaProvider,
@@ -525,9 +553,25 @@ const IDENTITY_ENVELOPES: readonly IdentityEnvelope[] = [
       datasetDocumentationVersion: "official-reference-2026-07-25",
     },
     expectedId: IDS.alpacaDataset,
-    orderedCapabilities: ["acquire", "replay"],
+    lane: "alpaca",
   },
   {
+    name: "fmp-dataset",
+    family: "dataset",
+    preimage: {
+      providerId: IDS.fmpProvider,
+      assetClass: "us-equity",
+      coverageRegion: "united-states",
+      productFamily: "premium-market-reference-discrepancy",
+      apiGeneration: "stable",
+      recordFamily: "aftermarket-quote-trade",
+      datasetDocumentationVersion: "official-stable-docs-2026-07-25",
+    },
+    expectedId: IDS.fmpDataset,
+    lane: "fmp",
+  },
+  {
+    name: "alpaca-feed",
     family: "feed",
     preimage: {
       datasetId: IDS.alpacaDataset,
@@ -538,9 +582,24 @@ const IDENTITY_ENVELOPES: readonly IdentityEnvelope[] = [
       correctionRepresentation: "unknown",
     },
     expectedId: IDS.alpacaFeed,
-    orderedCapabilities: ["acquire", "replay"],
+    lane: "alpaca",
   },
   {
+    name: "fmp-feed",
+    family: "feed",
+    preimage: {
+      datasetId: IDS.fmpDataset,
+      providerFeedCode: "exchanges-and-third-party-providers",
+      consolidationKind: "unknown",
+      delayClass: "provider-defined",
+      adjustmentMode: "unknown",
+      correctionRepresentation: "unknown",
+    },
+    expectedId: IDS.fmpFeed,
+    lane: "fmp",
+  },
+  {
+    name: "alpaca-quotes-channel",
     family: "channel",
     preimage: {
       feedId: IDS.alpacaFeed,
@@ -552,17 +611,73 @@ const IDENTITY_ENVELOPES: readonly IdentityEnvelope[] = [
       factKinds: ["quote"],
     },
     expectedId: IDS.alpacaQuotes,
-    orderedCapabilities: ["acquire", "replay"],
+    lane: "alpaca",
+  },
+  {
+    name: "alpaca-trades-channel",
+    family: "channel",
+    preimage: {
+      feedId: IDS.alpacaFeed,
+      channelKind: "historical-rest",
+      methodKind: "get",
+      safeRouteLabel: "alpaca-v2-historical-trades",
+      endpointDocumentationVersion: "official-reference-2026-07-25",
+      paginationKind: "opaque-token",
+      factKinds: ["trade"],
+    },
+    expectedId: IDS.alpacaTrades,
+    lane: "alpaca",
+  },
+  {
+    name: "alpaca-bars-channel",
+    family: "channel",
+    preimage: {
+      feedId: IDS.alpacaFeed,
+      channelKind: "historical-rest",
+      methodKind: "get",
+      safeRouteLabel: "alpaca-v2-historical-bars",
+      endpointDocumentationVersion: "official-reference-2026-07-25",
+      paginationKind: "opaque-token",
+      factKinds: ["bar"],
+    },
+    expectedId: IDS.alpacaBars,
+    lane: "alpaca",
+  },
+  {
+    name: "fmp-quote-channel",
+    family: "channel",
+    preimage: {
+      feedId: IDS.fmpFeed,
+      channelKind: "latest-rest",
+      methodKind: "get",
+      safeRouteLabel: "fmp-stable-aftermarket-quote",
+      endpointDocumentationVersion: "official-stable-docs-2026-07-25",
+      paginationKind: "none-documented",
+      factKinds: ["quote"],
+    },
+    expectedId: IDS.fmpQuote,
+    lane: "fmp",
+  },
+  {
+    name: "fmp-trade-channel",
+    family: "channel",
+    preimage: {
+      feedId: IDS.fmpFeed,
+      channelKind: "latest-rest",
+      methodKind: "get",
+      safeRouteLabel: "fmp-stable-aftermarket-trade",
+      endpointDocumentationVersion: "official-stable-docs-2026-07-25",
+      paginationKind: "none-documented",
+      factKinds: ["trade"],
+    },
+    expectedId: IDS.fmpTrade,
+    lane: "fmp",
   },
 ];
 
 function validateIdentityEnvelope(value: IdentityEnvelope): void {
-  const exactKeys = ["expectedId", "family", "orderedCapabilities", "preimage"];
-  if (
-    Object.keys(value).sort().join(",") !== exactKeys.join(",") ||
-    canonicalJson(value.orderedCapabilities as unknown as JsonValue) !==
-      canonicalJson(["acquire", "replay"])
-  ) {
+  const exactKeys = ["expectedId", "family", "lane", "name", "preimage"];
+  if (Object.keys(value).sort().join(",") !== exactKeys.join(",")) {
     throw rejection("identity-envelope-invalid");
   }
   let derived: string;
@@ -583,6 +698,36 @@ function validateIdentityEnvelope(value: IdentityEnvelope): void {
   if (derived !== value.expectedId) throw rejection("identity-envelope-invalid");
 }
 
+function guardedIdentityConfiguration(value: IdentityEnvelope, counters: SideEffectCounters): void {
+  validateIdentityEnvelope(value);
+  if (value.lane === "alpaca") {
+    preflight(exactBoundaryRequest(0n));
+  } else {
+    fmpPreflight({
+      method: "GET",
+      origin: "https://financialmodelingprep.com",
+      path: "/stable/aftermarket-quote",
+      providerId: IDS.fmpProvider,
+      datasetId: IDS.fmpDataset,
+      feedId: IDS.fmpFeed,
+      endpointChannelId: IDS.fmpQuote,
+      fields: { symbol: "abstract-instrument" },
+      authenticationPlacement: "apikey-header",
+      role: "private-discrepancy",
+      output: "private",
+    });
+  }
+  counters.credentialReads += 1;
+  counters.transportConstructions += 1;
+  counters.dnsCalls += 1;
+  counters.networkCalls += 1;
+  counters.providerCalls += 1;
+  counters.artifactCalls += 1;
+  counters.normalizationCalls += 1;
+  counters.selectionCalls += 1;
+  counters.postReturnActivity += 1;
+}
+
 type ContractEvent =
   | "acquisition.declared"
   | "request.started"
@@ -590,7 +735,10 @@ type ContractEvent =
   | "artifact.committed"
   | "artifact.verified"
   | "checkpoint.advanced"
+  | "chain.complete"
+  | "normalization.started"
   | "normalization.emitted"
+  | "selection.started"
   | "selection.recorded"
   | "failure.recorded";
 
@@ -602,30 +750,194 @@ type AcquisitionBudgets = {
   attempts: number;
 };
 
+type CheckpointKind =
+  | "acquisition-declared"
+  | "attempt-started"
+  | "request-succeeded"
+  | "artifact-committed"
+  | "artifact-verified"
+  | "page-checkpointed"
+  | "chain-complete"
+  | "normalization-started"
+  | "normalization-complete"
+  | "selection-started"
+  | "completed"
+  | "stopped"
+  | "failed-clean"
+  | "quarantined";
+
+const ACQUISITION_STATES = Object.freeze([
+  "declared",
+  "preflighting",
+  "dispatch-ready",
+  "credential-ready",
+  "attempt-active",
+  "response-accepted",
+  "artifact-committing",
+  "artifact-committed",
+  "artifact-verifying",
+  "page-verified",
+  "checkpointing",
+  "waiting-retry",
+  "chain-complete",
+  "normalizing",
+  "ready-for-selection",
+  "selecting",
+  "completed",
+  "stopped",
+  "failed-clean",
+  "quarantined",
+] as const);
+type AcquisitionState = (typeof ACQUISITION_STATES)[number];
+
+const ACQUISITION_TRANSITIONS: Readonly<Record<AcquisitionState, readonly AcquisitionState[]>> = {
+  declared: ["preflighting"],
+  preflighting: ["dispatch-ready", "stopped", "failed-clean"],
+  "dispatch-ready": ["credential-ready", "stopped"],
+  "credential-ready": ["attempt-active"],
+  "attempt-active": ["waiting-retry", "response-accepted", "stopped", "failed-clean"],
+  "response-accepted": ["artifact-committing", "failed-clean"],
+  "artifact-committing": ["artifact-committed", "failed-clean"],
+  "artifact-committed": ["artifact-verifying"],
+  "artifact-verifying": ["page-verified", "failed-clean", "quarantined"],
+  "page-verified": ["checkpointing"],
+  checkpointing: ["chain-complete", "preflighting", "failed-clean"],
+  "waiting-retry": ["preflighting", "stopped"],
+  "chain-complete": ["normalizing"],
+  normalizing: ["ready-for-selection", "quarantined", "failed-clean"],
+  "ready-for-selection": ["selecting"],
+  selecting: ["completed", "failed-clean", "quarantined"],
+  completed: [],
+  stopped: [],
+  "failed-clean": [],
+  quarantined: [],
+};
+
+function validateAcquisitionTransition(from: AcquisitionState, to: AcquisitionState): void {
+  if (!ACQUISITION_TRANSITIONS[from].includes(to)) {
+    throw rejection("acquisition-transition-invalid");
+  }
+}
+
 type DurableCheckpoint = Readonly<{
   schemaVersion: 1;
+  marketAcquisitionJournalId: string;
+  acquisitionObservationId: string;
   marketAcquisitionId: string;
+  admittedMarketAcquisitionIds: readonly string[];
   requestIdentityHash: string;
-  configurationHash: string;
+  acquisitionConfigurationHash: string;
   providerId: string;
   datasetId: string;
   feedId: string;
   endpointChannelId: string;
+  authorizationMode: "p1-09-approved";
+  logicalPageIdentityHash: string;
   pageOrdinal: number;
-  currentTokenHash: string | null;
+  checkpointKind: CheckpointKind;
+  currentTokenHash: string;
+  currentResumableTokenMaterial: string | null;
   nextTokenHash: string | null;
-  privateResumableTokenMaterial: string | null;
+  nextResumableTokenMaterial: string | null;
+  attemptId: string;
+  attemptOrdinal: number;
   artifactObservationId: string | null;
   artifactDigest: string | null;
-  budgets: Readonly<AcquisitionBudgets>;
-  terminal: boolean;
+  artifactSizeBytes: number | null;
+  artifactObservationHash: string | null;
+  artifactContentId: string | null;
+  rawArtifactId: string | null;
+  stageLedgerFactId: string | null;
+  causalParentFactIds: readonly string[];
+  pageRecordCount: number | null;
+  pageNormalizedFactCount: number | null;
+  pageChainHash: string;
+  cumulativeSuccessfulPages: number;
+  cumulativeVerifiedBytes: number;
+  cumulativeRecords: number;
+  cumulativeNormalizedFacts: number;
+  cumulativeAttempts: number;
+  acquisitionDeadlineBasis: string;
+  quotaWindowEvidence: readonly number[];
+  terminalState: "completed" | "stopped" | "failed-clean" | "quarantined" | null;
+  terminalReasonCode: string | null;
   incomplete: boolean;
+  priorJournalEntryHash: string;
+  journalSequence: number;
+  journalEntryHash: string;
 }>;
+
+const CHECKPOINT_KEYS = Object.freeze([
+  "schemaVersion",
+  "marketAcquisitionJournalId",
+  "acquisitionObservationId",
+  "marketAcquisitionId",
+  "admittedMarketAcquisitionIds",
+  "requestIdentityHash",
+  "acquisitionConfigurationHash",
+  "providerId",
+  "datasetId",
+  "feedId",
+  "endpointChannelId",
+  "authorizationMode",
+  "logicalPageIdentityHash",
+  "pageOrdinal",
+  "checkpointKind",
+  "currentTokenHash",
+  "currentResumableTokenMaterial",
+  "nextTokenHash",
+  "nextResumableTokenMaterial",
+  "attemptId",
+  "attemptOrdinal",
+  "artifactObservationId",
+  "artifactDigest",
+  "artifactSizeBytes",
+  "artifactObservationHash",
+  "artifactContentId",
+  "rawArtifactId",
+  "stageLedgerFactId",
+  "causalParentFactIds",
+  "pageRecordCount",
+  "pageNormalizedFactCount",
+  "pageChainHash",
+  "cumulativeSuccessfulPages",
+  "cumulativeVerifiedBytes",
+  "cumulativeRecords",
+  "cumulativeNormalizedFacts",
+  "cumulativeAttempts",
+  "acquisitionDeadlineBasis",
+  "quotaWindowEvidence",
+  "terminalState",
+  "terminalReasonCode",
+  "incomplete",
+  "priorJournalEntryHash",
+  "journalSequence",
+  "journalEntryHash",
+] as const);
 
 type JournalRow = Readonly<{
   sequence: number;
   event: ContractEvent;
   checkpoint: DurableCheckpoint;
+}>;
+
+type ImmutableReceiptSidecars = Readonly<{
+  attempts: readonly Readonly<{ attemptId: string; ordinal: number }>[];
+  artifacts: readonly Readonly<{
+    observationId: string;
+    digest: string;
+    sizeBytes: number;
+    observationHash: string;
+    contentId: string;
+    rawArtifactId: string;
+  }>[];
+  admittedPages: readonly Readonly<{
+    marketAcquisitionId: string;
+    pageOrdinal: number;
+    recordCount: number;
+    artifactDigest: string;
+  }>[];
+  normalizations: readonly Readonly<{ factCount: number }>[];
 }>;
 
 interface ContractJournal {
@@ -636,13 +948,21 @@ interface ContractJournal {
 
 const PREDECESSORS: Readonly<Record<ContractEvent, readonly ContractEvent[]>> = {
   "acquisition.declared": [],
-  "request.started": ["acquisition.declared", "failure.recorded"],
+  "request.started": [
+    "acquisition.declared",
+    "request.started",
+    "request.succeeded",
+    "failure.recorded",
+  ],
   "request.succeeded": ["request.started"],
   "artifact.committed": ["request.succeeded"],
   "artifact.verified": ["artifact.committed"],
   "checkpoint.advanced": ["artifact.verified"],
-  "normalization.emitted": ["checkpoint.advanced"],
-  "selection.recorded": ["normalization.emitted"],
+  "chain.complete": ["checkpoint.advanced"],
+  "normalization.started": ["chain.complete"],
+  "normalization.emitted": ["normalization.started"],
+  "selection.started": ["normalization.emitted"],
+  "selection.recorded": ["selection.started"],
   "failure.recorded": [
     "acquisition.declared",
     "request.started",
@@ -650,7 +970,10 @@ const PREDECESSORS: Readonly<Record<ContractEvent, readonly ContractEvent[]>> = 
     "artifact.committed",
     "artifact.verified",
     "checkpoint.advanced",
+    "chain.complete",
+    "normalization.started",
     "normalization.emitted",
+    "selection.started",
   ],
 };
 
@@ -666,12 +989,371 @@ function validateJournalAppend(rows: readonly JournalRow[], event: ContractEvent
   }
 }
 
+function checkpointKindForEvent(event: ContractEvent): CheckpointKind {
+  const map: Readonly<Record<ContractEvent, CheckpointKind>> = {
+    "acquisition.declared": "acquisition-declared",
+    "request.started": "attempt-started",
+    "request.succeeded": "request-succeeded",
+    "artifact.committed": "artifact-committed",
+    "artifact.verified": "artifact-verified",
+    "checkpoint.advanced": "page-checkpointed",
+    "chain.complete": "chain-complete",
+    "normalization.started": "normalization-started",
+    "normalization.emitted": "normalization-complete",
+    "selection.started": "selection-started",
+    "selection.recorded": "completed",
+    "failure.recorded": "failed-clean",
+  };
+  return map[event];
+}
+
+const CHECKPOINT_KIND_TRANSITIONS: Readonly<Record<CheckpointKind, readonly CheckpointKind[]>> = {
+  "acquisition-declared": ["attempt-started", "stopped", "failed-clean", "quarantined"],
+  "attempt-started": ["attempt-started", "request-succeeded", "stopped", "failed-clean"],
+  "request-succeeded": ["attempt-started", "artifact-committed", "stopped", "failed-clean"],
+  "artifact-committed": ["artifact-verified", "stopped", "failed-clean", "quarantined"],
+  "artifact-verified": ["page-checkpointed", "stopped", "failed-clean", "quarantined"],
+  "page-checkpointed": ["attempt-started", "chain-complete", "stopped", "failed-clean"],
+  "chain-complete": ["normalization-started", "stopped", "failed-clean", "quarantined"],
+  "normalization-started": ["normalization-complete", "stopped", "failed-clean", "quarantined"],
+  "normalization-complete": ["selection-started", "stopped", "failed-clean", "quarantined"],
+  "selection-started": ["completed", "stopped", "failed-clean", "quarantined"],
+  completed: [],
+  stopped: [],
+  "failed-clean": [],
+  quarantined: [],
+};
+
+function validateCheckpointKindTransition(
+  prior: CheckpointKind | null,
+  next: CheckpointKind,
+): void {
+  if (prior === null) {
+    if (next !== "acquisition-declared") throw rejection("checkpoint-transition-invalid");
+    return;
+  }
+  if (!CHECKPOINT_KIND_TRANSITIONS[prior].includes(next)) {
+    throw rejection("checkpoint-transition-invalid");
+  }
+}
+
+function deriveJournalEntryHash(checkpoint: DurableCheckpoint): string {
+  return canonicalHash("peas/p1-10-acquisition-journal-entry/v1", {
+    ...(checkpoint as unknown as Record<string, JsonValue>),
+    journalEntryHash: "",
+  });
+}
+
+function finalizeCheckpoint(
+  rows: readonly JournalRow[],
+  event: ContractEvent,
+  checkpoint: DurableCheckpoint,
+): DurableCheckpoint {
+  const prior = rows.at(-1)?.checkpoint;
+  const journalSequence = rows.length;
+  const stageLedgerFactId = hash(`ledger:${journalSequence}:${event}`);
+  const finalized = {
+    ...checkpoint,
+    checkpointKind: checkpointKindForEvent(event),
+    nextTokenHash:
+      event === "artifact.verified" ||
+      event === "checkpoint.advanced" ||
+      event === "chain.complete" ||
+      event === "normalization.started" ||
+      event === "normalization.emitted" ||
+      event === "selection.started" ||
+      event === "selection.recorded"
+        ? hash("terminal-token")
+        : checkpoint.nextTokenHash,
+    pageRecordCount:
+      event === "artifact.verified" && checkpoint.pageRecordCount === null
+        ? 3
+        : checkpoint.pageRecordCount,
+    terminalState:
+      event === "selection.recorded"
+        ? "completed"
+        : event === "failure.recorded"
+          ? "failed-clean"
+          : checkpoint.terminalState,
+    terminalReasonCode:
+      event === "selection.recorded"
+        ? "selection-recorded"
+        : event === "failure.recorded"
+          ? "terminal-failure"
+          : checkpoint.terminalReasonCode,
+    incomplete:
+      event === "selection.recorded" || event === "failure.recorded"
+        ? false
+        : checkpoint.incomplete,
+    stageLedgerFactId,
+    causalParentFactIds:
+      prior?.stageLedgerFactId === null || prior?.stageLedgerFactId === undefined
+        ? []
+        : [prior.stageLedgerFactId],
+    priorJournalEntryHash: prior?.journalEntryHash ?? "genesis",
+    journalSequence,
+    journalEntryHash: "",
+  } satisfies DurableCheckpoint;
+  validateCheckpointKindTransition(prior?.checkpointKind ?? null, finalized.checkpointKind);
+  return { ...finalized, journalEntryHash: deriveJournalEntryHash(finalized) };
+}
+
+function validateExactCheckpoint(checkpoint: DurableCheckpoint): void {
+  if (Object.keys(checkpoint).sort().join(",") !== [...CHECKPOINT_KEYS].sort().join(",")) {
+    throw rejection("checkpoint-shape-invalid");
+  }
+  if (deriveJournalEntryHash(checkpoint) !== checkpoint.journalEntryHash) {
+    throw rejection("checkpoint-hash-invalid");
+  }
+  if (
+    checkpoint.marketAcquisitionId !==
+      hash(`market-acquisition:${checkpoint.acquisitionObservationId}`) ||
+    checkpoint.logicalPageIdentityHash !==
+      hash(
+        `logical-page:${checkpoint.pageOrdinal}:${
+          checkpoint.pageOrdinal === 0 ? "no-token" : checkpoint.currentTokenHash
+        }`,
+      ) ||
+    checkpoint.quotaWindowEvidence.length !== checkpoint.cumulativeAttempts
+  ) {
+    throw rejection("checkpoint-identity-invalid");
+  }
+}
+
+function validateCheckpointSemantics(
+  checkpoint: DurableCheckpoint,
+  prior: DurableCheckpoint | null,
+): void {
+  const terminalKinds: readonly CheckpointKind[] = [
+    "completed",
+    "stopped",
+    "failed-clean",
+    "quarantined",
+  ];
+  if (
+    checkpoint.pageOrdinal === 0
+      ? checkpoint.currentTokenHash !== hash("no-token") ||
+        checkpoint.currentResumableTokenMaterial !== null
+      : checkpoint.currentResumableTokenMaterial === null ||
+        checkpoint.currentTokenHash !== hash(checkpoint.currentResumableTokenMaterial)
+  ) {
+    throw rejection("checkpoint-current-token-invalid");
+  }
+  const terminalTokenExpected = [
+    "artifact-verified",
+    "page-checkpointed",
+    "chain-complete",
+    "normalization-started",
+    "normalization-complete",
+    "selection-started",
+    "completed",
+  ].includes(checkpoint.checkpointKind);
+  if (
+    terminalTokenExpected
+      ? checkpoint.nextTokenHash !== hash("terminal-token") ||
+        checkpoint.nextResumableTokenMaterial !== null
+      : checkpoint.nextTokenHash !== null || checkpoint.nextResumableTokenMaterial !== null
+  ) {
+    throw rejection("checkpoint-next-token-invalid");
+  }
+  const artifactFields = [
+    checkpoint.artifactObservationId,
+    checkpoint.artifactDigest,
+    checkpoint.artifactSizeBytes,
+    checkpoint.artifactObservationHash,
+    checkpoint.artifactContentId,
+    checkpoint.rawArtifactId,
+  ];
+  const hasArtifact = artifactFields.every((value) => value !== null);
+  if (!hasArtifact && artifactFields.some((value) => value !== null)) {
+    throw rejection("checkpoint-artifact-partial");
+  }
+  if (
+    hasArtifact &&
+    (checkpoint.artifactObservationHash !==
+      hash(`observation:${checkpoint.artifactObservationId}`) ||
+      checkpoint.artifactContentId !== hash(`content:${checkpoint.artifactDigest}`) ||
+      checkpoint.rawArtifactId !==
+        hash(`raw:${checkpoint.artifactObservationId}:${checkpoint.artifactDigest}`))
+  ) {
+    throw rejection("checkpoint-artifact-binding-invalid");
+  }
+  const tupleAuthorized =
+    (checkpoint.providerId === IDS.alpacaProvider &&
+      checkpoint.datasetId === IDS.alpacaDataset &&
+      checkpoint.feedId === IDS.alpacaFeed &&
+      [IDS.alpacaQuotes, IDS.alpacaTrades, IDS.alpacaBars].includes(
+        checkpoint.endpointChannelId as never,
+      )) ||
+    (checkpoint.providerId === IDS.fmpProvider &&
+      checkpoint.datasetId === IDS.fmpDataset &&
+      checkpoint.feedId === IDS.fmpFeed &&
+      [IDS.fmpQuote, IDS.fmpTrade].includes(checkpoint.endpointChannelId as never));
+  if (
+    !tupleAuthorized ||
+    checkpoint.authorizationMode !== "p1-09-approved" ||
+    !/^[0-9a-f]{64}$/u.test(checkpoint.requestIdentityHash) ||
+    !/^[0-9a-f]{64}$/u.test(checkpoint.acquisitionConfigurationHash)
+  ) {
+    throw rejection("checkpoint-authority-invalid");
+  }
+  for (const [value, maximum] of [
+    [checkpoint.pageOrdinal, LIMITS.pages - 1],
+    [checkpoint.attemptOrdinal, LIMITS.pageAttempts - 1],
+    [checkpoint.artifactSizeBytes ?? 0, LIMITS.rawArtifactBytes],
+    [checkpoint.pageRecordCount ?? 0, LIMITS.recordsPerPage],
+    [checkpoint.pageNormalizedFactCount ?? 0, LIMITS.facts],
+    [checkpoint.cumulativeSuccessfulPages, LIMITS.pages],
+    [checkpoint.cumulativeVerifiedBytes, LIMITS.aggregateBytes],
+    [checkpoint.cumulativeRecords, LIMITS.pages * LIMITS.recordsPerPage],
+    [checkpoint.cumulativeNormalizedFacts, LIMITS.facts],
+    [checkpoint.cumulativeAttempts, LIMITS.attempts],
+  ] as const) {
+    if (!Number.isSafeInteger(value) || value < 0 || value > maximum) {
+      throw rejection("checkpoint-bound-invalid");
+    }
+  }
+  if (
+    checkpoint.admittedMarketAcquisitionIds.length !== checkpoint.cumulativeSuccessfulPages ||
+    (checkpoint.cumulativeSuccessfulPages > 0 &&
+      checkpoint.admittedMarketAcquisitionIds.at(-1) !== checkpoint.marketAcquisitionId)
+  ) {
+    throw rejection("checkpoint-admission-invalid");
+  }
+  if (prior !== null) {
+    const shouldAdvance = checkpoint.checkpointKind === "page-checkpointed";
+    if (
+      shouldAdvance
+        ? checkpoint.pageChainHash === prior.pageChainHash
+        : checkpoint.pageChainHash !== prior.pageChainHash
+    ) {
+      throw rejection("checkpoint-page-chain-invalid");
+    }
+  }
+  const terminal = terminalKinds.includes(checkpoint.checkpointKind);
+  if (
+    terminal
+      ? checkpoint.terminalState === null ||
+        checkpoint.terminalReasonCode === null ||
+        checkpoint.incomplete
+      : checkpoint.terminalState !== null ||
+        checkpoint.terminalReasonCode !== null ||
+        !checkpoint.incomplete
+  ) {
+    throw rejection("checkpoint-terminal-invalid");
+  }
+}
+
+function validateJournalRows(rows: readonly JournalRow[]): void {
+  let expectedPages = 0;
+  let expectedBytes = 0;
+  let expectedRecords = 0;
+  let expectedFacts = 0;
+  let expectedAttempts = 0;
+  for (const [index, row] of rows.entries()) {
+    validateExactCheckpoint(row.checkpoint);
+    validateCheckpointSemantics(row.checkpoint, rows[index - 1]?.checkpoint ?? null);
+    if (
+      row.sequence !== index ||
+      row.checkpoint.journalSequence !== index ||
+      row.checkpoint.priorJournalEntryHash !==
+        (rows[index - 1]?.checkpoint.journalEntryHash ?? "genesis")
+    ) {
+      throw rejection("checkpoint-sequence-invalid");
+    }
+    const priorFact = rows[index - 1]?.checkpoint.stageLedgerFactId;
+    assert.deepEqual(
+      row.checkpoint.causalParentFactIds,
+      priorFact === undefined || priorFact === null ? [] : [priorFact],
+    );
+    if (row.event === "request.started") expectedAttempts += 1;
+    if (row.event === "artifact.committed") {
+      expectedBytes += row.checkpoint.artifactSizeBytes ?? 0;
+    }
+    if (row.event === "checkpoint.advanced") {
+      expectedPages += 1;
+      expectedRecords += row.checkpoint.pageRecordCount ?? 0;
+    }
+    if (row.event === "normalization.emitted") {
+      expectedFacts += row.checkpoint.pageNormalizedFactCount ?? 0;
+    }
+    if (
+      row.checkpoint.cumulativeSuccessfulPages !== expectedPages ||
+      row.checkpoint.cumulativeVerifiedBytes !== expectedBytes ||
+      row.checkpoint.cumulativeRecords !== expectedRecords ||
+      row.checkpoint.cumulativeNormalizedFacts !== expectedFacts ||
+      row.checkpoint.cumulativeAttempts !== expectedAttempts
+    ) {
+      throw rejection("checkpoint-budget-reconciliation-failed");
+    }
+  }
+}
+
+function validateImmutableReceiptSidecars(
+  rows: readonly JournalRow[],
+  sidecars: ImmutableReceiptSidecars,
+): void {
+  const attemptRows = rows.filter((row) => row.event === "request.started");
+  assert.deepEqual(
+    attemptRows.map((row) => ({
+      attemptId: row.checkpoint.attemptId,
+      ordinal: row.checkpoint.attemptOrdinal,
+    })),
+    sidecars.attempts,
+  );
+  const artifactRows = rows.filter((row) => row.event === "artifact.committed");
+  assert.deepEqual(
+    artifactRows.map((row) => ({
+      observationId: row.checkpoint.artifactObservationId,
+      digest: row.checkpoint.artifactDigest,
+      sizeBytes: row.checkpoint.artifactSizeBytes,
+      observationHash: row.checkpoint.artifactObservationHash,
+      contentId: row.checkpoint.artifactContentId,
+      rawArtifactId: row.checkpoint.rawArtifactId,
+    })),
+    sidecars.artifacts,
+  );
+  const pageRows = rows.filter((row) => row.event === "checkpoint.advanced");
+  assert.deepEqual(
+    pageRows.map((row) => ({
+      marketAcquisitionId: row.checkpoint.marketAcquisitionId,
+      pageOrdinal: row.checkpoint.pageOrdinal,
+      recordCount: row.checkpoint.pageRecordCount,
+      artifactDigest: row.checkpoint.artifactDigest,
+    })),
+    sidecars.admittedPages,
+  );
+  const normalizationRows = rows.filter((row) => row.event === "normalization.emitted");
+  assert.deepEqual(
+    normalizationRows.map((row) => ({ factCount: row.checkpoint.pageNormalizedFactCount })),
+    sidecars.normalizations,
+  );
+  const final = rows.at(-1)?.checkpoint;
+  assert.ok(final !== undefined);
+  assert.equal(final.cumulativeAttempts, sidecars.attempts.length);
+  assert.equal(final.cumulativeSuccessfulPages, sidecars.admittedPages.length);
+  assert.equal(
+    final.cumulativeVerifiedBytes,
+    sidecars.artifacts.reduce((sum, receipt) => sum + receipt.sizeBytes, 0),
+  );
+  assert.equal(
+    final.cumulativeRecords,
+    sidecars.admittedPages.reduce((sum, receipt) => sum + receipt.recordCount, 0),
+  );
+  assert.equal(
+    final.cumulativeNormalizedFacts,
+    sidecars.normalizations.reduce((sum, receipt) => sum + receipt.factCount, 0),
+  );
+}
+
 class MemoryContractJournal implements ContractJournal {
   readonly #rows: JournalRow[] = [];
 
   append(event: ContractEvent, checkpoint: DurableCheckpoint): void {
     validateJournalAppend(this.#rows, event);
-    this.#rows.push({ sequence: this.#rows.length, event, checkpoint });
+    const finalized = finalizeCheckpoint(this.#rows, event, checkpoint);
+    this.#rows.push({ sequence: this.#rows.length, event, checkpoint: finalized });
+    validateJournalRows(this.#rows);
   }
 
   rows(): readonly JournalRow[] {
@@ -695,15 +1377,17 @@ class SqliteContractJournal implements ContractJournal {
   append(event: ContractEvent, checkpoint: DurableCheckpoint): void {
     const rows = this.rows();
     validateJournalAppend(rows, event);
+    const finalized = finalizeCheckpoint(rows, event, checkpoint);
     this.#database
       .prepare(
         "INSERT INTO acquisition_journal (sequence, event, checkpoint_json) VALUES (?, ?, ?)",
       )
-      .run(rows.length, event, canonicalJson(checkpoint as unknown as JsonValue));
+      .run(rows.length, event, canonicalJson(finalized as unknown as JsonValue));
+    validateJournalRows(this.rows());
   }
 
   rows(): readonly JournalRow[] {
-    return (
+    const rows = (
       this.#database
         .prepare(
           "SELECT sequence, event, checkpoint_json AS checkpointJson " +
@@ -715,6 +1399,8 @@ class SqliteContractJournal implements ContractJournal {
       event: row.event,
       checkpoint: JSON.parse(row.checkpointJson) as DurableCheckpoint,
     }));
+    validateJournalRows(rows);
+    return rows;
   }
 
   close(): void {
@@ -930,8 +1616,26 @@ class ArtifactDouble {
     if (this.receipt === null || this.receipt.digest !== digest) {
       throw rejection("artifact-missing");
     }
+    if (hash(Buffer.from(this.receipt.bytes).toString("hex")) !== digest) {
+      throw rejection("artifact-digest-mismatch");
+    }
     return Uint8Array.from(this.receipt.bytes);
   }
+}
+
+function normalizedFactsFromArtifact(artifact: ArtifactDouble): readonly string[] {
+  const bytes = artifact.receipt?.bytes;
+  if (bytes === undefined) throw rejection("artifact-missing");
+  const members =
+    Buffer.from(bytes)
+      .toString("utf8")
+      .match(/amber|cobalt|fern/gu) ?? [];
+  if (members.length !== 3) throw rejection("schema-failure");
+  return members.sort();
+}
+
+function normalizedDigestFromArtifact(artifact: ArtifactDouble): string {
+  return hash(normalizedFactsFromArtifact(artifact).join("|"));
 }
 
 type AcquisitionFault = Readonly<{
@@ -948,6 +1652,7 @@ class AcquisitionContractModel {
   readonly counters = zeroCounters();
   readonly budget = new ContractBudget();
   readonly activeClock = new ActiveClockBasisDouble();
+  normalizedFacts: readonly string[] = [];
   selectionDigest: string | null = null;
 
   constructor(
@@ -958,28 +1663,70 @@ class AcquisitionContractModel {
   ) {}
 
   checkpoint(overrides: Partial<DurableCheckpoint> = {}): DurableCheckpoint {
-    const privateResumableTokenMaterial = this.request.firstRequest
+    const currentResumableTokenMaterial = this.request.firstRequest
       ? null
       : Buffer.alloc(this.request.pageMaterialBytes ?? 0, 0x07).toString("base64");
+    const acquisitionObservationId = hash(`acquisition-observation:${this.budget.value.attempts}`);
+    const marketAcquisitionId = hash(`market-acquisition:${acquisitionObservationId}`);
+    const receipt = this.artifact.receipt;
     return {
       schemaVersion: 1,
-      marketAcquisitionId: hash("synthetic-acquisition"),
+      marketAcquisitionJournalId: hash("synthetic-acquisition-journal"),
+      acquisitionObservationId,
+      marketAcquisitionId,
+      admittedMarketAcquisitionIds: this.budget.value.pages === 0 ? [] : [marketAcquisitionId],
       requestIdentityHash: requestIdentity(this.request),
-      configurationHash: configurationHash(this.request),
+      acquisitionConfigurationHash: configurationHash(this.request),
       providerId: this.request.providerId,
       datasetId: this.request.datasetId,
       feedId: this.request.feedId,
       endpointChannelId: this.request.endpointChannelId,
+      authorizationMode: "p1-09-approved",
+      logicalPageIdentityHash: hash(
+        `logical-page:${this.request.firstRequest ? 0 : 1}:${
+          currentResumableTokenMaterial === null ? "no-token" : hash(currentResumableTokenMaterial)
+        }`,
+      ),
       pageOrdinal: this.request.firstRequest ? 0 : 1,
+      checkpointKind: "acquisition-declared",
       currentTokenHash:
-        privateResumableTokenMaterial === null ? null : hash(privateResumableTokenMaterial),
+        currentResumableTokenMaterial === null
+          ? hash("no-token")
+          : hash(currentResumableTokenMaterial),
+      currentResumableTokenMaterial,
       nextTokenHash: null,
-      privateResumableTokenMaterial,
-      artifactObservationId: this.artifact.receipt?.observationId ?? null,
-      artifactDigest: this.artifact.receipt?.digest ?? null,
-      budgets: { ...this.budget.value },
-      terminal: false,
+      nextResumableTokenMaterial: null,
+      attemptId: hash(`attempt:${this.budget.value.attempts}`),
+      attemptOrdinal: Math.max(0, this.budget.value.attempts - 1),
+      artifactObservationId: receipt?.observationId ?? null,
+      artifactDigest: receipt?.digest ?? null,
+      artifactSizeBytes: receipt?.bytes.byteLength ?? null,
+      artifactObservationHash:
+        receipt === null ? null : hash(`observation:${receipt.observationId}`),
+      artifactContentId: receipt === null ? null : hash(`content:${receipt.digest}`),
+      rawArtifactId:
+        receipt === null ? null : hash(`raw:${receipt.observationId}:${receipt.digest}`),
+      stageLedgerFactId: null,
+      causalParentFactIds: [],
+      pageRecordCount: this.budget.value.records === 0 ? null : this.budget.value.records,
+      pageNormalizedFactCount: this.budget.value.facts === 0 ? null : this.budget.value.facts,
+      pageChainHash: hash(`page-chain:${this.budget.value.pages}`),
+      cumulativeSuccessfulPages: this.budget.value.pages,
+      cumulativeVerifiedBytes: this.budget.value.bytes,
+      cumulativeRecords: this.budget.value.records,
+      cumulativeNormalizedFacts: this.budget.value.facts,
+      cumulativeAttempts: this.budget.value.attempts,
+      acquisitionDeadlineBasis: "trusted-request-started-plus-300000ms",
+      quotaWindowEvidence: Array.from(
+        { length: this.budget.value.attempts },
+        (_, index) => index * 1_000,
+      ),
+      terminalState: null,
+      terminalReasonCode: null,
       incomplete: true,
+      priorJournalEntryHash: "genesis",
+      journalSequence: 0,
+      journalEntryHash: "",
       ...overrides,
     };
   }
@@ -1030,22 +1777,22 @@ class AcquisitionContractModel {
       this.budget.add("records", 3);
       this.journal.append("checkpoint.advanced", this.checkpoint());
       if (fault.crashAt === "checkpoint-advanced") return "crashed";
+      this.journal.append("chain.complete", this.checkpoint());
+      this.journal.append("normalization.started", this.checkpoint());
+      if (fault.crashAt === "during-normalization") return "crashed";
       this.counters.normalizationCalls += 1;
       this.budget.add("facts", 3);
-      this.selectionDigest = hash(
-        this.provider.resources
-          .map((resource) => resource.glyph)
-          .sort()
-          .join("|"),
-      );
+      this.normalizedFacts = normalizedFactsFromArtifact(this.artifact);
+      this.selectionDigest = normalizedDigestFromArtifact(this.artifact);
       this.journal.append("normalization.emitted", this.checkpoint());
-      if (fault.crashAt === "during-normalization" || fault.crashAt === "before-selection") {
+      this.journal.append("selection.started", this.checkpoint());
+      if (fault.crashAt === "before-selection") {
         return "crashed";
       }
       this.counters.selectionCalls += 1;
       this.journal.append(
         "selection.recorded",
-        this.checkpoint({ terminal: true, incomplete: false }),
+        this.checkpoint({ terminalState: "completed", incomplete: false }),
       );
       return "complete";
     } catch {
@@ -1061,14 +1808,19 @@ class AcquisitionContractModel {
     let rows = this.journal.rows();
     let latest = rows.at(-1);
     if (latest === undefined) throw rejection("journal-empty");
-    if (latest.checkpoint.configurationHash !== expectedConfigurationHash) {
+    if (latest.checkpoint.acquisitionConfigurationHash !== expectedConfigurationHash) {
       throw rejection("restart-configuration-changed");
     }
-    Object.assign(this.budget.value, latest.checkpoint.budgets);
+    Object.assign(this.budget.value, {
+      pages: latest.checkpoint.cumulativeSuccessfulPages,
+      bytes: latest.checkpoint.cumulativeVerifiedBytes,
+      records: latest.checkpoint.cumulativeRecords,
+      facts: latest.checkpoint.cumulativeNormalizedFacts,
+      attempts: latest.checkpoint.cumulativeAttempts,
+    });
     const has = (event: ContractEvent): boolean => rows.some((row) => row.event === event);
     if (!has("artifact.committed")) {
       this.artifact.reconcileOrphans();
-      this.journal.append("failure.recorded", this.checkpoint());
       this.budget.add("attempts", 1);
       this.journal.append("request.started", this.checkpoint());
       this.counters.dnsCalls += 1;
@@ -1089,11 +1841,28 @@ class AcquisitionContractModel {
       latest = rows.at(-1);
       assert.ok(latest !== undefined);
     }
-    if (!has("artifact.verified")) {
-      const committed = [...rows].reverse().find((row) => row.event === "artifact.committed");
-      const digest = committed?.checkpoint.artifactDigest;
+    const committedRows = rows.filter((row) => row.event === "artifact.committed");
+    for (const committed of committedRows) {
+      const digest = committed.checkpoint.artifactDigest;
       if (digest === null || digest === undefined) throw rejection("artifact-missing");
+      const receipt = this.artifact.receipt;
+      if (
+        receipt === null ||
+        receipt.observationId !== committed.checkpoint.artifactObservationId ||
+        receipt.digest !== digest ||
+        receipt.bytes.byteLength !== committed.checkpoint.artifactSizeBytes ||
+        hash(`observation:${receipt.observationId}`) !==
+          committed.checkpoint.artifactObservationHash
+      ) {
+        throw rejection("artifact-receipt-mismatch");
+      }
       this.artifact.read(digest);
+    }
+    if (committedRows.length > 0) {
+      this.normalizedFacts = normalizedFactsFromArtifact(this.artifact);
+      this.selectionDigest = normalizedDigestFromArtifact(this.artifact);
+    }
+    if (!has("artifact.verified")) {
       this.journal.append("artifact.verified", this.checkpoint());
     }
     if (!has("checkpoint.advanced")) {
@@ -1101,22 +1870,27 @@ class AcquisitionContractModel {
       this.budget.add("records", 3);
       this.journal.append("checkpoint.advanced", this.checkpoint());
     }
+    if (!has("chain.complete")) {
+      this.journal.append("chain.complete", this.checkpoint());
+    }
+    if (!has("normalization.started")) {
+      this.journal.append("normalization.started", this.checkpoint());
+    }
     if (!has("normalization.emitted")) {
       this.counters.normalizationCalls += 1;
       this.budget.add("facts", 3);
-      this.selectionDigest = hash(
-        this.provider.resources
-          .map((resource) => resource.glyph)
-          .sort()
-          .join("|"),
-      );
+      this.normalizedFacts = normalizedFactsFromArtifact(this.artifact);
+      this.selectionDigest = normalizedDigestFromArtifact(this.artifact);
       this.journal.append("normalization.emitted", this.checkpoint());
+    }
+    if (!has("selection.started")) {
+      this.journal.append("selection.started", this.checkpoint());
     }
     if (!has("selection.recorded")) {
       this.counters.selectionCalls += 1;
       this.journal.append(
         "selection.recorded",
-        this.checkpoint({ terminal: true, incomplete: false }),
+        this.checkpoint({ terminalState: "completed", incomplete: false }),
       );
     }
     return "complete";
@@ -1316,12 +2090,24 @@ test("zero-spend policy recomputes exactly and every invalid decision is a zero-
 
 test("every identity family rejects every hostile derivation/configuration mutation with zero effects", () => {
   for (const envelope of IDENTITY_ENVELOPES) {
-    assert.doesNotThrow(() => validateIdentityEnvelope(envelope), envelope.family);
+    const reachable = zeroCounters();
+    assert.doesNotThrow(() => guardedIdentityConfiguration(envelope, reachable), envelope.name);
+    assert.deepEqual(reachable, {
+      credentialReads: 1,
+      transportConstructions: 1,
+      dnsCalls: 1,
+      networkCalls: 1,
+      providerCalls: 1,
+      artifactCalls: 1,
+      normalizationCalls: 1,
+      selectionCalls: 1,
+      postReturnActivity: 1,
+    });
     const preimageEntries = Object.entries(envelope.preimage);
     const firstKey = preimageEntries[0]?.[0];
     assert.ok(firstKey !== undefined);
     const withoutFirst = Object.fromEntries(preimageEntries.slice(1));
-    const mutations: readonly [string, IdentityEnvelope][] = [
+    const mutations: [string, IdentityEnvelope][] = [
       [
         "one-field",
         {
@@ -1331,10 +2117,6 @@ test("every identity family rejects every hostile derivation/configuration mutat
       ],
       ["missing", { ...envelope, preimage: withoutFirst }],
       ["extra", { ...envelope, preimage: { ...envelope.preimage, unexpected: true } }],
-      [
-        "reordered-set",
-        { ...envelope, orderedCapabilities: [...envelope.orderedCapabilities].reverse() },
-      ],
       [
         "forged-id",
         {
@@ -1354,14 +2136,61 @@ test("every identity family rejects every hostile derivation/configuration mutat
         { ...envelope, preimage: { ...envelope.preimage, providerDefault: true } },
       ],
     ];
+    if (envelope.family === "channel") {
+      const factKinds = envelope.preimage["factKinds"];
+      assert.ok(Array.isArray(factKinds));
+      mutations.push([
+        "reordered-real-fact-kind-set",
+        {
+          ...envelope,
+          preimage: {
+            ...envelope.preimage,
+            factKinds: [...factKinds, "unauthorized-kind"].reverse(),
+          },
+        },
+      ]);
+    }
     for (const [_name, mutation] of mutations) {
       const counters = zeroCounters();
-      assert.throws(() => {
-        validateIdentityEnvelope(mutation);
-        counters.credentialReads += 1;
-      }, /(?:identity|market)/u);
+      assert.throws(() => guardedIdentityConfiguration(mutation, counters), /(?:identity|market)/u);
       assertZeroSideEffects(counters);
     }
+  }
+
+  const fmpBaseline: FmpPreflight = {
+    method: "GET",
+    origin: "https://financialmodelingprep.com",
+    path: "/stable/aftermarket-quote",
+    providerId: IDS.fmpProvider,
+    datasetId: IDS.fmpDataset,
+    feedId: IDS.fmpFeed,
+    endpointChannelId: IDS.fmpQuote,
+    fields: { symbol: "abstract-instrument" },
+    authenticationPlacement: "apikey-header",
+    role: "private-discrepancy",
+    output: "private",
+  };
+  for (const mutation of [
+    { ...fmpBaseline, role: "primary" as const },
+    { ...fmpBaseline, role: "fallback" as const },
+    { ...fmpBaseline, output: "public" as const },
+    { ...fmpBaseline, path: "/stable/quote" },
+    { ...fmpBaseline, endpointChannelId: IDS.fmpTrade },
+  ]) {
+    const counters = zeroCounters();
+    assert.throws(() => {
+      fmpPreflight(mutation);
+      counters.credentialReads += 1;
+      counters.transportConstructions += 1;
+      counters.dnsCalls += 1;
+      counters.networkCalls += 1;
+      counters.providerCalls += 1;
+      counters.artifactCalls += 1;
+      counters.normalizationCalls += 1;
+      counters.selectionCalls += 1;
+      counters.postReturnActivity += 1;
+    });
+    assertZeroSideEffects(counters);
   }
 });
 
@@ -1578,6 +2407,31 @@ test("every frozen project ceiling has an exact and one-over executable vector",
 });
 
 test("journal transition legality and rolling project/entitlement quota equality are executable", () => {
+  for (const from of ACQUISITION_STATES) {
+    for (const to of ACQUISITION_STATES) {
+      if (ACQUISITION_TRANSITIONS[from].includes(to)) {
+        assert.doesNotThrow(() => validateAcquisitionTransition(from, to));
+      } else {
+        assert.throws(
+          () => validateAcquisitionTransition(from, to),
+          /acquisition-transition-invalid/u,
+        );
+      }
+    }
+  }
+  const allKinds = Object.keys(CHECKPOINT_KIND_TRANSITIONS) as CheckpointKind[];
+  for (const prior of allKinds) {
+    for (const next of allKinds) {
+      if (CHECKPOINT_KIND_TRANSITIONS[prior].includes(next)) {
+        assert.doesNotThrow(() => validateCheckpointKindTransition(prior, next));
+      } else {
+        assert.throws(
+          () => validateCheckpointKindTransition(prior, next),
+          /checkpoint-transition-invalid/u,
+        );
+      }
+    }
+  }
   const journal = new MemoryContractJournal();
   const model = new AcquisitionContractModel(
     exactBoundaryRequest(0n),
@@ -1591,10 +2445,15 @@ test("journal transition legality and rolling project/entitlement quota equality
     () => journal.append("selection.recorded", model.checkpoint()),
     /illegal-transition/u,
   );
+  model.budget.add("attempts", 1);
   journal.append("request.started", model.checkpoint());
   journal.append("request.succeeded", model.checkpoint());
   journal.append("failure.recorded", model.checkpoint());
-  journal.append("request.started", model.checkpoint());
+  model.budget.add("attempts", 1);
+  assert.throws(
+    () => journal.append("request.started", model.checkpoint()),
+    /checkpoint-transition-invalid/u,
+  );
 
   const quota = new RollingQuota(30, 2);
   assert.equal(quota.admit(0), true);
@@ -1609,29 +2468,171 @@ test("journal transition legality and rolling project/entitlement quota equality
   assert.equal(projectCeiling.admit(LIMITS.rateWindowMs), true);
 });
 
+test("checkpoint exact shape, canonical hash chain, causal parents, and receipt budgets reject corruption", async () => {
+  const journal = new MemoryContractJournal();
+  const artifact = new ArtifactDouble();
+  const model = new AcquisitionContractModel(
+    exactBoundaryRequest(0n),
+    new ProviderDouble(),
+    artifact,
+    journal,
+  );
+  assert.equal(await model.run(), "complete");
+  const rows = journal.rows();
+  assert.doesNotThrow(() => validateJournalRows(rows));
+  const receipt = artifact.receipt;
+  assert.ok(receipt !== null);
+  const sidecars: ImmutableReceiptSidecars = {
+    attempts: [{ attemptId: hash("attempt:1"), ordinal: 0 }],
+    artifacts: [
+      {
+        observationId: receipt.observationId,
+        digest: receipt.digest,
+        sizeBytes: receipt.bytes.byteLength,
+        observationHash: hash(`observation:${receipt.observationId}`),
+        contentId: hash(`content:${receipt.digest}`),
+        rawArtifactId: hash(`raw:${receipt.observationId}:${receipt.digest}`),
+      },
+    ],
+    admittedPages: [
+      {
+        marketAcquisitionId: hash(`market-acquisition:${hash("acquisition-observation:1")}`),
+        pageOrdinal: 0,
+        recordCount: 3,
+        artifactDigest: receipt.digest,
+      },
+    ],
+    normalizations: [{ factCount: 3 }],
+  };
+  assert.doesNotThrow(() => validateImmutableReceiptSidecars(rows, sidecars));
+  const finalRow = rows.at(-1);
+  assert.ok(finalRow !== undefined);
+  assert.equal(Object.keys(finalRow.checkpoint).length, CHECKPOINT_KEYS.length);
+  const withUnknown = {
+    ...finalRow.checkpoint,
+    unexpected: true,
+  } as unknown as DurableCheckpoint;
+  assert.throws(() => validateExactCheckpoint(withUnknown), /checkpoint-shape-invalid/u);
+  const missingField = { ...finalRow.checkpoint } as Record<string, unknown>;
+  delete missingField["quotaWindowEvidence"];
+  assert.throws(
+    () => validateExactCheckpoint(missingField as unknown as DurableCheckpoint),
+    /checkpoint-shape-invalid/u,
+  );
+  assert.throws(
+    () =>
+      validateJournalRows([
+        ...rows.slice(0, -1),
+        {
+          ...finalRow,
+          checkpoint: { ...finalRow.checkpoint, journalEntryHash: "forged" },
+        },
+      ]),
+    /checkpoint-hash-invalid/u,
+  );
+  const rehash = (checkpoint: DurableCheckpoint): DurableCheckpoint => {
+    const draft = { ...checkpoint, journalEntryHash: "" };
+    return { ...draft, journalEntryHash: deriveJournalEntryHash(draft) };
+  };
+  assert.throws(() =>
+    validateJournalRows([
+      ...rows.slice(0, -1),
+      {
+        ...finalRow,
+        checkpoint: rehash({
+          ...finalRow.checkpoint,
+          cumulativeVerifiedBytes: finalRow.checkpoint.cumulativeVerifiedBytes + 1,
+        }),
+      },
+    ]),
+  );
+  assert.throws(() =>
+    validateJournalRows([
+      ...rows.slice(0, -1),
+      {
+        ...finalRow,
+        checkpoint: rehash({
+          ...finalRow.checkpoint,
+          causalParentFactIds: [],
+        }),
+      },
+    ]),
+  );
+  assert.throws(() =>
+    validateJournalRows([
+      ...rows.slice(0, -1),
+      {
+        ...finalRow,
+        checkpoint: rehash({
+          ...finalRow.checkpoint,
+          priorJournalEntryHash: "forged",
+        }),
+      },
+    ]),
+  );
+  const forgedJournal = new MemoryContractJournal();
+  for (const row of rows) {
+    const afterCommit =
+      rows.findIndex((candidate) => candidate.event === "artifact.committed") <= row.sequence;
+    forgedJournal.append(row.event, {
+      ...row.checkpoint,
+      artifactSizeBytes:
+        row.checkpoint.artifactSizeBytes === null
+          ? null
+          : row.checkpoint.artifactSizeBytes + (afterCommit ? 1 : 0),
+      cumulativeVerifiedBytes: row.checkpoint.cumulativeVerifiedBytes + (afterCommit ? 1 : 0),
+    });
+  }
+  assert.doesNotThrow(() => validateJournalRows(forgedJournal.rows()));
+  assert.throws(() => validateImmutableReceiptSidecars(forgedJournal.rows(), sidecars));
+});
+
 test("retry/status/timeout matrix is deterministic and Retry-After is closed", () => {
-  for (const status of [408, 429, 500, 502, 503, 504]) {
-    assert.equal(retryDecision(`http-${status}`, 1, null, true), "retry-1000");
+  for (const status of [408, 500, 502, 503, 504]) {
+    assert.deepEqual(retryDecision(`http-${status}`, 1, null, "missing"), {
+      kind: "retry",
+      delayMs: 1_000,
+    });
   }
   for (const status of [400, 401, 403, 404, 409, 422]) {
-    assert.equal(retryDecision(`http-${status}`, 1, null, true), "stop");
+    assert.equal(retryDecision(`http-${status}`, 1, null, "missing").kind, "stop");
   }
   let laneEnabled = true;
   for (const status of [401, 403]) {
-    if (retryDecision(`http-${status}`, 1, null, true) === "stop") laneEnabled = false;
+    if (retryDecision(`http-${status}`, 1, null, "missing").kind === "stop") laneEnabled = false;
     assert.equal(laneEnabled, false);
     laneEnabled = true;
   }
   for (const failure of ["schema", "artifact"] as const) {
-    assert.equal(retryDecision(failure, 1, null, true), "stop");
+    assert.equal(retryDecision(failure, 1, null, "missing").kind, "stop");
   }
-  assert.equal(retryDecision("pre-response", 2, null, true), "retry-2000");
-  assert.equal(retryDecision("clean-partial", 3, null, true), "stop");
-  assert.equal(retryDecision("http-429", 1, null, false), "stop");
+  assert.deepEqual(retryDecision("pre-response", 2, null, "missing"), {
+    kind: "retry",
+    delayMs: 2_000,
+  });
+  assert.equal(retryDecision("clean-partial", 3, null, "missing").kind, "stop");
+  for (const classification of ["missing", "ambiguous", "quota-exhausted"] as const) {
+    assert.equal(retryDecision("http-429", 1, "1", classification).kind, "stop");
+  }
+  assert.deepEqual(retryDecision("http-429", 1, null, "temporary-throttling-proved"), {
+    kind: "retry",
+    delayMs: 1_000,
+  });
   for (const value of ["-1", "Wed, 21 Oct 2015 07:28:00 GMT", "1.5", "31", "999999999999999999"]) {
-    assert.equal(retryDecision("http-429", 1, value, true), "stop", value);
+    assert.equal(
+      retryDecision("http-429", 1, value, "temporary-throttling-proved").kind,
+      "stop",
+      value,
+    );
   }
-  assert.equal(retryDecision("http-429", 1, "30", true), "retry-1000");
+  assert.deepEqual(retryDecision("http-429", 1, "0", "temporary-throttling-proved"), {
+    kind: "retry",
+    delayMs: 1_000,
+  });
+  assert.deepEqual(retryDecision("http-429", 1, "30", "temporary-throttling-proved"), {
+    kind: "retry",
+    delayMs: 30_000,
+  });
 });
 
 test("provider/body/schema/store/read fault doubles enforce cleanup and causal journal writes", async () => {
@@ -1794,25 +2795,28 @@ test("redelivery, mutation, and correction semantics preserve observations or qu
     revisionEvidence: null,
     bytes: 10,
   };
-  assert.equal(classifyDeliveries([original, original]), "deduplicated");
-  assert.equal(
-    classifyDeliveries([original, { ...original, digest: hash("conflict") }]),
-    "quarantined",
-  );
-  assert.equal(
-    classifyDeliveries([
-      { ...original, revisionEvidence: "revision-a" },
-      { ...original, digest: hash("revision"), revisionEvidence: "revision-b" },
-    ]),
-    "verified",
-  );
-  assert.equal(
-    classifyDeliveries([
-      { ...original, revisionEvidence: null },
-      { ...original, digest: hash("unknown"), revisionEvidence: "revision-b" },
-    ]),
-    "quarantined",
-  );
+  const vectors: readonly [readonly Delivery[], ReturnType<typeof classifyDeliveries>][] = [
+    [[original, original], "deduplicated"],
+    [[original, { ...original, digest: hash("conflict") }], "quarantined"],
+    [
+      [
+        { ...original, revisionEvidence: "revision-a" },
+        { ...original, digest: hash("revision"), revisionEvidence: "revision-b" },
+      ],
+      "verified",
+    ],
+    [
+      [
+        { ...original, revisionEvidence: null },
+        { ...original, digest: hash("unknown"), revisionEvidence: "revision-b" },
+      ],
+      "quarantined",
+    ],
+  ];
+  for (const [deliveries, expected] of vectors) {
+    assert.equal(classifyDeliveries(deliveries), expected);
+    assert.equal(classifyDeliveries([...deliveries].reverse()), expected);
+  }
 });
 
 test("restart from every crash boundary derives retry/resume from durable journal state", async () => {
@@ -1842,6 +2846,13 @@ test("restart from every crash boundary derives retry/resume from durable journa
     const journal = new MemoryContractJournal();
     const model = new AcquisitionContractModel(request, provider, artifact, journal);
     assert.equal(await model.run({ crashAt }), "crashed", crashAt);
+    if (crashAt === "during-normalization") {
+      assert.equal(model.selectionDigest, null);
+      assert.equal(
+        journal.rows().some((row) => row.event === "normalization.emitted"),
+        false,
+      );
+    }
     const crashedResources = [...provider.resources];
     if (crashAt === "during-body") {
       assert.ok(
@@ -1855,6 +2866,7 @@ test("restart from every crash boundary derives retry/resume from durable journa
       assert.equal(artifact.orphanDigests.length, 1);
     }
     const callsAtCrash = provider.requestCalls;
+    const readsAtCrash = artifact.readCalls;
     await model.resume(configurationHash(request));
     const events = journal.rows().map((row) => row.event);
     assert.equal(events.at(-1), "selection.recorded", crashAt);
@@ -1868,6 +2880,7 @@ test("restart from every crash boundary derives retry/resume from durable journa
       assert.equal(provider.requestCalls, callsAtCrash + 1, crashAt);
     } else {
       assert.equal(provider.requestCalls, callsAtCrash, crashAt);
+      assert.ok(artifact.readCalls > readsAtCrash, `restart must reverify ${crashAt}`);
     }
     const committedIndex = events.indexOf("artifact.committed");
     const verifiedIndex = events.indexOf("artifact.verified");
@@ -1986,49 +2999,119 @@ test("abstract replay is invariant at page sizes 1, 2, 7, and 10,000", () => {
   }
 });
 
-test("memory and real SQLite close/reopen preserve the complete journal and restart decision", async () => {
+test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state", async () => {
   const request = exactBoundaryRequest(0n);
-  const memoryJournal = new MemoryContractJournal();
-  const memoryModel = new AcquisitionContractModel(
+  const baselineJournal = new MemoryContractJournal();
+  const baselineModel = new AcquisitionContractModel(
     request,
     new ProviderDouble(),
     new ArtifactDouble(),
-    memoryJournal,
+    baselineJournal,
   );
-  assert.equal(await memoryModel.run(), "complete");
-  const expected = canonicalJson(memoryJournal.rows() as unknown as JsonValue);
+  assert.equal(await baselineModel.run(), "complete");
+  const baselineRows = baselineJournal.rows();
+  const durableBytes = Buffer.from("ambercobaltfern");
+  const orders = [
+    ["amber", "cobalt", "fern"],
+    ["fern", "amber", "cobalt"],
+    ["cobalt", "fern", "amber"],
+  ] as const;
+
+  const restoreArtifact = (rows: readonly JournalRow[]): ArtifactDouble => {
+    const artifact = new ArtifactDouble();
+    const committed = [...rows].reverse().find((row) => row.event === "artifact.committed");
+    if (committed !== undefined) {
+      const checkpoint = committed.checkpoint;
+      assert.ok(checkpoint.artifactObservationId !== null);
+      assert.ok(checkpoint.artifactDigest !== null);
+      assert.equal(hash(durableBytes.toString("hex")), checkpoint.artifactDigest);
+      artifact.receipt = {
+        observationId: checkpoint.artifactObservationId,
+        digest: checkpoint.artifactDigest,
+        bytes: Uint8Array.from(durableBytes),
+      };
+    }
+    return artifact;
+  };
+  const appendRows = (
+    journal: ContractJournal,
+    rows: readonly JournalRow[],
+    backendPageSize: number,
+  ): void => {
+    for (let offset = 0; offset < rows.length; offset += backendPageSize) {
+      for (const row of rows.slice(offset, offset + backendPageSize)) {
+        journal.append(row.event, row.checkpoint);
+      }
+    }
+  };
+  const restartDecision = (rows: readonly JournalRow[]): string => {
+    const events = new Set(rows.map((row) => row.event));
+    if (events.has("selection.recorded")) return "revalidate-terminal";
+    if (events.has("normalization.emitted")) return "reverify-then-select";
+    if (events.has("checkpoint.advanced")) return "reverify-then-normalize";
+    if (events.has("artifact.committed")) return "reverify-no-dispatch";
+    return "new-attempt-after-reconciliation";
+  };
 
   const directory = mkdtempSync(join(tmpdir(), "peas-p1-10-journal-"));
-  const filename = join(directory, "journal.sqlite");
-  const provider = new ProviderDouble();
-  const artifact = new ArtifactDouble();
   try {
-    let sqliteJournal = new SqliteContractJournal(filename);
-    const crashing = new AcquisitionContractModel(request, provider, artifact, sqliteJournal);
-    assert.equal(await crashing.run({ crashAt: "artifact-committed" }), "crashed");
-    sqliteJournal.close();
+    for (let cutoff = 1; cutoff <= baselineRows.length; cutoff += 1) {
+      const prefix = baselineRows.slice(0, cutoff);
+      const backendPageSize = [1, 2, 7, 10_000][cutoff % 4] as number;
+      const order = orders[cutoff % orders.length] as readonly string[];
 
-    sqliteJournal = new SqliteContractJournal(filename);
-    const restarted = new AcquisitionContractModel(request, provider, artifact, sqliteJournal);
-    const providerCallsBefore = provider.requestCalls;
-    assert.equal(await restarted.resume(configurationHash(request)), "complete");
-    assert.equal(provider.requestCalls, providerCallsBefore);
-    const sqliteProjection = canonicalJson(sqliteJournal.rows() as unknown as JsonValue);
-    assert.equal(sqliteProjection, expected);
-    const checkpoint = sqliteJournal.rows().at(-1)?.checkpoint;
-    assert.ok(checkpoint !== undefined);
-    assert.deepEqual(checkpoint.budgets, {
-      pages: 1,
-      bytes: 15,
-      records: 3,
-      facts: 3,
-      attempts: 1,
-    });
-    assert.equal(checkpoint.requestIdentityHash, requestIdentity(request));
-    assert.equal(checkpoint.configurationHash, configurationHash(request));
-    assert.equal(checkpoint.terminal, true);
-    assert.equal(checkpoint.incomplete, false);
-    sqliteJournal.close();
+      const memoryJournal = new MemoryContractJournal();
+      appendRows(memoryJournal, prefix, backendPageSize);
+      const memoryProvider = new ProviderDouble(order);
+      const memoryArtifact = restoreArtifact(prefix);
+      const memoryModel = new AcquisitionContractModel(
+        request,
+        memoryProvider,
+        memoryArtifact,
+        memoryJournal,
+      );
+      const expectedDecision = restartDecision(prefix);
+      await memoryModel.resume(configurationHash(request));
+
+      const filename = join(directory, `checkpoint-${cutoff}.sqlite`);
+      let sqliteJournal = new SqliteContractJournal(filename);
+      appendRows(sqliteJournal, prefix, backendPageSize);
+      sqliteJournal.close();
+      sqliteJournal = new SqliteContractJournal(filename);
+      assert.equal(restartDecision(sqliteJournal.rows()), expectedDecision);
+      const sqliteProvider = new ProviderDouble(order);
+      const sqliteArtifact = restoreArtifact(sqliteJournal.rows());
+      const sqliteModel = new AcquisitionContractModel(
+        request,
+        sqliteProvider,
+        sqliteArtifact,
+        sqliteJournal,
+      );
+      await sqliteModel.resume(configurationHash(request));
+      assert.equal(
+        canonicalJson(sqliteJournal.rows() as unknown as JsonValue),
+        canonicalJson(memoryJournal.rows() as unknown as JsonValue),
+        `checkpoint ${cutoff}`,
+      );
+      assert.deepEqual(sqliteModel.counters, memoryModel.counters, `checkpoint ${cutoff}`);
+      assert.deepEqual(
+        sqliteModel.normalizedFacts,
+        memoryModel.normalizedFacts,
+        `checkpoint ${cutoff}`,
+      );
+      assert.equal(
+        sqliteModel.selectionDigest,
+        memoryModel.selectionDigest,
+        `checkpoint ${cutoff}`,
+      );
+      assert.equal(
+        sqliteProvider.requestCalls,
+        memoryProvider.requestCalls,
+        `checkpoint ${cutoff}`,
+      );
+      validateJournalRows(sqliteJournal.rows());
+      sqliteJournal.close();
+    }
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -2059,6 +3142,37 @@ test("response order, repeat run, replay page size, and post-return activity are
     assert.ok(provider.resources.every((resource) => resource.settled));
   }
   assert.equal(new Set(outputs).size, 1);
+  const artifactEnumeration = [
+    { ordinal: 2, digest: hash("artifact-c"), observationId: "delivery-c", sizeBytes: 7 },
+    { ordinal: 0, digest: hash("artifact-a"), observationId: "delivery-a", sizeBytes: 5 },
+    { ordinal: 1, digest: hash("artifact-a"), observationId: "delivery-b", sizeBytes: 5 },
+  ];
+  const canonicalArtifactEnumeration = (
+    values: readonly {
+      ordinal: number;
+      digest: string;
+      observationId: string;
+      sizeBytes: number;
+    }[],
+  ): string => {
+    let pageChainHash = hash("page-chain:genesis");
+    const admitted = [...values]
+      .sort((left, right) => left.ordinal - right.ordinal)
+      .map((receipt) => {
+        pageChainHash = hash(`${pageChainHash}:${receipt.ordinal}:${receipt.digest}`);
+        return { ...receipt, pageChainHash };
+      });
+    return canonicalJson({
+      admitted,
+      cumulativePages: admitted.length,
+      cumulativeBytes: admitted.reduce((sum, receipt) => sum + receipt.sizeBytes, 0),
+      physicalDigests: [...new Set(admitted.map((receipt) => receipt.digest))].sort(),
+    });
+  };
+  assert.equal(
+    canonicalArtifactEnumeration(artifactEnumeration),
+    canonicalArtifactEnumeration([...artifactEnumeration].reverse()),
+  );
   const baseline = normalizedFixtureProjection(1);
   for (const pageSize of [1, 2, 7, 10_000]) {
     assert.equal(normalizedFixtureProjection(pageSize), baseline);
