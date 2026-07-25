@@ -84,10 +84,33 @@ const ROUTE_POLICY_VERSION = "p1-10-frozen-historical-multi-symbol-v1";
 const JOURNAL_SCHEMA_VERSION = 1;
 const RUN_SESSION_NONCE = "synthetic-run-session-v1";
 const CANONICAL_SYMBOLS = Object.freeze(["glyph-amber", "glyph-cobalt"]);
-const INSTRUMENT_IDS = Object.freeze(
-  CANONICAL_SYMBOLS.map(
-    (symbol) => `min1_${createHash("sha256").update(symbol).digest("hex")}`,
-  ).sort(),
+type InstrumentMember = Readonly<{ canonicalSymbol: string; instrumentId: string }>;
+const syntheticInstrument = (canonicalSymbol: string): InstrumentMember =>
+  Object.freeze({
+    canonicalSymbol,
+    instrumentId: `min1_${createHash("sha256").update(canonicalSymbol).digest("hex")}`,
+  });
+const FROZEN_INSTRUMENT_REGISTRY = Object.freeze(
+  [
+    CANONICAL_SYMBOLS.map(syntheticInstrument),
+    ...Array.from({ length: 63 }, (_, index) => [
+      syntheticInstrument(`glyph-synthetic-${index.toString().padStart(3, "0")}`),
+    ]),
+  ]
+    .flat()
+    .sort((left, right) =>
+      Buffer.compare(Buffer.from(left.canonicalSymbol), Buffer.from(right.canonicalSymbol)),
+    ),
+);
+const FROZEN_INSTRUMENT_BY_ALIAS = new Map(
+  FROZEN_INSTRUMENT_REGISTRY.map((member) => [member.canonicalSymbol, member.instrumentId]),
+);
+const BASE_INSTRUMENTS = Object.freeze(
+  CANONICAL_SYMBOLS.map((symbol) => {
+    const instrumentId = FROZEN_INSTRUMENT_BY_ALIAS.get(symbol);
+    if (instrumentId === undefined) throw rejection("synthetic-instrument-registry-invalid");
+    return Object.freeze({ canonicalSymbol: symbol, instrumentId });
+  }),
 );
 const EFFECTIVE_CEILINGS = Object.freeze({
   concurrentRequests: 1,
@@ -109,6 +132,25 @@ const EFFECTIVE_CEILINGS = Object.freeze({
 });
 
 type AlpacaKind = "bars" | "quotes" | "trades";
+type ContinuationBindingPreimage = Readonly<{
+  precedingMarketAcquisitionId: string;
+  requestIdentityHash: string;
+  precedingLogicalPageIdentityHash: string;
+  precedingPageOrdinal: number;
+  precedingArtifactObservationId: string;
+  precedingArtifactDigest: string;
+  precedingPageChainHash: string;
+  nextPageOrdinal: number;
+  nextTokenHash: string;
+}>;
+type ContinuationMaterial = Readonly<{
+  opaqueMaterial: string;
+  tokenHash: string;
+  binding: ContinuationBindingPreimage;
+  bindingHash: string;
+  priorTokenHashes: readonly string[];
+  precedingPageVerified: boolean;
+}>;
 type Preflight = Readonly<{
   kind: AlpacaKind;
   method: string;
@@ -120,6 +162,7 @@ type Preflight = Readonly<{
   endpointChannelId: string;
   entitlementSnapshotId: string;
   routePolicyVersion: string;
+  instruments: readonly InstrumentMember[];
   fields: Readonly<Record<string, string>>;
   requestStartedNs: bigint;
   maximumClockErrorNs: bigint;
@@ -135,8 +178,8 @@ type Preflight = Readonly<{
   zeroSpendPolicyId: string | null;
   zeroSpendPolicyPreimage: Readonly<Record<string, JsonValue>> | null;
   runDecision: "allow" | "reject" | null;
-  firstRequest: boolean;
-  pageMaterialBytes: number | null;
+  pageOrdinal: number;
+  continuation: ContinuationMaterial | null;
 }>;
 
 const ROUTES = Object.freeze({
@@ -169,6 +212,7 @@ function baseRequest(kind: AlpacaKind = "quotes"): Preflight {
     endpointChannelId: ROUTES[kind].channel,
     entitlementSnapshotId: ENTITLEMENT_SNAPSHOT_ID,
     routePolicyVersion: ROUTE_POLICY_VERSION,
+    instruments: BASE_INSTRUMENTS,
     fields: kind === "bars" ? { ...common, timeframe: "1Min", adjustment: "raw" } : common,
     requestStartedNs: 1_000_000_000_000_000_000n,
     maximumClockErrorNs: 0n,
@@ -184,8 +228,75 @@ function baseRequest(kind: AlpacaKind = "quotes"): Preflight {
     zeroSpendPolicyId: ZERO_SPEND_POLICY_ID,
     zeroSpendPolicyPreimage: ZERO_SPEND_POLICY_PREIMAGE,
     runDecision: "allow",
-    firstRequest: true,
-    pageMaterialBytes: null,
+    pageOrdinal: 0,
+    continuation: null,
+  };
+}
+
+function validateInstrumentMembership(value: Preflight): Readonly<{
+  canonicalSymbols: readonly string[];
+  instrumentIds: readonly string[];
+}> {
+  if (
+    !Array.isArray(value.instruments) ||
+    value.instruments.length < 1 ||
+    value.instruments.length > LIMITS.instruments
+  ) {
+    throw rejection("instrument-count-invalid");
+  }
+  const canonicalSymbols: string[] = [];
+  const instrumentIds: string[] = [];
+  let priorSymbol: string | null = null;
+  const seenSymbols = new Set<string>();
+  const seenInstrumentIds = new Set<string>();
+  for (const member of value.instruments) {
+    if (
+      member === null ||
+      typeof member !== "object" ||
+      Object.keys(member).sort().join(",") !== "canonicalSymbol,instrumentId" ||
+      typeof member.canonicalSymbol !== "string" ||
+      typeof member.instrumentId !== "string"
+    ) {
+      throw rejection("instrument-member-shape-invalid");
+    }
+    const symbol = member.canonicalSymbol;
+    if (
+      symbol.length === 0 ||
+      Buffer.byteLength(symbol, "utf8") === 0 ||
+      symbol.includes(",") ||
+      symbol.trim() !== symbol
+    ) {
+      throw rejection("instrument-alias-invalid");
+    }
+    const frozenInstrumentId = FROZEN_INSTRUMENT_BY_ALIAS.get(symbol);
+    if (frozenInstrumentId === undefined) throw rejection("instrument-unmapped");
+    if (member.instrumentId !== frozenInstrumentId) {
+      throw rejection("instrument-alias-ambiguous-or-injected");
+    }
+    if (seenSymbols.has(symbol) || seenInstrumentIds.has(member.instrumentId)) {
+      throw rejection("instrument-duplicate");
+    }
+    if (
+      priorSymbol !== null &&
+      Buffer.compare(Buffer.from(priorSymbol, "utf8"), Buffer.from(symbol, "utf8")) >= 0
+    ) {
+      throw rejection("instrument-order-invalid");
+    }
+    seenSymbols.add(symbol);
+    seenInstrumentIds.add(member.instrumentId);
+    canonicalSymbols.push(symbol);
+    instrumentIds.push(member.instrumentId);
+    priorSymbol = symbol;
+  }
+  const encodedSymbols = canonicalSymbols.join(",");
+  if (value.fields["symbols"] !== encodedSymbols) {
+    throw rejection("instrument-query-membership-mismatch");
+  }
+  return {
+    canonicalSymbols,
+    instrumentIds: instrumentIds.sort((left, right) =>
+      Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8")),
+    ),
   };
 }
 
@@ -193,8 +304,15 @@ function parseCanonicalNs(text: string): bigint {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{9}Z$/u.test(text)) {
     throw rejection("timestamp-invalid");
   }
-  const milliseconds = Date.parse(`${text.slice(0, 23)}Z`);
+  const millisecondEncoding = `${text.slice(0, 23)}Z`;
+  const milliseconds = Date.parse(millisecondEncoding);
   if (!Number.isFinite(milliseconds)) throw rejection("timestamp-invalid");
+  const exactMillisecondRoundTrip = new Date(milliseconds).toISOString();
+  if (exactMillisecondRoundTrip !== millisecondEncoding) {
+    throw rejection("timestamp-roundtrip-invalid");
+  }
+  const exactNanosecondRoundTrip = `${exactMillisecondRoundTrip.slice(0, 20)}${text.slice(20, 29)}Z`;
+  if (exactNanosecondRoundTrip !== text) throw rejection("timestamp-roundtrip-invalid");
   return BigInt(milliseconds) * 1_000_000n + (BigInt(text.slice(20, 29)) % 1_000_000n);
 }
 
@@ -238,12 +356,13 @@ function preflight(value: Preflight): void {
   ) {
     throw rejection("cost-unproven");
   }
+  validateInstrumentMembership(value);
   const allowed = new Set(["symbols", "start", "end", "limit", "feed", "sort"]);
   if (value.kind === "bars") {
     allowed.add("timeframe");
     allowed.add("adjustment");
   }
-  if (!value.firstRequest) allowed.add("page_token");
+  if (value.pageOrdinal > 0) allowed.add("page_token");
   for (const key of Object.keys(value.fields)) {
     if (!allowed.has(key)) throw rejection("field-not-authorized");
   }
@@ -263,12 +382,38 @@ function preflight(value: Preflight): void {
   ) {
     throw rejection("limit-not-authorized");
   }
-  if (value.firstRequest && value.pageMaterialBytes !== null) throw rejection("first-page-token");
-  if (!value.firstRequest) {
+  if (
+    !Number.isSafeInteger(value.pageOrdinal) ||
+    value.pageOrdinal < 0 ||
+    value.pageOrdinal >= LIMITS.pages
+  ) {
+    throw rejection("page-ordinal-invalid");
+  }
+  if (value.pageOrdinal === 0) {
+    if (value.continuation !== null || value.fields["page_token"] !== undefined) {
+      throw rejection("first-page-token");
+    }
+  } else {
+    const continuation = value.continuation;
     if (
-      value.pageMaterialBytes === null ||
-      value.pageMaterialBytes < 1 ||
-      value.pageMaterialBytes > LIMITS.tokenBytes
+      continuation === null ||
+      Object.keys(continuation).sort().join(",") !==
+        "binding,bindingHash,opaqueMaterial,precedingPageVerified,priorTokenHashes,tokenHash" ||
+      Object.keys(continuation.binding).sort().join(",") !==
+        "nextPageOrdinal,nextTokenHash,precedingArtifactDigest,precedingArtifactObservationId,precedingLogicalPageIdentityHash,precedingMarketAcquisitionId,precedingPageChainHash,precedingPageOrdinal,requestIdentityHash" ||
+      continuation.opaqueMaterial.length === 0 ||
+      Buffer.byteLength(continuation.opaqueMaterial, "utf8") > LIMITS.tokenBytes ||
+      value.fields["page_token"] !== continuation.opaqueMaterial ||
+      continuation.tokenHash !== privateTokenHash(continuation.opaqueMaterial) ||
+      continuation.precedingPageVerified !== true ||
+      continuation.binding.requestIdentityHash !== requestIdentity(value) ||
+      continuation.binding.precedingPageOrdinal !== value.pageOrdinal - 1 ||
+      continuation.binding.nextPageOrdinal !== value.pageOrdinal ||
+      continuation.binding.nextTokenHash !== continuation.tokenHash ||
+      continuation.bindingHash !== continuationBindingHash(continuation.binding) ||
+      new Set(continuation.priorTokenHashes).size !== continuation.priorTokenHashes.length ||
+      continuation.priorTokenHashes.some((tokenHash) => !/^[0-9a-f]{64}$/u.test(tokenHash)) ||
+      continuation.priorTokenHashes.includes(continuation.tokenHash)
     ) {
       throw rejection("page-token-invalid");
     }
@@ -557,6 +702,12 @@ function guardedPreflight(request: Preflight, counters: SideEffectCounters): voi
   counters.transportConstructions += 1;
 }
 
+function assertGuardedPreflightReject(request: Preflight, pattern: RegExp): void {
+  const counters = zeroCounters();
+  assert.throws(() => guardedPreflight(request, counters), pattern);
+  assertZeroSideEffects(counters);
+}
+
 function independentCanonicalJson(value: JsonValue): string {
   if (value === null || typeof value === "boolean" || typeof value === "number") {
     return JSON.stringify(value);
@@ -587,7 +738,7 @@ function independentCanonicalHash(domain: string, value: JsonValue): string {
 }
 
 function requestIdentityPreimage(request: Preflight): JsonValue {
-  const symbols = (request.fields["symbols"] as string).split(",").sort();
+  const membership = validateInstrumentMembership(request);
   return {
     providerId: request.providerId,
     datasetId: request.datasetId,
@@ -595,8 +746,8 @@ function requestIdentityPreimage(request: Preflight): JsonValue {
     endpointChannelId: request.endpointChannelId,
     entitlementSnapshotId: request.entitlementSnapshotId,
     authorizationMode: request.authorizationMode,
-    instrumentIds: INSTRUMENT_IDS,
-    canonicalSymbols: symbols,
+    instrumentIds: membership.instrumentIds,
+    canonicalSymbols: membership.canonicalSymbols,
     factFamily: request.kind,
     queryStartNs: parseCanonicalNs(request.fields["start"] as string).toString(),
     queryEndNs: parseCanonicalNs(request.fields["end"] as string).toString(),
@@ -699,6 +850,7 @@ function acquisitionObservationIdentity(request: Preflight, retrievalAttemptId: 
 }
 
 function marketAcquisitionIdentity(request: Preflight, acquisitionObservationId: string): string {
+  const membership = validateInstrumentMembership(request);
   const preimage = {
     acquisitionObservationId,
     providerId: request.providerId,
@@ -706,7 +858,7 @@ function marketAcquisitionIdentity(request: Preflight, acquisitionObservationId:
     feedId: request.feedId,
     endpointChannelId: request.endpointChannelId,
     entitlementSnapshotId: request.entitlementSnapshotId,
-    instrumentIds: INSTRUMENT_IDS,
+    instrumentIds: membership.instrumentIds,
     requestedFactKinds: [request.kind === "bars" ? "bar" : request.kind.slice(0, -1)].sort(),
     queryStartNs: parseCanonicalNs(request.fields["start"] as string).toString(),
     queryEndNs: parseCanonicalNs(request.fields["end"] as string).toString(),
@@ -763,6 +915,48 @@ function continuationBindingHash(value: {
     independentCanonicalHash("peas/market-acquisition-continuation-binding/v1", preimage),
   );
   return derived;
+}
+
+function continuationRequestForVerifiedPage(
+  request: Preflight,
+  preceding: DurableCheckpoint,
+  opaqueMaterial: string,
+  priorTokenHashes: readonly string[] = [],
+): Preflight {
+  const tokenHash = privateTokenHash(opaqueMaterial);
+  if (
+    preceding.checkpointKind !== "page-checkpointed" ||
+    preceding.nextResumableTokenMaterial !== opaqueMaterial ||
+    preceding.nextTokenHash !== tokenHash ||
+    preceding.artifactObservationId === null ||
+    preceding.artifactDigest === null
+  ) {
+    throw rejection("page-token-preceding-page-unverified");
+  }
+  const binding: ContinuationBindingPreimage = {
+    precedingMarketAcquisitionId: preceding.marketAcquisitionId,
+    requestIdentityHash: preceding.requestIdentityHash,
+    precedingLogicalPageIdentityHash: preceding.logicalPageIdentityHash,
+    precedingPageOrdinal: preceding.pageOrdinal,
+    precedingArtifactObservationId: preceding.artifactObservationId as string,
+    precedingArtifactDigest: preceding.artifactDigest as string,
+    precedingPageChainHash: preceding.pageChainHash,
+    nextPageOrdinal: preceding.pageOrdinal + 1,
+    nextTokenHash: tokenHash,
+  };
+  return {
+    ...request,
+    fields: { ...request.fields, page_token: opaqueMaterial },
+    pageOrdinal: binding.nextPageOrdinal,
+    continuation: {
+      opaqueMaterial,
+      tokenHash,
+      binding,
+      bindingHash: continuationBindingHash(binding),
+      priorTokenHashes: [...priorTokenHashes],
+      precedingPageVerified: true,
+    },
+  };
 }
 
 function admittedPageChainHash(priorPageChainHash: string, checkpoint: DurableCheckpoint): string {
@@ -2139,14 +2333,24 @@ class ProviderDouble {
   requestCalls = 0;
   readonly requestsByPage = new Map<number, number>();
   readonly #order: readonly string[];
-  readonly #pages = Object.freeze([
-    { glyphs: ["amber", "cobalt", "fern"], nextToken: "synthetic-private-continuation-one" },
-    { glyphs: ["amber", "cobalt", "fern"], nextToken: "synthetic-private-continuation-two" },
-    { glyphs: ["lilac", "umber"], nextToken: null },
-  ] as const);
+  readonly #pages: readonly Readonly<{
+    glyphs: readonly string[];
+    nextToken: string | null;
+  }>[];
 
-  constructor(order: readonly string[] = ["amber", "cobalt", "fern"]) {
+  constructor(
+    order: readonly string[] = ["amber", "cobalt", "fern"],
+    continuationTokens: readonly [string, string] = [
+      "synthetic-private-continuation-one",
+      "synthetic-private-continuation-two",
+    ],
+  ) {
     this.#order = [...order];
+    this.#pages = Object.freeze([
+      { glyphs: ["amber", "cobalt", "fern"], nextToken: continuationTokens[0] },
+      { glyphs: ["amber", "cobalt", "fern"], nextToken: continuationTokens[1] },
+      { glyphs: ["lilac", "umber"], nextToken: null },
+    ]);
     this.resources = this.#newResources(0);
   }
 
@@ -2943,9 +3147,50 @@ class AcquisitionContractModel {
     }
   }
 
+  currentPagePreflightRequest(): Preflight {
+    if (this.currentPageOrdinal === 0) {
+      return {
+        ...this.request,
+        fields: withoutField(this.request.fields, "page_token"),
+        pageOrdinal: 0,
+        continuation: null,
+      };
+    }
+    if (this.currentTokenMaterial === null || this.currentContinuationBindingHash === null) {
+      throw rejection("page-token-state-missing");
+    }
+    const preceding = this.journal
+      .rows()
+      .find(
+        (row) =>
+          row.event === "checkpoint.advanced" &&
+          row.checkpoint.pageOrdinal === this.currentPageOrdinal - 1,
+      )?.checkpoint;
+    if (preceding === undefined) throw rejection("page-token-preceding-page-unverified");
+    const priorTokenHashes = this.journal
+      .rows()
+      .filter(
+        (row) =>
+          row.event === "checkpoint.advanced" &&
+          row.checkpoint.pageOrdinal < preceding.pageOrdinal &&
+          row.checkpoint.nextTokenHash !== null &&
+          row.checkpoint.nextTokenHash !== "terminal",
+      )
+      .map((row) => row.checkpoint.nextTokenHash as string);
+    const pageRequest = continuationRequestForVerifiedPage(
+      this.request,
+      preceding,
+      this.currentTokenMaterial,
+      priorTokenHashes,
+    );
+    if (pageRequest.continuation?.bindingHash !== this.currentContinuationBindingHash) {
+      throw rejection("page-token-binding-mismatch");
+    }
+    return pageRequest;
+  }
+
   async run(fault: AcquisitionFault = {}): Promise<"complete" | "crashed" | "failed"> {
     try {
-      guardedPreflight(this.request, this.counters);
       this.applyAcquisitionEvent("begin-preflight", this.exactEventEvidence(), {
         journalEvent: "acquisition.declared",
         pageOrdinal: 0,
@@ -2960,6 +3205,7 @@ class AcquisitionContractModel {
       });
       while (this.currentPageOrdinal < this.provider.pageCount()) {
         if (fault.crashAt === "before-request" && this.currentPageOrdinal === 0) return "crashed";
+        guardedPreflight(this.currentPagePreflightRequest(), this.counters);
         this.applyAcquisitionEvent("preflight-approved");
         this.applyAcquisitionEvent("credentials-loaded");
         const attemptTime = (this.budget.value.attempts + 1) * 1_000;
@@ -3300,6 +3546,7 @@ class AcquisitionContractModel {
         } else {
           this.applyAcquisitionEvent("begin-preflight");
         }
+        guardedPreflight(this.currentPagePreflightRequest(), this.counters);
         this.applyAcquisitionEvent("preflight-approved");
         this.applyAcquisitionEvent("credentials-loaded");
         const attemptTime = (this.budget.value.attempts + 1) * 1_000;
@@ -3889,6 +4136,220 @@ test("closed request limits 1..10000 are canonical and bind configuration but no
   );
 });
 
+test("typed instrument membership, continuation material, and canonical nanosecond timestamps close the guarded request boundary", async () => {
+  const requestWithInstruments = (instruments: readonly InstrumentMember[]): Preflight => ({
+    ...exactBoundaryRequest(0n),
+    instruments,
+    fields: {
+      ...exactBoundaryRequest(0n).fields,
+      symbols: instruments.map((member) => member.canonicalSymbol).join(","),
+    },
+  });
+  const exact64 = FROZEN_INSTRUMENT_REGISTRY.slice(0, LIMITS.instruments);
+  const exact64Request = requestWithInstruments(exact64);
+  const exact64Counters = zeroCounters();
+  assert.doesNotThrow(() => guardedPreflight(exact64Request, exact64Counters));
+  assert.equal(exact64Counters.credentialReads, 1);
+  assert.equal(exact64Counters.transportConstructions, 1);
+  const exact64Preimage = requestIdentityPreimage(exact64Request) as Readonly<
+    Record<string, JsonValue>
+  >;
+  assert.deepEqual(
+    exact64Preimage["canonicalSymbols"],
+    exact64.map((member) => member.canonicalSymbol),
+  );
+  assert.deepEqual(
+    exact64Preimage["instrumentIds"],
+    exact64
+      .map((member) => member.instrumentId)
+      .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))),
+  );
+
+  const baselineFirst = BASE_INSTRUMENTS[0] as InstrumentMember;
+  const baselineSecond = BASE_INSTRUMENTS[1] as InstrumentMember;
+  const invalidInstrumentRequests: readonly Preflight[] = [
+    requestWithInstruments([]),
+    requestWithInstruments(FROZEN_INSTRUMENT_REGISTRY),
+    requestWithInstruments([{ canonicalSymbol: "", instrumentId: baselineFirst.instrumentId }]),
+    requestWithInstruments([baselineFirst, baselineFirst]),
+    requestWithInstruments([
+      {
+        canonicalSymbol: "glyph-unmapped",
+        instrumentId: `min1_${"f".repeat(64)}`,
+      },
+    ]),
+    requestWithInstruments([
+      {
+        canonicalSymbol: baselineFirst.canonicalSymbol,
+        instrumentId: baselineSecond.instrumentId,
+      },
+    ]),
+    requestWithInstruments([
+      {
+        canonicalSymbol: `${baselineFirst.canonicalSymbol},${baselineSecond.canonicalSymbol}`,
+        instrumentId: baselineFirst.instrumentId,
+      },
+    ]),
+    requestWithInstruments([...BASE_INSTRUMENTS].reverse()),
+    {
+      ...requestWithInstruments(BASE_INSTRUMENTS),
+      fields: {
+        ...requestWithInstruments(BASE_INSTRUMENTS).fields,
+        symbols: baselineFirst.canonicalSymbol,
+      },
+    },
+  ];
+  for (const request of invalidInstrumentRequests) {
+    assertGuardedPreflightReject(request, /instrument/u);
+  }
+
+  const seedRequest = exactBoundaryRequest(0n);
+  const seedJournal = new MemoryContractJournal();
+  const seedModel = new AcquisitionContractModel(
+    seedRequest,
+    new ProviderDouble(
+      ["amber", "cobalt", "fern"],
+      ["t".repeat(LIMITS.tokenBytes), "synthetic-private-continuation-two"],
+    ),
+    new ArtifactDouble(),
+    seedJournal,
+  );
+  assert.equal(await seedModel.run({ crashAt: "checkpoint-advanced" }), "crashed");
+  const preceding = seedJournal
+    .rows()
+    .find((row) => row.event === "checkpoint.advanced")?.checkpoint;
+  assert.ok(preceding !== undefined);
+  assert.ok(preceding.nextResumableTokenMaterial !== null);
+  const validContinuationRequest = continuationRequestForVerifiedPage(
+    seedRequest,
+    preceding,
+    preceding.nextResumableTokenMaterial,
+  );
+  const continuationCounters = zeroCounters();
+  assert.doesNotThrow(() => guardedPreflight(validContinuationRequest, continuationCounters));
+  assert.equal(continuationCounters.credentialReads, 1);
+  assert.equal(continuationCounters.transportConstructions, 1);
+
+  const withContinuationMaterial = (
+    material: string,
+    mutate: (
+      continuation: ContinuationMaterial,
+      fields: Readonly<Record<string, string>>,
+    ) => Readonly<{
+      continuation: ContinuationMaterial | null;
+      fields: Readonly<Record<string, string>>;
+    }> = (continuation, fields) => ({ continuation, fields }),
+  ): Preflight => {
+    const prior = validContinuationRequest.continuation as ContinuationMaterial;
+    const tokenHash = privateTokenHash(material);
+    const binding = { ...prior.binding, nextTokenHash: tokenHash };
+    const continuation: ContinuationMaterial = {
+      ...prior,
+      opaqueMaterial: material,
+      tokenHash,
+      binding,
+      bindingHash: continuationBindingHash(binding),
+    };
+    const fields = { ...validContinuationRequest.fields, page_token: material };
+    const mutated = mutate(continuation, fields);
+    return {
+      ...validContinuationRequest,
+      continuation: mutated.continuation,
+      fields: mutated.fields,
+    };
+  };
+  assert.equal(
+    Buffer.byteLength(
+      (validContinuationRequest.continuation as ContinuationMaterial).opaqueMaterial,
+      "utf8",
+    ),
+    LIMITS.tokenBytes,
+  );
+
+  const repeatedTokenHash = (validContinuationRequest.continuation as ContinuationMaterial)
+    .tokenHash;
+  const crossQueryRequest = withContinuationMaterial(
+    (validContinuationRequest.continuation as ContinuationMaterial).opaqueMaterial,
+    (continuation, fields) => {
+      const binding = { ...continuation.binding, requestIdentityHash: hash("cross-query") };
+      return {
+        continuation: {
+          ...continuation,
+          binding,
+          bindingHash: continuationBindingHash(binding),
+        },
+        fields,
+      };
+    },
+  );
+  const invalidContinuationRequests: readonly Preflight[] = [
+    { ...validContinuationRequest, continuation: null },
+    {
+      ...validContinuationRequest,
+      fields: withoutField(validContinuationRequest.fields, "page_token"),
+    },
+    withContinuationMaterial(""),
+    withContinuationMaterial(
+      (validContinuationRequest.continuation as ContinuationMaterial).opaqueMaterial,
+      (continuation, fields) => ({
+        continuation: { ...continuation, priorTokenHashes: [repeatedTokenHash] },
+        fields,
+      }),
+    ),
+    crossQueryRequest,
+    withContinuationMaterial(
+      (validContinuationRequest.continuation as ContinuationMaterial).opaqueMaterial,
+      (continuation, fields) => ({
+        continuation,
+        fields: { ...fields, page_token: `${continuation.opaqueMaterial}-substituted` },
+      }),
+    ),
+    withContinuationMaterial("t".repeat(LIMITS.tokenBytes + 1)),
+  ];
+  for (const request of invalidContinuationRequests) {
+    assertGuardedPreflightReject(request, /page-token/u);
+  }
+
+  const integratedCountersModel = new AcquisitionContractModel(
+    seedRequest,
+    new ProviderDouble(),
+    new ArtifactDouble(),
+    new MemoryContractJournal(),
+  );
+  assert.equal(await integratedCountersModel.run(), "complete");
+  assert.equal(integratedCountersModel.counters.credentialReads, 3);
+  assert.equal(integratedCountersModel.counters.transportConstructions, 3);
+
+  const canonicalLeap = {
+    ...exactBoundaryRequest(0n),
+    fields: {
+      ...exactBoundaryRequest(0n).fields,
+      start: "2000-02-29T00:00:00.123456789Z",
+      end: "2000-02-29T00:00:00.123456789Z",
+    },
+  };
+  assert.doesNotThrow(() => preflight(canonicalLeap));
+  for (const timestamp of [
+    "2026-02-30T00:00:00.000000000Z",
+    "2025-02-29T00:00:00.000000000Z",
+    "2026-04-31T00:00:00.000000000Z",
+    "2026-13-01T00:00:00.000000000Z",
+    "2026-01-01T24:00:00.000000000Z",
+    "2026-01-01T00:00:60.000000000Z",
+    "2026-01-32T00:00:00.000000000Z",
+  ]) {
+    const request = {
+      ...exactBoundaryRequest(0n),
+      fields: {
+        ...exactBoundaryRequest(0n).fields,
+        start: timestamp,
+        end: timestamp,
+      },
+    };
+    assertGuardedPreflightReject(request, /timestamp/u);
+  }
+});
+
 test("closed Alpaca route, value, capability, and one-nanosecond time gates fail before dispatch", () => {
   assert.doesNotThrow(() => preflight(exactBoundaryRequest(0n)));
   assert.throws(() => preflight(exactBoundaryRequest(1n)), /history-boundary/u);
@@ -3952,7 +4413,10 @@ test("clock, first-page, cost, credential ordering, and active-response regressi
     { ...exactBoundaryRequest(0n), fallbackKind: "provider-default" },
     { ...exactBoundaryRequest(0n), zeroIncrementalSpend: false },
     { ...exactBoundaryRequest(0n), costStatus: "unknown" as const },
-    { ...exactBoundaryRequest(0n), pageMaterialBytes: 1 },
+    {
+      ...exactBoundaryRequest(0n),
+      fields: { ...exactBoundaryRequest(0n).fields, page_token: "forbidden-first-page-token" },
+    },
   ]) {
     assert.throws(() => execute(request));
   }
@@ -3962,22 +4426,6 @@ test("clock, first-page, cost, credential ordering, and active-response regressi
     () =>
       preflight({ ...exactBoundaryRequest(0n), priorMonotonicNs: 12n, currentMonotonicNs: 11n }),
     /clock-unavailable/u,
-  );
-  assert.doesNotThrow(() =>
-    preflight({
-      ...exactBoundaryRequest(0n),
-      firstRequest: false,
-      pageMaterialBytes: LIMITS.tokenBytes,
-    }),
-  );
-  assert.throws(
-    () =>
-      preflight({
-        ...exactBoundaryRequest(0n),
-        firstRequest: false,
-        pageMaterialBytes: LIMITS.tokenBytes + 1,
-      }),
-    /page-token-invalid/u,
   );
 });
 

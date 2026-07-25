@@ -35,6 +35,12 @@ zero-call path rather than a skipped test.
 | Unauthorized origin, method, path, single-symbol route, latest, snapshot, stream, or capability | `reject-zero-call` |
 | Omitted/default, empty, or non-`sip` feed | `reject-zero-call` |
 | Missing or noncanonical `start`/`end`; unbounded range | `reject-zero-call` |
+| Exact parse/re-encode equality for a valid leap-day nanosecond instant | accept |
+| Impossible month day, invalid leap day, month/day/hour/second overflow, or any normalized non-round-trip timestamp | guarded rejection with every side-effect counter exactly zero |
+| Typed frozen instrument membership: nonempty, unique canonical unsigned-UTF-8 order, and exact alias-to-instrument mapping | accept; `canonicalSymbols` and `instrumentIds` derive from the same membership |
+| Blank, duplicate, unmapped, ambiguous-ID, delimiter-injected, reordered, or query/membership-mismatched instrument | guarded rejection with every side-effect counter exactly zero |
+| Exactly 64 valid frozen instruments | accept through guarded preflight |
+| 65 valid frozen instruments | guarded rejection with every side-effect counter exactly zero |
 | `sort=asc`; canonical decimal integer `limit` from `1` through `10000` inclusive | accept |
 | Limits `1`, `2`, `7`, and `10000` through preflight/configuration/restart | accept with one stable request identity and four distinct configuration hashes |
 | Limit `0`, `10001`, sign, leading/trailing whitespace, leading zero, decimal, exponent, non-number, other sort, or other query field | `reject-zero-call` |
@@ -42,8 +48,9 @@ zero-call path rather than a skipped test.
 | Other/omitted timeframe or adjustment | `reject-zero-call` |
 | First request without continuation material | accept |
 | First request with continuation material | `reject-zero-call` |
-| Later request with preceding-page-bound opaque continuation | accept |
-| Later request with missing, empty, excessive, or cross-query continuation | `reject-zero-call` |
+| Later request with exact typed material/hash, immediately preceding verified page, unchanged request, next ordinal, binding hash, and byte-identical `fields.page_token` | accept; integrated acquisition preflights every page before credential or dispatch |
+| Exactly 4,096 bytes of preceding-page-returned opaque continuation material | accept through guarded preflight |
+| Missing field/material, empty, repeated, 4,097-byte, cross-query, substituted, ordinal-changed, or binding-changed continuation | guarded rejection with every side-effect counter exactly zero |
 | FMP private discrepancy role with exact quote/trade channel | contract-valid but transport disabled |
 | FMP as primary, fallback, public output, or any other endpoint | `reject-zero-call` |
 

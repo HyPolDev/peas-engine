@@ -47,7 +47,12 @@ persisted.
 - the exact 11 frozen identity preimages and expected IDs;
 - exact and one-over values for every project ceiling;
 - exact 15-minute history-boundary and one-nanosecond-newer timestamps;
-- bounded opaque continuation material represented only by byte length;
+- strict timestamp round-trip vectors for valid leap instants, impossible dates, invalid leap days,
+  overflow, and normalized-but-different instants;
+- typed frozen instrument memberships covering exact 64/65 bounds, blank, duplicate, unmapped,
+  ambiguous-ID, delimiter-injected, reordered, and query/membership mismatch;
+- original synthetic opaque continuation material held only in memory, including exact 4,096/4,097
+  byte bounds and missing, empty, repeated, cross-query, substituted, and post-terminal mutations;
 - route, method, identity, field, value, clock, cost, and authorization mutations;
 - exact zero-spend preimage/ID and missing, forged, mutated, stale, and unknown run decisions;
 - all 11 frozen provider, dataset, feed, and channel preimages under one guarded parser, covering
