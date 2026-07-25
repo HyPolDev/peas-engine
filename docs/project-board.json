@@ -275,16 +275,16 @@
           "id": "P1-10",
           "title": "Delayed historical market-reference adapter",
           "status": "in-progress",
-          "preparationStatus": "pr-2e-third-repair-candidate-validation",
+          "preparationStatus": "pr-2e-fourth-contract-repair-in-progress",
           "authorization": "P1-09 COMPLETE; PR 2E contract-only work authorized; PR 2F NO_GO pending exact-candidate contract GO and human retention authorization",
-          "contractCandidate": "pending-new-exact-candidate-sha",
+          "contractCandidate": "d4108a9aa1c4f2166aca5ccb0234408bf0ab6678",
           "contractReview": "NO_GO",
-          "contractReviewDocument": "docs/audit/pr-2e-p1-10-contract-final-review.md",
-          "repairStatus": "Third repair integrated for F-003 and F-004b/c/d/e: exact domains/preimages, acyclic page-chain/continuation binding, atomic state-owning event plans, closed retry/deadline/quota proof, three-page restart/replay, genuine memory/SQLite every-prefix equivalence, and all integrated pagination attacks; pending new exact candidate SHA, complete offline validation, same-SHA CI, and fresh independent review",
+          "contractReviewDocument": "docs/audit/pr-2e-p1-10-contract-third-review.md",
+          "repairStatus": "F-001 through F-004e closed; fresh third review found F-005a instrument membership/identity consistency, F-005b actual later-page page_token binding, and F-005c strict timestamp round-trip gaps; fourth repair, new exact candidate SHA, complete offline validation, same-SHA CI, and fresh independent review required",
           "owner": "agent",
           "dependsOn": ["P1-08", "P1-09"],
           "blocker": "ArtifactStore has no deletion API and migration 005 installs no-delete triggers; retention implementation requires separately authorized port, migration, reconciliation, or vault-semantic changes",
-          "contractBlocker": "Candidate 74f559f3b3b58de68f67e9ea8bc6991e381704e4 remains independently rejected; its third repair is integrated but has no authority until a new exact candidate passes complete validation, same-SHA CI, and fresh detached independent GO",
+          "contractBlocker": "Candidate d4108a9aa1c4f2166aca5ccb0234408bf0ab6678 received independent NO_GO F-005: the executable boundary does not yet enforce the frozen typed instrument set, bind the actual later-page page_token field to verified continuation material, or reject non-round-tripping calendar instants",
           "preparationScope": "Agents may prepare the file-ownership map, accepted-contract mapping, synthetic and recorded acceptance vectors, bounded retry/quota/restart plan, secret-redaction tests, and pre-implementation audit without credentials, provider calls, live transport, or provider bytes.",
           "acceptance": "A bounded no-new-spend adapter stores private raw artifacts, verifies reads, normalizes market facts, deterministically selects references around the PR 2C observation anchor, and emits marketReferenceJoinKey or a stable missing reason while paid-plan activation is disabled.",
           "evidence": [
@@ -302,7 +302,9 @@
             "contract-no-go@8cc8c8424d0498fd2c5486d37b7eb42df5991b2c",
             "docs/audit/pr-2e-p1-10-contract-reaudit.md",
             "contract-no-go@74f559f3b3b58de68f67e9ea8bc6991e381704e4",
-            "docs/audit/pr-2e-p1-10-contract-final-review.md"
+            "docs/audit/pr-2e-p1-10-contract-final-review.md",
+            "contract-no-go@d4108a9aa1c4f2166aca5ccb0234408bf0ab6678",
+            "docs/audit/pr-2e-p1-10-contract-third-review.md"
           ]
         },
         {
