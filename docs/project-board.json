@@ -275,16 +275,16 @@
           "id": "P1-10",
           "title": "Delayed historical market-reference adapter",
           "status": "in-progress",
-          "preparationStatus": "pr-2e-fifth-repair-candidate-validation",
+          "preparationStatus": "pr-2e-sixth-contract-repair-in-progress",
           "authorization": "P1-09 COMPLETE; PR 2E contract-only work authorized; PR 2F NO_GO pending exact-candidate contract GO and human retention authorization",
-          "contractCandidate": "pending-new-exact-candidate-sha",
-          "contractReview": "pending-new-candidate-review",
-          "contractReviewDocument": "docs/audit/pr-2e-p1-10-contract-fourth-review.md",
-          "repairStatus": "Fifth repair integrated: original-synthetic uppercase alias authority carries complete issuer/instrument/alias preimages with accepted-domain and independent imap1_/min1_/msa1_ recomputation plus effective-interval gap/overlap rejection; continuation admission consumes the durable preceding checkpoint and executes self-consistent next-ordinal/every-binding-member mutations through standalone, uninterrupted, and restart zero-delta paths; pending new exact candidate SHA, complete validation, same-SHA CI, and fresh review",
+          "contractCandidate": "00d8d90232e18342ed401f415e085ecb911319a2",
+          "contractReview": "NO_GO",
+          "contractReviewDocument": "docs/audit/pr-2e-p1-10-contract-fifth-review.md",
+          "repairStatus": "F-005b durable continuation and F-005c strict timestamps are closed; fresh fifth review found F-006a no literal-rooted synthetic imap1_/min1_/msa1_ catalog or configuration-bound catalog identity, and F-006b a generic shallow-frozen-array WeakSet cache bypass; sixth repair and fresh validation/review required",
           "owner": "agent",
           "dependsOn": ["P1-08", "P1-09"],
           "blocker": "ArtifactStore has no deletion API and migration 005 installs no-delete triggers; retention implementation requires separately authorized port, migration, reconciliation, or vault-semantic changes",
-          "contractBlocker": "Candidate ab245236d4953cde9c90a77fa6eb62143b0b4946 remains independently rejected; its fifth repair is integrated but has no authority until a new exact candidate passes complete validation, same-SHA CI, and fresh detached independent GO",
+          "contractBlocker": "Candidate 00d8d90232e18342ed401f415e085ecb911319a2 received independent NO_GO: the synthetic alias authority lacks displayed literal ID roots and a configuration-bound catalog identity, while generic outer-freeze caching can skip revalidation of mutable inner authority records",
           "preparationScope": "Agents may prepare the file-ownership map, accepted-contract mapping, synthetic and recorded acceptance vectors, bounded retry/quota/restart plan, secret-redaction tests, and pre-implementation audit without credentials, provider calls, live transport, or provider bytes.",
           "acceptance": "A bounded no-new-spend adapter stores private raw artifacts, verifies reads, normalizes market facts, deterministically selects references around the PR 2C observation anchor, and emits marketReferenceJoinKey or a stable missing reason while paid-plan activation is disabled.",
           "evidence": [
@@ -306,7 +306,9 @@
             "contract-no-go@d4108a9aa1c4f2166aca5ccb0234408bf0ab6678",
             "docs/audit/pr-2e-p1-10-contract-third-review.md",
             "contract-no-go@ab245236d4953cde9c90a77fa6eb62143b0b4946",
-            "docs/audit/pr-2e-p1-10-contract-fourth-review.md"
+            "docs/audit/pr-2e-p1-10-contract-fourth-review.md",
+            "contract-no-go@00d8d90232e18342ed401f415e085ecb911319a2",
+            "docs/audit/pr-2e-p1-10-contract-fifth-review.md"
           ]
         },
         {
