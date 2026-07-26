@@ -283,6 +283,46 @@ committed artifact before use, including terminal histories and normalization re
 multi-artifact enumeration preserves each delivery observation, permits physical digest
 deduplication, and is invariant to backend enumeration order.
 
+The live and replay observation-ledger projection additionally freezes the literal accepted
+`ClockBasisV1`:
+
+```text
+clockBasisId =
+clk1_c183b0fcb2f2ca909fa1f6ac3ab4edface941a3bd2bd3bbcabd893e62419a4bf
+
+H("peas/clock-basis/v1", {
+  wallClock: "system-utc",
+  synchronization: "verified-bound",
+  maximumErrorMs: 0,
+  monotonicClock: "process-monotonic-us",
+  monotonicSessionId: "synthetic-process-session-v1"
+})
+```
+
+The executable path recomputes that literal through the production `createClockBasis` helper and
+an independent framed hash, then submits every reconstructed bundle to the production
+`validateObservationLedgerBundle` validator. It emits one genuine all-null-clock
+`clock-basis.declared` entry per live or replay execution and derives every displayed `ole1_`
+entry from the exact
+`peas/observation-ledger-entry/v1`
+`{schemaVersion:1,executionId,parentEntryIds,clock,facts}` preimage. Every stage fact with a
+non-null clock has the matching declaration as one distinct, sorted direct parent in addition to
+its exact ADR-0009 stage parents. The declaration is earlier, same-execution, parentless, and is
+never substituted by adjacency.
+
+Independent reconstruction rejects a missing or extra direct parent, forged clock parent,
+changed-basis stamp, wrong clock preimage, cross-session substitution, duplicate parent, or
+reordered parent array even when the hostile entry is coherently rehashed. The extra-clock-parent
+case declares a second genuine same-execution basis and binds the child to both declarations; both
+the production validator and P1-10 reconstruction reject it. The cross-session case declares a
+second genuine basis and binds the child exclusively to it: the production validator admits that
+self-consistent generic ADR-0009 bundle, while exact P1-10 reconstruction rejects substituting it
+for the request-admitted basis. Live and replay bundles are reconstructed and validated after every
+journal prefix, uninterrupted completion, restart prefix, and memory/SQLite enumeration. Replay
+re-emits the clock declaration and preserved stamps, omits live request and live-failure facts,
+uses replay-mode commits parented by their acquisition declarations, and remaps all stage and clock
+parents into its own execution.
+
 The live synthetic chain has three pages and three distinct delivery observations. Pages zero and
 one intentionally share identical bytes and one physical digest while retaining separate
 attempt/acquisition/artifact observations; page two has a second physical digest and the terminal

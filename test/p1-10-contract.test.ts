@@ -20,8 +20,11 @@ import {
   deriveRawArtifactId,
 } from "../src/providers/market-reference/identity.js";
 import {
+  createClockBasis,
   deriveAcquisitionObservationId,
   deriveIssuerMappingId,
+  validateObservationLedgerBundle as validateAcceptedObservationLedgerBundle,
+  type ObservationLedgerEntryV1 as AcceptedObservationLedgerEntryV1,
 } from "../src/providers/observation-ledger.js";
 
 const NS_PER_MINUTE = 60_000_000_000n;
@@ -341,18 +344,41 @@ type Preflight = Readonly<{
   continuation: ContinuationMaterial | null;
 }>;
 
-const CLOCK_BASIS_ID = "synthetic-system-utc-basis-v1";
 const CLOCK_SESSION_ID = "synthetic-process-session-v1";
 const CLOCK_CURRENT_WALL_NS = 1_000_000_000_000_000_000n;
 const MAX_SIGNED_CLOCK_NS = (1n << 63n) - 1n;
+const CLOCK_BASIS_DOMAIN = "peas/clock-basis/v1";
+const CLOCK_BASIS_PREIMAGE = Object.freeze({
+  wallClock: "system-utc",
+  synchronization: "verified-bound",
+  maximumErrorMs: 0,
+  monotonicClock: "process-monotonic-us",
+  monotonicSessionId: CLOCK_SESSION_ID,
+});
+const CLOCK_BASIS_ID = "clk1_c183b0fcb2f2ca909fa1f6ac3ab4edface941a3bd2bd3bbcabd893e62419a4bf";
+
+function clockBasisIdForMaximumError(maximumErrorNs: bigint | null): string {
+  const boundedErrorNs = maximumErrorNs ?? 0n;
+  const maximumErrorMs = Number((boundedErrorNs + 999_999n) / 1_000_000n);
+  const preimage = {
+    ...CLOCK_BASIS_PREIMAGE,
+    maximumErrorMs,
+  } satisfies JsonValue;
+  const accepted = `clk1_${canonicalHash(CLOCK_BASIS_DOMAIN, preimage)}`;
+  assert.equal(accepted, `clk1_${independentCanonicalHash(CLOCK_BASIS_DOMAIN, preimage)}`);
+  return accepted;
+}
+
+assert.equal(clockBasisIdForMaximumError(0n), CLOCK_BASIS_ID);
 
 function baseTrustedClockEvidence(
   currentWallNs = CLOCK_CURRENT_WALL_NS,
   maximumErrorNs: bigint | null = 0n,
 ): TrustedClockEvidenceInput {
+  const clockBasisId = clockBasisIdForMaximumError(maximumErrorNs);
   return {
     available: true,
-    basisId: CLOCK_BASIS_ID,
+    basisId: clockBasisId,
     wallClock: "system-utc",
     synchronization: "verified-bound",
     maximumErrorNs,
@@ -362,7 +388,7 @@ function baseTrustedClockEvidence(
     priorSample: {
       sampleId: "clock-sample-prior",
       previousSampleId: null,
-      basisId: CLOCK_BASIS_ID,
+      basisId: clockBasisId,
       wallClock: "system-utc",
       synchronization: "verified-bound",
       wallNs: currentWallNs - 1n,
@@ -373,7 +399,7 @@ function baseTrustedClockEvidence(
     currentSample: {
       sampleId: "clock-sample-current",
       previousSampleId: "clock-sample-prior",
-      basisId: CLOCK_BASIS_ID,
+      basisId: clockBasisId,
       wallClock: "system-utc",
       synchronization: "verified-bound",
       wallNs: currentWallNs,
@@ -879,7 +905,8 @@ function validateTrustedClockEvidence(evidence: unknown): bigint {
   assertExactObjectKeys(currentSample, sampleKeys, "clock-unavailable");
   if (
     evidence["available"] !== true ||
-    evidence["basisId"] !== CLOCK_BASIS_ID ||
+    typeof evidence["basisId"] !== "string" ||
+    evidence["basisId"].length === 0 ||
     evidence["wallClock"] !== "system-utc" ||
     evidence["synchronization"] !== "verified-bound" ||
     evidence["monotonicClock"] !== "process-monotonic-us" ||
@@ -896,6 +923,9 @@ function validateTrustedClockEvidence(evidence: unknown): bigint {
     maximumErrorNs > MAX_SIGNED_CLOCK_NS
   ) {
     throw rejection("clock-unprovable");
+  }
+  if (evidence["basisId"] !== clockBasisIdForMaximumError(maximumErrorNs)) {
+    throw rejection("clock-unavailable");
   }
   for (const sample of [priorSample, currentSample]) {
     if (
@@ -1924,6 +1954,29 @@ type ContractEvent =
   | "selection.started"
   | "selection.recorded"
   | "failure.recorded";
+type ObservationLedgerMode = "live" | "replay";
+type ClockBasisV1 = Readonly<{
+  clockBasisId: string;
+  wallClock: "system-utc";
+  synchronization: "verified-bound";
+  maximumErrorMs: number;
+  monotonicClock: "process-monotonic-us";
+  monotonicSessionId: string;
+}>;
+type ClockStampV1 = Readonly<{
+  clockBasisId: string | null;
+  wallTimeMs: number | null;
+  monotonicTimeUs: number | null;
+}>;
+type ObservationLedgerEntryV1 = Readonly<{
+  schemaVersion: 1;
+  executionId: string;
+  entryId: string;
+  parentEntryIds: readonly string[];
+  clock: ClockStampV1;
+  facts: Readonly<Record<string, JsonValue>>;
+  entryHash: string;
+}>;
 
 type AcquisitionBudgets = {
   pages: number;
@@ -2280,29 +2333,6 @@ function deriveJournalEntryHash(checkpoint: DurableCheckpoint): string {
   return derived;
 }
 
-function ledgerFactId(
-  event: ContractEvent,
-  sequence: number,
-  checkpoint: DurableCheckpoint,
-): string | null {
-  if (
-    [
-      "checkpoint.advanced",
-      "chain.complete",
-      "normalization.started",
-      "selection.started",
-    ].includes(event)
-  ) {
-    return null;
-  }
-  return `ole1_${canonicalHash("peas/p1-10-synthetic-ledger-fact/v1", {
-    event,
-    sequence,
-    marketAcquisitionId: checkpoint.marketAcquisitionId,
-    artifactObservationId: checkpoint.artifactObservationId,
-  })}`;
-}
-
 function exactCausalParents(
   rows: readonly JournalRow[],
   event: ContractEvent,
@@ -2378,15 +2408,585 @@ function exactCausalParents(
   }
 }
 
+const OBSERVATION_LEDGER_ENTRY_DOMAIN = "peas/observation-ledger-entry/v1";
+const JOURNAL_ONLY_EVENTS = Object.freeze([
+  "checkpoint.advanced",
+  "chain.complete",
+  "normalization.started",
+  "selection.started",
+] satisfies readonly ContractEvent[]);
+
+function clockBasisFromRequest(request: Preflight): ClockBasisV1 {
+  validateTrustedClockEvidence(request.trustedClockEvidence);
+  const evidence = request.trustedClockEvidence as Readonly<Record<string, unknown>>;
+  const maximumErrorNs = evidence["maximumErrorNs"] as bigint;
+  const maximumErrorMs = Number((maximumErrorNs + 999_999n) / 1_000_000n);
+  const preimage = {
+    wallClock: "system-utc",
+    synchronization: "verified-bound",
+    maximumErrorMs,
+    monotonicClock: "process-monotonic-us",
+    monotonicSessionId: evidence["monotonicSessionId"] as string,
+  } as const;
+  const acceptedClockBasis = createClockBasis(preimage);
+  const clockBasisId = `clk1_${canonicalHash(CLOCK_BASIS_DOMAIN, preimage)}`;
+  assert.equal(clockBasisId, `clk1_${independentCanonicalHash(CLOCK_BASIS_DOMAIN, preimage)}`);
+  if (clockBasisId !== evidence["basisId"]) throw rejection("clock-basis-identity-invalid");
+  assert.equal(acceptedClockBasis.clockBasisId, clockBasisId);
+  if (maximumErrorMs === 0) {
+    assert.equal(canonicalJson(preimage), canonicalJson(CLOCK_BASIS_PREIMAGE));
+    assert.equal(clockBasisId, CLOCK_BASIS_ID);
+  }
+  return acceptedClockBasis as ClockBasisV1;
+}
+
+function deriveObservationLedgerEntry(
+  executionId: string,
+  parentEntryIds: readonly string[],
+  clock: ClockStampV1,
+  facts: Readonly<Record<string, JsonValue>>,
+): ObservationLedgerEntryV1 {
+  const sortedParents = [...parentEntryIds].sort((left, right) =>
+    Buffer.compare(Buffer.from(left), Buffer.from(right)),
+  );
+  if (
+    new Set(sortedParents).size !== sortedParents.length ||
+    canonicalJson(sortedParents as unknown as JsonValue) !==
+      canonicalJson(parentEntryIds as unknown as JsonValue)
+  ) {
+    throw rejection("observation-ledger-parent-order-invalid");
+  }
+  const preimage = {
+    schemaVersion: 1,
+    executionId,
+    parentEntryIds,
+    clock,
+    facts,
+  } satisfies JsonValue;
+  const entryHash = canonicalHash(OBSERVATION_LEDGER_ENTRY_DOMAIN, preimage);
+  assert.equal(entryHash, independentCanonicalHash(OBSERVATION_LEDGER_ENTRY_DOMAIN, preimage));
+  return {
+    schemaVersion: 1,
+    executionId,
+    entryId: `ole1_${entryHash}`,
+    parentEntryIds,
+    clock,
+    facts,
+    entryHash,
+  };
+}
+
+function rehashObservationLedgerEntry(
+  entry: Omit<ObservationLedgerEntryV1, "entryId" | "entryHash">,
+): ObservationLedgerEntryV1 {
+  const preimage = {
+    schemaVersion: 1,
+    executionId: entry.executionId,
+    parentEntryIds: entry.parentEntryIds,
+    clock: entry.clock,
+    facts: entry.facts,
+  } satisfies JsonValue;
+  const entryHash = canonicalHash(OBSERVATION_LEDGER_ENTRY_DOMAIN, preimage);
+  assert.equal(entryHash, independentCanonicalHash(OBSERVATION_LEDGER_ENTRY_DOMAIN, preimage));
+  return { ...entry, entryId: `ole1_${entryHash}`, entryHash };
+}
+
+function clockDeclarationEntryForBasis(
+  clockBasis: ClockBasisV1,
+  executionId: string,
+): ObservationLedgerEntryV1 {
+  return deriveObservationLedgerEntry(
+    executionId,
+    [],
+    { clockBasisId: null, wallTimeMs: null, monotonicTimeUs: null },
+    { kind: "clock-basis.declared", clockBasis: clockBasis as unknown as JsonValue },
+  );
+}
+
+function clockDeclarationEntry(request: Preflight, executionId: string): ObservationLedgerEntryV1 {
+  return clockDeclarationEntryForBasis(clockBasisFromRequest(request), executionId);
+}
+
+function nonNullClockStamp(request: Preflight, journalSequence: number): ClockStampV1 {
+  const evidence = request.trustedClockEvidence as Readonly<Record<string, unknown>>;
+  const currentSample = evidence["currentSample"] as Readonly<Record<string, unknown>>;
+  const wallTimeMs = Number((currentSample["wallNs"] as bigint) / 1_000_000n) + journalSequence;
+  const monotonicTimeUs = Number(currentSample["monotonicUs"] as bigint) + journalSequence;
+  if (!Number.isSafeInteger(wallTimeMs) || !Number.isSafeInteger(monotonicTimeUs)) {
+    throw rejection("clock-stamp-invalid");
+  }
+  return {
+    clockBasisId: evidence["basisId"] as string,
+    wallTimeMs,
+    monotonicTimeUs,
+  };
+}
+
+function rawArtifactLink(checkpoint: DurableCheckpoint): Readonly<Record<string, JsonValue>> {
+  if (
+    checkpoint.artifactObservationId === null ||
+    checkpoint.artifactObservationHash === null ||
+    checkpoint.artifactDigest === null ||
+    checkpoint.artifactSizeBytes === null
+  ) {
+    throw rejection("observation-ledger-artifact-link-missing");
+  }
+  return {
+    role: "primary",
+    acquisitionObservationId: checkpoint.acquisitionObservationId,
+    vaultObservationId: checkpoint.artifactObservationId,
+    vaultObservationHash: checkpoint.artifactObservationHash,
+    artifactDigest: checkpoint.artifactDigest,
+    sizeBytes: checkpoint.artifactSizeBytes,
+  };
+}
+
+function normalizationFacts(checkpoint: DurableCheckpoint): Readonly<Record<string, JsonValue>> {
+  const rawLink = rawArtifactLink(checkpoint);
+  const loaderIdentity = hash("p1-10-synthetic-loader");
+  const normalizerIdentity = hash("p1-10-synthetic-normalizer");
+  const projectionDigest = hash(`p1-10-projection:${checkpoint.artifactDigest}`);
+  const rawEvidenceSetHash = canonicalHash("peas/raw-evidence-set/v1", [
+    { role: "primary", artifactDigest: checkpoint.artifactDigest as string },
+  ]);
+  const projectionId = `prj1_${canonicalHash("peas/provider-derived-projection/v1", {
+    loaderIdentity,
+    normalizerIdentity,
+    rawEvidenceSetHash,
+    projectionDigest,
+  })}`;
+  const sourceRecordIdentity = `src1_${canonicalHash("peas/provider-source-record/v1", {
+    provider: "alpaca",
+    source: "p1-10-original-synthetic",
+    providerRecordId: checkpoint.artifactObservationId as string,
+  })}`;
+  const sourceVersionIdentity = `svr1_${canonicalHash("peas/provider-source-version/v1", {
+    sourceRecordIdentity,
+    providerRevisionId: "synthetic-revision-v1",
+    projectionDigest,
+    evidenceBundleHash: null,
+  })}`;
+  const revisionFamilyIdentity = `rvf1_${canonicalHash("peas/provider-revision-family/v1", {
+    provider: "alpaca",
+    source: "p1-10-original-synthetic",
+    providerStableRecordFamily: checkpoint.artifactObservationId as string,
+  })}`;
+  const sourceObservationId = `sob1_${canonicalHash("peas/normalized-source-observation/v1", {
+    sourceVersionIdentity,
+    projectionId,
+    sortedUniqueAcquisitionObservationIds: [checkpoint.acquisitionObservationId],
+  })}`;
+  const issuer = FROZEN_INSTRUMENT_REGISTRY[0] as FrozenAliasAuthorityRecord;
+  return {
+    kind: "normalization.emitted",
+    projectionId,
+    projectionDigest,
+    sourceObservationId,
+    sourceIdentity: {
+      provider: "alpaca",
+      source: "p1-10-original-synthetic",
+      sourceKind: "filing",
+      providerRecordId: checkpoint.artifactObservationId as string,
+      providerRevisionId: "synthetic-revision-v1",
+      sourceRecordIdentity,
+      sourceVersionIdentity,
+      revisionFamilyIdentity,
+      supersedesSourceVersionIdentity: null,
+    },
+    publicationTime: {
+      publishedAtMs: null,
+      timestampConfidence: "unknown",
+      originalTimestamp: null,
+    },
+    issuerMapping: {
+      issuerMappingId: issuer.issuerMappingId,
+      ...issuer.issuerMappingPreimage,
+    },
+    subject: "p1-10-original-synthetic-subject",
+    fiscalPeriod: "synthetic-period",
+    evidenceBundleHash: null,
+    primaryArtifactHash: checkpoint.artifactDigest as string,
+    primaryArtifactKind: "raw-artifact",
+    rawArtifactLinks: [rawLink],
+    loaderIdentity,
+    selectionHash: hash("p1-10-synthetic-selection"),
+    loaderTranscriptHash: hash("p1-10-synthetic-loader-transcript"),
+    normalizerIdentity,
+    normalizerTranscriptHash: hash("p1-10-synthetic-normalizer-transcript"),
+    eventDraftHash: hash("p1-10-synthetic-event-draft"),
+  };
+}
+
+function ledgerFactsForRow(
+  rows: readonly JournalRow[],
+  row: JournalRow,
+  request: Preflight,
+  mode: ObservationLedgerMode,
+): Readonly<Record<string, JsonValue>> | null {
+  const checkpoint = row.checkpoint;
+  switch (row.event) {
+    case "acquisition.declared":
+      return {
+        kind: "acquisition.declared",
+        acquisitionObservationId: checkpoint.acquisitionObservationId,
+        provider: "alpaca",
+        retrievalAttemptId: checkpoint.retrievalAttemptId,
+        sanitizedRequestIdentityHash: checkpoint.requestIdentityHash,
+        routeLabel: `alpaca-v2-historical-${request.kind}`,
+      };
+    case "request.started":
+      return mode === "replay"
+        ? null
+        : {
+            kind: "request.started",
+            acquisitionObservationId: checkpoint.acquisitionObservationId,
+          };
+    case "request.succeeded":
+      return mode === "replay"
+        ? null
+        : {
+            kind: "request.succeeded",
+            acquisitionObservationId: checkpoint.acquisitionObservationId,
+            safeResponseMetadataHash: hash("p1-10-synthetic-response-metadata"),
+          };
+    case "artifact.committed":
+      return {
+        kind: "artifact.committed",
+        acquisitionObservationId: checkpoint.acquisitionObservationId,
+        vaultObservationId: checkpoint.artifactObservationId as string,
+        vaultObservationHash: checkpoint.artifactObservationHash as string,
+        artifactDigest: checkpoint.artifactDigest as string,
+        sizeBytes: checkpoint.artifactSizeBytes as number,
+        acquisitionMode: mode,
+        retrievedAtMs: nonNullClockStamp(request, row.sequence).wallTimeMs,
+      };
+    case "artifact.verified":
+      return {
+        kind: "artifact.verified",
+        acquisitionObservationId: checkpoint.acquisitionObservationId,
+        vaultObservationId: checkpoint.artifactObservationId as string,
+        artifactDigest: checkpoint.artifactDigest as string,
+        metadataSizeBytes: checkpoint.artifactSizeBytes as number,
+        consumedSizeBytes: checkpoint.artifactSizeBytes as number,
+      };
+    case "normalization.emitted":
+      return normalizationFacts(checkpoint);
+    case "selection.recorded": {
+      const normalization = [...rows]
+        .reverse()
+        .find((candidate) => candidate.event === "normalization.emitted");
+      if (normalization === undefined) throw rejection("observation-ledger-normalization-missing");
+      const normalizationFact = normalizationFacts(normalization.checkpoint);
+      const commit = [...rows]
+        .reverse()
+        .find(
+          (candidate) =>
+            candidate.event === "artifact.committed" &&
+            candidate.checkpoint.artifactObservationId ===
+              normalization.checkpoint.artifactObservationId,
+        );
+      if (commit === undefined) throw rejection("observation-ledger-commit-missing");
+      const trustedObservationBasis = {
+        basisKind: "retrieval",
+        role: "primary",
+        acquisitionObservationId: normalization.checkpoint.acquisitionObservationId,
+        vaultObservationId: normalization.checkpoint.artifactObservationId as string,
+        retrievedAtMs: nonNullClockStamp(request, commit.sequence).wallTimeMs as number,
+        clockBasisId: clockBasisFromRequest(request).clockBasisId,
+      };
+      const issuerMapping = normalizationFact["issuerMapping"] as Readonly<
+        Record<string, JsonValue>
+      >;
+      const common = {
+        kind: "selection.recorded",
+        purpose: "market-reference-anchor",
+        selectionBasis: "retrieval",
+        trustedObservationBasis,
+        selectedSourceObservationId: normalizationFact["sourceObservationId"] as string,
+        selectedSourceVersionIdentity: (
+          normalizationFact["sourceIdentity"] as Readonly<Record<string, JsonValue>>
+        )["sourceVersionIdentity"] as string,
+        subject: normalizationFact["subject"] as string,
+        issuerMappingId: issuerMapping["issuerMappingId"] as string,
+        asOfMs: nonNullClockStamp(request, row.sequence).wallTimeMs as number,
+        branchId: null,
+      };
+      return {
+        ...common,
+        marketReferenceJoinKey: `mrj1_${canonicalHash("peas/market-reference-join/v1", {
+          subject: common.subject,
+          issuerMappingId: common.issuerMappingId,
+          selectedSourceObservationId: common.selectedSourceObservationId,
+          selectedSourceVersionIdentity: common.selectedSourceVersionIdentity,
+          trustedObservationBasis,
+        })}`,
+      };
+    }
+    case "failure.recorded": {
+      if (mode === "replay") return null;
+      const prior = [...rows.slice(0, -1)]
+        .reverse()
+        .find((candidate) => candidate.checkpoint.stageLedgerFactId !== null);
+      const failedAfter = prior?.event ?? "acquisition.declared";
+      const stage =
+        failedAfter === "acquisition.declared" || failedAfter === "request.started"
+          ? "request"
+          : failedAfter === "request.succeeded"
+            ? "artifact-store"
+            : failedAfter === "artifact.committed"
+              ? "verified-read"
+              : failedAfter === "artifact.verified"
+                ? "normalization"
+                : "selection";
+      return {
+        kind: "failure.recorded",
+        stage,
+        failedAfter,
+        acquisitionObservationId: checkpoint.acquisitionObservationId,
+        sourceObservationId: null,
+        reasonCode: checkpoint.terminalReasonCode ?? "technical-failure",
+        detailHash: null,
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+type DerivedLedgerRow = Readonly<{ row: JournalRow; entry: ObservationLedgerEntryV1 }>;
+
+function stageParentsForDerivedRow(
+  prior: readonly DerivedLedgerRow[],
+  row: JournalRow,
+  mode: ObservationLedgerMode,
+): readonly string[] {
+  const checkpoint = row.checkpoint;
+  const matching = (
+    event: ContractEvent,
+    predicate: (candidate: JournalRow) => boolean = () => true,
+  ): string => {
+    const found = [...prior]
+      .reverse()
+      .find((candidate) => candidate.row.event === event && predicate(candidate.row));
+    if (found === undefined) throw rejection("observation-ledger-stage-parent-missing");
+    return found.entry.entryId;
+  };
+  const sameAttempt = (candidate: JournalRow): boolean =>
+    candidate.checkpoint.marketAcquisitionId === checkpoint.marketAcquisitionId;
+  const sameArtifact = (candidate: JournalRow): boolean =>
+    candidate.checkpoint.artifactObservationId === checkpoint.artifactObservationId;
+  switch (row.event) {
+    case "acquisition.declared":
+      return [];
+    case "request.started":
+      return [matching("acquisition.declared", sameAttempt)];
+    case "request.succeeded":
+      return [matching("request.started", sameAttempt)];
+    case "artifact.committed":
+      return mode === "live"
+        ? [
+            matching("acquisition.declared", sameAttempt),
+            matching("request.succeeded", sameAttempt),
+          ].sort()
+        : [matching("acquisition.declared", sameAttempt)];
+    case "artifact.verified":
+      return [
+        matching(
+          "artifact.committed",
+          (candidate) => sameAttempt(candidate) && sameArtifact(candidate),
+        ),
+      ];
+    case "normalization.emitted":
+      return [matching("artifact.verified", sameArtifact)];
+    case "selection.recorded": {
+      const normalization = [...prior]
+        .reverse()
+        .find((candidate) => candidate.row.event === "normalization.emitted");
+      if (normalization === undefined) throw rejection("observation-ledger-stage-parent-missing");
+      const verified = matching(
+        "artifact.verified",
+        (candidate) =>
+          candidate.checkpoint.artifactObservationId ===
+          normalization.row.checkpoint.artifactObservationId,
+      );
+      return [normalization.entry.entryId, verified].sort();
+    }
+    case "failure.recorded":
+      return prior.length === 0 ? [] : [(prior.at(-1) as DerivedLedgerRow).entry.entryId];
+    default:
+      return [];
+  }
+}
+
+function reconstructObservationLedgerBundle(
+  rows: readonly JournalRow[],
+  request: Preflight,
+  mode: ObservationLedgerMode,
+  validateStoredLiveIds = true,
+): readonly ObservationLedgerEntryV1[] {
+  const executionId = `p1-10-${mode}-${requestIdentity(request)}`;
+  const declaration = clockDeclarationEntry(request, executionId);
+  const derivedRows: DerivedLedgerRow[] = [];
+  for (const row of rows) {
+    const facts = ledgerFactsForRow(rows.slice(0, row.sequence + 1), row, request, mode);
+    if (facts === null) {
+      if (
+        mode === "live" &&
+        (!(JOURNAL_ONLY_EVENTS as readonly ContractEvent[]).includes(row.event) ||
+          row.checkpoint.stageLedgerFactId !== null ||
+          row.checkpoint.causalParentFactIds.length !== 0)
+      ) {
+        throw rejection("observation-ledger-stage-entry-missing");
+      }
+      continue;
+    }
+    const stageParents = stageParentsForDerivedRow(derivedRows, row, mode);
+    const directParents = [...stageParents, declaration.entryId].sort((left, right) =>
+      Buffer.compare(Buffer.from(left), Buffer.from(right)),
+    );
+    if (directParents.filter((parent) => parent === declaration.entryId).length !== 1) {
+      throw rejection("observation-ledger-clock-parent-invalid");
+    }
+    const entry = deriveObservationLedgerEntry(
+      executionId,
+      directParents,
+      nonNullClockStamp(request, row.sequence),
+      facts,
+    );
+    if (mode === "live" && validateStoredLiveIds) {
+      if (
+        row.checkpoint.stageLedgerFactId !== entry.entryId ||
+        canonicalJson(row.checkpoint.causalParentFactIds as unknown as JsonValue) !==
+          canonicalJson(stageParents as unknown as JsonValue)
+      ) {
+        throw rejection("observation-ledger-reconstruction-invalid");
+      }
+    }
+    derivedRows.push({ row, entry });
+  }
+  return [declaration, ...derivedRows.map((derived) => derived.entry)];
+}
+
+function validateObservationLedgerBundle(
+  entries: readonly ObservationLedgerEntryV1[],
+  request: Preflight,
+  mode: ObservationLedgerMode,
+): void {
+  const executionId = `p1-10-${mode}-${requestIdentity(request)}`;
+  const declaration = clockDeclarationEntry(request, executionId);
+  if (
+    entries.length === 0 ||
+    canonicalJson(entries[0] as unknown as JsonValue) !==
+      canonicalJson(declaration as unknown as JsonValue)
+  ) {
+    throw rejection("observation-ledger-clock-declaration-invalid");
+  }
+  const seen = new Set<string>();
+  const clockDeclarations = new Map<string, ObservationLedgerEntryV1>();
+  for (const entry of entries) {
+    const sortedParents = [...entry.parentEntryIds].sort((left, right) =>
+      Buffer.compare(Buffer.from(left), Buffer.from(right)),
+    );
+    if (
+      entry.executionId !== executionId ||
+      canonicalJson(sortedParents as unknown as JsonValue) !==
+        canonicalJson(entry.parentEntryIds as unknown as JsonValue) ||
+      new Set(entry.parentEntryIds).size !== entry.parentEntryIds.length ||
+      entry.entryId !== `ole1_${entry.entryHash}` ||
+      entry.entryHash !==
+        canonicalHash(OBSERVATION_LEDGER_ENTRY_DOMAIN, {
+          schemaVersion: 1,
+          executionId: entry.executionId,
+          parentEntryIds: entry.parentEntryIds,
+          clock: entry.clock,
+          facts: entry.facts,
+        }) ||
+      entry.entryHash !==
+        independentCanonicalHash(OBSERVATION_LEDGER_ENTRY_DOMAIN, {
+          schemaVersion: 1,
+          executionId: entry.executionId,
+          parentEntryIds: entry.parentEntryIds,
+          clock: entry.clock,
+          facts: entry.facts,
+        })
+    ) {
+      throw rejection("observation-ledger-entry-identity-invalid");
+    }
+    if (entry.facts["kind"] === "clock-basis.declared") {
+      const clockBasis = entry.facts["clockBasis"] as Readonly<Record<string, JsonValue>>;
+      if (
+        entry.parentEntryIds.length !== 0 ||
+        entry.clock.clockBasisId !== null ||
+        entry.clock.wallTimeMs !== null ||
+        entry.clock.monotonicTimeUs !== null ||
+        typeof clockBasis["clockBasisId"] !== "string" ||
+        clockDeclarations.has(clockBasis["clockBasisId"])
+      ) {
+        throw rejection("observation-ledger-clock-declaration-invalid");
+      }
+      clockDeclarations.set(clockBasis["clockBasisId"], entry);
+    } else {
+      const matchingDeclaration =
+        entry.clock.clockBasisId === null
+          ? undefined
+          : clockDeclarations.get(entry.clock.clockBasisId);
+      const clockParentIds = entry.parentEntryIds.filter((parent) =>
+        [...clockDeclarations.values()].some((candidate) => candidate.entryId === parent),
+      );
+      if (
+        matchingDeclaration === undefined ||
+        clockParentIds.length !== 1 ||
+        clockParentIds[0] !== matchingDeclaration.entryId
+      ) {
+        throw rejection("observation-ledger-clock-parent-invalid");
+      }
+      for (const parent of entry.parentEntryIds) {
+        if (!seen.has(parent)) throw rejection("observation-ledger-parent-order-invalid");
+      }
+    }
+    if (seen.has(entry.entryId)) throw rejection("observation-ledger-entry-duplicate");
+    seen.add(entry.entryId);
+  }
+  try {
+    validateAcceptedObservationLedgerBundle(
+      entries as unknown as readonly AcceptedObservationLedgerEntryV1[],
+    );
+  } catch (error) {
+    const reason =
+      error instanceof Error && "reasonCode" in error
+        ? String((error as Error & { reasonCode: unknown }).reasonCode)
+        : "unknown";
+    throw rejection(
+      `accepted-observation-ledger-${String(entries.at(-1)?.facts["kind"])}-${reason}`,
+    );
+  }
+}
+
+function validateObservationLedgerAgainstRows(
+  entries: readonly ObservationLedgerEntryV1[],
+  rows: readonly JournalRow[],
+  request: Preflight,
+  mode: ObservationLedgerMode,
+): void {
+  validateObservationLedgerBundle(entries, request, mode);
+  const expected = reconstructObservationLedgerBundle(rows, request, mode);
+  if (
+    canonicalJson(entries as unknown as JsonValue) !==
+    canonicalJson(expected as unknown as JsonValue)
+  ) {
+    throw rejection("observation-ledger-direct-parent-invalid");
+  }
+}
+
 function finalizeCheckpoint(
   rows: readonly JournalRow[],
   event: ContractEvent,
   checkpoint: DurableCheckpoint,
+  expectedRequest: Preflight,
 ): DurableCheckpoint {
   const prior = rows.at(-1)?.checkpoint;
   const journalSequence = rows.length;
-  const stageLedgerFactId = ledgerFactId(event, journalSequence, checkpoint);
-  const finalized = {
+  const withoutLedgerIdentity = {
     ...checkpoint,
     checkpointKind: checkpointKindForEvent(event),
     terminalState:
@@ -2405,11 +3005,37 @@ function finalizeCheckpoint(
       event === "selection.recorded" || event === "failure.recorded"
         ? false
         : checkpoint.incomplete,
-    stageLedgerFactId,
-    causalParentFactIds: exactCausalParents(rows, event, checkpoint),
+    stageLedgerFactId: null,
+    causalParentFactIds: [],
     priorJournalEntryHash: prior?.journalEntryHash ?? "genesis",
     journalSequence,
     journalEntryHash: "",
+  } satisfies DurableCheckpoint;
+  const candidateRow = {
+    sequence: journalSequence,
+    event,
+    checkpoint: withoutLedgerIdentity,
+  } satisfies JournalRow;
+  const candidateBundle = reconstructObservationLedgerBundle(
+    [...rows, candidateRow],
+    expectedRequest,
+    "live",
+    false,
+  );
+  const clockDeclarationId = (candidateBundle[0] as ObservationLedgerEntryV1).entryId;
+  const candidateFacts = ledgerFactsForRow(
+    [...rows, candidateRow],
+    candidateRow,
+    expectedRequest,
+    "live",
+  );
+  const candidateEntry =
+    candidateFacts === null ? null : (candidateBundle.at(-1) as ObservationLedgerEntryV1);
+  const finalized = {
+    ...withoutLedgerIdentity,
+    stageLedgerFactId: candidateEntry?.entryId ?? null,
+    causalParentFactIds:
+      candidateEntry?.parentEntryIds.filter((parent) => parent !== clockDeclarationId) ?? [],
   } satisfies DurableCheckpoint;
   validateCheckpointKindTransition(prior?.checkpointKind ?? null, finalized.checkpointKind);
   return { ...finalized, journalEntryHash: deriveJournalEntryHash(finalized) };
@@ -2716,6 +3342,10 @@ function validateJournalRows(
       throw rejection("checkpoint-budget-reconciliation-failed");
     }
   }
+  const liveBundle = reconstructObservationLedgerBundle(rows, expectedRequest, "live");
+  validateObservationLedgerBundle(liveBundle, expectedRequest, "live");
+  const replayBundle = reconstructObservationLedgerBundle(rows, expectedRequest, "replay");
+  validateObservationLedgerBundle(replayBundle, expectedRequest, "replay");
 }
 
 function validateImmutableReceiptSidecars(
@@ -2786,7 +3416,7 @@ class MemoryContractJournal implements ContractJournal {
 
   append(event: ContractEvent, checkpoint: DurableCheckpoint): void {
     validateJournalAppend(this.#rows, event);
-    const finalized = finalizeCheckpoint(this.#rows, event, checkpoint);
+    const finalized = finalizeCheckpoint(this.#rows, event, checkpoint, this.#expectedRequest);
     const prospective = [
       ...this.#rows,
       { sequence: this.#rows.length, event, checkpoint: finalized },
@@ -2836,7 +3466,7 @@ class SqliteContractJournal implements ContractJournal {
   append(event: ContractEvent, checkpoint: DurableCheckpoint): void {
     const rows = this.rows();
     validateJournalAppend(rows, event);
-    const finalized = finalizeCheckpoint(rows, event, checkpoint);
+    const finalized = finalizeCheckpoint(rows, event, checkpoint, this.#expectedRequest);
     validateJournalRows(
       [...rows, { sequence: rows.length, event, checkpoint: finalized }],
       this.#expectedRequest,
@@ -3240,10 +3870,10 @@ class ArtifactDouble {
     const digest = hash(Buffer.from(bytes).toString("hex"));
     const deliveryOrdinal = this.#observationOrder.length;
     const receipt = {
-      observationId: `vault-observation-${canonicalHash("peas/synthetic-delivery-observation/v1", {
+      observationId: canonicalHash("peas/synthetic-delivery-observation/v1", {
         digest,
         deliveryOrdinal,
-      })}`,
+      }),
       digest,
       bytes: Uint8Array.from(bytes),
       deliveryOrdinal,
@@ -4209,6 +4839,9 @@ class AcquisitionContractModel {
       });
       return "complete";
     } catch (error) {
+      if (error instanceof Error && error.message.includes("accepted-observation-ledger-")) {
+        throw error;
+      }
       const rows = this.journal.rows();
       if (rows.length > 0 && rows.at(-1)?.event !== "selection.recorded") {
         if (ACQUISITION_TRANSITIONS[this.currentState].includes("failed-clean")) {
@@ -6140,6 +6773,251 @@ test("checkpoint exact shape, canonical hash chain, causal parents, and receipt 
   const rows = journal.rows();
   assert.doesNotThrow(() => validateJournalRows(rows));
   const request = exactBoundaryRequest(0n);
+  const frozenClockBasis = clockBasisFromRequest(request);
+  assert.equal(frozenClockBasis.clockBasisId, CLOCK_BASIS_ID);
+  assert.equal(
+    frozenClockBasis.clockBasisId,
+    `clk1_${independentCanonicalHash(
+      CLOCK_BASIS_DOMAIN,
+      CLOCK_BASIS_PREIMAGE as unknown as JsonValue,
+    )}`,
+  );
+  for (const mode of ["live", "replay"] as const) {
+    const bundle = reconstructObservationLedgerBundle(rows, request, mode);
+    assert.doesNotThrow(() => validateObservationLedgerAgainstRows(bundle, rows, request, mode));
+    const declaration = bundle[0] as ObservationLedgerEntryV1;
+    assert.equal(declaration.facts["kind"], "clock-basis.declared", mode);
+    assert.equal(declaration.parentEntryIds.length, 0, mode);
+    for (const entry of bundle.slice(1)) {
+      assert.equal(
+        entry.parentEntryIds.filter((parent) => parent === declaration.entryId).length,
+        1,
+        `${mode}:${entry.facts["kind"] as string}`,
+      );
+      assert.equal(entry.clock.clockBasisId, CLOCK_BASIS_ID, mode);
+    }
+    if (mode === "replay") {
+      assert.equal(
+        bundle.some((entry) => entry.facts["kind"] === "request.started"),
+        false,
+      );
+      assert.equal(
+        bundle.some((entry) => entry.facts["kind"] === "request.succeeded"),
+        false,
+      );
+      assert.equal(
+        bundle
+          .filter((entry) => entry.facts["kind"] === "artifact.committed")
+          .every((entry) => entry.facts["acquisitionMode"] === "replay"),
+        true,
+      );
+    }
+    for (let prefixLength = 1; prefixLength <= rows.length; prefixLength += 1) {
+      const prefix = rows.slice(0, prefixLength);
+      const prefixBundle = reconstructObservationLedgerBundle(prefix, request, mode);
+      assert.doesNotThrow(() =>
+        validateObservationLedgerAgainstRows(prefixBundle, prefix, request, mode),
+      );
+    }
+  }
+
+  const liveBundle = reconstructObservationLedgerBundle(rows, request, "live");
+  const declaration = liveBundle[0] as ObservationLedgerEntryV1;
+  const entryIndex = (kind: string): number =>
+    liveBundle.findIndex((entry) => entry.facts["kind"] === kind);
+  const mutateEntry = (
+    bundle: readonly ObservationLedgerEntryV1[],
+    index: number,
+    mutate: (
+      entry: ObservationLedgerEntryV1,
+    ) => Omit<ObservationLedgerEntryV1, "entryId" | "entryHash">,
+  ): readonly ObservationLedgerEntryV1[] => {
+    const mutated = [...bundle];
+    mutated[index] = rehashObservationLedgerEntry(
+      mutate(mutated[index] as ObservationLedgerEntryV1),
+    );
+    return mutated;
+  };
+  const acquisitionIndex = entryIndex("acquisition.declared");
+  const requestStartedIndex = entryIndex("request.started");
+  const requestSucceededIndex = entryIndex("request.succeeded");
+  const artifactCommitIndex = entryIndex("artifact.committed");
+  assert.ok(
+    acquisitionIndex > 0 &&
+      requestStartedIndex > acquisitionIndex &&
+      requestSucceededIndex > requestStartedIndex &&
+      artifactCommitIndex > requestSucceededIndex,
+  );
+  const acquisitionEntry = liveBundle[acquisitionIndex] as ObservationLedgerEntryV1;
+  const sameSessionSecondBasisPreimage = {
+    ...CLOCK_BASIS_PREIMAGE,
+    maximumErrorMs: 1,
+  } as const;
+  const sameSessionSecondBasis = createClockBasis(sameSessionSecondBasisPreimage);
+  assert.equal(
+    sameSessionSecondBasis.clockBasisId,
+    `clk1_${independentCanonicalHash(
+      CLOCK_BASIS_DOMAIN,
+      sameSessionSecondBasisPreimage as unknown as JsonValue,
+    )}`,
+  );
+  const sameSessionSecondDeclaration = clockDeclarationEntryForBasis(
+    sameSessionSecondBasis as ClockBasisV1,
+    declaration.executionId,
+  );
+  const extraClockParentChild = rehashObservationLedgerEntry({
+    ...acquisitionEntry,
+    parentEntryIds: [
+      ...acquisitionEntry.parentEntryIds,
+      sameSessionSecondDeclaration.entryId,
+    ].sort(),
+  });
+  const genuineExtraClockParentBundle = [
+    declaration,
+    sameSessionSecondDeclaration,
+    extraClockParentChild,
+  ] as const;
+  assert.throws(
+    () =>
+      validateAcceptedObservationLedgerBundle(
+        genuineExtraClockParentBundle as unknown as readonly AcceptedObservationLedgerEntryV1[],
+      ),
+    /observation\.clock-basis-invalid/u,
+    "extra-clock-parent uses a second genuine declaration and a child bound to both declarations",
+  );
+  assert.throws(
+    () => validateObservationLedgerBundle(genuineExtraClockParentBundle, request, "live"),
+    /observation-ledger-clock-parent-invalid/u,
+    "p1-10 also rejects the genuine extra clock parent",
+  );
+
+  const crossSessionPreimage = {
+    ...CLOCK_BASIS_PREIMAGE,
+    monotonicSessionId: "different-process-session",
+  } as const;
+  const crossSessionBasis = createClockBasis(crossSessionPreimage);
+  assert.equal(
+    crossSessionBasis.clockBasisId,
+    `clk1_${independentCanonicalHash(
+      CLOCK_BASIS_DOMAIN,
+      crossSessionPreimage as unknown as JsonValue,
+    )}`,
+  );
+  const crossSessionDeclaration = clockDeclarationEntryForBasis(
+    crossSessionBasis as ClockBasisV1,
+    declaration.executionId,
+  );
+  const crossSessionChild = rehashObservationLedgerEntry({
+    ...acquisitionEntry,
+    parentEntryIds: [crossSessionDeclaration.entryId],
+    clock: {
+      ...acquisitionEntry.clock,
+      clockBasisId: crossSessionBasis.clockBasisId,
+    },
+  });
+  const genuineCrossSessionBundle = [
+    declaration,
+    crossSessionDeclaration,
+    crossSessionChild,
+  ] as const;
+  assert.doesNotThrow(
+    () =>
+      validateAcceptedObservationLedgerBundle(
+        genuineCrossSessionBundle as unknown as readonly AcceptedObservationLedgerEntryV1[],
+      ),
+    "ADR-0009 accepts a genuine declared second execution session",
+  );
+  assert.throws(
+    () => validateObservationLedgerAgainstRows(genuineCrossSessionBundle, rows, request, "live"),
+    /observation-ledger-direct-parent-invalid/u,
+    "p1-10 rejects substituting a different genuine session for the admitted request basis",
+  );
+
+  const hostileBundles: readonly [string, readonly ObservationLedgerEntryV1[]][] = [
+    [
+      "missing-clock-parent",
+      mutateEntry(liveBundle, acquisitionIndex, (entry) => ({
+        ...entry,
+        parentEntryIds: entry.parentEntryIds.filter((parent) => parent !== declaration.entryId),
+      })),
+    ],
+    [
+      "extra-stage-parent",
+      mutateEntry(liveBundle, requestSucceededIndex, (entry) => ({
+        ...entry,
+        parentEntryIds: [
+          ...entry.parentEntryIds,
+          (liveBundle[acquisitionIndex] as ObservationLedgerEntryV1).entryId,
+        ].sort(),
+      })),
+    ],
+    [
+      "forged-clock-parent",
+      mutateEntry(liveBundle, requestStartedIndex, (entry) => ({
+        ...entry,
+        parentEntryIds: entry.parentEntryIds
+          .map((parent) => (parent === declaration.entryId ? `ole1_${"f".repeat(64)}` : parent))
+          .sort(),
+      })),
+    ],
+    [
+      "changed-basis",
+      mutateEntry(liveBundle, requestStartedIndex, (entry) => ({
+        ...entry,
+        clock: { ...entry.clock, clockBasisId: `clk1_${"e".repeat(64)}` },
+      })),
+    ],
+    [
+      "wrong-clock-preimage",
+      mutateEntry(liveBundle, 0, (entry) => ({
+        ...entry,
+        facts: {
+          ...entry.facts,
+          clockBasis: {
+            ...(entry.facts["clockBasis"] as Readonly<Record<string, JsonValue>>),
+            maximumErrorMs: 1,
+          },
+        },
+      })),
+    ],
+    [
+      "reordered-direct-parents",
+      mutateEntry(liveBundle, artifactCommitIndex, (entry) => ({
+        ...entry,
+        parentEntryIds: [...entry.parentEntryIds].reverse(),
+      })),
+    ],
+  ];
+  for (const [name, hostile] of hostileBundles) {
+    assert.throws(
+      () => validateObservationLedgerAgainstRows(hostile, rows, request, "live"),
+      /observation-ledger/u,
+      name,
+    );
+  }
+  const ledgerSqliteRoot = mkdtempSync(join(tmpdir(), "peas-p1-10-clock-ledger-"));
+  const ledgerSqlitePath = join(ledgerSqliteRoot, "clock-parent-prefixes.sqlite");
+  const ledgerSqlite = new SqliteContractJournal(ledgerSqlitePath, 2, "desc");
+  try {
+    ledgerSqlite.bindRequest(request);
+    for (const row of rows) {
+      ledgerSqlite.append(row.event, row.checkpoint);
+      const sqlitePrefix = ledgerSqlite.rows();
+      for (const mode of ["live", "replay"] as const) {
+        const prefixBundle = reconstructObservationLedgerBundle(sqlitePrefix, request, mode);
+        assert.doesNotThrow(() =>
+          validateObservationLedgerAgainstRows(prefixBundle, sqlitePrefix, request, mode),
+        );
+      }
+    }
+    assert.equal(
+      canonicalJson(ledgerSqlite.rows() as unknown as JsonValue),
+      canonicalJson(rows as unknown as JsonValue),
+    );
+  } finally {
+    ledgerSqlite.close();
+    rmSync(ledgerSqliteRoot, { recursive: true, force: true });
+  }
   const attemptRows = rows.filter((row) => row.event === "request.started");
   const committedRows = rows.filter((row) => row.event === "artifact.committed");
   const admittedRows = rows.filter((row) => row.event === "checkpoint.advanced");

@@ -162,10 +162,13 @@ They are superseded operationally by the exact-candidate P1-09 final `GO` at
 P1-09 completion permits the separately gated PR 2E contract-only wave. It does not authorize
 transport, credentials, provider calls, a witness, retention-semantics changes, PR 2F, or merge.
 An internal review recorded `GO` for PR 2E candidate
-`9ec0a48266d72ce42f0a815da6ed367d91a06b7b`, but the later authoritative external user-owned audit
-returned `NO_GO`: the executable model did not prove the frozen wall-clock basis, synchronization,
-error, linkage, and active-response regression contract. PR 2E is reopened only for that bounded
-repair. No retention implementation, PR 2F work, provider witness, or merge is authorized.
+`9ec0a48266d72ce42f0a815da6ed367d91a06b7b`, but the authoritative external user-owned audit
+returned `NO_GO` on its executable wall-clock proof. Repaired candidate
+`5e7dba7d2dfb047f3e840e7b54127e2fc303cd66` closed that finding, but external re-review returned
+`NO_GO` on one newly exposed executable ADR-0009 gap: the journal did not prove a genuine
+`clk1_` clock-basis declaration and its mandatory separate direct-parent relationship on clocked
+ledger facts. PR 2E is reopened only for that bounded journal repair. No retention implementation,
+PR 2F work, provider witness, or merge is authorized.
 
 ### Post-PR 2D next actions
 
@@ -176,7 +179,7 @@ must follow the order below; parallel preparation does not waive a gate.
 | --- | --- | --- | --- | --- |
 | 1 | Close the P1-09 evidence package | Human owner | Complete | Sanitized owner attestation, private Alpaca/FMP responses represented by opaque digest, explicit source/fallback decision, and zero-spend confirmation are recorded |
 | 2 | Independently audit the frozen P1-09 authorization | Integration owner plus fresh independent reviewer | Complete | Exact candidate `36dcf92b...` received `GO`; P1-09 is complete |
-| 3 | Prepare PR 2E, the P1-10 contract package | Agents with non-overlapping ownership | Reopened for bounded external clock repair; validation and external re-review pending | File-ownership map, exact approved-contract mapping, original synthetic acceptance vectors, bounded retry/quota/restart plan, secret/redaction/retention contract, exact clean candidate, and fresh external contract `GO`; no credentials, provider calls, transport, or provider bytes |
+| 3 | Prepare PR 2E, the P1-10 contract package | Agents with non-overlapping ownership | Reopened for bounded ADR-0009 journal clock-parent repair; validation and external re-review pending | File-ownership map, exact approved-contract mapping, original synthetic acceptance vectors, bounded retry/quota/restart plan, secret/redaction/retention contract, exact clean candidate, and fresh external contract `GO`; no credentials, provider calls, transport, or provider bytes |
 | 4 | Resolve the retention architecture authorization gate | Human owner | Unresolved; required before PR 2F independently of contract review | Explicit authorization or rejection of any required ArtifactStore port, migration, reconciliation, and vault-semantics change; PR 2F remains `NO_GO` while unresolved |
 | 5 | Implement PR 2F against the accepted PR 2E exact candidate | Agents after PR 2E `GO`, orchestration acknowledgement, and retention authorization | No | Only the approved zero-spend provider/dataset/feed; private content-addressed raw artifacts; verified loading; deterministic normalization/selection; stable missing reasons; no FMP transport, silent fallback, or paid-plan path; independent implementation `GO` |
 | 6 | Complete live read-only source capture and calendar prewarming | Non-overlapping source and calendar owners | Only where provider/account authorization is already explicit; market-data portions wait for P1-10 | Bounded SEC/FMP/issuer-IR capture as authorized, issuer allowlist, schedule provenance, restart/backfill evidence, and no dispatchable financial effects |
@@ -191,13 +194,14 @@ examples, select `delayed_sip`, or encode an FMP fallback. If review changes the
 identity or scientific meaning, repair and re-audit the preparation package before live
 implementation.
 
-PR 2E candidate `9ec0a48266d72ce42f0a815da6ed367d91a06b7b` had green offline and same-SHA
-Linux, Windows, and 10k gates, but the later external user-owned audit returned `NO_GO` on the
-executable wall-clock proof. The next action is to freeze and fully validate the bounded clock
-repair and return its exact SHA to that external audit task. Separately, the current ArtifactStore
-has no deletion API and migration 005 installs no-delete triggers. Retention implementation remains
-`HUMAN_AUTHORIZATION_REQUIRED / NOT_AUTHORIZED`; PR 2F may not begin without both external contract
-`GO` and separate human authorization of the exact retention architecture.
+PR 2E candidate `5e7dba7d2dfb047f3e840e7b54127e2fc303cd66` had green offline and same-SHA
+Linux, Windows, and 10k gates. External re-review confirmed the earlier wall-clock P0 closed and
+returned `NO_GO` on the executable journal's missing genuine ADR-0009 clock-basis identity and
+mandatory direct parent. The next action is to freeze and fully validate only that bounded journal
+repair and return its exact SHA to the same external audit task. Separately, the current
+ArtifactStore has no deletion API and migration 005 installs no-delete triggers. Retention
+implementation remains `HUMAN_AUTHORIZATION_REQUIRED / NOT_AUTHORIZED`; PR 2F may not begin without
+both external contract `GO` and separate human authorization of the exact retention architecture.
 
 ### Work-session plan through dataset collection
 
@@ -313,9 +317,10 @@ activation, broker/order surface, or financial effect.
 ### Step 4 - build live source capture and delayed market acquisition only after their gates
 
 P1-09 is complete with independent `GO`, but PR 2E candidate
-`9ec0a48266d72ce42f0a815da6ed367d91a06b7b` received external contract `NO_GO`; its bounded
-wall-clock repair requires a new exact candidate and external re-review. PR 2F remains `NO_GO`
-because external contract `GO` is absent and retention implementation is not human-authorized.
+`5e7dba7d2dfb047f3e840e7b54127e2fc303cd66` received external contract `NO_GO`; its bounded
+ADR-0009 journal clock-parent repair requires a new exact candidate and external re-review. PR 2F
+remains `NO_GO` because external contract `GO` is absent and retention implementation is not
+human-authorized.
 Only after both gates close may implementation begin for the approved delayed historical
 provider/dataset/feed behind the accepted recorded contract:
 
