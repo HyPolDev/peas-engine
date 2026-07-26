@@ -275,16 +275,16 @@
           "id": "P1-10",
           "title": "Delayed historical market-reference adapter",
           "status": "in-progress",
-          "preparationStatus": "pr-2e-sixth-contract-repair-integrated-validation-pending",
-          "authorization": "P1-09 COMPLETE; PR 2E contract-only work authorized; PR 2F NO_GO pending exact-candidate contract GO and human retention authorization",
-          "contractCandidate": "PENDING_SIXTH_CANDIDATE_SHA",
-          "contractReview": "PENDING",
-          "contractReviewDocument": "PENDING_SIXTH_INDEPENDENT_REVIEW",
-          "repairStatus": "F-005b durable continuation and F-005c strict timestamps remain closed; the sixth repair adds a literal 65-row synthetic alias-authority catalog with displayed and independently recomputed imap1_/min1_/msa1_/maac1_ identities, binds the catalog identity into configuration, recursively freezes and validates only the exact module catalog, and snapshots plus completely revalidates external catalogs on every use; exact-candidate validation and fresh independent review are required",
+          "preparationStatus": "pr-2e-contract-go-retention-authorization-pending",
+          "authorization": "P1-09 COMPLETE; PR 2E exact candidate 9ec0a48266d72ce42f0a815da6ed367d91a06b7b has independent contract GO; PR 2F NO_GO pending separate human retention authorization",
+          "contractCandidate": "9ec0a48266d72ce42f0a815da6ed367d91a06b7b",
+          "contractReview": "GO",
+          "contractReviewDocument": "docs/audit/pr-2e-p1-10-contract-sixth-review.md",
+          "repairStatus": "Independent sixth review closed F-006a and F-006b while preserving F-005b durable continuation and F-005c strict timestamp closure; all 11 frozen source identities, zero-spend identity, all 65 literal imap1_/min1_/msa1_ triples, and maac1_ catalog identity independently matched; exact-SHA local, Linux, Windows, 10k, and detached 25/25 evidence is green",
           "owner": "agent",
           "dependsOn": ["P1-08", "P1-09"],
           "blocker": "ArtifactStore has no deletion API and migration 005 installs no-delete triggers; retention implementation requires separately authorized port, migration, reconciliation, or vault-semantic changes",
-          "contractBlocker": "The sixth repair is integrated but has no frozen candidate SHA or independent decision yet; retention implementation separately remains HUMAN_AUTHORIZATION_REQUIRED because the frozen ArtifactStore has no deletion API and migration 005 installs no-delete triggers",
+          "contractBlocker": "PR 2E contract GO is complete, but retention implementation remains HUMAN_AUTHORIZATION_REQUIRED / NOT_AUTHORIZED because the frozen ArtifactStore has no deletion API and migration 005 installs no-delete triggers; PR 2F remains NO_GO",
           "preparationScope": "Agents may prepare the file-ownership map, accepted-contract mapping, synthetic and recorded acceptance vectors, bounded retry/quota/restart plan, secret-redaction tests, and pre-implementation audit without credentials, provider calls, live transport, or provider bytes.",
           "acceptance": "A bounded no-new-spend adapter stores private raw artifacts, verifies reads, normalizes market facts, deterministically selects references around the PR 2C observation anchor, and emits marketReferenceJoinKey or a stable missing reason while paid-plan activation is disabled.",
           "evidence": [
@@ -308,7 +308,13 @@
             "contract-no-go@ab245236d4953cde9c90a77fa6eb62143b0b4946",
             "docs/audit/pr-2e-p1-10-contract-fourth-review.md",
             "contract-no-go@00d8d90232e18342ed401f415e085ecb911319a2",
-            "docs/audit/pr-2e-p1-10-contract-fifth-review.md"
+            "docs/audit/pr-2e-p1-10-contract-fifth-review.md",
+            "contract-go@9ec0a48266d72ce42f0a815da6ed367d91a06b7b",
+            "docs/audit/pr-2e-p1-10-contract-sixth-review.md",
+            "ci-run@30179975579",
+            "ci-ubuntu@89734784228",
+            "ci-windows@89734784260",
+            "ci-scale-10k@89736475207"
           ]
         },
         {
