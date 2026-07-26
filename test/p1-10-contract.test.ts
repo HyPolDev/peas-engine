@@ -312,6 +312,7 @@ type ContinuationMaterial = Readonly<{
   bindingHash: string;
   priorTokenHashes: readonly string[];
 }>;
+type TrustedClockEvidenceInput = Readonly<Record<string, unknown>>;
 type Preflight = Readonly<{
   kind: AlpacaKind;
   method: string;
@@ -326,11 +327,7 @@ type Preflight = Readonly<{
   aliasAuthorityCatalogId: string;
   instruments: readonly InstrumentMember[];
   fields: Readonly<Record<string, string>>;
-  requestStartedNs: bigint;
-  maximumClockErrorNs: bigint;
-  priorMonotonicNs: bigint;
-  currentMonotonicNs: bigint;
-  clockAvailable: boolean;
+  trustedClockEvidence: unknown;
   liveEnabled: boolean;
   authorizationMode: string;
   capability: string;
@@ -343,6 +340,49 @@ type Preflight = Readonly<{
   pageOrdinal: number;
   continuation: ContinuationMaterial | null;
 }>;
+
+const CLOCK_BASIS_ID = "synthetic-system-utc-basis-v1";
+const CLOCK_SESSION_ID = "synthetic-process-session-v1";
+const CLOCK_CURRENT_WALL_NS = 1_000_000_000_000_000_000n;
+const MAX_SIGNED_CLOCK_NS = (1n << 63n) - 1n;
+
+function baseTrustedClockEvidence(
+  currentWallNs = CLOCK_CURRENT_WALL_NS,
+  maximumErrorNs: bigint | null = 0n,
+): TrustedClockEvidenceInput {
+  return {
+    available: true,
+    basisId: CLOCK_BASIS_ID,
+    wallClock: "system-utc",
+    synchronization: "verified-bound",
+    maximumErrorNs,
+    maximumErrorBounded: true,
+    monotonicClock: "process-monotonic-us",
+    monotonicSessionId: CLOCK_SESSION_ID,
+    priorSample: {
+      sampleId: "clock-sample-prior",
+      previousSampleId: null,
+      basisId: CLOCK_BASIS_ID,
+      wallClock: "system-utc",
+      synchronization: "verified-bound",
+      wallNs: currentWallNs - 1n,
+      monotonicClock: "process-monotonic-us",
+      monotonicSessionId: CLOCK_SESSION_ID,
+      monotonicUs: 10n,
+    },
+    currentSample: {
+      sampleId: "clock-sample-current",
+      previousSampleId: "clock-sample-prior",
+      basisId: CLOCK_BASIS_ID,
+      wallClock: "system-utc",
+      synchronization: "verified-bound",
+      wallNs: currentWallNs,
+      monotonicClock: "process-monotonic-us",
+      monotonicSessionId: CLOCK_SESSION_ID,
+      monotonicUs: 11n,
+    },
+  };
+}
 
 const ROUTES = Object.freeze({
   quotes: { path: "/v2/stocks/quotes", channel: IDS.alpacaQuotes },
@@ -377,11 +417,7 @@ function baseRequest(kind: AlpacaKind = "quotes"): Preflight {
     aliasAuthorityCatalogId: ALIAS_AUTHORITY_CATALOG_ID,
     instruments: BASE_INSTRUMENTS,
     fields: kind === "bars" ? { ...common, timeframe: "1Min", adjustment: "raw" } : common,
-    requestStartedNs: 1_000_000_000_000_000_000n,
-    maximumClockErrorNs: 0n,
-    priorMonotonicNs: 10n,
-    currentMonotonicNs: 11n,
-    clockAvailable: true,
+    trustedClockEvidence: baseTrustedClockEvidence(),
     liveEnabled: true,
     authorizationMode: "p1-09-approved",
     capability: "historical-market-reference",
@@ -809,6 +845,101 @@ function parseCanonicalNs(text: string): bigint {
   return BigInt(milliseconds) * 1_000_000n + (BigInt(text.slice(20, 29)) % 1_000_000n);
 }
 
+function validateTrustedClockEvidence(evidence: unknown): bigint {
+  assertExactObjectKeys(
+    evidence,
+    [
+      "available",
+      "basisId",
+      "wallClock",
+      "synchronization",
+      "maximumErrorNs",
+      "maximumErrorBounded",
+      "monotonicClock",
+      "monotonicSessionId",
+      "priorSample",
+      "currentSample",
+    ],
+    "clock-unavailable",
+  );
+  const priorSample = evidence["priorSample"];
+  const currentSample = evidence["currentSample"];
+  const sampleKeys = [
+    "sampleId",
+    "previousSampleId",
+    "basisId",
+    "wallClock",
+    "synchronization",
+    "wallNs",
+    "monotonicClock",
+    "monotonicSessionId",
+    "monotonicUs",
+  ] as const;
+  assertExactObjectKeys(priorSample, sampleKeys, "clock-unavailable");
+  assertExactObjectKeys(currentSample, sampleKeys, "clock-unavailable");
+  if (
+    evidence["available"] !== true ||
+    evidence["basisId"] !== CLOCK_BASIS_ID ||
+    evidence["wallClock"] !== "system-utc" ||
+    evidence["synchronization"] !== "verified-bound" ||
+    evidence["monotonicClock"] !== "process-monotonic-us" ||
+    typeof evidence["monotonicSessionId"] !== "string" ||
+    evidence["monotonicSessionId"].length === 0
+  ) {
+    throw rejection("clock-unavailable");
+  }
+  const maximumErrorNs = evidence["maximumErrorNs"];
+  if (
+    evidence["maximumErrorBounded"] !== true ||
+    typeof maximumErrorNs !== "bigint" ||
+    maximumErrorNs < 0n ||
+    maximumErrorNs > MAX_SIGNED_CLOCK_NS
+  ) {
+    throw rejection("clock-unprovable");
+  }
+  for (const sample of [priorSample, currentSample]) {
+    if (
+      typeof sample["sampleId"] !== "string" ||
+      sample["sampleId"].length === 0 ||
+      sample["basisId"] !== evidence["basisId"] ||
+      sample["wallClock"] !== evidence["wallClock"] ||
+      sample["synchronization"] !== evidence["synchronization"] ||
+      sample["monotonicClock"] !== evidence["monotonicClock"] ||
+      sample["monotonicSessionId"] !== evidence["monotonicSessionId"] ||
+      typeof sample["wallNs"] !== "bigint" ||
+      sample["wallNs"] < 0n ||
+      sample["wallNs"] > MAX_SIGNED_CLOCK_NS ||
+      typeof sample["monotonicUs"] !== "bigint" ||
+      sample["monotonicUs"] < 0n ||
+      sample["monotonicUs"] > MAX_SIGNED_CLOCK_NS
+    ) {
+      throw rejection("clock-unavailable");
+    }
+  }
+  if (
+    priorSample["previousSampleId"] !== null ||
+    currentSample["previousSampleId"] !== priorSample["sampleId"] ||
+    currentSample["sampleId"] === priorSample["sampleId"]
+  ) {
+    throw rejection("clock-sample-linkage-invalid");
+  }
+  const priorWallNs = priorSample["wallNs"] as bigint;
+  const currentWallNs = currentSample["wallNs"] as bigint;
+  if (currentWallNs < priorWallNs) throw rejection("clock-regression");
+  const priorMonotonicUs = priorSample["monotonicUs"] as bigint;
+  const currentMonotonicUs = currentSample["monotonicUs"] as bigint;
+  if (currentMonotonicUs <= priorMonotonicUs) throw rejection("clock-regression");
+  if (maximumErrorNs > currentWallNs) throw rejection("clock-unprovable");
+  const conservativeTrustedRequestStartedAtNs = currentWallNs - maximumErrorNs;
+  if (
+    conservativeTrustedRequestStartedAtNs < 0n ||
+    conservativeTrustedRequestStartedAtNs > MAX_SIGNED_CLOCK_NS
+  ) {
+    throw rejection("clock-unprovable");
+  }
+  return conservativeTrustedRequestStartedAtNs;
+}
+
 function preflight(
   value: Preflight,
   precedingCheckpoint: DurableCheckpoint | null = null,
@@ -838,10 +969,9 @@ function preflight(
   ) {
     throw rejection("identity-not-authorized");
   }
-  if (!value.clockAvailable || value.currentMonotonicNs <= value.priorMonotonicNs) {
-    throw rejection("clock-unavailable");
-  }
-  if (value.maximumClockErrorNs < 0n) throw rejection("clock-unprovable");
+  const conservativeTrustedRequestStartedAtNs = validateTrustedClockEvidence(
+    value.trustedClockEvidence,
+  );
   if (
     value.zeroSpendPolicyId !== ZERO_SPEND_POLICY_ID ||
     value.zeroSpendPolicyPreimage === null ||
@@ -965,18 +1095,23 @@ function preflight(
   ) {
     throw rejection("window-invalid");
   }
-  const conservativeStarted = value.requestStartedNs - value.maximumClockErrorNs;
-  if (end > conservativeStarted - HISTORY_DELAY_NS) throw rejection("history-boundary");
+  if (conservativeTrustedRequestStartedAtNs < HISTORY_DELAY_NS) {
+    throw rejection("history-boundary");
+  }
+  if (end > conservativeTrustedRequestStartedAtNs - HISTORY_DELAY_NS) {
+    throw rejection("history-boundary");
+  }
 }
 
-function exactBoundaryRequest(deltaNs: bigint): Preflight {
-  const endNs = baseRequest().requestStartedNs - HISTORY_DELAY_NS + deltaNs;
+function exactBoundaryRequest(deltaNs: bigint, maximumErrorNs = 0n): Preflight {
+  const endNs = CLOCK_CURRENT_WALL_NS - maximumErrorNs - HISTORY_DELAY_NS + deltaNs;
   const milliseconds = endNs / 1_000_000n;
   const fractional = (endNs % 1_000_000_000n).toString().padStart(9, "0");
   const prefix = new Date(Number(milliseconds)).toISOString().slice(0, 19);
   const canonicalEnd = `${prefix}.${fractional}Z`;
   return {
     ...baseRequest(),
+    trustedClockEvidence: baseTrustedClockEvidence(CLOCK_CURRENT_WALL_NS, maximumErrorNs),
     fields: {
       ...baseRequest().fields,
       start: canonicalEnd,
@@ -2264,7 +2399,7 @@ function finalizeCheckpoint(
       event === "selection.recorded"
         ? "selection-recorded"
         : event === "failure.recorded"
-          ? "terminal-failure"
+          ? (checkpoint.terminalReasonCode ?? "terminal-failure")
           : checkpoint.terminalReasonCode,
     incomplete:
       event === "selection.recorded" || event === "failure.recorded"
@@ -2950,21 +3085,116 @@ class ProviderDouble {
   }
 }
 
-class ActiveClockBasisDouble {
-  priorMonotonicNs = 10n;
-  currentMonotonicNs = 11n;
-  wallAvailable = true;
+type ActiveClockFault =
+  | "wall-regression"
+  | "monotonic-regression"
+  | "changed-basis"
+  | "wrong-synchronization"
+  | "absent-error"
+  | "unbounded-error";
+type MutableTrustedClockSample = {
+  sampleId: string;
+  previousSampleId: string | null;
+  basisId: string;
+  wallClock: string;
+  synchronization: string;
+  wallNs: bigint;
+  monotonicClock: string;
+  monotonicSessionId: string;
+  monotonicUs: bigint;
+};
+type MutableTrustedClockEvidence = {
+  available: boolean;
+  basisId: string;
+  wallClock: string;
+  synchronization: string;
+  maximumErrorNs: bigint | null;
+  maximumErrorBounded: boolean;
+  monotonicClock: string;
+  monotonicSessionId: string;
+  priorSample: MutableTrustedClockSample;
+  currentSample: MutableTrustedClockSample;
+};
 
-  validate(): void {
-    if (!this.wallAvailable || this.currentMonotonicNs <= this.priorMonotonicNs) {
-      throw rejection("clock-unavailable");
-    }
-    this.priorMonotonicNs = this.currentMonotonicNs;
-    this.currentMonotonicNs += 1n;
+class ActiveClockBasisDouble {
+  readonly evidence: MutableTrustedClockEvidence;
+  readonly requestAuthority: Readonly<{
+    basisId: string;
+    wallClock: string;
+    synchronization: string;
+    maximumErrorNs: bigint;
+    monotonicClock: string;
+    monotonicSessionId: string;
+    currentSampleId: string;
+    currentWallNs: bigint;
+    currentMonotonicUs: bigint;
+  }>;
+  #sampleOrdinal = 1;
+
+  constructor(requestEvidence: unknown) {
+    validateTrustedClockEvidence(requestEvidence);
+    const snapshot = structuredClone(requestEvidence) as MutableTrustedClockEvidence;
+    const admittedCurrent = { ...snapshot.currentSample };
+    this.requestAuthority = Object.freeze({
+      basisId: snapshot.basisId,
+      wallClock: snapshot.wallClock,
+      synchronization: snapshot.synchronization,
+      maximumErrorNs: snapshot.maximumErrorNs as bigint,
+      monotonicClock: snapshot.monotonicClock,
+      monotonicSessionId: snapshot.monotonicSessionId,
+      currentSampleId: admittedCurrent.sampleId,
+      currentWallNs: admittedCurrent.wallNs,
+      currentMonotonicUs: admittedCurrent.monotonicUs,
+    });
+    this.evidence = {
+      ...snapshot,
+      priorSample: { ...admittedCurrent, previousSampleId: null },
+      currentSample: {
+        ...admittedCurrent,
+        sampleId: "clock-sample-active-1",
+        previousSampleId: admittedCurrent.sampleId,
+        wallNs: admittedCurrent.wallNs + 1n,
+        monotonicUs: admittedCurrent.monotonicUs + 1n,
+      },
+    };
+    validateTrustedClockEvidence(this.evidence);
   }
 
-  regress(): void {
-    this.currentMonotonicNs = this.priorMonotonicNs - 1n;
+  validateAndAdvance(): void {
+    validateTrustedClockEvidence(this.evidence);
+    const prior = { ...this.evidence.currentSample, previousSampleId: null };
+    this.#sampleOrdinal += 1;
+    this.evidence.priorSample = prior;
+    this.evidence.currentSample = {
+      ...prior,
+      sampleId: `clock-sample-active-${this.#sampleOrdinal}`,
+      previousSampleId: prior.sampleId,
+      wallNs: prior.wallNs + 1n,
+      monotonicUs: prior.monotonicUs + 1n,
+    };
+  }
+
+  inject(fault: ActiveClockFault): void {
+    switch (fault) {
+      case "wall-regression":
+        this.evidence.currentSample.wallNs = this.evidence.priorSample.wallNs - 1n;
+        break;
+      case "monotonic-regression":
+        this.evidence.currentSample.monotonicUs = this.evidence.priorSample.monotonicUs - 1n;
+        break;
+      case "changed-basis":
+        this.evidence.currentSample.basisId = "synthetic-system-utc-basis-changed";
+        break;
+      case "wrong-synchronization":
+        this.evidence.synchronization = "unverified";
+        break;
+      case "absent-error":
+        this.evidence.maximumErrorNs = null;
+        break;
+      case "unbounded-error":
+        this.evidence.maximumErrorBounded = false;
+        break;
+    }
   }
 }
 
@@ -3115,7 +3345,7 @@ function normalizedDigestFromArtifact(artifact: ArtifactDouble): string {
 type AcquisitionFault = Readonly<{
   timeoutBeforeHeaders?: boolean;
   bodyFailureAt?: number;
-  activeClockRegression?: boolean;
+  activeClockFault?: ActiveClockFault;
   schemaFailure?: boolean;
   storeFailure?: boolean;
   readFailure?: boolean;
@@ -3222,7 +3452,7 @@ type MutableCoordinatorSnapshot = Readonly<{
 class AcquisitionContractModel {
   readonly counters = zeroCounters();
   readonly budget = new ContractBudget();
-  readonly activeClock = new ActiveClockBasisDouble();
+  readonly activeClock: ActiveClockBasisDouble;
   readonly quota: RollingQuota;
   currentState: AcquisitionState;
   currentPageOrdinal = 0;
@@ -3251,6 +3481,7 @@ class AcquisitionContractModel {
   ) {
     this.currentState = initialState;
     this.quota = new RollingQuota(LIMITS.rateAttempts, quotaEntitlementLimit);
+    this.activeClock = new ActiveClockBasisDouble(request.trustedClockEvidence);
     this.journal.bindRequest(request);
   }
 
@@ -3788,8 +4019,10 @@ class AcquisitionContractModel {
         const bytes = await this.provider.response(
           fault.bodyFailureAt ?? null,
           (index) => {
-            if (fault.activeClockRegression && index === 0) this.activeClock.regress();
-            this.activeClock.validate();
+            if (fault.activeClockFault !== undefined && index === 0) {
+              this.activeClock.inject(fault.activeClockFault);
+            }
+            this.activeClock.validateAndAdvance();
           },
           this.currentPageOrdinal,
         );
@@ -3975,15 +4208,21 @@ class AcquisitionContractModel {
         },
       });
       return "complete";
-    } catch {
+    } catch (error) {
       const rows = this.journal.rows();
       if (rows.length > 0 && rows.at(-1)?.event !== "selection.recorded") {
         if (ACQUISITION_TRANSITIONS[this.currentState].includes("failed-clean")) {
+          const errorMessage = error instanceof Error ? error.message : "";
+          const terminalReasonCode = errorMessage.includes("p1-10.clock-regression")
+            ? "clock-regression"
+            : errorMessage.includes("p1-10.clock-")
+              ? "clock-unavailable"
+              : "technical-failure";
           this.applyAcquisitionEvent("technical-failure-settled", this.exactEventEvidence(), {
             journalEvent: "failure.recorded",
             checkpointOverrides: {
               terminalState: "failed-clean",
-              terminalReasonCode: "technical-failure",
+              terminalReasonCode,
               incomplete: false,
             },
           });
@@ -5264,6 +5503,253 @@ test("outer-frozen mutable-inner external catalogs are snapshotted and revalidat
   }
 });
 
+test("trusted system-utc basis and same-session monotonic evidence fail closed at pre-dispatch", () => {
+  const mutateClock = (mutate: (evidence: MutableTrustedClockEvidence) => void): unknown => {
+    const evidence = structuredClone(
+      baseTrustedClockEvidence(),
+    ) as unknown as MutableTrustedClockEvidence;
+    mutate(evidence);
+    return evidence;
+  };
+  const omitClockField = (field: string): unknown => {
+    const evidence = structuredClone(baseTrustedClockEvidence()) as Record<string, unknown>;
+    delete evidence[field];
+    return evidence;
+  };
+  const omitCurrentSampleField = (field: string): unknown => {
+    const evidence = structuredClone(
+      baseTrustedClockEvidence(),
+    ) as unknown as MutableTrustedClockEvidence;
+    delete (evidence.currentSample as unknown as Record<string, unknown>)[field];
+    return evidence;
+  };
+  const omitPriorSampleField = (field: string): unknown => {
+    const evidence = structuredClone(
+      baseTrustedClockEvidence(),
+    ) as unknown as MutableTrustedClockEvidence;
+    delete (evidence.priorSample as unknown as Record<string, unknown>)[field];
+    return evidence;
+  };
+  const vectors: readonly [string, () => unknown][] = [
+    ["evidence-absent", () => undefined],
+    ["evidence-null", () => null],
+    ["availability-absent", () => omitClockField("available")],
+    [
+      "availability-null",
+      () =>
+        mutateClock((evidence) => {
+          evidence.available = null as unknown as boolean;
+        }),
+    ],
+    [
+      "availability-wrong",
+      () =>
+        mutateClock((evidence) => {
+          evidence.available = "true" as unknown as boolean;
+        }),
+    ],
+    ["basis-id-absent", () => omitClockField("basisId")],
+    [
+      "basis-id-null",
+      () =>
+        mutateClock((evidence) => {
+          evidence.basisId = null as unknown as string;
+        }),
+    ],
+    [
+      "basis-id-wrong",
+      () =>
+        mutateClock((evidence) => {
+          evidence.basisId = "other-system-basis";
+        }),
+    ],
+    ["wall-clock-absent", () => omitClockField("wallClock")],
+    [
+      "wall-clock-null",
+      () =>
+        mutateClock((evidence) => {
+          evidence.wallClock = null as unknown as string;
+        }),
+    ],
+    [
+      "wall-clock-wrong",
+      () =>
+        mutateClock((evidence) => {
+          evidence.wallClock = "local-time";
+        }),
+    ],
+    ["synchronization-absent", () => omitClockField("synchronization")],
+    [
+      "synchronization-null",
+      () =>
+        mutateClock((evidence) => {
+          evidence.synchronization = null as unknown as string;
+        }),
+    ],
+    [
+      "synchronization-wrong",
+      () =>
+        mutateClock((evidence) => {
+          evidence.synchronization = "unverified";
+        }),
+    ],
+    ["error-absent", () => omitClockField("maximumErrorNs")],
+    ["error-bound-evidence-absent", () => omitClockField("maximumErrorBounded")],
+    [
+      "error-null",
+      () =>
+        mutateClock((evidence) => {
+          evidence.maximumErrorNs = null;
+        }),
+    ],
+    [
+      "error-negative",
+      () =>
+        mutateClock((evidence) => {
+          evidence.maximumErrorNs = -1n;
+        }),
+    ],
+    [
+      "error-wrong-type",
+      () =>
+        mutateClock((evidence) => {
+          evidence.maximumErrorNs = "0" as unknown as bigint;
+        }),
+    ],
+    [
+      "error-unbounded",
+      () =>
+        mutateClock((evidence) => {
+          evidence.maximumErrorBounded = false;
+        }),
+    ],
+    [
+      "error-over-signed-bound",
+      () =>
+        mutateClock((evidence) => {
+          evidence.maximumErrorNs = MAX_SIGNED_CLOCK_NS + 1n;
+        }),
+    ],
+    [
+      "error-underflows-wall",
+      () =>
+        mutateClock((evidence) => {
+          evidence.maximumErrorNs = CLOCK_CURRENT_WALL_NS + 1n;
+        }),
+    ],
+    ["monotonic-clock-absent", () => omitClockField("monotonicClock")],
+    ["monotonic-session-absent", () => omitClockField("monotonicSessionId")],
+    ["prior-sample-absent", () => omitClockField("priorSample")],
+    ["current-sample-absent", () => omitClockField("currentSample")],
+    [
+      "prior-sample-null",
+      () =>
+        mutateClock((evidence) => {
+          evidence.priorSample = null as unknown as MutableTrustedClockSample;
+        }),
+    ],
+    [
+      "current-sample-null",
+      () =>
+        mutateClock((evidence) => {
+          evidence.currentSample = null as unknown as MutableTrustedClockSample;
+        }),
+    ],
+    ["prior-sample-id-absent", () => omitPriorSampleField("sampleId")],
+    ["prior-sample-link-absent", () => omitPriorSampleField("previousSampleId")],
+    ["prior-sample-basis-link-absent", () => omitPriorSampleField("basisId")],
+    ["current-sample-basis-link-absent", () => omitCurrentSampleField("basisId")],
+    [
+      "wall-regression",
+      () =>
+        mutateClock((evidence) => {
+          evidence.currentSample.wallNs = evidence.priorSample.wallNs - 1n;
+        }),
+    ],
+    [
+      "monotonic-equality",
+      () =>
+        mutateClock((evidence) => {
+          evidence.currentSample.monotonicUs = evidence.priorSample.monotonicUs;
+        }),
+    ],
+    [
+      "monotonic-regression",
+      () =>
+        mutateClock((evidence) => {
+          evidence.currentSample.monotonicUs = evidence.priorSample.monotonicUs - 1n;
+        }),
+    ],
+    [
+      "sample-basis-link-absent",
+      () =>
+        mutateClock((evidence) => {
+          evidence.currentSample.basisId = null as unknown as string;
+        }),
+    ],
+    [
+      "sample-basis-link-changed",
+      () =>
+        mutateClock((evidence) => {
+          evidence.currentSample.basisId = "changed-system-basis";
+        }),
+    ],
+    ["sample-id-absent", () => omitCurrentSampleField("sampleId")],
+    ["sample-link-absent", () => omitCurrentSampleField("previousSampleId")],
+    [
+      "sample-link-changed",
+      () =>
+        mutateClock((evidence) => {
+          evidence.currentSample.previousSampleId = "unrelated-sample";
+        }),
+    ],
+    [
+      "sample-wall-clock-changed",
+      () =>
+        mutateClock((evidence) => {
+          evidence.currentSample.wallClock = "local-time";
+        }),
+    ],
+    [
+      "sample-synchronization-changed",
+      () =>
+        mutateClock((evidence) => {
+          evidence.currentSample.synchronization = "unverified";
+        }),
+    ],
+    [
+      "monotonic-clock-wrong",
+      () =>
+        mutateClock((evidence) => {
+          evidence.currentSample.monotonicClock = "wall-clock";
+        }),
+    ],
+    [
+      "monotonic-session-null",
+      () =>
+        mutateClock((evidence) => {
+          evidence.monotonicSessionId = null as unknown as string;
+        }),
+    ],
+    [
+      "monotonic-session-changed",
+      () =>
+        mutateClock((evidence) => {
+          evidence.currentSample.monotonicSessionId = "different-process-session";
+        }),
+    ],
+  ];
+  for (const [, evidence] of vectors) {
+    assertGuardedPreflightReject(
+      { ...exactBoundaryRequest(0n), trustedClockEvidence: evidence() },
+      /clock/u,
+    );
+  }
+
+  assert.doesNotThrow(() => preflight(exactBoundaryRequest(0n, 7n)));
+  assertGuardedPreflightReject(exactBoundaryRequest(1n, 7n), /history-boundary/u);
+});
+
 test("closed Alpaca route, value, capability, and one-nanosecond time gates fail before dispatch", () => {
   assert.doesNotThrow(() => preflight(exactBoundaryRequest(0n)));
   assert.throws(() => preflight(exactBoundaryRequest(1n)), /history-boundary/u);
@@ -5309,7 +5795,7 @@ test("closed Alpaca route, value, capability, and one-nanosecond time gates fail
   );
 });
 
-test("clock, first-page, cost, credential ordering, and active-response regression fail closed", () => {
+test("first-page, cost, and credential ordering fail closed", () => {
   let credentialReads = 0;
   let calls = 0;
   const execute = (request: Preflight): void => {
@@ -5318,9 +5804,6 @@ test("clock, first-page, cost, credential ordering, and active-response regressi
     calls += 1;
   };
   for (const request of [
-    { ...exactBoundaryRequest(0n), clockAvailable: false },
-    { ...exactBoundaryRequest(0n), currentMonotonicNs: 9n },
-    { ...exactBoundaryRequest(0n), maximumClockErrorNs: -1n },
     { ...exactBoundaryRequest(0n), liveEnabled: false },
     { ...exactBoundaryRequest(0n), authorizationMode: "" },
     { ...exactBoundaryRequest(0n), capability: "subscription-mutation" },
@@ -5336,11 +5819,6 @@ test("clock, first-page, cost, credential ordering, and active-response regressi
   }
   assert.equal(credentialReads, 0);
   assert.equal(calls, 0);
-  assert.throws(
-    () =>
-      preflight({ ...exactBoundaryRequest(0n), priorMonotonicNs: 12n, currentMonotonicNs: 11n }),
-    /clock-unavailable/u,
-  );
 });
 
 test("every frozen project ceiling has an exact and one-over executable vector", () => {
@@ -6181,7 +6659,12 @@ test("provider/body/schema/store/read fault doubles enforce cleanup and causal j
   const cases: readonly [string, AcquisitionFault][] = [
     ["timeout-before-headers", { timeoutBeforeHeaders: true }],
     ["timeout-during-body", { bodyFailureAt: 0 }],
-    ["active-clock-regression", { activeClockRegression: true }],
+    ["active-wall-regression", { activeClockFault: "wall-regression" }],
+    ["active-monotonic-regression", { activeClockFault: "monotonic-regression" }],
+    ["active-changed-basis", { activeClockFault: "changed-basis" }],
+    ["active-wrong-synchronization", { activeClockFault: "wrong-synchronization" }],
+    ["active-absent-error", { activeClockFault: "absent-error" }],
+    ["active-unbounded-error", { activeClockFault: "unbounded-error" }],
     ["truncated-middle-body", { bodyFailureAt: 1 }],
     ["declared-length-last-body", { bodyFailureAt: 2 }],
     ["malformed-schema", { schemaFailure: true }],
@@ -6192,17 +6675,40 @@ test("provider/body/schema/store/read fault doubles enforce cleanup and causal j
     const provider = new ProviderDouble();
     const artifact = new ArtifactDouble();
     const journal = new MemoryContractJournal();
-    const model = new AcquisitionContractModel(
-      exactBoundaryRequest(0n),
-      provider,
-      artifact,
-      journal,
+    const request = exactBoundaryRequest(0n);
+    const requestClock = request.trustedClockEvidence as MutableTrustedClockEvidence;
+    const model = new AcquisitionContractModel(request, provider, artifact, journal);
+    assert.equal(model.activeClock.requestAuthority.basisId, requestClock.basisId, name);
+    assert.equal(
+      model.activeClock.requestAuthority.monotonicSessionId,
+      requestClock.monotonicSessionId,
+      name,
+    );
+    assert.equal(
+      model.activeClock.requestAuthority.currentWallNs,
+      requestClock.currentSample.wallNs,
+      name,
+    );
+    assert.equal(
+      model.activeClock.evidence.priorSample.sampleId,
+      requestClock.currentSample.sampleId,
+      name,
+    );
+    assert.equal(
+      model.activeClock.evidence.priorSample.wallNs,
+      requestClock.currentSample.wallNs,
+      name,
+    );
+    assert.equal(
+      model.activeClock.evidence.priorSample.monotonicUs,
+      requestClock.currentSample.monotonicUs,
+      name,
     );
     assert.equal(await model.run(fault), "failed", name);
     const events = journal.rows().map((row) => row.event);
     assert.equal(events.at(-1), "failure.recorded", name);
     assert.equal(events.includes("selection.recorded"), false, name);
-    if (fault.bodyFailureAt !== undefined || fault.activeClockRegression) {
+    if (fault.bodyFailureAt !== undefined || fault.activeClockFault !== undefined) {
       for (const resource of provider.resources) {
         assert.equal(resource.aborted, true, name);
         assert.equal(resource.destroyed, true, name);
@@ -6213,7 +6719,7 @@ test("provider/body/schema/store/read fault doubles enforce cleanup and causal j
     if (
       fault.timeoutBeforeHeaders ||
       fault.bodyFailureAt !== undefined ||
-      fault.activeClockRegression ||
+      fault.activeClockFault !== undefined ||
       fault.schemaFailure
     ) {
       assert.equal(events.includes("artifact.committed"), false, name);
@@ -6222,6 +6728,27 @@ test("provider/body/schema/store/read fault doubles enforce cleanup and causal j
     if (fault.readFailure) {
       assert.equal(events.includes("artifact.committed"), true, name);
       assert.equal(events.includes("artifact.verified"), false, name);
+    }
+    if (fault.activeClockFault !== undefined) {
+      const terminal = journal.rows().at(-1)?.checkpoint;
+      assert.ok(terminal !== undefined, name);
+      assert.match(terminal.terminalReasonCode ?? "", /^clock-(regression|unavailable)$/u, name);
+      assert.equal(model.counters.artifactCalls, 0, name);
+      assert.equal(model.counters.normalizationCalls, 0, name);
+      assert.equal(model.counters.selectionCalls, 0, name);
+      assert.equal(model.counters.postReturnActivity, 0, name);
+      const settledJournal = canonicalJson(journal.rows() as unknown as JsonValue);
+      const settledCounters = { ...model.counters };
+      await Promise.resolve();
+      assert.equal(canonicalJson(journal.rows() as unknown as JsonValue), settledJournal, name);
+      assert.deepEqual(model.counters, settledCounters, name);
+      if (fault.activeClockFault === "changed-basis") {
+        assert.notEqual(
+          model.activeClock.evidence.currentSample.basisId,
+          model.activeClock.requestAuthority.basisId,
+          name,
+        );
+      }
     }
   }
 });

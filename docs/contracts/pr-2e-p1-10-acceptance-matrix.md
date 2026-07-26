@@ -65,18 +65,32 @@ The tested authorization predicate is:
 
 `end <= conservativeTrustedRequestStartedAt - 900000000000ns`.
 
-`conservativeTrustedRequestStartedAt` subtracts the declared maximum clock error. The source is the
-trusted `request.started` stamp, never response, completion, replay, local-file, rounded, or database
-time.
+`conservativeTrustedRequestStartedAt` is exact signed-nanosecond
+`currentSample.wallNs - maximumErrorNs`. The evidence is a closed runtime object with
+`basisId`, `wallClock=system-utc`, `synchronization=verified-bound`, bounded non-null
+`maximumErrorNs`, `monotonicClock=process-monotonic-us`, one nonempty `monotonicSessionId`, and
+linked prior/current samples. Each sample repeats the unchanged basis, wall-clock,
+synchronization, monotonic-clock, and monotonic-session identity. The current sample links to the
+prior sample and is the trusted `request.started` source. Response, completion, replay, local-file,
+rounded, and database time are never authority.
 
 | Vector | Expected |
 | --- | --- |
-| End exactly at the conservative 15-minute boundary | accept |
-| End one nanosecond newer | `reject-zero-call` |
+| Complete exact basis and linked samples; current wall non-regressing; current same-session monotonic microseconds strictly greater; nonnegative bounded error | accept |
+| End exactly at `current wallNs - maximumErrorNs - 900000000000ns`, including a positive bounded error | accept |
+| End one nanosecond newer than that conservative boundary | guarded rejection with credential, transport construction, DNS/network/provider, artifact, normalization, selection, and post-return counters all exactly zero |
 | End before boundary | accept |
-| Wall basis unavailable or maximum error invalid/unprovable | `reject-zero-call` |
-| Same-session monotonic order equal or regressing before dispatch | `reject-zero-call` |
-| Wall or monotonic regression while response is active | destroy/settle body and siblings; terminal clock failure; no commit/normalization/selection |
+| Complete evidence object absent/null, or any top-level `available`, `basisId`, `wallClock`, `synchronization`, `maximumErrorNs`, `maximumErrorBounded`, `monotonicClock`, `monotonicSessionId`, `priorSample`, or `currentSample` field omitted | each omission executes as a separate guarded zero-side-effect pre-dispatch rejection |
+| Availability null/wrong/false; basis ID null/wrong; `wallClock` null/not `system-utc`; or prior/current sample basis linkage absent/changed | guarded zero-side-effect pre-dispatch rejection |
+| Synchronization null/not `verified-bound`, including a changed sample synchronization | guarded zero-side-effect pre-dispatch rejection |
+| Maximum error null/wrong-type/negative/explicitly unbounded/over the signed bound/greater than current wall | guarded zero-side-effect pre-dispatch rejection |
+| Prior or current sample null; prior/current sample ID, predecessor link, or basis link omitted; sample link changed; or current sample does not link exactly to prior | each omission/mutation executes as a guarded zero-side-effect pre-dispatch rejection |
+| Current wall sample below the prior wall sample in the unchanged basis | guarded zero-side-effect pre-dispatch rejection |
+| Monotonic clock absent/wrong, monotonic session absent/null/changed, or current same-session `process-monotonic-us` value equal to or below prior | guarded zero-side-effect pre-dispatch rejection |
+| Active-response clock initialization | validate and snapshot the admitted request evidence; the preflight current sample is the active prior authority with byte-identical basis ID, session ID, wall value, monotonic value, and sample ID; every mutation-boundary sample advances from it |
+| Active-response wall regression | abort/destroy/settle body and every sibling; terminal `clock-regression`; no artifact commit/normalization/selection or post-return activity |
+| Active-response monotonic regression or changed basis | abort/destroy/settle body and every sibling; terminal clock failure; no artifact commit/normalization/selection or post-return activity |
+| Active-response wrong synchronization, absent error, or unbounded error evidence | abort/destroy/settle body and every sibling; terminal `clock-unavailable`; no artifact commit/normalization/selection or post-return activity |
 
 ## Exact-limit and one-over register
 
