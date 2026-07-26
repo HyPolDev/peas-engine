@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, realpath } from "node:fs/promises";
+import { lstat, mkdir, open, realpath, rm } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
@@ -186,4 +186,50 @@ export async function syncDirectory(path: string): Promise<void> {
       }
     }
   }
+}
+
+export async function eraseTrustedFileMatchingDigest(
+  root: string,
+  path: string,
+  device: number,
+  expectedDigest: string,
+): Promise<"erased" | "absent" | "different-content"> {
+  await assertTrustedPath(root, path, device);
+  let before: Awaited<ReturnType<typeof lstat>>;
+  try {
+    before = await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "absent";
+    throw error;
+  }
+  if (!before.isFile() || before.isSymbolicLink() || before.dev !== device || before.nlink !== 1)
+    throw new ArtifactVaultError(
+      "unsafe-filesystem-object",
+      "Retention target is not a trusted single-owner file",
+    );
+  const verified = await hashTrustedFile(path);
+  if (verified.digest !== expectedDigest) return "different-content";
+  const current = await lstat(path);
+  if (
+    current.dev !== before.dev ||
+    current.ino !== before.ino ||
+    current.size !== before.size ||
+    current.mtimeMs !== before.mtimeMs
+  )
+    throw new ArtifactVaultError(
+      "unsafe-filesystem-object",
+      "Retention target identity changed before erasure",
+    );
+  await rm(path);
+  await syncDirectory(dirname(path));
+  try {
+    await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "erased";
+    throw error;
+  }
+  throw new ArtifactVaultError(
+    "artifact-integrity-failure",
+    "Retention target remained present after erasure",
+  );
 }

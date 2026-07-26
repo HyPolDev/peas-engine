@@ -112,6 +112,7 @@ class Semaphore {
   readonly #limit: number;
   #active = 0;
   readonly #waiting: Array<() => void> = [];
+  readonly #idleWaiting: Array<() => void> = [];
 
   constructor(limit: number) {
     this.#limit = limit;
@@ -123,8 +124,20 @@ class Semaphore {
     this.#active += 1;
     return () => {
       this.#active -= 1;
-      this.#waiting.shift()?.();
+      const next = this.#waiting.shift();
+      next?.();
+      if (this.#active === 0 && next === undefined && this.#waiting.length === 0)
+        for (const waiter of this.#idleWaiting.splice(0, this.#idleWaiting.length)) waiter();
     };
+  }
+
+  active(): number {
+    return this.#active;
+  }
+
+  async waitForIdle(): Promise<void> {
+    if (this.#active === 0 && this.#waiting.length === 0) return;
+    await new Promise<void>((resolve) => this.#idleWaiting.push(resolve));
   }
 }
 
@@ -137,6 +150,8 @@ export class DurableArtifactStore implements ArtifactStore {
   readonly #lease: VaultWriterLease;
   readonly #faultBoundary: ArtifactFaultBoundary;
   #reservedBytes = 0;
+  #activeReaders = 0;
+  readonly #readerIdleWaiting: Array<() => void> = [];
 
   private constructor(
     repository: SqliteArtifactRepository,
@@ -233,7 +248,19 @@ export class DurableArtifactStore implements ArtifactStore {
   async store(request: StoreArtifactRequest): Promise<StoreArtifactResult> {
     const attemptDraft = validateRetrievalAttempt(request.attempt);
     const response = validateHttpResponseMetadata(request.response);
+    if (this.#repository.retentionProviderUseDenied(attemptDraft.provider))
+      throw new ArtifactVaultError(
+        "artifact-integrity-failure",
+        "Artifact acquisition is disabled by retention policy",
+      );
     const release = await this.#semaphore.acquire();
+    if (this.#repository.retentionProviderUseDenied(attemptDraft.provider)) {
+      release();
+      throw new ArtifactVaultError(
+        "artifact-integrity-failure",
+        "Artifact acquisition is disabled by retention policy",
+      );
+    }
     const existingAttempt = this.#repository.getAttempt(attemptDraft.attemptId);
     if (existingAttempt !== undefined) {
       try {
@@ -336,6 +363,11 @@ export class DurableArtifactStore implements ArtifactStore {
         await handle.close();
       }
       await this.#checkpoint("stage-sync-close");
+      if (this.#repository.retentionProviderUseDenied(attemptDraft.provider))
+        throw new ArtifactVaultError(
+          "artifact-integrity-failure",
+          "Artifact acquisition was stopped by retention policy",
+        );
 
       const digest = hash.digest("hex");
       const finalPath = await this.#contentPath(digest, true);
@@ -480,11 +512,15 @@ export class DurableArtifactStore implements ArtifactStore {
 
   async stat(digest: ArtifactDigest): Promise<ArtifactMetadata | undefined> {
     assertArtifactDigest(digest);
+    if (this.#repository.retentionDigestUseDenied(digest))
+      throw new ArtifactVaultError("artifact-not-found", "Artifact use is denied");
     return this.#repository.stat(digest);
   }
 
   async read(digest: ArtifactDigest): Promise<VerifiedArtifactRead> {
     assertArtifactDigest(digest);
+    if (this.#repository.retentionDigestUseDenied(digest))
+      throw new ArtifactVaultError("artifact-not-found", "Artifact use is denied");
     const artifact = this.#repository.stat(digest);
     if (artifact === undefined)
       throw new ArtifactVaultError("artifact-not-found", "Artifact does not exist");
@@ -540,7 +576,16 @@ export class DurableArtifactStore implements ArtifactStore {
       await this.#checkpoint("snapshot-verification-complete");
       await sourceHandle.close();
       const stream = snapshotHandle.createReadStream({ start: 0, autoClose: true });
+      this.#activeReaders += 1;
+      let readerSettled = false;
       const cleanup = (): void => {
+        if (!readerSettled) {
+          readerSettled = true;
+          this.#activeReaders -= 1;
+          if (this.#activeReaders === 0)
+            for (const waiter of this.#readerIdleWaiting.splice(0, this.#readerIdleWaiting.length))
+              waiter();
+        }
         void rm(snapshotPath, { force: true });
       };
       stream.once("end", cleanup);
@@ -582,6 +627,8 @@ export class DurableArtifactStore implements ArtifactStore {
     limit: number,
   ): Promise<ArtifactPage<ArtifactObservation>> {
     assertArtifactDigest(digest);
+    if (this.#repository.retentionDigestUseDenied(digest))
+      throw new ArtifactVaultError("artifact-not-found", "Artifact use is denied");
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000)
       throw new RangeError("Invalid page limit");
     return this.#repository.readObservations(digest, afterSequence, limit);
@@ -1062,6 +1109,11 @@ export class DurableArtifactStore implements ArtifactStore {
         const path = safeChild(leaf.path, name);
         try {
           assertArtifactDigest(name);
+          if (this.#repository.retentionTombstoned(name))
+            throw new ArtifactVaultError(
+              "artifact-integrity-failure",
+              "Tombstoned artifact content is still present",
+            );
           const verified = await hashFile(
             path,
             Math.min(this.#config.maxArtifactBytes, maxBytes - bytesHashed),
@@ -1144,6 +1196,11 @@ export class DurableArtifactStore implements ArtifactStore {
       try {
         await stat(path);
       } catch {
+        if (this.#repository.retentionTombstoned(artifact.digest)) {
+          await advance("missing-content", 0, artifact.digest);
+          processed += 1;
+          continue;
+        }
         await planAction({
           actionKind: "record-missing-content",
           sourceRelativePath: relative(this.#paths.root, path),
@@ -1231,6 +1288,27 @@ export class DurableArtifactStore implements ArtifactStore {
       names,
       entriesRead: firstNames.length + secondNames.length + names.length,
     };
+  }
+
+  async settleForRetention(timeoutMs = 30_000): Promise<boolean> {
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1)
+      throw new RangeError("Retention settlement timeout is invalid");
+    const waitForReaders = async (): Promise<void> => {
+      if (this.#activeReaders === 0) return;
+      await new Promise<void>((resolve) => this.#readerIdleWaiting.push(resolve));
+    };
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        Promise.all([this.#semaphore.waitForIdle(), waitForReaders()]).then(() => true),
+        new Promise<boolean>((resolve) => {
+          timeout = setTimeout(() => resolve(false), timeoutMs);
+          timeout.unref();
+        }),
+      ]);
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+    }
   }
 
   #committedBytes(): number {
