@@ -1,0 +1,662 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { canonicalHash } from "../src/core/hash.js";
+import { executeAlpacaAttempt } from "../src/adapters/market-acquisition/alpaca/adapter.js";
+import type {
+  AlpacaAttemptResource,
+  AlpacaBodyRead,
+  AlpacaDeadlineHandle,
+  AlpacaDeadlineScheduler,
+  AlpacaPageAuthority,
+  AlpacaResponseBody,
+  AlpacaTransport,
+  AlpacaTransportRequest,
+  AlpacaTransportResponse,
+  AlpacaVerifiedPageSink,
+} from "../src/adapters/market-acquisition/alpaca/contracts.js";
+import {
+  ACCEPTED_PR_2E_CANDIDATE_SHA,
+  MARKET_ACQUISITION_LIMITS,
+  type AlpacaAcquisitionKind,
+  type MarketAcquisitionConfigurationInput,
+  type ValidatedMarketAcquisitionConfiguration,
+} from "../src/adapters/market-acquisition/contracts.js";
+import { validateMarketAcquisitionConfiguration } from "../src/adapters/market-acquisition/configuration.js";
+import type { AlpacaAuthorizationHeaders } from "../src/adapters/market-acquisition/credentials.js";
+import {
+  ALPACA_ROUTE_REGISTRY,
+  ZERO_SPEND_POLICY_ID,
+  ZERO_SPEND_POLICY_PREIMAGE,
+} from "../src/adapters/market-acquisition/identity.js";
+import {
+  deriveContinuationBindingHash,
+  deriveLogicalPageIdentityHash,
+  derivePrivateTokenHash,
+  NO_TOKEN_HASH,
+} from "../src/adapters/market-acquisition/journal.js";
+
+const ORIGINAL_FETCH = globalThis.fetch;
+let unexpectedNetworkCalls = 0;
+globalThis.fetch = (() => {
+  unexpectedNetworkCalls += 1;
+  throw new Error("unexpected network");
+}) as typeof fetch;
+test.after(() => {
+  globalThis.fetch = ORIGINAL_FETCH;
+});
+
+const WALL_NS = 1_800_000_000_000_000_000n;
+const BOUNDARY_NS = WALL_NS - 900_000_000_000n;
+const CLOCK_SESSION = "alpaca-adapter-test-session";
+const CLOCK_BASIS_ID = `clk1_${canonicalHash("peas/clock-basis/v1", {
+  wallClock: "system-utc",
+  synchronization: "verified-bound",
+  maximumErrorMs: 0,
+  monotonicClock: "process-monotonic-us",
+  monotonicSessionId: CLOCK_SESSION,
+})}`;
+const HEADERS: AlpacaAuthorizationHeaders = Object.freeze({
+  "APCA-API-KEY-ID": "x",
+  "APCA-API-SECRET-KEY": "y",
+});
+
+function timestamp(epochNs: bigint): string {
+  const milliseconds = epochNs / 1_000_000n;
+  const fraction = (epochNs % 1_000_000_000n).toString().padStart(9, "0");
+  return `${new Date(Number(milliseconds)).toISOString().slice(0, 19)}.${fraction}Z`;
+}
+
+function configuration(
+  kind: AlpacaAcquisitionKind = "quotes",
+  endNs = BOUNDARY_NS,
+): MarketAcquisitionConfigurationInput {
+  const route = ALPACA_ROUTE_REGISTRY[kind];
+  const common = {
+    symbols: "QA,QB",
+    start: timestamp(endNs - 60_000_000_000n),
+    end: timestamp(endNs),
+    limit: "10000",
+    feed: "sip",
+    sort: "asc",
+  };
+  return {
+    schemaVersion: 1,
+    acceptedContractCandidateSha: ACCEPTED_PR_2E_CANDIDATE_SHA,
+    lane: "alpaca-historical-sip",
+    kind,
+    providerId: route.providerId,
+    datasetId: route.datasetId,
+    feedId: route.feedId,
+    endpointChannelId: route.endpointChannelId,
+    entitlementSnapshotId: `ent1_${"a".repeat(64)}`,
+    routePolicyVersion: "p1-10-frozen-historical-multi-symbol-v1",
+    aliasAuthorityCatalogId: `maac1_${"b".repeat(64)}`,
+    instruments: [
+      { instrumentId: `min1_${"1".repeat(64)}`, symbol: "QA" },
+      { instrumentId: `min1_${"2".repeat(64)}`, symbol: "QB" },
+    ],
+    queryFields: kind === "bars" ? { ...common, timeframe: "1Min", adjustment: "raw" } : common,
+    trustedClockEvidence: {
+      available: true,
+      basisId: CLOCK_BASIS_ID,
+      wallClock: "system-utc",
+      synchronization: "verified-bound",
+      maximumErrorNs: 0n,
+      maximumErrorBounded: true,
+      monotonicClock: "process-monotonic-us",
+      monotonicSessionId: CLOCK_SESSION,
+      priorSample: {
+        sampleId: "prior",
+        previousSampleId: null,
+        basisId: CLOCK_BASIS_ID,
+        wallClock: "system-utc",
+        synchronization: "verified-bound",
+        wallNs: WALL_NS - 1n,
+        monotonicClock: "process-monotonic-us",
+        monotonicSessionId: CLOCK_SESSION,
+        monotonicUs: 100n,
+      },
+      currentSample: {
+        sampleId: "current",
+        previousSampleId: "prior",
+        basisId: CLOCK_BASIS_ID,
+        wallClock: "system-utc",
+        synchronization: "verified-bound",
+        wallNs: WALL_NS,
+        monotonicClock: "process-monotonic-us",
+        monotonicSessionId: CLOCK_SESSION,
+        monotonicUs: 101n,
+      },
+    },
+    liveEnabled: true,
+    authorizationMode: "p1-09-approved",
+    capability: "historical-market-reference",
+    sourceRole: "primary",
+    fallbackKind: "none",
+    zeroIncrementalSpend: true,
+    costStatus: "zero-incremental-spend-approved",
+    zeroSpendPolicyId: ZERO_SPEND_POLICY_ID,
+    zeroSpendPolicyPreimage: ZERO_SPEND_POLICY_PREIMAGE,
+    runDecision: "allow",
+    retentionPolicyReadiness: "ready",
+  };
+}
+
+function validatedPlan(
+  kind: AlpacaAcquisitionKind = "quotes",
+): ValidatedMarketAcquisitionConfiguration {
+  const result = validateMarketAcquisitionConfiguration(configuration(kind));
+  assert.equal(result.ok, true);
+  if (!result.ok) throw new Error("test plan must validate");
+  return result.value;
+}
+
+type ResourceCounts = {
+  abort: number;
+  destroy: number;
+  settle: number;
+  read: number;
+  write: number;
+  complete: number;
+  transport: number;
+};
+
+function counts(): ResourceCounts {
+  return { abort: 0, destroy: 0, settle: 0, read: 0, write: 0, complete: 0, transport: 0 };
+}
+
+class ResourceDouble implements AlpacaAttemptResource {
+  constructor(protected readonly counters: ResourceCounts) {}
+  async abort(): Promise<void> {
+    this.counters.abort += 1;
+  }
+  async destroy(): Promise<void> {
+    this.counters.destroy += 1;
+  }
+  async settle(): Promise<void> {
+    this.counters.settle += 1;
+  }
+}
+
+class BodyDouble extends ResourceDouble implements AlpacaResponseBody {
+  readonly #chunks: readonly Uint8Array[];
+  #index = 0;
+  #pendingResolve: ((value: AlpacaBodyRead) => void) | null = null;
+  readonly #hangAfterChunks: boolean;
+  constructor(counters: ResourceCounts, chunks: readonly Uint8Array[], hangAfterChunks = false) {
+    super(counters);
+    this.#chunks = chunks;
+    this.#hangAfterChunks = hangAfterChunks;
+  }
+  async read(): Promise<AlpacaBodyRead> {
+    this.counters.read += 1;
+    const chunk = this.#chunks[this.#index];
+    if (chunk !== undefined) {
+      this.#index += 1;
+      return { done: false, bytes: chunk };
+    }
+    if (!this.#hangAfterChunks) return { done: true };
+    return new Promise((resolve) => {
+      this.#pendingResolve = resolve;
+    });
+  }
+  override async abort(): Promise<void> {
+    await super.abort();
+    this.#pendingResolve?.({ done: true });
+    this.#pendingResolve = null;
+  }
+}
+
+class SinkDouble extends ResourceDouble implements AlpacaVerifiedPageSink<string> {
+  bytes = 0;
+  constructor(
+    counters: ResourceCounts,
+    private readonly failWrite = false,
+  ) {
+    super(counters);
+  }
+  async write(bytes: Uint8Array): Promise<void> {
+    this.counters.write += 1;
+    if (this.failWrite) throw new Error("synthetic sink failure");
+    this.bytes += bytes.byteLength;
+  }
+  async completeAndVerify(): Promise<string> {
+    this.counters.complete += 1;
+    return `verified:${this.bytes}`;
+  }
+}
+
+class TimerDouble implements AlpacaDeadlineScheduler {
+  #expire: (() => void) | null = null;
+  cancelled = 0;
+  settled = 0;
+  armedWith: number | null = null;
+  arm(delayMs: 30_000): AlpacaDeadlineHandle {
+    this.armedWith = delayMs;
+    const expired = new Promise<void>((resolve) => {
+      this.#expire = resolve;
+    });
+    return {
+      expired,
+      cancel: () => {
+        this.cancelled += 1;
+      },
+      settle: async () => {
+        this.settled += 1;
+      },
+    };
+  }
+  expire(): void {
+    this.#expire?.();
+  }
+}
+
+class TransportDouble implements AlpacaTransport {
+  request: AlpacaTransportRequest | null = null;
+  constructor(
+    private readonly counters: ResourceCounts,
+    private readonly response: AlpacaTransportResponse,
+  ) {}
+  async dispatch(request: AlpacaTransportRequest): Promise<AlpacaTransportResponse> {
+    this.counters.transport += 1;
+    this.request = request;
+    return this.response;
+  }
+  async abort(): Promise<void> {
+    this.counters.abort += 1;
+  }
+  async settle(): Promise<void> {
+    this.counters.settle += 1;
+  }
+}
+
+class HangingTransport implements AlpacaTransport {
+  #reject: ((reason: unknown) => void) | null = null;
+  constructor(private readonly counters: ResourceCounts) {}
+  async dispatch(request: AlpacaTransportRequest): Promise<AlpacaTransportResponse> {
+    assert.equal(request.signal.aborted, false);
+    this.counters.transport += 1;
+    return new Promise((_, reject) => {
+      this.#reject = reject;
+    });
+  }
+  async abort(): Promise<void> {
+    this.counters.abort += 1;
+    this.#reject?.(new Error("synthetic aborted transport"));
+    this.#reject = null;
+  }
+  async settle(): Promise<void> {
+    this.counters.settle += 1;
+  }
+}
+
+function response(
+  body: AlpacaResponseBody,
+  overrides: Partial<AlpacaTransportResponse> = {},
+): AlpacaTransportResponse {
+  return {
+    status: 200,
+    contentLength: null,
+    retryAfter: null,
+    quotaClassification: "missing",
+    body,
+    siblingResources: [],
+    ...overrides,
+  };
+}
+
+function firstPage(): AlpacaPageAuthority {
+  return { kind: "first-page", pageOrdinal: 0 };
+}
+
+function continuationPage(plan: ValidatedMarketAcquisitionConfiguration): AlpacaPageAuthority {
+  const tokenMaterial = "q";
+  const tokenHash = derivePrivateTokenHash(tokenMaterial);
+  const preceding = {
+    marketAcquisitionId: `maq1_${"1".repeat(64)}`,
+    requestIdentityHash: plan.requestIdentityHash,
+    logicalPageIdentityHash: deriveLogicalPageIdentityHash({
+      requestIdentityHash: plan.requestIdentityHash,
+      pageOrdinal: 0,
+      currentTokenHash: NO_TOKEN_HASH,
+    }),
+    pageOrdinal: 0,
+    artifactObservationId: "2".repeat(64),
+    artifactDigest: "3".repeat(64),
+    pageChainHash: "4".repeat(64),
+    nextTokenHash: tokenHash,
+    nextContinuationBindingHash: "",
+  };
+  const nextContinuationBindingHash = deriveContinuationBindingHash({
+    precedingMarketAcquisitionId: preceding.marketAcquisitionId,
+    requestIdentityHash: preceding.requestIdentityHash,
+    precedingLogicalPageIdentityHash: preceding.logicalPageIdentityHash,
+    precedingPageOrdinal: preceding.pageOrdinal,
+    precedingArtifactObservationId: preceding.artifactObservationId,
+    precedingArtifactDigest: preceding.artifactDigest,
+    precedingPageChainHash: preceding.pageChainHash,
+    nextPageOrdinal: 1,
+    nextTokenHash: tokenHash,
+  });
+  return {
+    kind: "verified-continuation",
+    pageOrdinal: 1,
+    tokenMaterial,
+    currentTokenHash: tokenHash,
+    currentContinuationBindingHash: nextContinuationBindingHash,
+    previouslyConsumedTokenHashes: [],
+    preceding: { ...preceding, nextContinuationBindingHash },
+  };
+}
+
+async function successfulAttempt(
+  kind: AlpacaAcquisitionKind = "quotes",
+  page: AlpacaPageAuthority = firstPage(),
+) {
+  const counters = counts();
+  const body = new BodyDouble(counters, [Uint8Array.from([1, 2]), Uint8Array.from([3])]);
+  const transport = new TransportDouble(counters, response(body, { contentLength: 3 }));
+  const sink = new SinkDouble(counters);
+  const timer = new TimerDouble();
+  const result = await executeAlpacaAttempt({
+    plan: validatedPlan(kind),
+    page,
+    authorizationHeaders: HEADERS,
+    transport,
+    artifactSink: sink,
+    deadlineScheduler: timer,
+  });
+  return { result, counters, transport, sink, timer };
+}
+
+test("frozen quotes, trades, and bars compile exact GET route and closed query pairs", async () => {
+  const expected = {
+    quotes: ["symbols", "start", "end", "limit", "feed", "sort"],
+    trades: ["symbols", "start", "end", "limit", "feed", "sort"],
+    bars: ["symbols", "start", "end", "limit", "feed", "sort", "timeframe", "adjustment"],
+  };
+  for (const kind of ["quotes", "trades", "bars"] as const) {
+    const { result, transport, timer } = await successfulAttempt(kind);
+    assert.equal(result.ok, true);
+    assert.equal(transport.request?.method, "GET");
+    assert.equal(transport.request?.origin, "https://data.alpaca.markets");
+    assert.equal(transport.request?.path, ALPACA_ROUTE_REGISTRY[kind].path);
+    assert.equal(transport.request?.redirect, "error");
+    assert.deepEqual(
+      transport.request?.query.map(([field]) => field),
+      expected[kind],
+    );
+    assert.equal(transport.request?.query.find(([field]) => field === "feed")?.[1], "sip");
+    assert.equal(transport.request?.query.find(([field]) => field === "sort")?.[1], "asc");
+    assert.equal(timer.armedWith, 30_000);
+  }
+  assert.equal(unexpectedNetworkCalls, 0);
+});
+
+test("15-minute equality dispatches and one nanosecond newer stops before transport", async () => {
+  const equality = validateMarketAcquisitionConfiguration(configuration("quotes", BOUNDARY_NS));
+  assert.equal(equality.ok, true);
+
+  const tooNew = validateMarketAcquisitionConfiguration(configuration("quotes", BOUNDARY_NS + 1n));
+  assert.equal(tooNew.ok, false);
+  if (!tooNew.ok) assert.equal(tooNew.error.reasonCode, "historical-boundary-unprovable");
+  assert.equal(unexpectedNetworkCalls, 0);
+});
+
+test("forged validated plans and unauthorized first-page continuation reject with zero dispatch", async () => {
+  const plan = validatedPlan();
+  const forged = Object.freeze({
+    ...plan,
+    requestIdentityHash: "0".repeat(64),
+  }) as ValidatedMarketAcquisitionConfiguration;
+  for (const [candidate, page] of [
+    [forged, firstPage()],
+    [plan, { kind: "verified-continuation", pageOrdinal: 1 } as AlpacaPageAuthority],
+  ] as const) {
+    const counters = counts();
+    const body = new BodyDouble(counters, []);
+    const result = await executeAlpacaAttempt({
+      plan: candidate,
+      page,
+      authorizationHeaders: HEADERS,
+      transport: new TransportDouble(counters, response(body)),
+      artifactSink: new SinkDouble(counters),
+      deadlineScheduler: new TimerDouble(),
+    });
+    assert.equal(result.ok, false);
+    assert.equal(counters.transport, 0);
+    assert.equal(counters.write, 0);
+  }
+});
+
+test("verified continuation binding adds one opaque page field and substitutions reject", async () => {
+  const plan = validatedPlan();
+  const validPage = continuationPage(plan);
+  const valid = await successfulAttempt("quotes", validPage);
+  assert.equal(valid.result.ok, true);
+  assert.deepEqual(
+    valid.transport.request?.query.map(([field]) => field),
+    ["symbols", "start", "end", "limit", "page_token", "feed", "sort"],
+  );
+
+  const counters = counts();
+  const body = new BodyDouble(counters, []);
+  const substituted = {
+    ...validPage,
+    currentTokenHash: "0".repeat(64),
+  } as AlpacaPageAuthority;
+  const rejected = await executeAlpacaAttempt({
+    plan,
+    page: substituted,
+    authorizationHeaders: HEADERS,
+    transport: new TransportDouble(counters, response(body)),
+    artifactSink: new SinkDouble(counters),
+    deadlineScheduler: new TimerDouble(),
+  });
+  assert.equal(rejected.ok, false);
+  assert.equal(counters.transport, 0);
+});
+
+test("HTTP retry classifications are sanitized and every response resource is cleaned", async () => {
+  for (const [status, quota, expectedReason, laneDisabled] of [
+    [408, "missing", "transport-failed", false],
+    [429, "temporary-throttling-proved", "transport-failed", false],
+    [429, "quota-exhausted", "quota-exhausted", false],
+    [500, "missing", "transport-failed", false],
+    [401, "missing", "lane-disabled", true],
+    [403, "missing", "lane-disabled", true],
+    [422, "missing", "http-nonretryable", false],
+  ] as const) {
+    const counters = counts();
+    const body = new BodyDouble(counters, []);
+    const sibling = new ResourceDouble(counters);
+    const transport = new TransportDouble(
+      counters,
+      response(body, {
+        status,
+        quotaClassification: quota,
+        siblingResources: [sibling],
+      }),
+    );
+    const result = await executeAlpacaAttempt({
+      plan: validatedPlan(),
+      page: firstPage(),
+      authorizationHeaders: HEADERS,
+      transport,
+      artifactSink: new SinkDouble(counters),
+      deadlineScheduler: new TimerDouble(),
+    });
+    assert.equal(result.ok, false);
+    if (result.ok) continue;
+    assert.equal(result.error.reasonCode, expectedReason);
+    assert.equal(result.laneDisabled, laneDisabled);
+    assert.equal(result.resourcesSettled, true);
+    assert.equal(counters.abort >= 3, true);
+    assert.equal(counters.destroy >= 3, true);
+  }
+});
+
+test("malformed or excessive Retry-After is terminal and never reaches retry control", async () => {
+  for (const retryAfter of ["-1", "01", "Wed, 21 Oct 2015 07:28:00 GMT", "31"]) {
+    const counters = counts();
+    const body = new BodyDouble(counters, []);
+    const result = await executeAlpacaAttempt({
+      plan: validatedPlan(),
+      page: firstPage(),
+      authorizationHeaders: HEADERS,
+      transport: new TransportDouble(
+        counters,
+        response(body, {
+          status: 429,
+          quotaClassification: "temporary-throttling-proved",
+          retryAfter,
+        }),
+      ),
+      artifactSink: new SinkDouble(counters),
+      deadlineScheduler: new TimerDouble(),
+    });
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.error.reasonCode, "retry-after-invalid");
+      assert.equal(result.retryFailure.kind, "malformed-body");
+    }
+  }
+});
+
+test("declared and consumed body bounds plus length mismatch never complete a partial sink", async () => {
+  const oneOver = MARKET_ACQUISITION_LIMITS.rawArtifactBytes + 1;
+  for (const [declaredLength, chunks, expectedReason] of [
+    [oneOver, [], "bound-exceeded"],
+    [3, [Uint8Array.from([1, 2])], "response-length-mismatch"],
+    [null, [new Uint8Array(oneOver)], "bound-exceeded"],
+  ] as const) {
+    const counters = counts();
+    const body = new BodyDouble(counters, chunks);
+    const result = await executeAlpacaAttempt({
+      plan: validatedPlan(),
+      page: firstPage(),
+      authorizationHeaders: HEADERS,
+      transport: new TransportDouble(counters, response(body, { contentLength: declaredLength })),
+      artifactSink: new SinkDouble(counters),
+      deadlineScheduler: new TimerDouble(),
+    });
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.reasonCode, expectedReason);
+    assert.equal(counters.complete, 0);
+  }
+});
+
+test("the exact raw-page byte limit succeeds and one byte over remains atomic", async () => {
+  const counters = counts();
+  const exact = MARKET_ACQUISITION_LIMITS.rawArtifactBytes;
+  const body = new BodyDouble(counters, [new Uint8Array(exact)]);
+  const result = await executeAlpacaAttempt({
+    plan: validatedPlan(),
+    page: firstPage(),
+    authorizationHeaders: HEADERS,
+    transport: new TransportDouble(counters, response(body, { contentLength: exact })),
+    artifactSink: new SinkDouble(counters),
+    deadlineScheduler: new TimerDouble(),
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.consumedBytes, exact);
+});
+
+test("sink failure destroys partial body and sibling resources without completing", async () => {
+  const counters = counts();
+  const body = new BodyDouble(counters, [Uint8Array.from([1, 2, 3])]);
+  const sibling = new ResourceDouble(counters);
+  const result = await executeAlpacaAttempt({
+    plan: validatedPlan(),
+    page: firstPage(),
+    authorizationHeaders: HEADERS,
+    transport: new TransportDouble(counters, response(body, { siblingResources: [sibling] })),
+    artifactSink: new SinkDouble(counters, true),
+    deadlineScheduler: new TimerDouble(),
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.error.reasonCode, "artifact-store-failed");
+    assert.equal(result.resourcesSettled, true);
+  }
+  assert.equal(counters.complete, 0);
+  assert.equal(counters.abort >= 4, true);
+  assert.equal(counters.destroy >= 3, true);
+});
+
+test("timeout before headers aborts and settles the dispatched operation before return", async () => {
+  const counters = counts();
+  const timer = new TimerDouble();
+  const promise = executeAlpacaAttempt({
+    plan: validatedPlan(),
+    page: firstPage(),
+    authorizationHeaders: HEADERS,
+    transport: new HangingTransport(counters),
+    artifactSink: new SinkDouble(counters),
+    deadlineScheduler: timer,
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  timer.expire();
+  const result = await promise;
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.error.reasonCode, "attempt-timeout");
+    assert.equal(result.error.operationStage, "dispatch");
+    assert.equal(result.resourcesSettled, true);
+  }
+  const snapshot = { ...counters };
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(counters, snapshot);
+});
+
+test("active-body timeout aborts, destroys, settles, and has no post-return activity", async () => {
+  const counters = counts();
+  const body = new BodyDouble(counters, [Uint8Array.from([1])], true);
+  const sibling = new ResourceDouble(counters);
+  const transport = new TransportDouble(counters, response(body, { siblingResources: [sibling] }));
+  const timer = new TimerDouble();
+  const promise = executeAlpacaAttempt({
+    plan: validatedPlan(),
+    page: firstPage(),
+    authorizationHeaders: HEADERS,
+    transport,
+    artifactSink: new SinkDouble(counters),
+    deadlineScheduler: timer,
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  timer.expire();
+  const result = await promise;
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.error.reasonCode, "attempt-timeout");
+    assert.equal(result.resourcesSettled, true);
+  }
+  const snapshot = { ...counters, timerCancelled: timer.cancelled, timerSettled: timer.settled };
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    { ...counters, timerCancelled: timer.cancelled, timerSettled: timer.settled },
+    snapshot,
+  );
+  assert.equal(counters.complete, 0);
+  assert.equal(unexpectedNetworkCalls, 0);
+});
+
+test("successful verified-page completion settles every resource before return", async () => {
+  const { result, counters, sink, timer } = await successfulAttempt();
+  assert.deepEqual(result, {
+    ok: true,
+    artifact: "verified:3",
+    status: 200,
+    declaredContentLength: 3,
+    consumedBytes: 3,
+    resourcesSettled: true,
+  });
+  assert.equal(sink.bytes, 3);
+  assert.equal(counters.complete, 1);
+  assert.equal(timer.cancelled, 1);
+  assert.equal(timer.settled, 1);
+  const snapshot = { ...counters };
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(counters, snapshot);
+});
