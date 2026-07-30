@@ -1,0 +1,834 @@
+{
+  "schemaVersion": "peas-p1-10-original-synthetic-wire-faults-v1",
+  "classification": "original-project-authored-synthetic",
+  "providerEvidence": false,
+  "networkAuthorized": false,
+  "vectorEncoding": {
+    "baseCaseId": "references a case in valid-pages.json",
+    "path": "RFC-6901 pointer into the referenced wire value",
+    "operation": "project-authored deterministic mutation applied before parser admission",
+    "fieldSet": "expands into one independent vector for each named field",
+    "generatedValue": "bounded recipe expanded only in memory"
+  },
+  "cases": [
+    {
+      "caseId": "fault-envelope-root-not-object",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "replace-root",
+      "value": [],
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "fault-envelope-missing-required",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "remove-each-own-field",
+      "fieldSetByEndpoint": {
+        "quotes": ["quotes", "next_page_token"],
+        "trades": ["trades", "next_page_token"],
+        "bars": ["bars", "next_page_token"]
+      },
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "fault-envelope-unknown-field",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "add-own-field",
+      "path": "",
+      "field": "peas_unknown",
+      "value": "violet",
+      "expectedDisposition": "reject-local-closed-schema"
+    },
+    {
+      "caseId": "fault-envelope-cross-kind-member",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "rename-data-field",
+      "fieldMapByEndpoint": {
+        "quotes": "trades",
+        "trades": "bars",
+        "bars": "quotes"
+      },
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "fault-envelope-data-member-not-object",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "replace",
+      "pathByEndpoint": {
+        "quotes": "/quotes",
+        "trades": "/trades",
+        "bars": "/bars"
+      },
+      "values": [null, [], "amber", 13, true],
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "fault-envelope-currency",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "replace-or-add-own-field",
+      "path": "/currency",
+      "values": [null, "", "EUR", 1, [], {}],
+      "expectedDisposition": "reject-not-exact-usd"
+    },
+    {
+      "caseId": "fault-symbol-group-unrequested",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "rename-first-symbol-own-key",
+      "value": "PEASUNREQUESTED",
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "fault-symbol-group-key-shape",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "rename-first-symbol-own-key",
+      "values": ["", "peasamb", " PEASAMB", "PEASAMB ", "PEAS,AMB"],
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "fault-symbol-group-not-array",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "replace-first-symbol-value",
+      "values": [null, {}, "cobalt", 17, true],
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "fault-symbol-group-item-not-object",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "replace-first-item",
+      "values": [null, [], "fern", 19, false],
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "fault-empty-nonterminal-envelope",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-continuation-currency",
+        "wire-trades-terminal-grouped",
+        "wire-bars-continuation"
+      ],
+      "operation": "replace-data-member-with-empty-object-and-token-with-string",
+      "token": "peas-synthetic-opaque-empty-nonterminal",
+      "expectedDisposition": "reject-contradiction"
+    },
+    {
+      "caseId": "fault-item-missing-required-field",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "remove-each-own-field-from-first-item",
+      "fieldSetByEndpoint": {
+        "quotes": ["t", "bx", "bp", "bs", "ap", "as", "ax", "c", "z"],
+        "trades": ["t", "i", "x", "p", "s", "c", "z"],
+        "bars": ["t", "o", "h", "l", "c", "v", "n", "vw"]
+      },
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "fault-item-unknown-field",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "add-own-field-to-first-item",
+      "field": "peas_unknown",
+      "value": "indigo",
+      "expectedDisposition": "reject-local-closed-schema"
+    },
+    {
+      "caseId": "fault-item-null-required-field",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "replace-each-own-field-in-first-item",
+      "fieldSetByEndpoint": {
+        "quotes": ["t", "bx", "bp", "bs", "ap", "as", "ax", "c", "z"],
+        "trades": ["t", "i", "x", "p", "s", "c", "z"],
+        "bars": ["t", "o", "h", "l", "c", "v", "n", "vw"]
+      },
+      "value": null,
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "fault-timestamp-type",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "replace-first-item-field",
+      "field": "t",
+      "values": [null, 20330506, true, [], {}],
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "fault-timestamp-canonical-round-trip",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "replace-first-item-field",
+      "field": "t",
+      "values": [
+        "",
+        "2033-05-06",
+        "2033-05-06T07:08:09",
+        "2033-05-06t07:08:09.123456789z",
+        "2033-05-06T07:08:09.123456789-00:00",
+        "2033-05-06T07:08:09.123456789+24:00",
+        "2033-05-06T07:08:09.123456789+01:60",
+        "2033-05-06T07:08:09.123456789+1:00",
+        "2033-05-06T07:08:09.123456789Z ",
+        "2033-05-06T07:08:09.1234567890Z",
+        "2033-05-06T07:08:60.000000000Z",
+        "2033-02-29T07:08:09.000000000Z",
+        "2033-13-06T07:08:09.000000000Z",
+        "2033-05-06T24:00:00.000000000Z",
+        "2262-04-12T00:00:00.000000000Z",
+        "1677-09-20T00:00:00.000000000Z"
+      ],
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "exact-timestamp-offset-round-trip",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "replace-first-item-field",
+      "field": "t",
+      "timestampCases": [
+        {
+          "text": "2033-05-06T07:08:09.123456789+00:00",
+          "canonicalUtc": "2033-05-06T07:08:09.123456789Z",
+          "precisionNs": "1"
+        },
+        {
+          "text": "2033-05-06T08:08:09.123456789+01:00",
+          "canonicalUtc": "2033-05-06T07:08:09.123456789Z",
+          "precisionNs": "1"
+        },
+        {
+          "text": "2033-05-06T05:08:09.123456789-02:00",
+          "canonicalUtc": "2033-05-06T07:08:09.123456789Z",
+          "precisionNs": "1"
+        }
+      ],
+      "expectedDisposition": "accept-exact-offset-to-utc-round-trip"
+    },
+    {
+      "caseId": "exact-timestamp-supported-precision",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "replace-first-item-field",
+      "field": "t",
+      "timestampCases": [
+        {
+          "text": "2033-05-06T07:08:09Z",
+          "precisionNs": "1000000000"
+        },
+        {
+          "text": "2033-05-06T07:08:09.1Z",
+          "precisionNs": "100000000"
+        },
+        {
+          "text": "2033-05-06T07:08:09.12Z",
+          "precisionNs": "10000000"
+        },
+        {
+          "text": "2033-05-06T07:08:09.123Z",
+          "precisionNs": "1000000"
+        },
+        {
+          "text": "2033-05-06T07:08:09.1234Z",
+          "precisionNs": "100000"
+        },
+        {
+          "text": "2033-05-06T07:08:09.12345Z",
+          "precisionNs": "10000"
+        },
+        {
+          "text": "2033-05-06T07:08:09.123456Z",
+          "precisionNs": "1000"
+        },
+        {
+          "text": "2033-05-06T07:08:09.1234567Z",
+          "precisionNs": "100"
+        },
+        {
+          "text": "2033-05-06T07:08:09.12345678Z",
+          "precisionNs": "10"
+        },
+        {
+          "text": "2033-05-06T07:08:09.123456789Z",
+          "precisionNs": "1"
+        }
+      ],
+      "expectedDisposition": "accept-with-derived-exact-precision"
+    },
+    {
+      "caseId": "fault-timestamp-string-bytes",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "replace-first-item-field-with-generated-string",
+      "field": "t",
+      "generatedValues": [
+        {
+          "kind": "repeat-ascii",
+          "character": "2",
+          "bytes": 64,
+          "expectedDisposition": "reject-malformed-within-bound"
+        },
+        {
+          "kind": "repeat-ascii",
+          "character": "2",
+          "bytes": 65,
+          "expectedDisposition": "reject-bound-exceeded"
+        }
+      ]
+    },
+    {
+      "caseId": "fault-condition-container",
+      "endpointKinds": ["quotes", "trades"],
+      "baseCaseIds": ["wire-quotes-terminal-grouped", "wire-trades-terminal-grouped"],
+      "operation": "replace-first-item-field",
+      "field": "c",
+      "values": [null, "Q1", 1, true, {}],
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "fault-condition-member-type",
+      "endpointKinds": ["quotes", "trades"],
+      "baseCaseIds": ["wire-quotes-terminal-grouped", "wire-trades-terminal-grouped"],
+      "operation": "replace-first-item-field",
+      "field": "c",
+      "values": [[null], [1], [true], [[]], [{}]],
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "exact-and-excessive-quote-condition-count",
+      "endpointKinds": ["quotes"],
+      "baseCaseIds": ["wire-quotes-terminal-grouped"],
+      "operation": "replace-first-item-field-with-generated-array",
+      "field": "c",
+      "generatedValues": [
+        {
+          "kind": "numbered-strings",
+          "prefix": "C",
+          "count": 1,
+          "expectedGrammarDisposition": "accept",
+          "expectedTranslationDisposition": "quarantine-condition-authority-unavailable"
+        },
+        {
+          "kind": "numbered-strings",
+          "prefix": "C",
+          "count": 2,
+          "expectedGrammarDisposition": "accept",
+          "expectedTranslationDisposition": "quarantine-condition-authority-unavailable"
+        },
+        {
+          "kind": "numbered-strings",
+          "prefix": "C",
+          "count": 0,
+          "expectedDisposition": "reject-undocumented-cardinality"
+        },
+        {
+          "kind": "numbered-strings",
+          "prefix": "C",
+          "count": 3,
+          "expectedDisposition": "reject-undocumented-cardinality"
+        }
+      ]
+    },
+    {
+      "caseId": "exact-and-excessive-trade-condition-count",
+      "endpointKinds": ["trades"],
+      "baseCaseIds": ["wire-trades-terminal-grouped"],
+      "operation": "replace-first-item-field-with-generated-array",
+      "field": "c",
+      "generatedValues": [
+        {
+          "kind": "numbered-strings",
+          "prefix": "C",
+          "count": 1,
+          "expectedGrammarDisposition": "accept",
+          "expectedTranslationDisposition": "quarantine-condition-authority-unavailable"
+        },
+        {
+          "kind": "numbered-strings",
+          "prefix": "C",
+          "count": 8,
+          "expectedGrammarDisposition": "accept",
+          "expectedTranslationDisposition": "quarantine-condition-authority-unavailable"
+        },
+        {
+          "kind": "numbered-strings",
+          "prefix": "C",
+          "count": 0,
+          "expectedTranslationDisposition": "quarantine-condition-authority-unavailable"
+        },
+        {
+          "kind": "numbered-strings",
+          "prefix": "C",
+          "count": 9,
+          "expectedDisposition": "reject-bound-exceeded"
+        }
+      ]
+    },
+    {
+      "caseId": "exact-and-excessive-condition-member-bytes",
+      "endpointKinds": ["quotes", "trades"],
+      "baseCaseIds": ["wire-quotes-terminal-grouped", "wire-trades-terminal-grouped"],
+      "operation": "replace-first-item-field-with-generated-array",
+      "field": "c",
+      "generatedValues": [
+        {
+          "kind": "single-repeated-ascii-string",
+          "character": "C",
+          "bytes": 8,
+          "expectedGrammarDisposition": "accept",
+          "expectedTranslationDisposition": "quarantine-condition-authority-unavailable"
+        },
+        {
+          "kind": "single-repeated-ascii-string",
+          "character": "C",
+          "bytes": 9,
+          "expectedDisposition": "reject-bound-exceeded"
+        }
+      ]
+    },
+    {
+      "caseId": "fault-tape-type-or-value",
+      "endpointKinds": ["quotes", "trades"],
+      "baseCaseIds": ["wire-quotes-terminal-grouped", "wire-trades-terminal-grouped"],
+      "operation": "replace-first-item-field",
+      "field": "z",
+      "values": ["", "D", "a", "AA", null, 1, true, [], {}],
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "exact-tape-values",
+      "endpointKinds": ["quotes", "trades"],
+      "baseCaseIds": ["wire-quotes-terminal-grouped", "wire-trades-terminal-grouped"],
+      "operation": "replace-first-item-field",
+      "field": "z",
+      "values": ["A", "B", "C"],
+      "expectedGrammarDisposition": "accept",
+      "expectedTranslationDisposition": "quarantine-condition-authority-unavailable"
+    },
+    {
+      "caseId": "fault-frozen-sip-tape-contradiction",
+      "endpointKinds": ["quotes", "trades"],
+      "baseCaseIds": ["wire-quotes-terminal-grouped", "wire-trades-terminal-grouped"],
+      "operation": "replace-first-item-field",
+      "field": "z",
+      "values": ["N", "O"],
+      "expectedDisposition": "reject-feed-identity-contradiction"
+    },
+    {
+      "caseId": "fault-quote-string-fields",
+      "endpointKinds": ["quotes"],
+      "baseCaseIds": ["wire-quotes-terminal-grouped"],
+      "operation": "replace-each-own-field-in-first-item",
+      "fieldSet": ["bx", "ax"],
+      "values": [null, "", 1, true, [], {}],
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "fault-quote-uint32-fields",
+      "endpointKinds": ["quotes"],
+      "baseCaseIds": ["wire-quotes-terminal-grouped"],
+      "operation": "replace-each-own-field-in-first-item",
+      "fieldSet": ["bs", "as"],
+      "values": [-1, 1.5, 4294967296, "3", null, true, [], {}],
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "exact-quote-uint32-boundaries",
+      "endpointKinds": ["quotes"],
+      "baseCaseIds": ["wire-quotes-terminal-grouped"],
+      "operation": "replace-each-own-field-in-first-item",
+      "fieldSet": ["bs", "as"],
+      "values": [0, 4294967295],
+      "expectedGrammarDisposition": "accept",
+      "expectedTranslationDisposition": "quarantine-condition-authority-unavailable"
+    },
+    {
+      "caseId": "fault-trade-uint32-size",
+      "endpointKinds": ["trades"],
+      "baseCaseIds": ["wire-trades-terminal-grouped"],
+      "operation": "replace-first-item-field",
+      "field": "s",
+      "values": [-1, 0, 1.5, 4294967296, "19", null, true, [], {}],
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "exact-trade-uint32-size-boundaries",
+      "endpointKinds": ["trades"],
+      "baseCaseIds": ["wire-trades-terminal-grouped"],
+      "operation": "replace-first-item-field",
+      "field": "s",
+      "values": [1, 4294967295],
+      "expectedGrammarDisposition": "accept",
+      "expectedTranslationDisposition": "quarantine-condition-authority-unavailable"
+    },
+    {
+      "caseId": "fault-trade-id",
+      "endpointKinds": ["trades"],
+      "baseCaseIds": ["wire-trades-terminal-grouped"],
+      "operation": "replace-first-item-field",
+      "field": "i",
+      "values": [-1, 1.5, "7001", null, true, [], {}],
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "exact-and-excessive-trade-id",
+      "endpointKinds": ["trades"],
+      "baseCaseIds": ["wire-trades-terminal-grouped"],
+      "operation": "replace-first-item-raw-number-token",
+      "field": "i",
+      "rawNumberTokens": [
+        {
+          "token": "0",
+          "expectedGrammarDisposition": "accept",
+          "expectedTranslationDisposition": "quarantine-condition-authority-unavailable"
+        },
+        {
+          "token": "18446744073709551615",
+          "expectedGrammarDisposition": "accept",
+          "expectedTranslationDisposition": "quarantine-condition-authority-unavailable"
+        },
+        {
+          "token": "18446744073709551616",
+          "expectedDisposition": "reject-bound-exceeded"
+        }
+      ]
+    },
+    {
+      "caseId": "fault-trade-update-value-or-type",
+      "endpointKinds": ["trades"],
+      "baseCaseIds": ["wire-trades-terminal-grouped"],
+      "operation": "replace-or-add-first-item-field",
+      "field": "u",
+      "values": ["", "replaced", "CANCELED", null, 1, true, [], {}],
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "documented-trade-update-values",
+      "endpointKinds": ["trades"],
+      "baseCaseIds": ["wire-trades-terminal-grouped"],
+      "operation": "replace-or-add-first-item-field",
+      "field": "u",
+      "values": ["canceled", "incorrect", "corrected"],
+      "expectedGrammarDisposition": "accept",
+      "expectedTranslationDisposition": "terminal-correction-unsupported"
+    },
+    {
+      "caseId": "fault-json-number-fields",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "replace-each-number-field-in-first-item",
+      "fieldSetByEndpoint": {
+        "quotes": ["bp", "ap"],
+        "trades": ["p"],
+        "bars": ["o", "h", "l", "c", "vw"]
+      },
+      "values": [null, "17.125", true, [], {}],
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "fault-nonpositive-price-or-vwap",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "replace-each-number-field-in-first-item",
+      "fieldSetByEndpoint": {
+        "quotes": ["bp", "ap"],
+        "trades": ["p"],
+        "bars": ["o", "h", "l", "c", "vw"]
+      },
+      "values": [-1, 0],
+      "expectedDispositionByEndpoint": {
+        "quotes": "quarantine-zero-side-or-reject-negative",
+        "trades": "reject",
+        "bars": "reject"
+      }
+    },
+    {
+      "caseId": "exact-and-excessive-decimal-token-bytes",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "replace-first-decimal-with-raw-number-token",
+      "rawNumberTokens": [
+        {
+          "token": "12345678901234567890.12345678901",
+          "bytes": 32,
+          "expectedTokenizerDisposition": "accept-raw-token-bound",
+          "expectedFinalDisposition": "reject-primary-decimal-shape"
+        },
+        {
+          "token": "12345678901234567890.123456789012",
+          "bytes": 33,
+          "expectedDisposition": "reject-bound-exceeded"
+        }
+      ]
+    },
+    {
+      "caseId": "fault-decimal-token-grammar",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "replace-first-decimal-with-raw-number-token",
+      "rawNumberTokens": ["1e2", "1E+2", "+1", "-0", "01", "1."],
+      "expectedDisposition": "reject-noncanonical-decimal-token"
+    },
+    {
+      "caseId": "fault-bar-int64-fields",
+      "endpointKinds": ["bars"],
+      "baseCaseIds": ["wire-bars-terminal-grouped"],
+      "operation": "replace-each-own-field-in-first-item",
+      "fieldSet": ["v", "n"],
+      "values": [-1, 1.5, "101", null, true, [], {}],
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "exact-and-excessive-bar-int64-fields",
+      "endpointKinds": ["bars"],
+      "baseCaseIds": ["wire-bars-terminal-grouped"],
+      "operation": "replace-each-first-item-raw-number-token",
+      "fieldSet": ["v", "n"],
+      "rawNumberTokens": [
+        {
+          "token": "0",
+          "expectedTokenizerDisposition": "accept-int64",
+          "expectedFinalDisposition": "quarantine-nonpositive-bar"
+        },
+        {
+          "token": "9223372036854775807",
+          "expectedDisposition": "accept"
+        },
+        {
+          "token": "9223372036854775808",
+          "expectedDisposition": "reject-bound-exceeded"
+        }
+      ]
+    },
+    {
+      "caseId": "fault-bar-ohlc-contradiction",
+      "endpointKinds": ["bars"],
+      "baseCaseIds": ["wire-bars-terminal-grouped"],
+      "operation": "replace-first-item-fields",
+      "fieldMaps": [
+        {
+          "h": 60.125,
+          "l": 60.375
+        },
+        {
+          "o": 63.125,
+          "h": 62.875
+        },
+        {
+          "c": 59.875,
+          "l": 60.375
+        },
+        {
+          "vw": 63.125,
+          "h": 62.875
+        },
+        {
+          "vw": 59.875,
+          "l": 60.375
+        }
+      ],
+      "expectedDisposition": "quarantine-contradictory-bar"
+    },
+    {
+      "caseId": "fault-record-count",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "replace-first-symbol-array-with-generated-identical-items",
+      "generatedValues": [
+        {
+          "count": 9999,
+          "expectedPageRecordCount": 10000,
+          "expectedDisposition": "accept-exact-bound"
+        },
+        {
+          "count": 10000,
+          "expectedPageRecordCount": 10001,
+          "expectedDisposition": "reject-bound-exceeded"
+        }
+      ]
+    },
+    {
+      "caseId": "fault-record-order-within-symbol",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "duplicate-first-item-with-earlier-timestamp-after-it",
+      "timestamp": "2033-05-06T07:00:00.000000000Z",
+      "expectedDisposition": "reject-order-contradiction"
+    },
+    {
+      "caseId": "fault-next-page-token-type",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "replace",
+      "path": "/next_page_token",
+      "values": [0, true, [], {}],
+      "expectedDisposition": "reject"
+    },
+    {
+      "caseId": "fault-next-page-token-empty",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "replace",
+      "path": "/next_page_token",
+      "value": "",
+      "expectedDisposition": "reject-contradiction"
+    },
+    {
+      "caseId": "exact-and-excessive-next-page-token-bytes",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "baseCaseIds": [
+        "wire-quotes-terminal-grouped",
+        "wire-trades-terminal-grouped",
+        "wire-bars-terminal-grouped"
+      ],
+      "operation": "replace-with-generated-string",
+      "path": "/next_page_token",
+      "generatedValues": [
+        {
+          "kind": "synthetic-opaque-token",
+          "bytes": 4096,
+          "expectedDisposition": "accept-exact-bound"
+        },
+        {
+          "kind": "synthetic-opaque-token",
+          "bytes": 4097,
+          "expectedDisposition": "reject-bound-exceeded"
+        }
+      ]
+    },
+    {
+      "caseId": "fault-malformed-json",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "operation": "parse-original-synthetic-raw-json-text",
+      "rawJsonTexts": [
+        "{\"quotes\":{\"PEASAMB\":[{\"t\":\"2033-05-06T07:08:09Z\"}]},\"next_page_token\":null",
+        "{\"trades\":{\"PEASLIL\":[{\"i\":7001,,\"t\":\"2033-05-06T07:10:11Z\"}]},\"next_page_token\":null}",
+        "{\"bars\":{\"PEASIVY\":[{\"t\":\"2033-05-06T07:12:00Z\",\"c\":62.125}],},\"next_page_token\":null}"
+      ],
+      "expectedDisposition": "reject-before-schema"
+    },
+    {
+      "caseId": "fault-duplicate-json-key",
+      "endpointKinds": ["quotes", "trades", "bars"],
+      "operation": "parse-original-synthetic-raw-json-text",
+      "rawJsonTexts": [
+        "{\"quotes\":{},\"quotes\":{},\"next_page_token\":null}",
+        "{\"trades\":{},\"next_page_token\":null,\"next_page_token\":null}",
+        "{\"bars\":{\"PEASIVY\":[],\"PEASIVY\":[]},\"next_page_token\":null}"
+      ],
+      "expectedDisposition": "reject-before-schema"
+    }
+  ]
+}

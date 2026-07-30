@@ -170,6 +170,20 @@ returned `NO_GO` on its executable wall-clock proof. Repaired candidate
 ledger facts. PR 2E is reopened only for that bounded journal repair. No retention implementation,
 PR 2F work, provider witness, or merge is authorized.
 
+That repair history is now superseded operationally. The external user-owned audit returned `GO`
+for exact immutable PR 2E candidate
+`038fb381963cd822d2e7f81e55d45d26f1d2c9e5`, tree
+`d6fb3258c29c5b97f5cf7edab6d74c0d80386c16`. The owner separately authorized the frozen retention
+architecture and an offline PR 2F wave, which is preserved and stopped at committed checkpoint
+`da6bc096215ca8e4047fcac10fec3c1357589a91` plus six untracked Lane E files. PR 2E is now reopened
+only for an Alpaca historical wire-grammar amendment. The owner authorized the exact narrowed
+disposition: raw one-minute bars may translate when every neutral field is proven; quotes and
+trades without the documented update field remain private raw-capture inputs but produce
+no-record quarantine; trades with the update field terminate `correction-unsupported`; and
+quotes/trades never become fallback, alter bar selection, or enter public output. PR 2F remains
+stopped until this amendment receives external `CONTRACT_GO`, explicit merge authorization, and is
+merged.
+
 ### Post-PR 2D next actions
 
 PR 2D is complete and merged. The active critical path is now P1-09 -> P1-10 -> P1-06 -> P2. Work
@@ -179,9 +193,9 @@ must follow the order below; parallel preparation does not waive a gate.
 | --- | --- | --- | --- | --- |
 | 1 | Close the P1-09 evidence package | Human owner | Complete | Sanitized owner attestation, private Alpaca/FMP responses represented by opaque digest, explicit source/fallback decision, and zero-spend confirmation are recorded |
 | 2 | Independently audit the frozen P1-09 authorization | Integration owner plus fresh independent reviewer | Complete | Exact candidate `36dcf92b...` received `GO`; P1-09 is complete |
-| 3 | Prepare PR 2E, the P1-10 contract package | Agents with non-overlapping ownership | Reopened for bounded ADR-0009 journal clock-parent repair; validation and external re-review pending | File-ownership map, exact approved-contract mapping, original synthetic acceptance vectors, bounded retry/quota/restart plan, secret/redaction/retention contract, exact clean candidate, and fresh external contract `GO`; no credentials, provider calls, transport, or provider bytes |
-| 4 | Resolve the retention architecture authorization gate | Human owner | Unresolved; required before PR 2F independently of contract review | Explicit authorization or rejection of any required ArtifactStore port, migration, reconciliation, and vault-semantics change; PR 2F remains `NO_GO` while unresolved |
-| 5 | Implement PR 2F against the accepted PR 2E exact candidate | Agents after PR 2E `GO`, orchestration acknowledgement, and retention authorization | No | Only the approved zero-spend provider/dataset/feed; private content-addressed raw artifacts; verified loading; deterministic normalization/selection; stable missing reasons; no FMP transport, silent fallback, or paid-plan path; independent implementation `GO` |
+| 3 | Prepare PR 2E, the P1-10 contract package | Agents with non-overlapping ownership | Reopened only for the authorized narrowed wire amendment; validation and external review pending | Exact official-document grammar, bar-only neutral translation, deterministic quote/trade non-translation, original synthetic fault matrix, clean exact candidate, same-SHA offline/hosted evidence, and fresh external `CONTRACT_GO`; no credentials, provider calls, transport, or provider bytes |
+| 4 | Resolve the retention architecture authorization gate | Human owner | Authorized for the exact frozen architecture before the stopped PR 2F wave | Preserve the owner-authorized maintenance port, additive migration, controlled vault-root erasure, tombstone/use-denial semantics, and exact retention sequence; no scope expansion |
+| 5 | Implement PR 2F against the accepted PR 2E exact candidate | Agents after PR 2E amendment `CONTRACT_GO`, merge, and renewed Phase B direction | Stopped at checkpoint `da6bc096...`; do not touch | Reconstruct only after amendment merge, preserve compatible stopped work, treat amendment bytes as immutable, and continue the offline implementation/audit loop without FMP transport, silent fallback, or paid-plan paths |
 | 6 | Complete live read-only source capture and calendar prewarming | Non-overlapping source and calendar owners | Only where provider/account authorization is already explicit; market-data portions wait for P1-10 | Bounded SEC/FMP/issuer-IR capture as authorized, issuer allowlist, schedule provenance, restart/backfill evidence, and no dispatchable financial effects |
 | 7 | Run P1-06 integrated readiness drill | Integration owner plus fresh auditor | After P1-03, P1-04, P1-05, and P1-10 are independently complete | Same-SHA Linux/Windows and 10k evidence; complete synthetic matrix; retention enforcement; restart/replay and memory/SQLite equivalence; binary readiness `GO` |
 | 8 | Collect and freeze P2 | Collection agents, then research owner | Blocked until P1-06 independent `GO` | Exactly the prospectively frozen 180-cluster cohort, fixed denominators, immutable dataset manifest, code/config/entitlement identities, and completeness report before conclusions |
@@ -202,6 +216,12 @@ repair and return its exact SHA to the same external audit task. Separately, the
 ArtifactStore has no deletion API and migration 005 installs no-delete triggers. Retention
 implementation remains `HUMAN_AUTHORIZATION_REQUIRED / NOT_AUTHORIZED`; PR 2F may not begin without
 both external contract `GO` and separate human authorization of the exact retention architecture.
+
+That paragraph is preserved audit history. Candidate `038fb381963cd822d2e7f81e55d45d26f1d2c9e5`
+closed the ADR-0009 finding and received external `GO`; the owner then authorized the exact
+retention architecture. The active next action is now the narrowed PR 2E wire amendment and its
+same-SHA external review. Phase B remains stopped for this amendment even though the earlier
+retention gate was resolved.
 
 ### Work-session plan through dataset collection
 
@@ -316,13 +336,16 @@ activation, broker/order surface, or financial effect.
 
 ### Step 4 - build live source capture and delayed market acquisition only after their gates
 
-P1-09 is complete with independent `GO`, but PR 2E candidate
-`5e7dba7d2dfb047f3e840e7b54127e2fc303cd66` received external contract `NO_GO`; its bounded
-ADR-0009 journal clock-parent repair requires a new exact candidate and external re-review. PR 2F
-remains `NO_GO` because external contract `GO` is absent and retention implementation is not
-human-authorized.
-Only after both gates close may implementation begin for the approved delayed historical
-provider/dataset/feed behind the accepted recorded contract:
+The earlier PR 2E `NO_GO` and retention-pending status is preserved above as audit history.
+Candidate `038fb381963cd822d2e7f81e55d45d26f1d2c9e5` subsequently received external contract `GO`,
+and the owner authorized the exact retention architecture. The current gate is the separately
+authorized narrowed wire amendment: it requires a clean exact candidate, same-SHA offline and
+hosted evidence, external `CONTRACT_GO`, explicit merge authorization, and merge. PR 2F remains
+stopped at `da6bc096215ca8e4047fcac10fec3c1357589a91` plus its six untracked Lane E files until those
+amendment gates close and the owner renews Phase B direction.
+
+Only then may implementation resume for the approved delayed historical provider/dataset/feed
+behind the accepted recorded contract:
 
 ```text
 bounded acquisition -> private raw artifact -> verified read -> pure market normalization

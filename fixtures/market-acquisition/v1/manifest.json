@@ -9,6 +9,41 @@
     "synthetic-alias-authority-catalog.json",
     "synthetic-pages.json"
   ],
+  "wireGrammarAmendment": {
+    "schemaVersion": "peas-p1-10-original-synthetic-wire-fixture-manifest-v1",
+    "classification": "original-project-authored-synthetic",
+    "providerEvidence": false,
+    "networkAuthorized": false,
+    "officialFieldNamesOnly": true,
+    "copiedProviderExamples": false,
+    "files": [
+      "wire-grammar/README.md",
+      "wire-grammar/valid-pages.json",
+      "wire-grammar/grammar-faults.json",
+      "wire-grammar/pagination-delivery-faults.json",
+      "wire-grammar/bar-translation.json"
+    ],
+    "cases": [
+      "quotes-schema-valid-quarantine",
+      "trades-schema-valid-quarantine",
+      "trade-update-terminal-correction-unsupported",
+      "raw-one-minute-bar-translation",
+      "envelope-required-optional-unknown",
+      "symbol-grouping",
+      "item-required-type-bound",
+      "timestamp-precision-round-trip",
+      "condition-shape-and-bound",
+      "trade-id-and-integer-bound",
+      "decimal-token-shape-and-bound",
+      "bar-ohlc-contradiction",
+      "page-token-null-string-type-bound",
+      "pagination-chain-contradictions",
+      "identical-redelivery",
+      "conflicting-redelivery",
+      "unsupported-correction-replacement",
+      "malformed-and-duplicate-key-json"
+    ]
+  },
   "cases": [
     "verified-chain",
     "identical-redelivery",
