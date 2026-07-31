@@ -275,16 +275,16 @@
           "id": "P1-10",
           "title": "Delayed historical market-reference adapter",
           "status": "in-progress",
-          "preparationStatus": "pr-2e-wire-amendment-first-no-go-repaired-validation-pending",
+          "preparationStatus": "pr-2e-wire-recurring-p0-sole-repair-validation-pending",
           "authorization": "P1-09 COMPLETE; external user-owned audit returned GO for immutable PR 2E candidate 038fb381963cd822d2e7f81e55d45d26f1d2c9e5; the owner authorized the exact retention architecture and later authorized the narrowed PR 2E wire amendment in which raw one-minute bars alone may translate, quotes and no-u trades produce no-record quarantine, and u trades terminate correction-unsupported; no provider call or merge is authorized",
-          "contractCandidate": "accepted-base@038fb381963cd822d2e7f81e55d45d26f1d2c9e5; rejected-amendment@add3bc99862eaa2998b3dee0bbc0004b4b5f1e23; repaired-amendment-candidate@PENDING",
-          "contractReview": "ACCEPTED_BASE_GO; AMENDMENT_ADD3BC_CONTRACT_NO_GO; BOUNDED_REPAIR_VALIDATION_PENDING",
+          "contractCandidate": "accepted-base@038fb381963cd822d2e7f81e55d45d26f1d2c9e5; rejected-amendment@add3bc99862eaa2998b3dee0bbc0004b4b5f1e23; recurring-p0-rejected-amendment@1bdfe46947be842655bc630556163fc2c24f342e; sole-repair-candidate@PENDING",
+          "contractReview": "ACCEPTED_BASE_GO; AMENDMENT_ADD3BC_CONTRACT_NO_GO; AMENDMENT_1BDFE469_CONTRACT_NO_GO_SAME_MATERIAL_FINDING_RECURRENCE; HUMAN_AUTHORIZED_SOLE_REPAIR_VALIDATION_PENDING",
           "contractReviewDocument": "external-audit-task@019f9dbb-d604-75c2-9447-18044f9b5c91",
-          "repairStatus": "The accepted ADR-0009 clock-parent repair is preserved at 038fb381963cd822d2e7f81e55d45d26f1d2c9e5. External review of amendment add3bc99862eaa2998b3dee0bbc0004b4b5f1e23 returned CONTRACT_NO_GO because a valid trade u did not stop later same-page parsing and nested hostile arrays/values could execute getters or Proxy traps. The bounded repair now returns correction-unsupported immediately before later same-symbol/later-symbol/later-page value reads, recursively validates passive-Proxy-first data descriptors, and executes 8 original-synthetic hostile/atomicity cases with 10 literal runtime recipes and zero-call/zero-output counters. Complete new-candidate local/hosted evidence and external re-review remain pending. Stopped PR 2F remains preserved at da6bc096215ca8e4047fcac10fec3c1357589a91 plus six untracked Lane E files until amendment merge and renewed Phase B direction",
+          "repairStatus": "The accepted ADR-0009 clock-parent repair is preserved at 038fb381963cd822d2e7f81e55d45d26f1d2c9e5. External review of first amendment add3bc99862eaa2998b3dee0bbc0004b4b5f1e23 returned CONTRACT_NO_GO for non-immediate u handling and hostile-container traversal. Repaired candidate 1bdfe46947be842655bc630556163fc2c24f342e preserved all accepted bytes and passed local/hosted gates, but external re-review returned CONTRACT_NO_GO with SAME_MATERIAL_FINDING_RECURRENCE because group traversal depended on JSON insertion order and runChain modeled/encoded the whole semantic page before the u scan. The owner authorized exactly one bounded repair: canonical unsigned-UTF-8 group traversal, a verified-raw-text integrated boundary, and 27 original-synthetic update/placement/successor vectors through direct admission, uninterrupted/every-prefix restart, memory, and SQLite with exact zero later output/mutation/getter/Proxy-trap calls. Complete new-candidate same-SHA local/hosted evidence and one whole-package external re-review remain pending. Any recurrence or new material authority need stops work with no further repair. Stopped PR 2F remains preserved at da6bc096215ca8e4047fcac10fec3c1357589a91 plus six untracked Lane E files until amendment merge and renewed Phase B direction",
           "owner": "agent",
           "dependsOn": ["P1-08", "P1-09"],
           "blocker": "The narrowed PR 2E wire amendment needs a clean exact candidate, same-SHA offline/hosted evidence, external CONTRACT_GO, and explicit merge authorization before stopped PR 2F may be reconstructed",
-          "contractBlocker": "External CONTRACT_GO is absent after CONTRACT_NO_GO on add3bc99862eaa2998b3dee0bbc0004b4b5f1e23; the bounded repair needs a new clean candidate, complete same-SHA local/hosted evidence, and whole-package external re-review; PR 2F remains stopped and unmerged",
+          "contractBlocker": "External CONTRACT_GO is absent after SAME_MATERIAL_FINDING_RECURRENCE on 1bdfe46947be842655bc630556163fc2c24f342e; the sole authorized repair needs a new clean candidate, complete same-SHA local/hosted evidence, and exactly one whole-package external re-review; any recurrence or new material authority need stops work; PR 2F remains stopped and unmerged",
           "preparationScope": "Agents may prepare the file-ownership map, accepted-contract mapping, synthetic and recorded acceptance vectors, bounded retry/quota/restart plan, secret-redaction tests, and pre-implementation audit without credentials, provider calls, live transport, or provider bytes.",
           "acceptance": "A bounded no-new-spend adapter stores private raw artifacts, verifies reads, normalizes market facts, deterministically selects references around the PR 2C observation anchor, and emits marketReferenceJoinKey or a stable missing reason while paid-plan activation is disabled.",
           "evidence": [
@@ -338,7 +338,14 @@
             "wire-amendment-ci-run@30587959302",
             "wire-amendment-finding@same-page-u-terminal-not-immediate",
             "wire-amendment-finding@nested-hostile-container-not-inert",
-            "wire-amendment-repair@immediate-u-and-recursive-inert-descriptors"
+            "wire-amendment-repair@immediate-u-and-recursive-inert-descriptors",
+            "wire-amendment-recurring-p0-candidate@1bdfe46947be842655bc630556163fc2c24f342e",
+            "wire-amendment-recurring-p0-tree@ef0c66ef079bd0cef06b014bfc2f89039d95911a",
+            "wire-amendment-recurring-p0-ci-run@30596382005",
+            "wire-amendment-contract-no-go@1bdfe46947be842655bc630556163fc2c24f342e",
+            "wire-amendment-finding@same-material-terminal-precedence-recurrence",
+            "human-authorization@exactly-one-bounded-recurring-p0-repair-cycle",
+            "wire-amendment-sole-repair@canonical-u-before-semantic-tail"
           ]
         },
         {

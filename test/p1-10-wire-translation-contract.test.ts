@@ -55,6 +55,7 @@ type PageAdmission = Readonly<{
   quarantines: readonly Quarantine[];
   barObservations: readonly BarObservation[];
   terminalReason: "correction-unsupported" | null;
+  terminalItemDigest: string | null;
   publicSummary: Readonly<{
     endpointKind: EndpointKind;
     recordCount: number;
@@ -308,6 +309,10 @@ function assertExactKeys(
 
 function utf8Bytes(value: string): number {
   return Buffer.byteLength(value, "utf8");
+}
+
+function compareUnsignedUtf8(left: string, right: string): number {
+  return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
 }
 
 function independentCanonicalJson(value: JsonValue): string {
@@ -1068,8 +1073,6 @@ function admitPage(
   const groupDescriptors = Object.getOwnPropertyDescriptors(groups);
   if (groupNames.length === 0 && token !== null) reject("schema-invalid");
   const membership = new Set(context.requestedSymbols);
-  let recordCount = 0;
-  const validated: ValidatedItem[] = [];
   for (const symbol of groupNames) {
     if (
       !/^[\x21-\x7e]{1,32}$/u.test(symbol) ||
@@ -1079,6 +1082,11 @@ function admitPage(
     ) {
       reject("schema-invalid");
     }
+  }
+  groupNames.sort(compareUnsignedUtf8);
+  let recordCount = 0;
+  const validated: ValidatedItem[] = [];
+  for (const symbol of groupNames) {
     const items = (
       groupDescriptors[symbol] as PropertyDescriptor & {
         value: unknown;
@@ -1122,6 +1130,7 @@ function admitPage(
           quarantines,
           barObservations: Object.freeze([]),
           terminalReason,
+          terminalItemDigest: item.digest,
           publicSummary: Object.freeze({
             endpointKind,
             recordCount: 0,
@@ -1252,6 +1261,7 @@ function admitPage(
     quarantines: Object.freeze(quarantines),
     barObservations: Object.freeze(barObservations),
     terminalReason,
+    terminalItemDigest: null,
     publicSummary,
   });
 }
@@ -1264,7 +1274,8 @@ function admitFixture(caseId: string, context: ParseContext = BASE_CONTEXT): Pag
 
 type ChainPage = Readonly<{
   ordinal: number;
-  page: PlainRecord;
+  rawText: string;
+  adversarialSemanticEnvelope?: unknown;
   presentedRequestToken: string | null;
   logicalRequestId: string;
   rawArtifactId?: string;
@@ -1422,6 +1433,18 @@ function encodeWireJson(value: unknown): string {
   return `{${Object.entries(value)
     .map(([key, entry]) => `${JSON.stringify(key)}:${encodeWireJson(entry)}`)
     .join(",")}}`;
+}
+
+function verifiedChainPage(
+  page: PlainRecord,
+  metadata: Omit<ChainPage, "rawText" | "adversarialSemanticEnvelope">,
+  adversarialSemanticEnvelope?: unknown,
+): ChainPage {
+  return Object.freeze({
+    ...metadata,
+    rawText: encodeWireJson(modelValue(page)),
+    ...(adversarialSemanticEnvelope === undefined ? {} : { adversarialSemanticEnvelope }),
+  });
 }
 
 function inspectContinuationToken(endpointKind: EndpointKind, input: unknown): string | null {
@@ -1859,13 +1882,13 @@ function runChain(
       reject("token-substitution");
     }
     enforcePageCount(checkpoint.verifiedPages.length + 1);
-    const rawText = encodeWireJson(modelValue(chainPage.page));
+    const rawText = chainPage.rawText;
     const rawPageBytes = utf8Bytes(rawText);
     enforceRawPageBytes(rawPageBytes);
     aggregateVerifiedBytes += rawPageBytes;
     enforceAggregateVerifiedBytes(aggregateVerifiedBytes);
-    const parsedEnvelope = parseRawJson(rawText);
-    const returnedToken = inspectContinuationToken(endpointKind, parsedEnvelope);
+    const parsedRawEnvelope = parseRawJson(rawText);
+    const returnedToken = inspectContinuationToken(endpointKind, parsedRawEnvelope);
     const returnedTokenHash = returnedToken === null ? null : privateTokenHash(returnedToken);
     if (returnedTokenHash !== null && seenReturnedTokenHashes.has(returnedTokenHash)) {
       reject("repeated-token");
@@ -1884,12 +1907,29 @@ function runChain(
       returnedTokenMaterial: returnedToken,
     });
     const verifiedPages = Object.freeze([...checkpoint.verifiedPages, verifiedPage]);
+    const pageContext = {
+      ...context,
+      rawArtifactId,
+    };
+    const rawAdmission = admitPage(endpointKind, parsedRawEnvelope, pageContext);
+    let semanticAdmission = rawAdmission;
+    if (chainPage.adversarialSemanticEnvelope !== undefined) {
+      semanticAdmission = admitPage(
+        endpointKind,
+        chainPage.adversarialSemanticEnvelope,
+        pageContext,
+      );
+      if (
+        rawAdmission.terminalReason !== "correction-unsupported" ||
+        semanticAdmission.terminalReason !== "correction-unsupported" ||
+        rawAdmission.terminalItemDigest !== semanticAdmission.terminalItemDigest ||
+        !sameCanonical(rawAdmission.quarantines, semanticAdmission.quarantines)
+      ) {
+        reject("verified-page-semantic-mismatch");
+      }
+    }
     const correctionStop =
-      endpointKind === "trades" &&
-      admitPage(endpointKind, parsedEnvelope, {
-        ...context,
-        rawArtifactId,
-      }).terminalReason === "correction-unsupported";
+      endpointKind === "trades" && semanticAdmission.terminalReason === "correction-unsupported";
     checkpoint = Object.freeze({
       endpointKind,
       contextIdentityHash: expectedContextIdentityHash,
@@ -2009,16 +2049,20 @@ function paginateBars(items: readonly PlainRecord[], pageSize: number): readonly
     const ordinal = pages.length;
     const terminal = offset + pageSize >= items.length;
     const returnedToken = terminal ? null : `peas-synthetic-opaque-page-${ordinal + 1}`;
-    pages.push({
-      ordinal,
-      logicalRequestId: "peas-synthetic-bars-page-size-invariance",
-      presentedRequestToken: ordinal === 0 ? null : `peas-synthetic-opaque-page-${ordinal}`,
-      rawArtifactId: `mar1_${ordinal.toString(16).padStart(64, "0")}`,
-      page: {
-        bars: { PEASIVY: items.slice(offset, offset + pageSize) },
-        next_page_token: returnedToken,
-      },
-    });
+    pages.push(
+      verifiedChainPage(
+        {
+          bars: { PEASIVY: items.slice(offset, offset + pageSize) },
+          next_page_token: returnedToken,
+        },
+        {
+          ordinal,
+          logicalRequestId: "peas-synthetic-bars-page-size-invariance",
+          presentedRequestToken: ordinal === 0 ? null : `peas-synthetic-opaque-page-${ordinal}`,
+          rawArtifactId: `mar1_${ordinal.toString(16).padStart(64, "0")}`,
+        },
+      ),
+    );
   }
   return Object.freeze(pages);
 }
@@ -2594,15 +2638,15 @@ test("all 8 hostile-atomicity recipes execute with literal zero-trap and zero-ou
           records += runChain(
             "trades",
             [
-              {
+              verifiedChainPage(updatePage, {
                 ordinal: 0,
-                page: updatePage,
                 presentedRequestToken: null,
                 logicalRequestId: "peas-synthetic-immediate-u-stop",
-              },
+              }),
               {
                 ordinal: 1,
-                page: hostilePage,
+                rawText: "",
+                adversarialSemanticEnvelope: hostilePage,
                 presentedRequestToken: "peas-synthetic-opaque-stop-before-page-one",
                 logicalRequestId: "peas-synthetic-immediate-u-stop",
               },
@@ -3033,6 +3077,235 @@ test("valid trade updates stop at first, middle, and last positions before hosti
   assert.equal(proxyTrapCalls, 0);
 });
 
+test("canonical trade-update precedence is exhaustive across direct, restart, memory, and SQLite paths", () => {
+  const normal = structuredClone(
+    firstItem(cloneAndModel(fixtureWire("wire-trades-terminal-grouped")), "trades"),
+  );
+  const updates = ["canceled", "incorrect", "corrected"] as const;
+  const placements = ["first", "middle", "last"] as const;
+  const successorKinds = ["malformed", "getter-hostile", "proxy-hostile"] as const;
+  const backends = [
+    ["memory", () => new MemoryJournal()],
+    ["sqlite", () => new SqliteJournal()],
+  ] as const;
+  const terminalOutcomes = new Set<string>();
+  let vectorCount = 0;
+  let integratedRunCount = 0;
+
+  for (const update of updates) {
+    for (const placement of placements) {
+      for (const successorKind of successorKinds) {
+        vectorCount += 1;
+        let getterCalls = 0;
+        let proxyTrapCalls = 0;
+        const getterHostileValue = (): PlainRecord => {
+          const value = Object.create(null) as PlainRecord;
+          Object.defineProperty(value, "peasSyntheticLaterValue", {
+            enumerable: true,
+            get() {
+              getterCalls += 1;
+              throw new Error("peas-synthetic-later-getter");
+            },
+          });
+          return value;
+        };
+        const proxyHostileValue = (): object =>
+          new Proxy(
+            {},
+            {
+              getPrototypeOf() {
+                proxyTrapCalls += 1;
+                throw new Error("peas-synthetic-later-proxy");
+              },
+              ownKeys() {
+                proxyTrapCalls += 1;
+                throw new Error("peas-synthetic-later-proxy");
+              },
+              getOwnPropertyDescriptor() {
+                proxyTrapCalls += 1;
+                throw new Error("peas-synthetic-later-proxy");
+              },
+              get() {
+                proxyTrapCalls += 1;
+                throw new Error("peas-synthetic-later-proxy");
+              },
+            },
+          );
+        const laterValue = (): unknown =>
+          successorKind === "malformed"
+            ? null
+            : successorKind === "getter-hostile"
+              ? getterHostileValue()
+              : proxyHostileValue();
+
+        const updateItem = structuredClone(normal);
+        updateItem["u"] = update;
+        const expectedItemIndex = placement === "first" ? 0 : placement === "middle" ? 1 : 2;
+        const earlierItems: unknown[] =
+          placement === "first"
+            ? [updateItem, laterValue()]
+            : placement === "middle"
+              ? [structuredClone(normal), updateItem, laterValue()]
+              : [structuredClone(normal), structuredClone(normal), updateItem];
+        const laterGroupValue = placement === "last" ? laterValue() : [];
+
+        const reversedGroups: PlainRecord = {};
+        reversedGroups["PEASUMB"] = laterGroupValue;
+        reversedGroups["PEASLIL"] = earlierItems;
+        assert.deepEqual(Object.keys(reversedGroups), ["PEASUMB", "PEASLIL"]);
+        const semanticPage: PlainRecord = {
+          trades: reversedGroups,
+          next_page_token: "peas-synthetic-terminal-token-must-clear",
+        };
+        const direct = admitPage("trades", semanticPage);
+        assert.equal(direct.terminal, true);
+        assert.equal(direct.privateNextToken, null);
+        assert.equal(direct.terminalReason, "correction-unsupported");
+        assert.match(direct.terminalItemDigest ?? "", /^[0-9a-f]{64}$/u);
+        assert.deepEqual(direct.records, []);
+        assert.deepEqual(direct.barObservations, []);
+        assert.deepEqual(direct.quarantines, [
+          {
+            endpointKind: "trades",
+            reason: "correction-unsupported",
+            symbol: "PEASLIL",
+            itemIndex: expectedItemIndex,
+          },
+        ]);
+        for (const forbiddenState of [
+          "replacement",
+          "replacements",
+          "selection",
+          "selections",
+          "reversibleState",
+          "providerRecordKey",
+          "providerRevisionKey",
+        ]) {
+          assert.equal(Object.hasOwn(direct, forbiddenState), false, forbiddenState);
+        }
+
+        const safeEarlierItems =
+          placement === "first"
+            ? [structuredClone(updateItem), null]
+            : placement === "middle"
+              ? [structuredClone(normal), structuredClone(updateItem), null]
+              : [structuredClone(normal), structuredClone(normal), structuredClone(updateItem)];
+        const safeReversedGroups: PlainRecord = {};
+        safeReversedGroups["PEASUMB"] = placement === "last" ? null : [];
+        safeReversedGroups["PEASLIL"] = safeEarlierItems;
+        const safeRawPage: PlainRecord = {
+          trades: safeReversedGroups,
+          next_page_token: "peas-synthetic-terminal-token-must-clear",
+        };
+        const logicalRequestId = `peas-synthetic-canonical-u-${update}-${placement}-${successorKind}`;
+        const prefixPage = verifiedChainPage(
+          {
+            trades: { PEASLIL: [] },
+            next_page_token: "peas-synthetic-prefix-token",
+          },
+          {
+            ordinal: 0,
+            presentedRequestToken: null,
+            logicalRequestId,
+            rawArtifactId: `mar1_${"1".repeat(64)}`,
+          },
+        );
+        const updatePage = verifiedChainPage(
+          safeRawPage,
+          {
+            ordinal: 1,
+            presentedRequestToken: "peas-synthetic-prefix-token",
+            logicalRequestId,
+            rawArtifactId: `mar1_${"2".repeat(64)}`,
+          },
+          semanticPage,
+        );
+        const forbiddenLaterPage = new Proxy(
+          {
+            ordinal: 2,
+            rawText: "",
+            presentedRequestToken: "peas-synthetic-terminal-token-must-clear",
+            logicalRequestId,
+            rawArtifactId: `mar1_${"3".repeat(64)}`,
+          } satisfies ChainPage,
+          {
+            get(target, property, receiver) {
+              proxyTrapCalls += 1;
+              return Reflect.get(target, property, receiver);
+            },
+            ownKeys(target) {
+              proxyTrapCalls += 1;
+              return Reflect.ownKeys(target);
+            },
+            getOwnPropertyDescriptor(target, property) {
+              proxyTrapCalls += 1;
+              return Reflect.getOwnPropertyDescriptor(target, property);
+            },
+          },
+        );
+        const chain = [prefixPage, updatePage, forbiddenLaterPage] as const;
+
+        for (const [backend, createJournal] of backends) {
+          for (const durablePrefix of [0, 1, 2] as const) {
+            integratedRunCount += 1;
+            const journal = createJournal();
+            try {
+              let records: readonly RecordedMarketRecordV1[];
+              if (durablePrefix === 0) {
+                records = runChain("trades", chain, journal);
+              } else if (durablePrefix === 1) {
+                assert.deepEqual(runChain("trades", [prefixPage], journal), [], backend);
+                records = runChain("trades", [updatePage, forbiddenLaterPage], journal);
+              } else {
+                assert.deepEqual(
+                  runChain("trades", [prefixPage, updatePage], journal),
+                  [],
+                  backend,
+                );
+                records = runChain("trades", [], journal);
+              }
+              assert.deepEqual(records, [], `${backend}:${durablePrefix}`);
+              const checkpoint = journal.load();
+              assert.ok(checkpoint);
+              assert.equal(checkpoint.terminal, true);
+              assert.equal(checkpoint.expectedPrivateToken, null);
+              assert.equal(checkpoint.expectedPrivateTokenHash, null);
+              assert.equal(checkpoint.verifiedPages.length, 2);
+              assert.equal(checkpoint.outcome?.terminalReason, "correction-unsupported");
+              assert.deepEqual(checkpoint.outcome?.records, []);
+              assert.equal(checkpoint.outcome?.barObservationCount, 0);
+              assert.deepEqual(checkpoint.outcome?.quarantines, direct.quarantines);
+              assert.match(checkpoint.outcome?.resolutionHash ?? "", /^[0-9a-f]{64}$/u);
+              terminalOutcomes.add(canonicalJson(checkpoint.outcome as unknown as JsonValue));
+              for (const forbiddenState of [
+                "replacement",
+                "replacements",
+                "selection",
+                "selections",
+                "reversibleState",
+              ]) {
+                assert.equal(
+                  Object.hasOwn(checkpoint.outcome ?? {}, forbiddenState),
+                  false,
+                  `${backend}:${durablePrefix}:${forbiddenState}`,
+                );
+              }
+            } finally {
+              journal.close();
+            }
+          }
+        }
+        assert.equal(getterCalls, 0, `${update}:${placement}:${successorKind}:getter`);
+        assert.equal(proxyTrapCalls, 0, `${update}:${placement}:${successorKind}:proxy`);
+      }
+    }
+  }
+
+  assert.equal(vectorCount, 27);
+  assert.equal(integratedRunCount, 162);
+  assert.equal(terminalOutcomes.size, 3);
+});
+
 test("decimal and integer lexical grammar, machine limits, and one-over bounds are exact", () => {
   for (const token of ["1e2", "1E+2", "+1", "-0", "01", "1."]) {
     expectWireError("market.decimal-invalid", () => numberToken(rawNumber(token)));
@@ -3307,18 +3580,16 @@ test("required opaque token grammar and complete page-chain contradictions fail 
   const first = fixtureWire("wire-bars-continuation");
   const second = fixtureWire("wire-bars-terminal-grouped");
   const acceptedPages: readonly ChainPage[] = [
-    {
+    verifiedChainPage(first, {
       ordinal: 0,
-      page: first,
       presentedRequestToken: null,
       logicalRequestId: "peas-synthetic-chain",
-    },
-    {
+    }),
+    verifiedChainPage(second, {
       ordinal: 1,
-      page: second,
       presentedRequestToken: "peas-synthetic-opaque-bars-ordinal-2",
       logicalRequestId: "peas-synthetic-chain",
-    },
+    }),
   ];
   const journal = new MemoryJournal();
   assert.equal(runChain("bars", acceptedPages, journal).length, 3);
@@ -3362,18 +3633,16 @@ test("required opaque token grammar and complete page-chain contradictions fail 
     runChain(
       "quotes",
       [
-        {
+        verifiedChainPage(loopFirst, {
           ordinal: 0,
-          page: loopFirst,
           presentedRequestToken: null,
           logicalRequestId: "peas-synthetic-loop",
-        },
-        {
+        }),
+        verifiedChainPage(loopSecond, {
           ordinal: 1,
-          page: loopSecond,
           presentedRequestToken: repeatedToken,
           logicalRequestId: "peas-synthetic-loop",
-        },
+        }),
       ],
       new MemoryJournal(),
     ),
@@ -3392,18 +3661,16 @@ test("journal persists verified pages, token history, terminal resolution, and r
 
   const first = fixtureWire("wire-bars-continuation");
   const second = fixtureWire("wire-bars-terminal-grouped");
-  const firstPage: ChainPage = {
+  const firstPage: ChainPage = verifiedChainPage(first, {
     ordinal: 0,
-    page: first,
     presentedRequestToken: null,
     logicalRequestId: "peas-synthetic-journal",
-  };
-  const secondPage: ChainPage = {
+  });
+  const secondPage: ChainPage = verifiedChainPage(second, {
     ordinal: 1,
-    page: second,
     presentedRequestToken: "peas-synthetic-opaque-bars-ordinal-2",
     logicalRequestId: "peas-synthetic-journal",
-  };
+  });
   const journal = new RecordingJournal();
   assert.deepEqual(runChain("bars", [firstPage], journal), []);
   const incomplete = journal.load();
@@ -3429,24 +3696,25 @@ test("journal persists verified pages, token history, terminal resolution, and r
   assert.deepEqual(runChain("bars", [], journal), completed);
 
   const repeatedJournal = new MemoryJournal();
-  const quoteFirst: ChainPage = {
-    ordinal: 0,
-    page: fixtureWire("wire-quotes-continuation-currency"),
-    presentedRequestToken: null,
-    logicalRequestId: "peas-synthetic-restart-loop",
-  };
+  const quoteFirst: ChainPage = verifiedChainPage(
+    fixtureWire("wire-quotes-continuation-currency"),
+    {
+      ordinal: 0,
+      presentedRequestToken: null,
+      logicalRequestId: "peas-synthetic-restart-loop",
+    },
+  );
   assert.deepEqual(runChain("quotes", [quoteFirst], repeatedJournal), []);
   const quoteSecondPage = fixtureWire("wire-quotes-continuation-currency");
   expectWireError("repeated-token", () =>
     runChain(
       "quotes",
       [
-        {
+        verifiedChainPage(quoteSecondPage, {
           ordinal: 1,
-          page: quoteSecondPage,
           presentedRequestToken: "peas-synthetic-opaque-quotes-ordinal-2",
           logicalRequestId: "peas-synthetic-restart-loop",
-        },
+        }),
       ],
       repeatedJournal,
     ),
@@ -3461,18 +3729,16 @@ test("journal persists verified pages, token history, terminal resolution, and r
     runChain(
       "trades",
       [
-        {
+        verifiedChainPage(tradeUpdate, {
           ordinal: 0,
-          page: tradeUpdate,
           presentedRequestToken: null,
           logicalRequestId: "peas-synthetic-u-stop",
-        },
-        {
+        }),
+        verifiedChainPage(laterMalformedTrade, {
           ordinal: 1,
-          page: laterMalformedTrade,
           presentedRequestToken: "peas-synthetic-opaque-trade-after-u",
           logicalRequestId: "peas-synthetic-u-stop",
-        },
+        }),
       ],
       tradeJournal,
     ),
@@ -3520,25 +3786,22 @@ test("every journal load independently rejects incomplete and terminal checkpoin
   middleWire["next_page_token"] = "peas-synthetic-opaque-bars-ordinal-3";
   const terminalWire = fixtureWire("wire-bars-terminal-grouped");
   const prefix: readonly ChainPage[] = [
-    {
+    verifiedChainPage(firstWire, {
       ordinal: 0,
-      page: firstWire,
       presentedRequestToken: null,
       logicalRequestId: "peas-synthetic-checkpoint-mutation",
-    },
-    {
+    }),
+    verifiedChainPage(middleWire, {
       ordinal: 1,
-      page: middleWire,
       presentedRequestToken: "peas-synthetic-opaque-bars-ordinal-2",
       logicalRequestId: "peas-synthetic-checkpoint-mutation",
-    },
+    }),
   ];
-  const finalPage: ChainPage = {
+  const finalPage: ChainPage = verifiedChainPage(terminalWire, {
     ordinal: 2,
-    page: terminalWire,
     presentedRequestToken: "peas-synthetic-opaque-bars-ordinal-3",
     logicalRequestId: "peas-synthetic-checkpoint-mutation",
-  };
+  });
 
   const mutate = (checkpoint: ChainCheckpoint, operation: (copy: PlainRecord) => void): unknown => {
     const copy = structuredClone(checkpoint) as unknown as PlainRecord;
@@ -3863,18 +4126,16 @@ test("complete-chain bar deduplication and conflicts are global across pages", (
   continuation["next_page_token"] = "peas-synthetic-opaque-global-bars";
   const duplicate = fixtureWire("wire-bars-terminal-grouped");
   const basePages: readonly ChainPage[] = [
-    {
+    verifiedChainPage(continuation, {
       ordinal: 0,
-      page: continuation,
       presentedRequestToken: null,
       logicalRequestId: "peas-synthetic-global-bars",
-    },
-    {
+    }),
+    verifiedChainPage(duplicate, {
       ordinal: 1,
-      page: duplicate,
       presentedRequestToken: "peas-synthetic-opaque-global-bars",
       logicalRequestId: "peas-synthetic-global-bars",
-    },
+    }),
   ];
   assert.equal(runChain("bars", basePages, new MemoryJournal()).length, 2);
 
@@ -3883,7 +4144,14 @@ test("complete-chain bar deduplication and conflicts are global across pages", (
   const journal = new MemoryJournal();
   const records = runChain(
     "bars",
-    [basePages[0] as ChainPage, { ...(basePages[1] as ChainPage), page: conflicting }],
+    [
+      basePages[0] as ChainPage,
+      verifiedChainPage(conflicting, {
+        ordinal: 1,
+        presentedRequestToken: "peas-synthetic-opaque-global-bars",
+        logicalRequestId: "peas-synthetic-global-bars",
+      }),
+    ],
     journal,
   );
   assert.equal(records.length, 1);
@@ -3905,12 +4173,11 @@ test("complete-chain bar deduplication and conflicts are global across pages", (
   const samePageRecords = runChain(
     "bars",
     [
-      {
+      verifiedChainPage(paginationFixturePage("bars", samePageFixture), {
         ordinal: 0,
-        page: paginationFixturePage("bars", samePageFixture),
         presentedRequestToken: null,
         logicalRequestId: "peas-synthetic-same-page-conflict",
-      },
+      }),
     ],
     samePageJournal,
   );
@@ -3925,14 +4192,15 @@ test("every pagination-delivery fixture operation executes with its literal disp
     const endpointKind = fixtureCase["endpointKind"] as EndpointKind;
     if (fixtureCase.caseId.startsWith("chain-")) {
       const specifications = fixtureCase["pages"] as readonly Readonly<Record<string, unknown>>[];
-      const pages = specifications.map((specification) => ({
-        ordinal: specification["ordinal"] as number,
-        page: paginationFixturePage(endpointKind, specification),
-        presentedRequestToken: specification["presentedRequestToken"] as string | null,
-        logicalRequestId:
-          (specification["logicalRequestIdOverride"] as string | undefined) ??
-          (fixtureCase["logicalRequestId"] as string),
-      }));
+      const pages = specifications.map((specification) =>
+        verifiedChainPage(paginationFixturePage(endpointKind, specification), {
+          ordinal: specification["ordinal"] as number,
+          presentedRequestToken: specification["presentedRequestToken"] as string | null,
+          logicalRequestId:
+            (specification["logicalRequestIdOverride"] as string | undefined) ??
+            (fixtureCase["logicalRequestId"] as string),
+        }),
+      );
       const journal = new MemoryJournal();
       const expected = fixtureCase["expectedDisposition"];
       if (expected === "accept-complete") {

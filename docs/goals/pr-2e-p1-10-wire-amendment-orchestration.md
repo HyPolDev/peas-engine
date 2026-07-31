@@ -1,6 +1,6 @@
 # PR 2E P1-10 Alpaca wire-grammar amendment orchestration
 
-Status: external amendment NO_GO repaired; new candidate validation pending; PR 2F remains stopped
+Status: human-authorized sole recurring-P0 repair in validation; PR 2F remains stopped
 
 ## Frozen base and preservation boundary
 
@@ -110,6 +110,36 @@ The first focused integration rerun passed `26/26`; complete same-SHA local and 
 must be regenerated after the new repair candidate is frozen. A fresh whole-package re-review by
 the same external task remains mandatory.
 
+## Recurring P0 review and sole authorized repair
+
+Exact repaired amendment candidate `1bdfe46947be842655bc630556163fc2c24f342e`, tree
+`ef0c66ef079bd0cef06b014bfc2f89039d95911a`, preserved every accepted authority byte and passed
+the complete same-SHA local and hosted matrix. The same independent external audit task nevertheless
+returned `CONTRACT_NO_GO` with `SAME_MATERIAL_FINDING_RECURRENCE`:
+
+1. `admitPage` traversed symbol groups in JSON insertion order instead of canonical requested-symbol
+   unsigned-UTF-8 order, so reversing two properties allowed malformed later-canonical input to
+   override a canonical-earlier fully validated `u`; and
+2. `runChain` recursively modeled and encoded the complete semantic page before the terminal scan,
+   so a hostile later item could reject the integrated path before the valid `u` was observed.
+
+The immutable external report remains in task
+`019f9dbb-d604-75c2-9447-18044f9b5c91`. Human direction subsequently authorized exactly one
+bounded repair/re-review cycle for this recurring P0. Sole repair ownership is limited to:
+
+- canonical unsigned-UTF-8 descriptor traversal independent of JSON property order;
+- a verified-raw-text chain boundary that performs no whole-page semantic modeling or encoding
+  before the terminal scan; and
+- exhaustive original-synthetic direct/integrated, uninterrupted/every-prefix, memory/SQLite
+  evidence across every `canceled|incorrect|corrected` and `first|middle|last` placement, reversed
+  group order, malformed/getter-hostile/Proxy-hostile later-canonical items or groups, and exact
+  zero later-output/mutation/getter/trap counters.
+
+The accepted wire contract already requires those semantics and remains byte-identical. This
+repair changes only the executable model and its acceptance/status evidence. If the same P0 recurs,
+if any new material finding requires authority beyond those three items, or if exact same-SHA
+evidence cannot be proved, work stops for human direction with no further repair.
+
 ## Validation and review sequence
 
 1. Integrate official-document evidence, grammar/translation contract, original synthetic fixtures,
@@ -117,8 +147,9 @@ the same external task remains mandatory.
 2. Run focused tests and the complete offline repository gates.
 3. Freeze a clean candidate SHA and tree.
 4. Push only the amendment branch and require same-SHA Ubuntu, Windows, and scale evidence.
-5. Submit the entire exact candidate to external audit task
+5. Submit the entire exact candidate exactly once to external audit task
    `019f9dbb-d604-75c2-9447-18044f9b5c91`.
-6. Repair every `CONTRACT_NO_GO` finding on a new candidate and resubmit the whole package.
+6. Require a binary decision on the complete package. Any recurring P0 or new material finding is
+   a stop condition; no further repair is authorized.
 7. On `CONTRACT_GO`, verify local head, remote head, reviewed SHA/tree, and CI SHA are identical,
    then stop for human merge authorization. Do not merge.

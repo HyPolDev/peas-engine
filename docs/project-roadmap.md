@@ -190,8 +190,19 @@ passed complete same-SHA local and hosted gates but received external `CONTRACT_
 getter or Proxy code before rejection. The bounded repair now requires immediate
 `correction-unsupported` return before later same-symbol/later-symbol/later-page value reads,
 recursive passive-Proxy-first descriptor admission, and all 8 original-synthetic hostile/atomicity
-cases (10 literal runtime recipes) with exact zero-call/zero-output counters. A new clean candidate,
-complete same-SHA local/hosted evidence, and whole-package external re-review remain pending.
+cases (10 literal runtime recipes) with exact zero-call/zero-output counters.
+
+That repaired candidate, `1bdfe46947be842655bc630556163fc2c24f342e`, tree
+`ef0c66ef079bd0cef06b014bfc2f89039d95911a`, also passed complete same-SHA local and hosted gates,
+but external re-review returned `CONTRACT_NO_GO` with `SAME_MATERIAL_FINDING_RECURRENCE`. Symbol
+groups still followed JSON insertion order, and the integrated chain modeled/encoded the whole
+semantic page before scanning `u`. The human owner authorized exactly one bounded recurrence
+repair: canonical unsigned-UTF-8 group traversal, a verified-raw-text boundary before semantic
+modeling, and exhaustive direct/integrated every-prefix memory/SQLite vectors for all three update
+values and placements with reversed group order plus malformed/getter-hostile/Proxy-hostile later
+items/groups. A new clean candidate, complete same-SHA local/hosted evidence, and exactly one
+whole-package external re-review remain pending. Any recurrence or new material authority need
+stops work; no further repair is authorized.
 
 ### Post-PR 2D next actions
 
@@ -202,7 +213,7 @@ must follow the order below; parallel preparation does not waive a gate.
 | --- | --- | --- | --- | --- |
 | 1 | Close the P1-09 evidence package | Human owner | Complete | Sanitized owner attestation, private Alpaca/FMP responses represented by opaque digest, explicit source/fallback decision, and zero-spend confirmation are recorded |
 | 2 | Independently audit the frozen P1-09 authorization | Integration owner plus fresh independent reviewer | Complete | Exact candidate `36dcf92b...` received `GO`; P1-09 is complete |
-| 3 | Prepare PR 2E, the P1-10 contract package | Agents with non-overlapping ownership | First amendment candidate received external `CONTRACT_NO_GO`; bounded repair integrated and new same-SHA validation/re-review pending | Immediate `u` stop, recursively inert hostile-container rejection, exact official-document grammar, bar-only neutral translation, deterministic quote/trade non-translation, original synthetic fault matrix, clean exact candidate, same-SHA offline/hosted evidence, and fresh external `CONTRACT_GO`; no credentials, provider calls, transport, or provider bytes |
+| 3 | Prepare PR 2E, the P1-10 contract package | Agents with non-overlapping ownership | Repaired amendment candidate received recurring-P0 `CONTRACT_NO_GO`; sole human-authorized recurrence repair and same-SHA validation/re-review pending | Canonical unsigned-UTF-8 immediate `u` stop, verified-raw boundary before semantic traversal, recursively inert hostile-container rejection, exact official-document grammar, bar-only neutral translation, deterministic quote/trade non-translation, original synthetic every-prefix memory/SQLite matrix, clean exact candidate, same-SHA offline/hosted evidence, and fresh external `CONTRACT_GO`; no credentials, provider calls, transport, or provider bytes |
 | 4 | Resolve the retention architecture authorization gate | Human owner | Authorized for the exact frozen architecture before the stopped PR 2F wave | Preserve the owner-authorized maintenance port, additive migration, controlled vault-root erasure, tombstone/use-denial semantics, and exact retention sequence; no scope expansion |
 | 5 | Implement PR 2F against the accepted PR 2E exact candidate | Agents after PR 2E amendment `CONTRACT_GO`, merge, and renewed Phase B direction | Stopped at checkpoint `da6bc096...`; do not touch | Reconstruct only after amendment merge, preserve compatible stopped work, treat amendment bytes as immutable, and continue the offline implementation/audit loop without FMP transport, silent fallback, or paid-plan paths |
 | 6 | Complete live read-only source capture and calendar prewarming | Non-overlapping source and calendar owners | Only where provider/account authorization is already explicit; market-data portions wait for P1-10 | Bounded SEC/FMP/issuer-IR capture as authorized, issuer allowlist, schedule provenance, restart/backfill evidence, and no dispatchable financial effects |
@@ -348,10 +359,12 @@ activation, broker/order surface, or financial effect.
 The earlier PR 2E `NO_GO` and retention-pending status is preserved above as audit history.
 Candidate `038fb381963cd822d2e7f81e55d45d26f1d2c9e5` subsequently received external contract `GO`,
 and the owner authorized the exact retention architecture. The current gate is the separately
-authorized narrowed wire amendment: it requires a clean exact candidate, same-SHA offline and
-hosted evidence, external `CONTRACT_GO`, explicit merge authorization, and merge. PR 2F remains
-stopped at `da6bc096215ca8e4047fcac10fec3c1357589a91` plus its six untracked Lane E files until those
-amendment gates close and the owner renews Phase B direction.
+authorized sole recurring-P0 repair of the narrowed wire amendment: it requires a clean exact
+candidate, same-SHA offline and hosted evidence, exactly one complete external re-review,
+`CONTRACT_GO`, explicit merge authorization, and merge. Any recurrence or new material authority
+need stops work without another repair. PR 2F remains stopped at
+`da6bc096215ca8e4047fcac10fec3c1357589a91` plus its six untracked Lane E files until those amendment
+gates close and the owner renews Phase B direction.
 
 Only then may implementation resume for the approved delayed historical provider/dataset/feed
 behind the accepted recorded contract:

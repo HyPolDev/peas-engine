@@ -47,6 +47,7 @@ original project-authored synthetic input.
 | `all valid synthetic pages admit exact grammar and enforce bar-only translation` | All valid quote/trade/bar envelopes | Quote/trade record count zero; every `u` terminal; eligible bars normalize through accepted PR 2D code |
 | `response envelopes, currency, symbol grouping, and closed item fields fail closed` | Required/optional/unknown envelope fields, exact `USD`, symbol membership/case/group type, required/unknown/null item fields | Every unauthorized shape rejects; omitted or exact `USD` admits |
 | `quote/trade conditions, tapes, updates, and absent sequence authority never emit records` | Quote condition arity 1/2, trade conditions 0..8, member bounds, SIP tapes A/B/C, prohibited N/O, all exact `u` values | Deterministic no-record quarantine; N/O rejects as feed mismatch; the first fully validated `u` stops complete acquisition before any later same-symbol, same-page-symbol, or later-page property read |
+| `canonical trade-update precedence is exhaustive across direct, restart, memory, and SQLite paths` | 27 original-synthetic `canceled|incorrect|corrected` x `first|middle|last` x malformed/getter-hostile/Proxy-hostile vectors; canonical-earlier update group inserted after the later-canonical group; direct admission and verified-raw integrated chain; uninterrupted and every durable prefix; memory and SQLite | Every path durably returns only `correction-unsupported`, clears continuation, stores no later page, emits zero records/bar observations/later quarantines/selections/replacements/reversible mutations, and performs exactly zero getter or Proxy-trap calls |
 | `decimal and integer lexical grammar, machine limits, and one-over bounds are exact` | Closed raw number grammar, leading plus, exponent, leading zero, trailing point, negative zero, uint32/uint64/int64 exact/one-over | Exact limits admit; every one-over/noncanonical token rejects before conversion |
 | `numeric wire fields reject wrong types and bars quarantine every contradiction` | Price/VWAP types, positivity, bar OHLC/VWAP relationships, volume/count positivity, completed interval | Wrong types reject; valid-number contradictions and nonpositive bar counts quarantine with no affected bar record |
 | `bar projection is exact RecordedMarketRecordV1 and accepted normalizer input` | Every accepted provider-neutral field/value, `providerSequence:null`, `sequenceSessionDate:null`, raw one-minute payload, fallback family | Deep field equality and accepted PR 2D normalization |
@@ -157,16 +158,21 @@ is returned. Every load validates endpoint and configuration identity before ite
 exact checkpoint/page shapes, contiguous page/token chain, recomputed raw digests, token hashes and
 history, expected continuation, and terminal/outcome consistency. A terminal return additionally
 replays the verified raw pages in deterministic order and recomputes the complete outcome. A
-trade-`u` outcome replays only through the first fully validated update item: later raw artifacts
-remain chain/digest verified but none of their JSON properties are read. A stored result cannot
-validate itself by presenting a correspondingly altered result hash.
+trade-`u` outcome replays only through the first fully validated update item. The current correction
+page remains byte-verified and durable; a later page is neither read nor appended. `runChain`
+accepts the already verified raw text and does not recursively model or encode a semantic object.
+Its adversarial semantic-envelope witness is accepted only when the inert raw parse independently
+reaches the same terminal item digest and quarantine identity. A stored result cannot validate
+itself by presenting a correspondingly altered result hash.
 
-The immediate-stop vectors place hostile getter and Proxy witnesses in (1) the next item of the
-same symbol group, (2) the first item of a later symbol group on the same page, and (3) the first
-item of a later page. Each vector runs uninterrupted and from every applicable memory/SQLite
-restart prefix. The first update item is fully descriptor/shape/field validated, the durable
-`correction-unsupported` result is identical in every run, and every later property-read, digest,
-parse, quarantine, record, getter-call, and Proxy-trap counter remains exactly zero.
+The immediate-stop vectors place malformed, hostile-getter, and hostile-Proxy witnesses in the
+next item for first/middle update placement and in a later canonical symbol group for last
+placement. Every page inserts that later group first in JSON property order. All 27 vectors run by
+direct admission and through the integrated raw-text chain, uninterrupted and after every durable
+prefix, with memory and SQLite journals. A separate later-page Proxy proves the chain returns
+without reading its fields. The update item is fully descriptor/shape/field validated, the durable
+`correction-unsupported` disposition is identical in every run, continuation is cleared, and every
+later output, reversible mutation, getter call, and Proxy trap remains exactly zero.
 
 The inert-container vectors place accessors and Proxies at the envelope, symbol-group map, group
 array, item, condition array, condition member, continuation, and nested hostile-value boundaries.
