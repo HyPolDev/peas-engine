@@ -1,6 +1,6 @@
 # PR 2E P1-10 Alpaca wire-grammar amendment orchestration
 
-Status: human-authorized sole recurring-P0 repair in validation; PR 2F remains stopped
+Status: human-authorized timing-gate reproducibility repair in validation; PR 2F remains stopped
 
 ## Frozen base and preservation boundary
 
@@ -140,16 +140,51 @@ repair changes only the executable model and its acceptance/status evidence. If 
 if any new material finding requires authority beyond those three items, or if exact same-SHA
 evidence cannot be proved, work stops for human direction with no further repair.
 
+## External recurrence re-review and timing-gate repair
+
+Exact sole recurrence-repair candidate `8f21b13b7d3ad837b89d715b625cc8db0dea6a1d`,
+tree `956de717f36294a114193d21c540f3d648b2b4ee`, closed the recurring wire P0. The existing
+independent audit task reproduced the focused wire suite `27/27`, the combined P1-10 suite `53/53`,
+and all 27 original-synthetic vectors / 162 integrated memory/SQLite restart runs. It found no
+recurrence, accepted-contract change, provider scope, or new wire-authority need.
+
+The immutable final report nevertheless returned `CONTRACT_NO_GO` because the complete Windows
+coverage gate could not independently reproduce the unrelated legacy 300-cluster timing assertion
+in `test/audit.test.ts`. Two complete coverage runs measured `19,998 ms` and `15,204 ms` against
+the unchanged `<15,000 ms` bound. The identical isolated test passed in `10,631 ms`, an earlier
+unchanged full-wrapper run passed in `8,684 ms`, and same-SHA hosted Ubuntu and Windows were green.
+The report therefore classified this as host-load-sensitive wall-clock evidence, not a functional
+wire-contract failure, but correctly blocked merge and PR 2F because the required complete local
+same-SHA gate was not reproducible.
+
+The human owner subsequently authorized one new repair limited to that timing-gate
+non-reproducibility. The repair may:
+
+- retain the exact `15,000 ms` processing-work bound while replacing scheduler-contaminated wall
+  time with narrowly equivalent process CPU time;
+- retain wall elapsed time as an explicit diagnostic and expose whether host delay crossed the
+  unchanged CPU budget;
+- add a focused regression proving that external wall delay does not pass a true CPU overage; and
+- update only the timing test and bounded status/evidence metadata.
+
+It may not inflate, weaken, skip, delete, or bypass the performance assertion; alter production
+code or accepted contract bytes; conceal host-load sensitivity; or broaden any provider, route,
+field, capability, cost, migration, port, P1-06, P2, outcome, financial-effect, or PR 2F scope.
+The complete clean-process isolated, full-file coverage, full repository coverage/check, hosted
+Ubuntu/Windows/10k, accepted-byte, and PR 2F proofs must be regenerated at one new exact candidate.
+If the same timing failure recurs after this repair or any broader authority is required, work
+stops for human direction.
+
 ## Validation and review sequence
 
-1. Integrate official-document evidence, grammar/translation contract, original synthetic fixtures,
-   and executable matrix.
-2. Run focused tests and the complete offline repository gates.
+1. Preserve the immutable `8f21b13b...` `CONTRACT_NO_GO` report and all accepted wire bytes.
+2. Run the focused timing-policy regression, clean-process isolated scale gate, full audit-file
+   coverage, and complete offline repository gates.
 3. Freeze a clean candidate SHA and tree.
 4. Push only the amendment branch and require same-SHA Ubuntu, Windows, and scale evidence.
 5. Submit the entire exact candidate exactly once to external audit task
    `019f9dbb-d604-75c2-9447-18044f9b5c91`.
-6. Require a binary decision on the complete package. Any recurring P0 or new material finding is
-   a stop condition; no further repair is authorized.
+6. Require a binary decision on the complete package. A repeated timing failure, recurring wire
+   P0, or new material finding is a stop condition.
 7. On `CONTRACT_GO`, verify local head, remote head, reviewed SHA/tree, and CI SHA are identical,
    then stop for human merge authorization. Do not merge.

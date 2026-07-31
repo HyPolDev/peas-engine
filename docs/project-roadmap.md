@@ -200,9 +200,16 @@ semantic page before scanning `u`. The human owner authorized exactly one bounde
 repair: canonical unsigned-UTF-8 group traversal, a verified-raw-text boundary before semantic
 modeling, and exhaustive direct/integrated every-prefix memory/SQLite vectors for all three update
 values and placements with reversed group order plus malformed/getter-hostile/Proxy-hostile later
-items/groups. A new clean candidate, complete same-SHA local/hosted evidence, and exactly one
-whole-package external re-review remain pending. Any recurrence or new material authority need
-stops work; no further repair is authorized.
+items/groups. Candidate `8f21b13b7d3ad837b89d715b625cc8db0dea6a1d`, tree
+`956de717f36294a114193d21c540f3d648b2b4ee`, closed that wire recurrence: the independent audit
+reproduced the focused `27/27`, combined `53/53`, and 27-vector / 162-run restart evidence with no
+wire finding. Its immutable final decision remained `CONTRACT_NO_GO` only because the legacy
+300-cluster wall-clock assertion failed two complete Windows coverage runs at `19,998 ms` and
+`15,204 ms` despite isolated and hosted passes. The owner authorized one new timing-only repair:
+retain the exact `15,000 ms` processing-work bound as deterministic process CPU time, expose wall
+elapsed time and host-delay sensitivity as diagnostics, and regenerate complete clean-process,
+same-SHA local/hosted, and external evidence. No production or accepted-contract change is
+authorized. A repeated timing failure or broader authority need stops work.
 
 ### Post-PR 2D next actions
 
@@ -213,7 +220,7 @@ must follow the order below; parallel preparation does not waive a gate.
 | --- | --- | --- | --- | --- |
 | 1 | Close the P1-09 evidence package | Human owner | Complete | Sanitized owner attestation, private Alpaca/FMP responses represented by opaque digest, explicit source/fallback decision, and zero-spend confirmation are recorded |
 | 2 | Independently audit the frozen P1-09 authorization | Integration owner plus fresh independent reviewer | Complete | Exact candidate `36dcf92b...` received `GO`; P1-09 is complete |
-| 3 | Prepare PR 2E, the P1-10 contract package | Agents with non-overlapping ownership | Repaired amendment candidate received recurring-P0 `CONTRACT_NO_GO`; sole human-authorized recurrence repair and same-SHA validation/re-review pending | Canonical unsigned-UTF-8 immediate `u` stop, verified-raw boundary before semantic traversal, recursively inert hostile-container rejection, exact official-document grammar, bar-only neutral translation, deterministic quote/trade non-translation, original synthetic every-prefix memory/SQLite matrix, clean exact candidate, same-SHA offline/hosted evidence, and fresh external `CONTRACT_GO`; no credentials, provider calls, transport, or provider bytes |
+| 3 | Prepare PR 2E, the P1-10 contract package | Agents with non-overlapping ownership | Wire recurrence is closed at `8f21b13b...`; human-authorized timing-gate reproducibility repair and same-SHA validation/re-review pending | Preserve the closed canonical unsigned-UTF-8 immediate-`u` repair and all accepted bytes; make only the deterministic 300-cluster timing evidence reproducible without raising or bypassing its `15,000 ms` processing-work bound; require clean exact local/hosted evidence and fresh external `CONTRACT_GO`; no credentials, provider calls, transport, or provider bytes |
 | 4 | Resolve the retention architecture authorization gate | Human owner | Authorized for the exact frozen architecture before the stopped PR 2F wave | Preserve the owner-authorized maintenance port, additive migration, controlled vault-root erasure, tombstone/use-denial semantics, and exact retention sequence; no scope expansion |
 | 5 | Implement PR 2F against the accepted PR 2E exact candidate | Agents after PR 2E amendment `CONTRACT_GO`, merge, and renewed Phase B direction | Stopped at checkpoint `da6bc096...`; do not touch | Reconstruct only after amendment merge, preserve compatible stopped work, treat amendment bytes as immutable, and continue the offline implementation/audit loop without FMP transport, silent fallback, or paid-plan paths |
 | 6 | Complete live read-only source capture and calendar prewarming | Non-overlapping source and calendar owners | Only where provider/account authorization is already explicit; market-data portions wait for P1-10 | Bounded SEC/FMP/issuer-IR capture as authorized, issuer allowlist, schedule provenance, restart/backfill evidence, and no dispatchable financial effects |
