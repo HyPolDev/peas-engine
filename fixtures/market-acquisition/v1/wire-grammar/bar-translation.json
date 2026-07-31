@@ -1,0 +1,104 @@
+{
+  "schemaVersion": "peas-p1-10-original-synthetic-bar-translation-v1",
+  "classification": "original-project-authored-synthetic",
+  "providerEvidence": false,
+  "networkAuthorized": false,
+  "hashNote": "The literal payload digest and fallback-family hash were independently calculated from the displayed preimages using their accepted hash rules; tests must recompute them without deriving expected values from the function under test. memberKey is the contract's literal canonical artifact-member path and is not a hash.",
+  "cases": [
+    {
+      "caseId": "translate-first-peasivy-raw-one-minute-bar",
+      "wireCaseId": "wire-bars-terminal-grouped",
+      "symbolGroupKey": "PEASIVY",
+      "itemIndex": 0,
+      "context": {
+        "source": {
+          "providerId": "mpv1_7a0d9dbb0982daebfdc6986ef4903b3c6388f83cbafa6c1b7af8bf92b5ec6d9c",
+          "datasetId": "mds1_d18d90386ef7b3ddff114dc552ca4561a3ee613f3bc501e60491e81d85f734d1",
+          "feedId": "mfd1_79bf3edbf4b7d87ab16edadaafca55d991bdc6962294abc2998f240838483023",
+          "endpointChannelId": "mec1_016928912d87c2fd5ae5eae163752f363d7b8deba66f4b08753cf9d80c891c9c",
+          "entitlementSnapshotId": "ent1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "instrumentId": "min1_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "marketAcquisitionId": "maq1_dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "rawArtifactId": "mar1_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "sessionKind": "regular-continuous",
+        "calendarVersion": "peas-p1-10-original-synthetic-calendar-v1",
+        "durablyRecordedAtMs": 1998976380000,
+        "durableLogicalAtMs": 1998976380000,
+        "durableClockBasisId": "clk1_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "primaryCorpusMember": true
+      },
+      "providerStableRecordFamilyPreimage": {
+        "providerId": "mpv1_7a0d9dbb0982daebfdc6986ef4903b3c6388f83cbafa6c1b7af8bf92b5ec6d9c",
+        "datasetId": "mds1_d18d90386ef7b3ddff114dc552ca4561a3ee613f3bc501e60491e81d85f734d1",
+        "feedId": "mfd1_79bf3edbf4b7d87ab16edadaafca55d991bdc6962294abc2998f240838483023",
+        "endpointChannelId": "mec1_016928912d87c2fd5ae5eae163752f363d7b8deba66f4b08753cf9d80c891c9c",
+        "entitlementSnapshotId": "ent1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "instrumentId": "min1_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "eventKind": "bar",
+        "eventTime": {
+          "epochNs": "1998976320000000000",
+          "semantic": "bar-start",
+          "precisionNs": "1"
+        },
+        "venueTapeId": null,
+        "providerSequence": null,
+        "canonicalProviderPayloadDigest": "a18f1367c05d559a41983303fe39e7fb2684080b69d944404e77ab04c0485ff7"
+      },
+      "providerStableRecordFamily": "dce17ad52b93c3be4381dfce35eeaf8829073ed3954fd29c3d15ed818b4e9c65",
+      "memberKey": "$.bars[\"PEASIVY\"][0]",
+      "expectedRecord": {
+        "source": {
+          "providerId": "mpv1_7a0d9dbb0982daebfdc6986ef4903b3c6388f83cbafa6c1b7af8bf92b5ec6d9c",
+          "datasetId": "mds1_d18d90386ef7b3ddff114dc552ca4561a3ee613f3bc501e60491e81d85f734d1",
+          "feedId": "mfd1_79bf3edbf4b7d87ab16edadaafca55d991bdc6962294abc2998f240838483023",
+          "endpointChannelId": "mec1_016928912d87c2fd5ae5eae163752f363d7b8deba66f4b08753cf9d80c891c9c",
+          "entitlementSnapshotId": "ent1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "instrumentId": "min1_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "venueTapeId": null,
+        "providerRecordKey": null,
+        "providerRevisionKey": null,
+        "providerStableRecordFamily": "dce17ad52b93c3be4381dfce35eeaf8829073ed3954fd29c3d15ed818b4e9c65",
+        "eventKind": "bar",
+        "eventTime": {
+          "epochNs": "1998976320000000000",
+          "semantic": "bar-start",
+          "precisionNs": "1"
+        },
+        "providerSequence": null,
+        "sequenceSessionDate": null,
+        "canonicalProviderPayloadDigest": "a18f1367c05d559a41983303fe39e7fb2684080b69d944404e77ab04c0485ff7",
+        "marketAcquisitionId": "maq1_dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "rawArtifactId": "mar1_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "memberKey": "$.bars[\"PEASIVY\"][0]",
+        "occurrenceOrdinal": 0,
+        "revisionKind": "original",
+        "supersedesRevisionId": null,
+        "effectiveEventTime": null,
+        "sessionKind": "regular-continuous",
+        "currency": "USD",
+        "payload": {
+          "kind": "bar",
+          "barKind": "one-minute",
+          "close": {
+            "coefficient": "62125",
+            "scale": 3,
+            "negative": false
+          },
+          "barStartNs": "1998976320000000000",
+          "barEndNs": "1998976380000000000",
+          "adjustmentMode": "raw"
+        },
+        "normalizerVersion": "market-normalizer-v1",
+        "conditionPolicyVersion": "p1-10-alpaca-no-quote-trade-emission-v1",
+        "calendarVersion": "peas-p1-10-original-synthetic-calendar-v1",
+        "parserContractVersion": "p1-10-alpaca-historical-wire-v1",
+        "durablyRecordedAtMs": 1998976380000,
+        "durableLogicalAtMs": 1998976380000,
+        "durableClockBasisId": "clk1_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "primaryCorpusMember": true
+      }
+    }
+  ]
+}

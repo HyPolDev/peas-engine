@@ -1,0 +1,271 @@
+{
+  "schemaVersion": "peas-p1-10-original-synthetic-wire-hostile-atomicity-v1",
+  "classification": "original-project-authored-synthetic",
+  "providerEvidence": false,
+  "networkAuthorized": false,
+  "runtimeValuesEmbedded": false,
+  "caseCount": 8,
+  "runtimeVectorCount": 10,
+  "constructionRule": "Every hostile value is constructed in test memory from the literal recipe. This file contains no executable accessor, Proxy, provider response, or provider-derived value.",
+  "cases": [
+    {
+      "caseId": "atomic-valid-update-before-malformed-or-hostile-same-array-item",
+      "endpointKind": "trades",
+      "baseCaseId": "wire-trade-update-canceled",
+      "operation": "append-runtime-values-after-first-valid-update",
+      "placement": {
+        "scope": "same-symbol-array",
+        "position": "immediately-after-first-valid-update"
+      },
+      "runtimeValueRecipes": [
+        {
+          "recipeId": "malformed-null-item",
+          "kind": "literal-null"
+        },
+        {
+          "recipeId": "hostile-throwing-item-accessor",
+          "kind": "object-with-throwing-own-accessor",
+          "propertyAlias": "synthetic-later-item-member",
+          "enumerable": true,
+          "onGet": "increment-accessor-counter-and-throw"
+        }
+      ],
+      "expectedDisposition": "terminal-correction-unsupported",
+      "expectedTerminalClassification": "correction-unsupported",
+      "expectedCounters": {
+        "terminalDecisions": 1,
+        "laterSchemaReads": 0,
+        "accessorCalls": 0,
+        "proxyTrapCalls": 0,
+        "records": 0,
+        "replacements": 0,
+        "selections": 0,
+        "reversibleStateMutations": 0,
+        "postReturnActivity": 0
+      }
+    },
+    {
+      "caseId": "atomic-valid-update-before-hostile-later-symbol-group",
+      "endpointKind": "trades",
+      "baseCaseId": "wire-trade-update-canceled",
+      "operation": "append-runtime-symbol-group-after-first-valid-update-group",
+      "placement": {
+        "scope": "later-symbol-group",
+        "position": "after-first-valid-update-group",
+        "symbolAlias": "PEASTEEL",
+        "requestedSymbolSetAddition": "PEASTEEL"
+      },
+      "runtimeValueRecipes": [
+        {
+          "recipeId": "hostile-later-group-proxy",
+          "kind": "proxy-with-throwing-traps",
+          "traps": ["getPrototypeOf", "ownKeys", "getOwnPropertyDescriptor", "get"],
+          "onTrap": "increment-proxy-trap-counter-and-throw"
+        }
+      ],
+      "expectedDisposition": "terminal-correction-unsupported",
+      "expectedTerminalClassification": "correction-unsupported",
+      "expectedCounters": {
+        "terminalDecisions": 1,
+        "laterSchemaReads": 0,
+        "accessorCalls": 0,
+        "proxyTrapCalls": 0,
+        "records": 0,
+        "replacements": 0,
+        "selections": 0,
+        "reversibleStateMutations": 0,
+        "postReturnActivity": 0
+      }
+    },
+    {
+      "caseId": "atomic-valid-update-before-hostile-later-page",
+      "endpointKind": "trades",
+      "baseCaseId": "wire-trade-update-canceled",
+      "operation": "construct-runtime-page-chain-with-hostile-page-after-valid-update",
+      "placement": {
+        "scope": "later-page",
+        "validUpdatePageOrdinal": 0,
+        "hostilePageOrdinal": 1,
+        "page0ReturnedTokenAlias": "peas-synthetic-opaque-update-later-page",
+        "page1PresentedTokenAlias": "peas-synthetic-opaque-update-later-page"
+      },
+      "runtimeValueRecipes": [
+        {
+          "recipeId": "hostile-later-page-accessor",
+          "kind": "object-with-throwing-own-accessor",
+          "propertyAlias": "synthetic-later-page-member",
+          "enumerable": true,
+          "onGet": "increment-accessor-counter-and-throw"
+        }
+      ],
+      "expectedDisposition": "terminal-correction-unsupported",
+      "expectedTerminalClassification": "correction-unsupported",
+      "expectedCounters": {
+        "terminalDecisions": 1,
+        "laterSchemaReads": 0,
+        "accessorCalls": 0,
+        "proxyTrapCalls": 0,
+        "records": 0,
+        "replacements": 0,
+        "selections": 0,
+        "reversibleStateMutations": 0,
+        "postReturnActivity": 0
+      }
+    },
+    {
+      "caseId": "hostile-array-index-accessor",
+      "endpointKind": "bars",
+      "baseCaseId": "wire-bars-terminal-grouped",
+      "operation": "replace-first-array-index-with-runtime-accessor",
+      "runtimeValueRecipes": [
+        {
+          "recipeId": "throwing-index-zero-accessor",
+          "kind": "array-index-throwing-accessor",
+          "index": 0,
+          "enumerable": true,
+          "configurable": true,
+          "onGet": "increment-accessor-counter-and-throw"
+        }
+      ],
+      "expectedDisposition": "reject",
+      "expectedErrorCode": "schema-invalid",
+      "expectedCounters": {
+        "terminalDecisions": 0,
+        "accessorCalls": 0,
+        "proxyTrapCalls": 0,
+        "records": 0,
+        "quarantines": 0,
+        "normalizationCalls": 0,
+        "replacements": 0,
+        "selections": 0,
+        "reversibleStateMutations": 0,
+        "postReturnActivity": 0
+      }
+    },
+    {
+      "caseId": "hostile-nested-numeric-proxy",
+      "endpointKind": "bars",
+      "baseCaseId": "wire-bars-terminal-grouped",
+      "operation": "replace-first-item-numeric-field-with-runtime-proxy",
+      "field": "o",
+      "runtimeValueRecipes": [
+        {
+          "recipeId": "throwing-numeric-value-proxy",
+          "kind": "proxy-with-throwing-traps",
+          "targetKind": "plain-object",
+          "traps": ["getPrototypeOf", "ownKeys", "getOwnPropertyDescriptor", "get"],
+          "onTrap": "increment-proxy-trap-counter-and-throw"
+        }
+      ],
+      "expectedDisposition": "reject",
+      "expectedErrorCode": "schema-invalid",
+      "expectedCounters": {
+        "terminalDecisions": 0,
+        "accessorCalls": 0,
+        "proxyTrapCalls": 0,
+        "records": 0,
+        "quarantines": 0,
+        "normalizationCalls": 0,
+        "replacements": 0,
+        "selections": 0,
+        "reversibleStateMutations": 0,
+        "postReturnActivity": 0
+      }
+    },
+    {
+      "caseId": "hostile-custom-array-prototype",
+      "endpointKind": "bars",
+      "baseCaseId": "wire-bars-terminal-grouped",
+      "operation": "set-first-symbol-array-runtime-prototype",
+      "runtimeValueRecipes": [
+        {
+          "recipeId": "custom-array-prototype",
+          "kind": "custom-array-prototype",
+          "prototypeKind": "frozen-null-prototype-object"
+        }
+      ],
+      "expectedDisposition": "reject",
+      "expectedErrorCode": "schema-invalid",
+      "expectedCounters": {
+        "terminalDecisions": 0,
+        "accessorCalls": 0,
+        "proxyTrapCalls": 0,
+        "records": 0,
+        "quarantines": 0,
+        "normalizationCalls": 0,
+        "replacements": 0,
+        "selections": 0,
+        "reversibleStateMutations": 0,
+        "postReturnActivity": 0
+      }
+    },
+    {
+      "caseId": "hostile-extra-own-array-property",
+      "endpointKind": "bars",
+      "baseCaseId": "wire-bars-terminal-grouped",
+      "operation": "add-extra-own-property-to-first-symbol-array",
+      "runtimeValueRecipes": [
+        {
+          "recipeId": "extra-enumerable-array-property",
+          "kind": "array-extra-own-data-property",
+          "propertyAlias": "syntheticExtra",
+          "enumerable": true,
+          "valueKind": "literal-boolean"
+        }
+      ],
+      "expectedDisposition": "reject",
+      "expectedErrorCode": "schema-invalid",
+      "expectedCounters": {
+        "terminalDecisions": 0,
+        "accessorCalls": 0,
+        "proxyTrapCalls": 0,
+        "records": 0,
+        "quarantines": 0,
+        "normalizationCalls": 0,
+        "replacements": 0,
+        "selections": 0,
+        "reversibleStateMutations": 0,
+        "postReturnActivity": 0
+      }
+    },
+    {
+      "caseId": "hostile-nested-accessor-and-proxy-values",
+      "endpointKind": "trades",
+      "baseCaseId": "wire-trades-terminal-grouped",
+      "operation": "replace-first-item-condition-member-with-runtime-value",
+      "field": "c",
+      "index": 0,
+      "runtimeValueRecipes": [
+        {
+          "recipeId": "nested-condition-index-accessor",
+          "kind": "array-index-throwing-accessor",
+          "index": 0,
+          "enumerable": true,
+          "configurable": true,
+          "onGet": "increment-accessor-counter-and-throw"
+        },
+        {
+          "recipeId": "nested-condition-proxy",
+          "kind": "proxy-with-throwing-traps",
+          "targetKind": "plain-object",
+          "traps": ["getPrototypeOf", "ownKeys", "getOwnPropertyDescriptor", "get"],
+          "onTrap": "increment-proxy-trap-counter-and-throw"
+        }
+      ],
+      "expectedDisposition": "reject",
+      "expectedErrorCode": "schema-invalid",
+      "expectedCounters": {
+        "terminalDecisions": 0,
+        "accessorCalls": 0,
+        "proxyTrapCalls": 0,
+        "records": 0,
+        "quarantines": 0,
+        "normalizationCalls": 0,
+        "replacements": 0,
+        "selections": 0,
+        "reversibleStateMutations": 0,
+        "postReturnActivity": 0
+      }
+    }
+  ]
+}
