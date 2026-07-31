@@ -1,0 +1,342 @@
+# PR 2E P1-10 acquisition acceptance and fault-injection matrix
+
+Status: contract candidate; no implementation authorization
+Executable owner: `test/p1-10-contract.test.ts`
+Fixture authority: `docs/contracts/pr-2e-p1-10-fixture-manifest.md`
+
+## Result vocabulary
+
+- **accept**: the exact authorized value advances to the next gate.
+- **reject-zero-call**: a typed pre-dispatch failure occurs before credential loading and transport.
+- **terminal**: the acquisition stops with no retry.
+- **retry-same-page**: the same logical page identity receives a new attempt identity after complete
+  partial-byte cleanup.
+- **quarantine**: no affected normalization or primary selection is emitted.
+- **resume**: restart verifies committed artifacts and continues only at the next valid page.
+
+All default execution is offline. The matrix supplies deterministic doubles only. The global
+network witness throws if any code reaches `fetch`, and missing credentials remain an asserted
+zero-call path rather than a skipped test.
+
+## Frozen identity and lane vectors
+
+| Vector | Expected |
+| --- | --- |
+| Recompute Alpaca provider, dataset, feed, quotes channel, trades channel, bars channel | Exact equality with the six frozen IDs |
+| Recompute FMP provider, dataset, feed, aftermarket-quote channel, aftermarket-trade channel | Exact equality with the five frozen IDs |
+| Any changed preimage member or endpoint-channel identity | `reject-zero-call` |
+| Every hostile class over all 11 real preimages, including a mutation of the real channel `factKinds` set-like member | integrated guarded rejection with credential, transport construction, DNS/network/provider, artifact, normalization, selection, and post-return counters all exactly zero |
+| Controlled valid synthetic channel with canonical multi-member `factKinds=["bar","quote"]` | exact derived identity and guarded positive path |
+| Same controlled valid members reversed to `["quote","bar"]` | integrated guarded rejection with every side-effect counter exactly zero; no member substitution |
+| Live acquisition default/flag absent or false | `reject-zero-call` |
+| Exact zero-spend preimage, `mzp1_b2f575e234dcd7f05eb5fcc03060420313b56e45aff87c961c3771d1c5cf3b9e`, run decision `allow`, `authorizationMode=p1-09-approved`, capability `historical-market-reference`, fallback `none` | accept |
+| Missing, forged, mutated, stale, unknown, or rejecting zero-spend proof; wrong authorization mode; unknown/account/subscription capability; or fallback | `reject-zero-call` |
+| Alpaca historical multi-symbol quotes/trades/bars GET route with exact channel | accept |
+| Unauthorized origin, method, path, single-symbol route, latest, snapshot, stream, or capability | `reject-zero-call` |
+| Omitted/default, empty, or non-`sip` feed | `reject-zero-call` |
+| Missing or noncanonical `start`/`end`; unbounded range | `reject-zero-call` |
+| Exact parse/re-encode equality for a valid leap-day nanosecond instant | accept |
+| Impossible month day, invalid leap day, month/day/hour/second overflow, or any normalized non-round-trip timestamp | guarded rejection with every side-effect counter exactly zero |
+| Literal original-synthetic catalog with all 65 complete issuer-mapping, instrument, and symbol-alias preimages; displayed `imap1_`/`min1_`/`msa1_`; and displayed `maac1_361de0d202a39899c369c10da3c5bb43e98305c91749f1bee6b7cab5eac685dd` catalog identity | recursively immutable exact module catalog; accepted-domain and independent framed-hash equality for every displayed ID and the complete catalog before resolution |
+| Separate mutation of issuer-mapping, instrument, or symbol-alias preimage; separate mutation of displayed `imap1_`, `min1_`, `msa1_`, or `maac1_`; or changed configured catalog identity | guarded rejection with every side-effect counter exactly zero; preimage and displayed IDs cannot move together |
+| Exact literal catalog identity in the acquisition configuration preimage | accept; changed catalog/configuration identity changes the configuration hash and rejects before credential or transport construction |
+| External/test catalog | canonical snapshot and complete row/ID/catalog validation on every use; only the exact recursively immutable module-owned catalog may reuse its one-time complete validation |
+| Outer-frozen external catalog whose mutable inner row, nested preimage, interval, linkage, or displayed ID changes after one successful admission | every subsequent guarded call rejects with all side-effect counters zero |
+| Typed frozen instrument membership: nonempty, unique canonical unsigned-UTF8 order, exact alias-to-instrument linkage, and one effective version covering the inclusive query interval | accept; `canonicalSymbols` and `instrumentIds` derive from the same resolved membership |
+| Blank, duplicate, unmapped, wrong instrument, delimiter-injected, reordered, query/membership mismatch, effective-interval gap, or overlapping effective-version ambiguity | guarded rejection with every side-effect counter exactly zero |
+| Exactly 64 valid frozen instruments | accept through guarded preflight |
+| 65 valid frozen instruments | guarded rejection with every side-effect counter exactly zero |
+| `sort=asc`; canonical decimal integer `limit` from `1` through `10000` inclusive | accept |
+| Limits `1`, `2`, `7`, and `10000` through preflight/configuration/restart | accept with one stable request identity and four distinct configuration hashes |
+| Limit `0`, `10001`, sign, leading/trailing whitespace, leading zero, decimal, exponent, non-number, other sort, or other query field | `reject-zero-call` |
+| Bars `timeframe=1Min` and `adjustment=raw` | accept |
+| Other/omitted timeframe or adjustment | `reject-zero-call` |
+| First request without continuation material | accept |
+| First request with continuation material | `reject-zero-call` |
+| Later request plus separately supplied durable preceding checkpoint with exact typed material/hash, unchanged request, next ordinal, every preceding-page binding member, stored expected binding hash, and byte-identical `fields.page_token` | accept; uninterrupted and restart acquisition use this same pre-dispatch admission API |
+| Exactly 4,096 bytes of preceding-page-returned opaque continuation material | accept through guarded preflight |
+| Missing field/material, empty, repeated, 4,097-byte, cross-query, substituted, next-ordinal change, token relation change, or change to preceding acquisition/page/artifact/digest/page-chain/ordinal binding | self-consistently rehashed request rejects against durable evidence in standalone, uninterrupted, and restart paths; rejected logical dispatch has zero credential/transport/DNS/network/provider/artifact/normalization/selection/post-return delta |
+| FMP private discrepancy role with exact quote/trade channel | contract-valid but transport disabled |
+| FMP as primary, fallback, public output, or any other endpoint | `reject-zero-call` |
+
+## Trusted request-time and clock vectors
+
+The tested authorization predicate is:
+
+`end <= conservativeTrustedRequestStartedAt - 900000000000ns`.
+
+`conservativeTrustedRequestStartedAt` is exact signed-nanosecond
+`currentSample.wallNs - maximumErrorNs`. The evidence is a closed runtime object with
+`basisId`, `wallClock=system-utc`, `synchronization=verified-bound`, bounded non-null
+`maximumErrorNs`, `monotonicClock=process-monotonic-us`, one nonempty `monotonicSessionId`, and
+linked prior/current samples. Each sample repeats the unchanged basis, wall-clock,
+synchronization, monotonic-clock, and monotonic-session identity. The current sample links to the
+prior sample and is the trusted `request.started` source. Response, completion, replay, local-file,
+rounded, and database time are never authority.
+
+| Vector | Expected |
+| --- | --- |
+| Complete exact basis and linked samples; current wall non-regressing; current same-session monotonic microseconds strictly greater; nonnegative bounded error | accept |
+| End exactly at `current wallNs - maximumErrorNs - 900000000000ns`, including a positive bounded error | accept |
+| End one nanosecond newer than that conservative boundary | guarded rejection with credential, transport construction, DNS/network/provider, artifact, normalization, selection, and post-return counters all exactly zero |
+| End before boundary | accept |
+| Complete evidence object absent/null, or any top-level `available`, `basisId`, `wallClock`, `synchronization`, `maximumErrorNs`, `maximumErrorBounded`, `monotonicClock`, `monotonicSessionId`, `priorSample`, or `currentSample` field omitted | each omission executes as a separate guarded zero-side-effect pre-dispatch rejection |
+| Availability null/wrong/false; basis ID null/wrong; `wallClock` null/not `system-utc`; or prior/current sample basis linkage absent/changed | guarded zero-side-effect pre-dispatch rejection |
+| Synchronization null/not `verified-bound`, including a changed sample synchronization | guarded zero-side-effect pre-dispatch rejection |
+| Maximum error null/wrong-type/negative/explicitly unbounded/over the signed bound/greater than current wall | guarded zero-side-effect pre-dispatch rejection |
+| Prior or current sample null; prior/current sample ID, predecessor link, or basis link omitted; sample link changed; or current sample does not link exactly to prior | each omission/mutation executes as a guarded zero-side-effect pre-dispatch rejection |
+| Current wall sample below the prior wall sample in the unchanged basis | guarded zero-side-effect pre-dispatch rejection |
+| Monotonic clock absent/wrong, monotonic session absent/null/changed, or current same-session `process-monotonic-us` value equal to or below prior | guarded zero-side-effect pre-dispatch rejection |
+| Active-response clock initialization | validate and snapshot the admitted request evidence; the preflight current sample is the active prior authority with byte-identical basis ID, session ID, wall value, monotonic value, and sample ID; every mutation-boundary sample advances from it |
+| Active-response wall regression | abort/destroy/settle body and every sibling; terminal `clock-regression`; no artifact commit/normalization/selection or post-return activity |
+| Active-response monotonic regression or changed basis | abort/destroy/settle body and every sibling; terminal clock failure; no artifact commit/normalization/selection or post-return activity |
+| Active-response wrong synchronization, absent error, or unbounded error evidence | abort/destroy/settle body and every sibling; terminal `clock-unavailable`; no artifact commit/normalization/selection or post-return activity |
+
+## Exact-limit and one-over register
+
+The lesser of an approved entitlement limit and the project ceiling always wins. Every row has an
+executable exact acceptance and one-over rejection.
+
+| Dimension | Exact accepted | One-over result |
+| --- | ---: | --- |
+| Concurrent provider requests | 1 | pre-dispatch bound failure |
+| Raw artifact bytes/page | 10 MiB | destroy bytes; no artifact |
+| Aggregate verified bytes/acquisition | 64 MiB | terminal bound failure |
+| Successful pages/artifacts | 16 | terminal before page 17 |
+| Records/page and requested page limit | 10,000 | page rejection |
+| Normalized facts/acquisition | 160,000 | no partial selection |
+| Opaque page-material bytes | 4,096 | pre-dispatch pagination failure |
+| Instruments/acquisition | 64 | pre-dispatch bound failure |
+| Historical query span | 8 consecutive calendar dates | pre-dispatch window failure |
+| HTTP attempts/acquisition | 48 | terminal before attempt 49 |
+| Attempts/logical page | 3 | terminal before attempt 4 |
+| Accepted `Retry-After` | 30,000 ms | terminal |
+| Whole-attempt deadline | 30,000 ms | abort/destroy/settle |
+| Whole-acquisition deadline | 300,000 ms | terminal |
+| Rolling project rate | 30 attempts/60,000 ms | no dispatch until/if a budgeted window permits; never exceed |
+
+Retry delay is exactly `1,000 ms` then `2,000 ms`; there is no jitter.
+
+## HTTP, transport, parsing, and cleanup
+
+| Fault | Expected |
+| --- | --- |
+| Pre-response transport failure | `retry-same-page` if all budgets permit |
+| Timeout before headers | abort/settle, then retry if budgets permit |
+| Fully cleaned partial-body transport failure | `retry-same-page` if budgets permit |
+| Timeout during body, truncated body, or declared-length mismatch | destroy all partial bytes; retry only as cleaned partial transport failure |
+| HTTP 408, 500, 502, 503, 504 | retry under deterministic delay and all budgets |
+| HTTP 429 with `temporary-throttling-proved` and valid bounded integer-seconds `Retry-After` | retry after `max(projectDelay, Retry-After)`; exact 30 seconds means 30,000 ms |
+| Missing, ambiguous, or quota-exhausted 429 classification | terminal |
+| HTTP 400, 404, 409, 422 | terminal, no retry |
+| HTTP 401 or 403 | terminal and lane disabled for the run |
+| Missing `Retry-After` with proved temporary-throttling classification | ordinary deterministic delay |
+| Negative, date-form, fractional, malformed, excessive `Retry-After` | terminal |
+| Malformed JSON, duplicate structural ambiguity, or schema drift | terminal schema failure; no retry |
+| Identity, entitlement, feed, clock, bound, pagination, redaction, artifact, or zero-spend failure | terminal; no retry |
+| Response body or store failure after `request.succeeded` | exact terminal stage; no commit, normalization, or selection |
+| Sibling stream failure | abort/destroy all siblings and await settlement before return |
+| Any returned promise | no post-return timer, read, retry, write, or stream activity |
+
+Every retry preserves logical request/page identity and creates distinct retrieval-attempt,
+acquisition-observation, frozen PR 2D market-acquisition, and attempt identities.
+
+The executable coordinator accepts `waiting-retry` only from `attempt-active` with a closed retry
+context containing failure class, page-attempt number, cumulative acquisition attempts, raw
+`Retry-After`, and quota classification. It independently recomputes the exact retry/stop decision
+and 1,000/2,000 ms or accepted `Retry-After` delay; a caller-supplied wrong delay, nonretryable
+class, exhausted page/acquisition attempt budget, or unproved 429 leaves the coordinator, journal,
+budgets, and counters byte-equivalent. The same event API admits the exact 30,000 ms attempt and
+300,000 ms acquisition deadline and rejects one millisecond over. Its dispatch event applies the
+lesser entitlement/project rolling quota before mutating attempts or counters. A successful retry
+keeps the logical-page identity fixed while changing attempt, retrieval, acquisition-observation,
+and frozen PR 2D market-acquisition identities. The accepted retry event atomically stores the
+exact deterministic pending delay. Only exact elapsed equality on a valid same-session monotonic
+clock may clear it and move `waiting-retry -> preflighting`; one millisecond short or long, missing
+proof, wall-only proof, or monotonic regression rejects byte-equivalently. The executable paths
+exercise 1,000, 2,000, and accepted 30,000 ms delays without timers, sleeps, or jitter. Ordinary
+declaration and checkpoint-continuation preflight reject retry-delay proof and require no pending
+retry state.
+
+## Pagination and completeness
+
+| Vector | Expected |
+| --- | --- |
+| Ordinals start at zero and advance without gaps | accept |
+| Token hash bound to preceding verified page and unchanged request identity | accept |
+| Repeated token or loop | terminal pagination failure |
+| Gap, skipped ordinal, or duplicate ordinal | terminal pagination failure |
+| Identical page bytes at another position with a distinct verified delivery observation | physical digest deduplication allowed; page admission remains distinct |
+| Duplicate asserted delivery observation or duplicate ordinal at another position | quarantine/terminal |
+| Cross-query token or query substitution | terminal pre-dispatch |
+| Page after terminal continuation | terminal |
+| Complete chain with every page committed then verified before checkpoint | eligible for normalization |
+| Incomplete/unverified chain | no selection |
+
+Raw continuation material remains private and unlogged. Only its bounded private material and hash
+may occur in a durable checkpoint; this synthetic package persists neither.
+
+The acquisition-wide `requestIdentityHash` is invariant across every page and excludes page ordinal
+and continuation material. Each private `logicalPageIdentityHash` binds that unchanged request hash,
+the page ordinal, and the current continuation hash (or the distinguished no-continuation value for
+page zero). Every attempt identity binds the logical-page hash plus a new attempt ordinal. Thus a
+retry changes only attempt identity, page advancement changes logical-page identity, and neither
+operation changes request identity.
+
+The frozen PR 2D `marketAcquisitionId` and the acquisition-wide `requestIdentityHash` also exclude
+requested page limit. Because `marketAcquisitionId` includes the physical
+`acquisitionObservationId`, a retry receives a new `marketAcquisitionId`; it is not the stable
+logical request identity. A separate private `acquisitionConfigurationHash` binds the limit and all
+effective operational policies. An unchanged configuration resumes; a changed limit or policy
+causes a journal conflict without changing the stable request identity or inserting page-limit
+fields into the frozen PR 2D preimage.
+
+## Duplicate, correction, and mutation behavior
+
+| Vector | Expected |
+| --- | --- |
+| Identical bytes redelivered as a distinct delivery observation | physical deduplication allowed; each delivery observation preserved |
+| Different bytes for the same asserted delivery/revision | quarantine; no primary selection |
+| Replacement with distinct supported revision evidence | distinct revision admitted under unchanged PR 2D rules |
+| Replacement without supported revision evidence | quarantine; never infer correction semantics |
+| Same logical content in different provider response order | canonical normalized facts and selection unchanged |
+
+## Crash and durable-checkpoint matrix
+
+| Injected crash | Restart rule |
+| --- | --- |
+| Before request | new attempt for same page |
+| After `request.started` | previous attempt terminal/in-flight; new attempt for same page |
+| During body | partial bytes destroyed; new attempt only if retry budgets permit |
+| After a vault filesystem side effect but before durable artifact-commit receipt | reconcile the orphan; create a new attempt only after cleanup is proved |
+| After artifact commit, before verification | verify committed artifact; never normalize unverified bytes |
+| After artifact verification, before checkpoint | verify again idempotently; do not re-request page |
+| After checkpoint | resume only the next valid page |
+| During normalization | replay verified complete chain deterministically |
+| Before selection | replay normalization then select once from complete verified chain |
+
+Restart must reject changed configuration or logical request identity. It must verify every committed
+artifact before use and produce identical facts and selection across every crash point.
+
+## Privacy, credentials, retention, and output
+
+| Vector | Expected |
+| --- | --- |
+| Missing `PEAS_ALPACA_API_KEY_ID` or `PEAS_ALPACA_API_SECRET_KEY` | typed credential-stage failure and zero network calls |
+| Disabled reserved `PEAS_FMP_API_KEY` boundary | no read and no client |
+| Non-secret preflight rejection | zero credential reads and zero transport calls |
+| Credential-shaped nested keys, URL/error/cause/body/header/query fields | closed redacted projection only |
+| Throwing getter, proxy, inherited/custom prototype, cycle, or hostile library value | getter/trap not trusted; opaque safe value |
+| Raw provider error/body text | absent from logs and ledger facts |
+| FMP evidence in public output | rejection |
+| Provider material, raw token, credential, account evidence, or query-bearing URL in fixture/evidence | immediate `NO_GO` |
+
+Retention deletion remains subject to the separate human authorization recorded in the credential,
+privacy, and retention contract. This matrix does not authorize a port, migration, reconciliation,
+or vault-semantic change.
+
+## Replay, persistence, and termination invariants
+
+| Vector | Expected |
+| --- | --- |
+| Replay page sizes `1`, `2`, `7`, `10,000` | byte-identical canonical projection |
+| Memory journal versus SQLite file closed/reopened after every durable row | byte-identical exact closed checkpoint, restart decision, counters, normalized digest, and selection across response, duplicate, replay-page, and backend-page permutations |
+| Provider response order permutation | same normalized facts and selection |
+| Restart from every durable checkpoint | same final projection |
+| Failure with active siblings | all abort/destroy/settle before return |
+| Event-loop probe after return | zero asynchronous activity |
+
+The executable model drives real legal and illegal journal transitions and uses deterministic
+provider-body, artifact-store/read, memory-journal, and SQLite-journal doubles. Faults are injected
+before headers; at the first, middle, and last body member; at schema validation; in store and read;
+before an artifact receipt is journaled; and after each durable checkpoint. Assertions inspect
+actual causal journal rows, resource abort/destroy/settle state, complete checkpoint bodies, provider
+call counts, and close/reopen restart behavior. No outcome is supplied to the assertion as a
+preselected step list.
+
+The executable state vocabulary and transition adjacency are an exact transcription of the 20
+states and every allowed edge in acquisition-state-machine sections 5 and 6. The test evaluates the
+complete 20-by-20 Cartesian transition matrix, and separately evaluates the complete 14-by-14
+checkpoint-kind matrix, accepting every listed edge and rejecting every unlisted edge.
+
+The acquisition coordinator additionally owns `currentState` and changes it only through
+`applyAcquisitionEvent(event, exactEvidence)`. That operation validates the closed evidence shape,
+stable request/configuration/journal identities, run nonce, cumulative budgets, quota evidence,
+attempt/acquisition deadlines, resource settlement, token relation, page chain, and retry proof
+before applying an edge. The executable Cartesian matrix invokes this same model operation for
+every event from every current state and proves failed evidence leaves state unchanged.
+
+Every checkpoint uses the exact closed field names from the artifact/replay contract, including
+`runSessionNonce`, `retrievalAttemptId`, `acquisitionConfigurationHash`,
+`currentContinuationBindingHash`, and `nextContinuationBindingHash`. Request, configuration,
+logical-page, attempt-control, acquisition-observation, frozen PR 2D market-acquisition, journal,
+private-token, continuation-binding, journal-entry, and page-chain values use the exact frozen
+domains and object preimages and are independently recomputed with a separate canonicalizer and
+eight-byte length framing. The executable validator rejects missing/unknown fields, sequence
+or prior-hash breaks, canonical entry-hash mismatch, causal-parent mismatch, and cached cumulative
+budgets that do not reconcile to independently supplied immutable
+attempt/page/artifact/normalization receipts. It also validates state-dependent token semantics,
+artifact ID bindings, frozen lane tuples, bounds, admission order, page-chain movement, and
+terminal-state consistency. A forged journal whose own hashes and cached byte totals agree but
+whose size differs from its immutable artifact receipt is rejected. Restart freshly verifies every
+committed artifact before use, including terminal histories and normalization restarts. Canonical
+multi-artifact enumeration preserves each delivery observation, permits physical digest
+deduplication, and is invariant to backend enumeration order.
+
+The live and replay observation-ledger projection additionally freezes the literal accepted
+`ClockBasisV1`:
+
+```text
+clockBasisId =
+clk1_c183b0fcb2f2ca909fa1f6ac3ab4edface941a3bd2bd3bbcabd893e62419a4bf
+
+H("peas/clock-basis/v1", {
+  wallClock: "system-utc",
+  synchronization: "verified-bound",
+  maximumErrorMs: 0,
+  monotonicClock: "process-monotonic-us",
+  monotonicSessionId: "synthetic-process-session-v1"
+})
+```
+
+The executable path recomputes that literal through the production `createClockBasis` helper and
+an independent framed hash, then submits every reconstructed bundle to the production
+`validateObservationLedgerBundle` validator. It emits one genuine all-null-clock
+`clock-basis.declared` entry per live or replay execution and derives every displayed `ole1_`
+entry from the exact
+`peas/observation-ledger-entry/v1`
+`{schemaVersion:1,executionId,parentEntryIds,clock,facts}` preimage. Every stage fact with a
+non-null clock has the matching declaration as one distinct, sorted direct parent in addition to
+its exact ADR-0009 stage parents. The declaration is earlier, same-execution, parentless, and is
+never substituted by adjacency.
+
+Independent reconstruction rejects a missing or extra direct parent, forged clock parent,
+changed-basis stamp, wrong clock preimage, cross-session substitution, duplicate parent, or
+reordered parent array even when the hostile entry is coherently rehashed. The extra-clock-parent
+case declares a second genuine same-execution basis and binds the child to both declarations; both
+the production validator and P1-10 reconstruction reject it. The cross-session case declares a
+second genuine basis and binds the child exclusively to it: the production validator admits that
+self-consistent generic ADR-0009 bundle, while exact P1-10 reconstruction rejects substituting it
+for the request-admitted basis. Live and replay bundles are reconstructed and validated after every
+journal prefix, uninterrupted completion, restart prefix, and memory/SQLite enumeration. Replay
+re-emits the clock declaration and preserved stamps, omits live request and live-failure facts,
+uses replay-mode commits parented by their acquisition declarations, and remaps all stage and clock
+parents into its own execution.
+
+The live synthetic chain has three pages and three distinct delivery observations. Pages zero and
+one intentionally share identical bytes and one physical digest while retaining separate
+attempt/acquisition/artifact observations; page two has a second physical digest and the terminal
+marker. Page-chain admission is computed first from the verified receipt and prospective admitted
+totals, then the nonterminal continuation binding is computed from that resulting page-chain hash,
+and both are persisted atomically. Restart re-verifies all committed observations, never
+redispatches a committed page, and requests only the next incomplete ordinal.
+
+## Required validation
+
+The exact PR 2E candidate must pass formatting, lint, typecheck, build, focused/full tests, coverage,
+mutation, hard-kill, evidence reconciliation, applicable persistence/vault checks, and required
+10k-scale execution. Linux and Windows CI must run without provider credentials or network access.
+No test may be skipped because credentials are absent.
+
+Any contract, fixture, or contract-test change after independent review invalidates the result and
+requires a new candidate SHA and fresh review.

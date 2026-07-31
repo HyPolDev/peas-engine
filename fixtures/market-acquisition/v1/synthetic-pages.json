@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "peas-abstract-page-v1",
+  "pages": [
+    {
+      "ordinal": 0,
+      "glyphs": ["amber", "cobalt"]
+    },
+    {
+      "ordinal": 1,
+      "glyphs": ["fern"]
+    },
+    {
+      "ordinal": 2,
+      "glyphs": ["lilac", "umber"]
+    }
+  ]
+}

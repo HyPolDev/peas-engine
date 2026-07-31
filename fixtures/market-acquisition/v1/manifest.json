@@ -1,0 +1,62 @@
+{
+  "schemaVersion": "peas-p1-10-synthetic-acquisition-v1",
+  "classification": "original-project-authored-synthetic",
+  "providerEvidence": false,
+  "networkAuthorized": false,
+  "files": [
+    "README.md",
+    "manifest.json",
+    "synthetic-alias-authority-catalog.json",
+    "synthetic-pages.json"
+  ],
+  "wireGrammarAmendment": {
+    "schemaVersion": "peas-p1-10-original-synthetic-wire-fixture-manifest-v1",
+    "classification": "original-project-authored-synthetic",
+    "providerEvidence": false,
+    "networkAuthorized": false,
+    "officialFieldNamesOnly": true,
+    "copiedProviderExamples": false,
+    "hostileAtomicityCaseCount": 8,
+    "hostileAtomicityRuntimeVectorCount": 10,
+    "files": [
+      "wire-grammar/README.md",
+      "wire-grammar/valid-pages.json",
+      "wire-grammar/grammar-faults.json",
+      "wire-grammar/pagination-delivery-faults.json",
+      "wire-grammar/hostile-atomicity-faults.json",
+      "wire-grammar/bar-translation.json"
+    ],
+    "cases": [
+      "quotes-schema-valid-quarantine",
+      "trades-schema-valid-quarantine",
+      "trade-update-terminal-correction-unsupported",
+      "raw-one-minute-bar-translation",
+      "envelope-required-optional-unknown",
+      "symbol-grouping",
+      "item-required-type-bound",
+      "timestamp-precision-round-trip",
+      "condition-shape-and-bound",
+      "trade-id-and-integer-bound",
+      "decimal-token-shape-and-bound",
+      "bar-ohlc-contradiction",
+      "page-token-null-string-type-bound",
+      "pagination-chain-contradictions",
+      "identical-redelivery",
+      "conflicting-redelivery",
+      "unsupported-correction-replacement",
+      "malformed-and-duplicate-key-json",
+      "valid-update-terminal-short-circuit",
+      "hostile-runtime-container-inertness"
+    ]
+  },
+  "cases": [
+    "verified-chain",
+    "identical-redelivery",
+    "conflicting-redelivery",
+    "supported-revision",
+    "unknown-revision",
+    "restart-every-checkpoint",
+    "page-size-invariance",
+    "memory-sqlite-equivalence"
+  ]
+}

@@ -1,0 +1,268 @@
+{
+  "schemaVersion": "peas-p1-10-original-synthetic-wire-pages-v1",
+  "classification": "original-project-authored-synthetic",
+  "providerEvidence": false,
+  "networkAuthorized": false,
+  "cases": [
+    {
+      "caseId": "wire-quotes-terminal-grouped",
+      "endpointKind": "quotes",
+      "requestedSymbols": ["PEASAMB", "PEASCBT"],
+      "expectedGrammarDisposition": "accept",
+      "expectedTranslationDisposition": "quarantine-condition-authority-unavailable",
+      "expectedReason": {
+        "code": "market.condition-unknown",
+        "detail": null
+      },
+      "wire": {
+        "quotes": {
+          "PEASAMB": [
+            {
+              "t": "2033-05-06T07:08:09.123456789Z",
+              "bx": "PX",
+              "bp": 17.125,
+              "bs": 3,
+              "ap": 17.875,
+              "as": 5,
+              "ax": "QX",
+              "c": ["Q1"],
+              "z": "A"
+            }
+          ],
+          "PEASCBT": [
+            {
+              "t": "2033-05-06T07:08:10.000000001Z",
+              "bx": "RX",
+              "bp": 23.375,
+              "bs": 7,
+              "ap": 23.625,
+              "as": 11,
+              "ax": "SX",
+              "c": ["Q4"],
+              "z": "B"
+            }
+          ]
+        },
+        "next_page_token": null
+      }
+    },
+    {
+      "caseId": "wire-quotes-continuation-currency",
+      "endpointKind": "quotes",
+      "requestedSymbols": ["PEASFERN", "PEASROSE"],
+      "expectedGrammarDisposition": "accept",
+      "expectedTranslationDisposition": "quarantine-condition-authority-unavailable",
+      "expectedReason": {
+        "code": "market.condition-unknown",
+        "detail": null
+      },
+      "wire": {
+        "quotes": {
+          "PEASFERN": [
+            {
+              "t": "2033-05-06T07:09:00.100000000Z",
+              "bx": "TX",
+              "bp": 31.25,
+              "bs": 13,
+              "ap": 31.75,
+              "as": 17,
+              "ax": "UX",
+              "c": ["Q2", "Q3"],
+              "z": "C"
+            }
+          ]
+        },
+        "next_page_token": "peas-synthetic-opaque-quotes-ordinal-2",
+        "currency": "USD"
+      }
+    },
+    {
+      "caseId": "wire-trades-terminal-grouped",
+      "endpointKind": "trades",
+      "requestedSymbols": ["PEASLIL", "PEASUMB"],
+      "expectedGrammarDisposition": "accept",
+      "expectedTranslationDisposition": "quarantine-condition-authority-unavailable",
+      "expectedReason": {
+        "code": "market.trade-condition-ineligible",
+        "detail": {
+          "tradeConditionFailureKind": "state-insufficient"
+        }
+      },
+      "wire": {
+        "trades": {
+          "PEASLIL": [
+            {
+              "t": "2033-05-06T07:10:11.987654321Z",
+              "i": 7001,
+              "x": "VX",
+              "p": 41.125,
+              "s": 19,
+              "c": ["T1"],
+              "z": "A"
+            }
+          ],
+          "PEASUMB": [
+            {
+              "t": "2033-05-06T07:10:12.000000001Z",
+              "i": 7002,
+              "x": "WX",
+              "p": 43.875,
+              "s": 23,
+              "c": ["T5"],
+              "z": "B"
+            }
+          ]
+        },
+        "next_page_token": null,
+        "currency": "USD"
+      }
+    },
+    {
+      "caseId": "wire-trade-update-canceled",
+      "endpointKind": "trades",
+      "requestedSymbols": ["PEASSIE"],
+      "expectedGrammarDisposition": "accept",
+      "expectedTranslationDisposition": "terminal-correction-unsupported",
+      "expectedTerminalClassification": "correction-unsupported",
+      "wire": {
+        "trades": {
+          "PEASSIE": [
+            {
+              "t": "2033-05-06T07:11:00.000000002Z",
+              "i": 7101,
+              "x": "YX",
+              "p": 47.125,
+              "s": 29,
+              "c": ["T2"],
+              "z": "C",
+              "u": "canceled"
+            }
+          ]
+        },
+        "next_page_token": null
+      }
+    },
+    {
+      "caseId": "wire-trade-update-incorrect",
+      "endpointKind": "trades",
+      "requestedSymbols": ["PEASTEEL"],
+      "expectedGrammarDisposition": "accept",
+      "expectedTranslationDisposition": "terminal-correction-unsupported",
+      "expectedTerminalClassification": "correction-unsupported",
+      "wire": {
+        "trades": {
+          "PEASTEEL": [
+            {
+              "t": "2033-05-06T07:11:01.000000003Z",
+              "i": 7102,
+              "x": "ZX",
+              "p": 53.375,
+              "s": 31,
+              "c": ["T3"],
+              "z": "A",
+              "u": "incorrect"
+            }
+          ]
+        },
+        "next_page_token": null
+      }
+    },
+    {
+      "caseId": "wire-trade-update-corrected",
+      "endpointKind": "trades",
+      "requestedSymbols": ["PEASOCH"],
+      "expectedGrammarDisposition": "accept",
+      "expectedTranslationDisposition": "terminal-correction-unsupported",
+      "expectedTerminalClassification": "correction-unsupported",
+      "wire": {
+        "trades": {
+          "PEASOCH": [
+            {
+              "t": "2033-05-06T07:11:02.000000004Z",
+              "i": 7103,
+              "x": "AA",
+              "p": 59.625,
+              "s": 37,
+              "c": ["T4"],
+              "z": "B",
+              "u": "corrected"
+            }
+          ]
+        },
+        "next_page_token": null
+      }
+    },
+    {
+      "caseId": "wire-bars-terminal-grouped",
+      "endpointKind": "bars",
+      "requestedSymbols": ["PEASIVY", "PEASMAL"],
+      "expectedGrammarDisposition": "accept",
+      "expectedTranslationDisposition": "emit-recorded-market-record-v1",
+      "wire": {
+        "bars": {
+          "PEASIVY": [
+            {
+              "t": "2033-05-06T07:12:00.000000000Z",
+              "o": 61.125,
+              "h": 62.875,
+              "l": 60.375,
+              "c": 62.125,
+              "v": 101,
+              "n": 41,
+              "vw": 61.9375
+            }
+          ],
+          "PEASMAL": [
+            {
+              "t": "2033-05-06T07:13:00.000000000Z",
+              "o": 67.375,
+              "h": 68.625,
+              "l": 66.125,
+              "c": 67.875,
+              "v": 103,
+              "n": 43,
+              "vw": 67.5625
+            }
+          ]
+        },
+        "next_page_token": null,
+        "currency": "USD"
+      }
+    },
+    {
+      "caseId": "wire-bars-continuation",
+      "endpointKind": "bars",
+      "requestedSymbols": ["PEASPLUM"],
+      "expectedGrammarDisposition": "accept",
+      "expectedTranslationDisposition": "emit-recorded-market-record-v1",
+      "wire": {
+        "bars": {
+          "PEASPLUM": [
+            {
+              "t": "2033-05-06T07:14:00.000000000Z",
+              "o": 71.25,
+              "h": 72.75,
+              "l": 70.5,
+              "c": 72.125,
+              "v": 107,
+              "n": 47,
+              "vw": 71.8125
+            }
+          ]
+        },
+        "next_page_token": "peas-synthetic-opaque-bars-ordinal-2"
+      }
+    },
+    {
+      "caseId": "wire-bars-empty-terminal",
+      "endpointKind": "bars",
+      "requestedSymbols": ["PEASIVY"],
+      "expectedGrammarDisposition": "accept",
+      "expectedTranslationDisposition": "emit-no-records",
+      "wire": {
+        "bars": {},
+        "next_page_token": null
+      }
+    }
+  ]
+}

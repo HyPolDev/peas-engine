@@ -1,0 +1,335 @@
+{
+  "schemaVersion": "peas-p1-10-original-synthetic-wire-chain-v1",
+  "classification": "original-project-authored-synthetic",
+  "providerEvidence": false,
+  "networkAuthorized": false,
+  "cases": [
+    {
+      "caseId": "chain-terminal-null",
+      "endpointKind": "bars",
+      "logicalRequestId": "peas-synthetic-request-bars-amber",
+      "pages": [
+        {
+          "ordinal": 0,
+          "wireCaseId": "wire-bars-terminal-grouped",
+          "presentedRequestToken": null
+        }
+      ],
+      "expectedDisposition": "accept-complete"
+    },
+    {
+      "caseId": "chain-two-page-opaque-continuation",
+      "endpointKind": "bars",
+      "logicalRequestId": "peas-synthetic-request-bars-plum",
+      "pages": [
+        {
+          "ordinal": 0,
+          "wireCaseId": "wire-bars-continuation",
+          "presentedRequestToken": null
+        },
+        {
+          "ordinal": 1,
+          "wireCaseId": "wire-bars-terminal-grouped",
+          "presentedRequestToken": "peas-synthetic-opaque-bars-ordinal-2"
+        }
+      ],
+      "expectedDisposition": "accept-complete"
+    },
+    {
+      "caseId": "chain-first-request-token",
+      "endpointKind": "bars",
+      "logicalRequestId": "peas-synthetic-request-bars-first-token",
+      "pages": [
+        {
+          "ordinal": 0,
+          "wireCaseId": "wire-bars-continuation",
+          "presentedRequestToken": "peas-synthetic-opaque-unearned-first"
+        }
+      ],
+      "expectedDisposition": "reject-before-page-read"
+    },
+    {
+      "caseId": "chain-token-substitution",
+      "endpointKind": "bars",
+      "logicalRequestId": "peas-synthetic-request-bars-substitution",
+      "pages": [
+        {
+          "ordinal": 0,
+          "wireCaseId": "wire-bars-continuation",
+          "presentedRequestToken": null
+        },
+        {
+          "ordinal": 1,
+          "wireCaseId": "wire-bars-terminal-grouped",
+          "presentedRequestToken": "peas-synthetic-opaque-substituted"
+        }
+      ],
+      "expectedDisposition": "reject-before-second-page-admission"
+    },
+    {
+      "caseId": "chain-repeated-token-loop",
+      "endpointKind": "quotes",
+      "logicalRequestId": "peas-synthetic-request-quotes-loop",
+      "pages": [
+        {
+          "ordinal": 0,
+          "wireCaseId": "wire-quotes-continuation-currency",
+          "presentedRequestToken": null
+        },
+        {
+          "ordinal": 1,
+          "baseWireCaseId": "wire-quotes-continuation-currency",
+          "wireMutations": [
+            {
+              "operation": "replace",
+              "path": "/next_page_token",
+              "value": "peas-synthetic-opaque-quotes-ordinal-2"
+            }
+          ],
+          "presentedRequestToken": "peas-synthetic-opaque-quotes-ordinal-2"
+        }
+      ],
+      "expectedDisposition": "reject-repeated-token"
+    },
+    {
+      "caseId": "chain-skipped-page-ordinal",
+      "endpointKind": "bars",
+      "logicalRequestId": "peas-synthetic-request-bars-gap",
+      "pages": [
+        {
+          "ordinal": 0,
+          "wireCaseId": "wire-bars-continuation",
+          "presentedRequestToken": null
+        },
+        {
+          "ordinal": 2,
+          "wireCaseId": "wire-bars-terminal-grouped",
+          "presentedRequestToken": "peas-synthetic-opaque-bars-ordinal-2"
+        }
+      ],
+      "expectedDisposition": "reject-gap"
+    },
+    {
+      "caseId": "chain-duplicate-page-ordinal",
+      "endpointKind": "bars",
+      "logicalRequestId": "peas-synthetic-request-bars-duplicate-page",
+      "pages": [
+        {
+          "ordinal": 0,
+          "wireCaseId": "wire-bars-continuation",
+          "presentedRequestToken": null
+        },
+        {
+          "ordinal": 0,
+          "wireCaseId": "wire-bars-terminal-grouped",
+          "presentedRequestToken": "peas-synthetic-opaque-bars-ordinal-2"
+        }
+      ],
+      "expectedDisposition": "reject-duplicate-page-position"
+    },
+    {
+      "caseId": "chain-cross-query-token",
+      "endpointKind": "bars",
+      "logicalRequestId": "peas-synthetic-request-bars-cross-query",
+      "pages": [
+        {
+          "ordinal": 0,
+          "wireCaseId": "wire-bars-continuation",
+          "presentedRequestToken": null
+        },
+        {
+          "ordinal": 1,
+          "wireCaseId": "wire-bars-terminal-grouped",
+          "presentedRequestToken": "peas-synthetic-opaque-bars-ordinal-2",
+          "logicalRequestIdOverride": "peas-synthetic-request-bars-other"
+        }
+      ],
+      "expectedDisposition": "reject-changed-logical-request"
+    },
+    {
+      "caseId": "chain-page-after-terminal",
+      "endpointKind": "bars",
+      "logicalRequestId": "peas-synthetic-request-bars-post-terminal",
+      "pages": [
+        {
+          "ordinal": 0,
+          "wireCaseId": "wire-bars-terminal-grouped",
+          "presentedRequestToken": null
+        },
+        {
+          "ordinal": 1,
+          "wireCaseId": "wire-bars-terminal-grouped",
+          "presentedRequestToken": "peas-synthetic-opaque-post-terminal"
+        }
+      ],
+      "expectedDisposition": "reject-before-second-page-admission"
+    },
+    {
+      "caseId": "chain-incomplete-after-nonterminal",
+      "endpointKind": "bars",
+      "logicalRequestId": "peas-synthetic-request-bars-incomplete",
+      "pages": [
+        {
+          "ordinal": 0,
+          "wireCaseId": "wire-bars-continuation",
+          "presentedRequestToken": null
+        }
+      ],
+      "expectedDisposition": "incomplete-no-normalization-no-selection"
+    },
+    {
+      "caseId": "delivery-identical-bytes",
+      "endpointKind": "bars",
+      "logicalRequestId": "peas-synthetic-request-bars-redelivery",
+      "deliveries": [
+        {
+          "deliveryOrdinal": 0,
+          "wireCaseId": "wire-bars-terminal-grouped"
+        },
+        {
+          "deliveryOrdinal": 1,
+          "wireCaseId": "wire-bars-terminal-grouped"
+        }
+      ],
+      "expectedDisposition": "one-physical-digest-two-delivery-observations-one-semantic-family"
+    },
+    {
+      "caseId": "delivery-same-asserted-identity-conflicting-bytes",
+      "endpointKind": "bars",
+      "logicalRequestId": "peas-synthetic-request-bars-conflict",
+      "assertedDeliveryIdentity": "peas-synthetic-delivery-bars-conflict",
+      "deliveries": [
+        {
+          "deliveryOrdinal": 0,
+          "wireCaseId": "wire-bars-terminal-grouped"
+        },
+        {
+          "deliveryOrdinal": 1,
+          "baseWireCaseId": "wire-bars-terminal-grouped",
+          "wireMutations": [
+            {
+              "operation": "replace-first-item-field",
+              "field": "c",
+              "value": 62.375
+            }
+          ]
+        }
+      ],
+      "expectedDisposition": "quarantine-conflicting-content-no-selection"
+    },
+    {
+      "caseId": "trade-same-id-identical-items-no-stable-identity",
+      "endpointKind": "trades",
+      "baseWireCaseId": "wire-trades-terminal-grouped",
+      "wireMutations": [
+        {
+          "operation": "append-copy-of-first-item-to-first-symbol"
+        }
+      ],
+      "expectedGrammarDisposition": "accept",
+      "expectedTranslationDisposition": "two-independent-no-record-trade-quarantines",
+      "expectedReason": {
+        "code": "market.trade-condition-ineligible",
+        "detail": {
+          "tradeConditionFailureKind": "state-insufficient"
+        }
+      },
+      "tradeIdAuthority": {
+        "providerRecordKey": "not-authorized",
+        "providerSequence": "not-authorized",
+        "providerRevisionKey": "not-authorized",
+        "duplicateFamilyInference": "forbidden"
+      }
+    },
+    {
+      "caseId": "trade-same-id-different-items-no-stable-identity",
+      "endpointKind": "trades",
+      "baseWireCaseId": "wire-trades-terminal-grouped",
+      "wireMutations": [
+        {
+          "operation": "append-copy-of-first-item-to-first-symbol",
+          "then": {
+            "operation": "replace-appended-item-field",
+            "field": "p",
+            "value": 41.375
+          }
+        }
+      ],
+      "expectedGrammarDisposition": "accept",
+      "expectedTranslationDisposition": "two-independent-no-record-trade-quarantines",
+      "expectedReason": {
+        "code": "market.trade-condition-ineligible",
+        "detail": {
+          "tradeConditionFailureKind": "state-insufficient"
+        }
+      },
+      "tradeIdAuthority": {
+        "providerRecordKey": "not-authorized",
+        "providerSequence": "not-authorized",
+        "providerRevisionKey": "not-authorized",
+        "conflictFamilyInference": "forbidden"
+      }
+    },
+    {
+      "caseId": "item-identical-bar-key-redelivery",
+      "endpointKind": "bars",
+      "baseWireCaseId": "wire-bars-terminal-grouped",
+      "wireMutations": [
+        {
+          "operation": "append-copy-of-first-item-to-first-symbol"
+        }
+      ],
+      "expectedDisposition": "preserve-two-occurrences-one-semantic-fact"
+    },
+    {
+      "caseId": "item-conflicting-bar-key",
+      "endpointKind": "bars",
+      "baseWireCaseId": "wire-bars-terminal-grouped",
+      "wireMutations": [
+        {
+          "operation": "append-copy-of-first-item-to-first-symbol",
+          "then": {
+            "operation": "replace-appended-item-field",
+            "field": "c",
+            "value": 62.375
+          }
+        }
+      ],
+      "expectedDisposition": "quarantine-conflicting-content-no-selection"
+    },
+    {
+      "caseId": "trade-correction-without-linkage",
+      "endpointKind": "trades",
+      "wireCaseIds": [
+        "wire-trade-update-canceled",
+        "wire-trade-update-incorrect",
+        "wire-trade-update-corrected"
+      ],
+      "expectedGrammarDisposition": "accept",
+      "expectedTranslationDisposition": "terminal-correction-unsupported"
+    },
+    {
+      "caseId": "trade-correction-guessed-target-forbidden",
+      "endpointKind": "trades",
+      "baseWireCaseId": "wire-trade-update-corrected",
+      "externalClaim": {
+        "guessedSupersededTradeId": 7001,
+        "guessedRevisionOrdinal": 2
+      },
+      "expectedDisposition": "reject-external-unsupported-linkage-no-selection"
+    },
+    {
+      "caseId": "replacement-marker-unknown",
+      "endpointKind": "trades",
+      "baseWireCaseId": "wire-trades-terminal-grouped",
+      "wireMutations": [
+        {
+          "operation": "add-own-field-to-first-item",
+          "field": "replacement",
+          "value": "peas-synthetic-replacement"
+        }
+      ],
+      "expectedDisposition": "reject-unknown-field"
+    }
+  ]
+}
