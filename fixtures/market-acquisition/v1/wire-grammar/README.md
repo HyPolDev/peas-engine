@@ -37,3 +37,8 @@ the closed parser and translation grammar. All other structure and content is pr
 The closed file inventory is declared by the parent `manifest.json`. Valid quote, trade, and raw
 one-minute-bar pages are separated from envelope, field-shape, timestamp, pagination, and
 delivery/revision fault vectors so that every rejection has one reviewable cause.
+`hostile-atomicity-faults.json` contains inert, literal recipes for constructing runtime-only
+accessors, proxies, custom prototypes, and extra array properties. It embeds no executable hostile
+value. The valid-update-first recipes require one terminal `correction-unsupported` decision and
+zero later hostile invocations or semantic effects; the hostile-container recipes require a typed
+schema rejection before any getter, Proxy trap, record, quarantine, normalization, or selection.

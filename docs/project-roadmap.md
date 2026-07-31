@@ -184,6 +184,15 @@ quotes/trades never become fallback, alter bar selection, or enter public output
 stopped until this amendment receives external `CONTRACT_GO`, explicit merge authorization, and is
 merged.
 
+The first frozen amendment candidate `add3bc99862eaa2998b3dee0bbc0004b4b5f1e23`
+passed complete same-SHA local and hosted gates but received external `CONTRACT_NO_GO`: valid trade
+`u` did not stop later same-page item parsing, and nested hostile arrays/values could execute
+getter or Proxy code before rejection. The bounded repair now requires immediate
+`correction-unsupported` return before later same-symbol/later-symbol/later-page value reads,
+recursive passive-Proxy-first descriptor admission, and all 8 original-synthetic hostile/atomicity
+cases (10 literal runtime recipes) with exact zero-call/zero-output counters. A new clean candidate,
+complete same-SHA local/hosted evidence, and whole-package external re-review remain pending.
+
 ### Post-PR 2D next actions
 
 PR 2D is complete and merged. The active critical path is now P1-09 -> P1-10 -> P1-06 -> P2. Work
@@ -193,7 +202,7 @@ must follow the order below; parallel preparation does not waive a gate.
 | --- | --- | --- | --- | --- |
 | 1 | Close the P1-09 evidence package | Human owner | Complete | Sanitized owner attestation, private Alpaca/FMP responses represented by opaque digest, explicit source/fallback decision, and zero-spend confirmation are recorded |
 | 2 | Independently audit the frozen P1-09 authorization | Integration owner plus fresh independent reviewer | Complete | Exact candidate `36dcf92b...` received `GO`; P1-09 is complete |
-| 3 | Prepare PR 2E, the P1-10 contract package | Agents with non-overlapping ownership | Reopened only for the authorized narrowed wire amendment; validation and external review pending | Exact official-document grammar, bar-only neutral translation, deterministic quote/trade non-translation, original synthetic fault matrix, clean exact candidate, same-SHA offline/hosted evidence, and fresh external `CONTRACT_GO`; no credentials, provider calls, transport, or provider bytes |
+| 3 | Prepare PR 2E, the P1-10 contract package | Agents with non-overlapping ownership | First amendment candidate received external `CONTRACT_NO_GO`; bounded repair integrated and new same-SHA validation/re-review pending | Immediate `u` stop, recursively inert hostile-container rejection, exact official-document grammar, bar-only neutral translation, deterministic quote/trade non-translation, original synthetic fault matrix, clean exact candidate, same-SHA offline/hosted evidence, and fresh external `CONTRACT_GO`; no credentials, provider calls, transport, or provider bytes |
 | 4 | Resolve the retention architecture authorization gate | Human owner | Authorized for the exact frozen architecture before the stopped PR 2F wave | Preserve the owner-authorized maintenance port, additive migration, controlled vault-root erasure, tombstone/use-denial semantics, and exact retention sequence; no scope expansion |
 | 5 | Implement PR 2F against the accepted PR 2E exact candidate | Agents after PR 2E amendment `CONTRACT_GO`, merge, and renewed Phase B direction | Stopped at checkpoint `da6bc096...`; do not touch | Reconstruct only after amendment merge, preserve compatible stopped work, treat amendment bytes as immutable, and continue the offline implementation/audit loop without FMP transport, silent fallback, or paid-plan paths |
 | 6 | Complete live read-only source capture and calendar prewarming | Non-overlapping source and calendar owners | Only where provider/account authorization is already explicit; market-data portions wait for P1-10 | Bounded SEC/FMP/issuer-IR capture as authorized, issuer allowlist, schedule provenance, restart/backfill evidence, and no dispatchable financial effects |

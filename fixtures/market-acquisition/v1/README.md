@@ -21,4 +21,6 @@ and types frozen from cited official Alpaca documentation. Every envelope, symbo
 condition member, identifier, number, continuation value, ordering, duplicate, conflict, and fault
 combination is an original PEAS construction. It neither copies nor structurally transcribes an
 Alpaca example or response and is not evidence of undocumented provider behavior. See
-`wire-grammar/README.md` for the closed provenance and safety rules.
+`wire-grammar/README.md` for the closed provenance and safety rules. Hostile accessors, proxies,
+and custom containers are stored only as inert constructor recipes and are created solely in test
+memory; the fixture files contain no executable hostile value.

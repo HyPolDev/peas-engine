@@ -90,6 +90,20 @@ integer conversion, trailing non-whitespace bytes, invalid UTF-8, and an unpaire
 the page as `schema-invalid`. All recognized objects reject unknown or extra own fields even where
 the provider OpenAPI does not spell `additionalProperties:false`.
 
+This is a recursive descriptor gate, not a top-level shape check. Before any property value is read
+at every reachable object or array depth, a trusted runtime passive-proxy predicate must reject a
+Proxy without invoking `ownKeys`, `getOwnPropertyDescriptor`, `getPrototypeOf`, `get`, or any other
+user trap. Only a non-Proxy may be inspected through own property descriptors. Every descriptor
+must be an ordinary data descriptor; accessors reject without invoking the getter or setter. Object
+prototype, exact own string keys, absence of symbol keys, array length/index descriptors, density,
+and the absence of non-index array properties are validated before child values are read. Each
+child container then passes the same proxy-and-descriptor sequence before any of its properties are
+read. If a passive proxy predicate is unavailable, the in-memory object boundary is unavailable and
+fails closed; it must not probe the candidate reflectively. Tokenizer-created plain data follows the
+same descriptor validation. Getter calls and Proxy-trap calls are therefore exactly zero on every
+reject path, including nested condition arrays and hostile values beneath envelope, symbol-group,
+item, and continuation members.
+
 Resource preflight uses the accepted lesser-limit rule. In particular:
 
 - page records use the accepted 10,000-record project ceiling;
@@ -198,6 +212,11 @@ unsigned-UTF-8 order, then timestamp, then canonical wire-record digest; JSON ob
 is irrelevant. A decreasing `t`, a record outside the inclusive requested start/end interval, or a
 record under a different symbol is `schema-invalid`.
 
+The trade-update stop scan precedes that semantic processing order. It traverses validated
+symbol-group descriptors in canonical requested-symbol unsigned-UTF-8 order and each dense group by
+unsigned array index. It does not pre-read a later item's timestamp or other field to establish the
+semantic order.
+
 `next_page_token` is a required own field and is exactly:
 
 - `null`, meaning the one terminal page; or
@@ -300,6 +319,20 @@ or selection. `canceled` does not manufacture a cancellation payload; `incorrect
 or delete an earlier fact; `corrected` does not become a correction or later trade by arrival
 order. A mixed page cannot expose its otherwise valid records because the unsupported update may
 change corpus completeness.
+
+After the envelope, parent-container descriptor tables, and descriptor-derived resource counts pass
+without reading later item values, the stop occurs immediately when the first trade item containing
+`u` has itself passed the recursive descriptor gate, exact-field check, and full validation of every
+field including the documented `u` value. The terminal outcome is durably recorded before return.
+The parser then reads
+no property value of any later array item in that symbol group, any later symbol group on the same
+page, or any later page; it performs no recursive descent into such a value and computes no later
+item digest, quarantine, record, semantic-item count, or semantic order. A passive, trap-free
+descriptor-table check already required for a containing array/object is not a later value read.
+Hostile behavior
+reachable only by reading or descending into a later data descriptor cannot override the already
+proven stop or trigger a getter or Proxy trap. Previously validated items remain private and emit
+nothing. This immediate stop is identical without restart and after every durable restart prefix.
 
 A trade-only acquisition with no `u` completes with unchanged typed
 `market.no-eligible-trade` only after all quarantines and the complete corpus are durable. It never
@@ -507,8 +540,10 @@ fact, normalized fact, or selection identity.
 
 ## 9. Duplicate, correction, and ordering invariants
 
-The parser first counts and validates all wire items, then groups by the channel-specific logical
-key, then applies these rules:
+After complete page-chain verification, the parser first applies the section 6 trade-update stop
+scan. If that scan finds `u`, the terminal outcome ends parsing at that exact item and none of the
+later grouping rules run. Otherwise the parser counts and validates all wire items, groups by the
+channel-specific logical key, and applies these rules:
 
 1. Equal key and equal wire digest is exact duplicate/redelivery. Preserve all immutable delivery
    observations; emit at most one semantic bar.
@@ -519,7 +554,9 @@ key, then applies these rules:
    market correction or sequence.
 5. A bar replacement is unsupported because the endpoint publishes no revision relation. A
    changed bar at the same key is conflict, not last-writer-wins.
-6. Any trade `u` stops the complete acquisition as section 6 requires.
+6. The first fully validated trade `u` stops the complete acquisition immediately as section 6
+   requires, before any property read in a later same-symbol item, later same-page symbol, or later
+   page.
 7. No selection runs until every page outcome, duplicate group, conflict, quarantine, and emitted
    bar is durable and the full corpus revalidates.
 

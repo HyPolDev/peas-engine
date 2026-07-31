@@ -140,6 +140,9 @@ const grammarFixture = JSON.parse(
 const paginationFixture = JSON.parse(
   readFileSync(`${FIXTURE_ROOT}/pagination-delivery-faults.json`, "utf8"),
 ) as Readonly<{ cases: readonly FixtureCase[] }>;
+const hostileAtomicityFixture = JSON.parse(
+  readFileSync(`${FIXTURE_ROOT}/hostile-atomicity-faults.json`, "utf8"),
+) as Readonly<{ cases: readonly FixtureCase[] }>;
 const barTranslationFixture = JSON.parse(
   readFileSync(`${FIXTURE_ROOT}/bar-translation.json`, "utf8"),
 ) as Readonly<{
@@ -214,13 +217,25 @@ function rawNumber(rawNumber: string): RawNumber {
 }
 
 function isRawNumber(value: unknown): value is RawNumber {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    Object.getPrototypeOf(value) === Object.prototype &&
-    Object.keys(value).length === 1 &&
-    typeof (value as RawNumber).rawNumber === "string"
-  );
+  if (typeof value !== "object" || value === null || isProxy(value) || Array.isArray(value)) {
+    return false;
+  }
+  try {
+    if (Object.getPrototypeOf(value) !== Object.prototype) return false;
+    if (Object.getOwnPropertySymbols(value).length !== 0) return false;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const keys = Object.keys(descriptors);
+    if (keys.length !== 1 || keys[0] !== "rawNumber") return false;
+    const descriptor = descriptors["rawNumber"];
+    return (
+      descriptor !== undefined &&
+      "value" in descriptor &&
+      descriptor.enumerable === true &&
+      typeof descriptor.value === "string"
+    );
+  } catch {
+    return false;
+  }
 }
 
 function assertPlainRecord(value: unknown, code = "schema-invalid"): asserts value is PlainRecord {
@@ -235,8 +250,10 @@ function assertPlainRecord(value: unknown, code = "schema-invalid"): asserts val
     if (Object.keys(descriptors).length > RAW_LIMITS.keysPerObject) {
       reject("rawJsonKeysPerObject");
     }
-    for (const descriptor of Object.values(descriptors)) {
-      if (!("value" in descriptor)) reject(code);
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      if (key === "__proto__" || !("value" in descriptor) || descriptor.enumerable !== true) {
+        reject(code);
+      }
     }
   } catch (error) {
     if (error instanceof WireContractError) throw error;
@@ -249,12 +266,29 @@ function assertDenseArray(value: unknown, code = "schema-invalid"): asserts valu
     reject(code);
   }
   try {
-    const array = value as unknown[];
-    if (array.length > RAW_LIMITS.arrayItems) reject("rawJsonArrayItems");
-    for (let index = 0; index < array.length; index += 1) {
-      if (!Object.hasOwn(array, index)) reject(code);
+    if (Object.getPrototypeOf(value) !== Array.prototype) reject(code);
+    if (Object.getOwnPropertySymbols(value).length !== 0) reject(code);
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+    if (
+      lengthDescriptor === undefined ||
+      !("value" in lengthDescriptor) ||
+      typeof lengthDescriptor.value !== "number" ||
+      !Number.isSafeInteger(lengthDescriptor.value) ||
+      lengthDescriptor.value < 0
+    ) {
+      reject(code);
     }
-    if (Object.getOwnPropertySymbols(array).length !== 0) reject(code);
+    const length = (lengthDescriptor as PropertyDescriptor & { value: number }).value;
+    if (length > RAW_LIMITS.arrayItems) reject("rawJsonArrayItems");
+    const allowedKeys = new Set(["length", ...Array.from({ length }, (_, index) => String(index))]);
+    if (Object.keys(descriptors).some((key) => !allowedKeys.has(key))) reject(code);
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = descriptors[String(index)];
+      if (descriptor === undefined || !("value" in descriptor) || descriptor.enumerable !== true) {
+        reject(code);
+      }
+    }
   } catch (error) {
     if (error instanceof WireContractError) throw error;
     reject(code);
@@ -542,14 +576,34 @@ function modelValue(value: unknown): unknown {
     try {
       if (Array.isArray(entry)) {
         assertDenseArray(entry);
-        return entry.map((item) => visit(item, depth + 1));
+        const descriptors = Object.getOwnPropertyDescriptors(entry);
+        const length = (
+          Object.getOwnPropertyDescriptor(entry, "length") as PropertyDescriptor & {
+            value: number;
+          }
+        ).value;
+        return Array.from({ length }, (_, index) =>
+          visit(
+            (
+              descriptors[String(index)] as PropertyDescriptor & {
+                value: unknown;
+              }
+            ).value,
+            depth + 1,
+          ),
+        );
       }
       assertPlainRecord(entry);
+      const descriptors = Object.getOwnPropertyDescriptors(entry);
       return Object.fromEntries(
-        Object.entries(entry).map(([key, item]) => [
+        Object.keys(descriptors).map((key) => [
           key,
           visit(
-            item,
+            (
+              descriptors[key] as PropertyDescriptor & {
+                value: unknown;
+              }
+            ).value,
             depth + 1,
             key === "next_page_token" ? Number.MAX_SAFE_INTEGER : RAW_LIMITS.genericStringBytes,
           ),
@@ -725,7 +779,16 @@ function conditions(value: unknown, endpointKind: "quotes" | "trades"): readonly
   if (endpointKind === "quotes" && value.length !== 1 && value.length !== 2) {
     reject("schema-invalid");
   }
-  const parsed = value.map((entry) => nonemptyAscii(entry));
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const parsed = Array.from({ length: value.length }, (_, index) =>
+    nonemptyAscii(
+      (
+        descriptors[String(index)] as PropertyDescriptor & {
+          value: unknown;
+        }
+      ).value,
+    ),
+  );
   if (new Set(parsed).size !== parsed.length) reject("schema-invalid");
   return Object.freeze(parsed);
 }
@@ -1001,12 +1064,13 @@ function admitPage(
   if (typeof token === "string" && utf8Bytes(token) > 4_096) reject("pageTokenInputBytes");
   const groups = input[dataField];
   assertPlainRecord(groups);
-  const groupEntries = Object.entries(groups);
-  if (groupEntries.length === 0 && token !== null) reject("schema-invalid");
+  const groupNames = Object.keys(groups);
+  const groupDescriptors = Object.getOwnPropertyDescriptors(groups);
+  if (groupNames.length === 0 && token !== null) reject("schema-invalid");
   const membership = new Set(context.requestedSymbols);
   let recordCount = 0;
   const validated: ValidatedItem[] = [];
-  for (const [symbol, items] of groupEntries) {
+  for (const symbol of groupNames) {
     if (
       !/^[\x21-\x7e]{1,32}$/u.test(symbol) ||
       symbol !== symbol.toUpperCase() ||
@@ -1015,15 +1079,57 @@ function admitPage(
     ) {
       reject("schema-invalid");
     }
+    const items = (
+      groupDescriptors[symbol] as PropertyDescriptor & {
+        value: unknown;
+      }
+    ).value;
     assertDenseArray(items);
     recordCount += items.length;
     if (recordCount > 10_000) reject("recordsPerArtifactOrPage");
+    const itemDescriptors = Object.getOwnPropertyDescriptors(items);
     let priorNs: bigint | null = null;
     for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
-      const item = validateItem(endpointKind, symbol, itemIndex, items[itemIndex], context);
+      const item = validateItem(
+        endpointKind,
+        symbol,
+        itemIndex,
+        (
+          itemDescriptors[String(itemIndex)] as PropertyDescriptor & {
+            value: unknown;
+          }
+        ).value,
+        context,
+      );
       const eventNs = BigInt(item.timestamp.timestamp.epochNs);
       if (priorNs !== null && eventNs < priorNs) reject("schema-invalid");
       priorNs = eventNs;
+      if (item.kind === "trade" && item.update !== null) {
+        const terminalReason = "correction-unsupported" as const;
+        const quarantines = Object.freeze([
+          Object.freeze({
+            endpointKind,
+            reason: terminalReason,
+            symbol,
+            itemIndex,
+          }),
+        ]);
+        return Object.freeze({
+          endpointKind,
+          terminal: true,
+          privateNextToken: null,
+          records: Object.freeze([]),
+          quarantines,
+          barObservations: Object.freeze([]),
+          terminalReason,
+          publicSummary: Object.freeze({
+            endpointKind,
+            recordCount: 0,
+            quarantineCount: quarantines.length,
+            terminalReason,
+          }),
+        });
+      }
       validated.push(item);
     }
   }
@@ -1038,7 +1144,7 @@ function admitPage(
   const quarantines: Quarantine[] = [];
   const records: RecordedMarketRecordV1[] = [];
   const barObservations: BarObservation[] = [];
-  let terminalReason: "correction-unsupported" | null = null;
+  const terminalReason: "correction-unsupported" | null = null;
   if (endpointKind === "quotes") {
     for (const item of ordered) {
       quarantines.push({
@@ -1049,25 +1155,13 @@ function admitPage(
       });
     }
   } else if (endpointKind === "trades") {
-    if (ordered.some((item) => item.kind === "trade" && item.update !== null)) {
-      terminalReason = "correction-unsupported";
-      for (const item of ordered) {
-        quarantines.push({
-          endpointKind,
-          reason: "correction-unsupported",
-          symbol: item.symbol,
-          itemIndex: item.itemIndex,
-        });
-      }
-    } else {
-      for (const item of ordered) {
-        quarantines.push({
-          endpointKind,
-          reason: "market.trade-condition-ineligible/state-insufficient",
-          symbol: item.symbol,
-          itemIndex: item.itemIndex,
-        });
-      }
+    for (const item of ordered) {
+      quarantines.push({
+        endpointKind,
+        reason: "market.trade-condition-ineligible/state-insufficient",
+        symbol: item.symbol,
+        itemIndex: item.itemIndex,
+      });
     }
   } else {
     const bars = ordered.filter(
@@ -1476,10 +1570,11 @@ function sameCanonical(left: unknown, right: unknown): boolean {
 
 function validateLoadedCheckpoint(
   endpointKind: EndpointKind,
-  expectedContextIdentityHash: string,
+  context: ParseContext,
   input: unknown,
 ): ChainCheckpoint {
   try {
+    const expectedContextIdentityHash = contextIdentityHash(context);
     assertPlainRecord(input);
     assertExactKeys(input, [
       "endpointKind",
@@ -1540,6 +1635,7 @@ function validateLoadedCheckpoint(
     let aggregateVerifiedBytes = 0;
     let priorReturnedMaterial: string | null = null;
     let priorReturnedHash: string | null = null;
+    let correctionStop = false;
     const recomputedSeenHashes: string[] = [];
     const validatedPages: VerifiedRawPage[] = [];
     for (let index = 0; index < pages.length; index += 1) {
@@ -1593,7 +1689,8 @@ function validateLoadedCheckpoint(
       if (createHash("sha256").update(rawText, "utf8").digest("hex") !== page["rawDigest"]) {
         reject("checkpoint-invalid");
       }
-      const returnedMaterial = inspectContinuationToken(endpointKind, parseRawJson(rawText));
+      const parsedPage = parseRawJson(rawText);
+      const returnedMaterial = inspectContinuationToken(endpointKind, parsedPage);
       const returnedHash = returnedMaterial === null ? null : privateTokenHash(returnedMaterial);
       if (
         returnedMaterial !== page["returnedTokenMaterial"] ||
@@ -1609,16 +1706,29 @@ function validateLoadedCheckpoint(
       priorReturnedMaterial = returnedMaterial;
       priorReturnedHash = returnedHash;
       validatedPages.push(page as unknown as VerifiedRawPage);
+      if (
+        endpointKind === "trades" &&
+        admitPage(endpointKind, parsedPage, {
+          ...context,
+          rawArtifactId: page["rawArtifactId"] as string,
+        }).terminalReason === "correction-unsupported"
+      ) {
+        if (index !== pages.length - 1) reject("checkpoint-invalid");
+        correctionStop = true;
+      }
     }
     recomputedSeenHashes.sort();
+    const recomputedExpectedToken = correctionStop ? null : priorReturnedMaterial;
+    const recomputedExpectedTokenHash = correctionStop ? null : priorReturnedHash;
     if (
       !sameCanonical(storedSeenHashes, recomputedSeenHashes) ||
-      expectedPrivateToken !== priorReturnedMaterial ||
-      expectedPrivateTokenHash !== priorReturnedHash
+      expectedPrivateToken !== recomputedExpectedToken ||
+      expectedPrivateTokenHash !== recomputedExpectedTokenHash
     ) {
       reject("checkpoint-invalid");
     }
-    const recomputedTerminal = pages.length > 0 && priorReturnedMaterial === null;
+    const recomputedTerminal =
+      correctionStop || (pages.length > 0 && priorReturnedMaterial === null);
     if (input["terminal"] !== recomputedTerminal) reject("checkpoint-invalid");
 
     const outcome = input["outcome"];
@@ -1718,11 +1828,7 @@ function runChain(
       outcome: null,
     });
   } else {
-    checkpoint = validateLoadedCheckpoint(
-      endpointKind,
-      expectedContextIdentityHash,
-      loadedCheckpoint,
-    );
+    checkpoint = validateLoadedCheckpoint(endpointKind, context, loadedCheckpoint);
   }
   if (checkpoint.outcome !== null) {
     if (pages.length !== 0) reject("page-after-terminal");
@@ -1777,18 +1883,46 @@ function runChain(
       returnedTokenHash,
       returnedTokenMaterial: returnedToken,
     });
+    const verifiedPages = Object.freeze([...checkpoint.verifiedPages, verifiedPage]);
+    const correctionStop =
+      endpointKind === "trades" &&
+      admitPage(endpointKind, parsedEnvelope, {
+        ...context,
+        rawArtifactId,
+      }).terminalReason === "correction-unsupported";
     checkpoint = Object.freeze({
       endpointKind,
       contextIdentityHash: expectedContextIdentityHash,
       nextOrdinal: chainPage.ordinal + 1,
-      expectedPrivateToken: returnedToken,
-      expectedPrivateTokenHash: returnedTokenHash,
+      expectedPrivateToken: correctionStop ? null : returnedToken,
+      expectedPrivateTokenHash: correctionStop ? null : returnedTokenHash,
       seenReturnedTokenHashes: Object.freeze([...seenReturnedTokenHashes].sort()),
       logicalRequestId: checkpoint.logicalRequestId,
-      terminal: returnedToken === null,
-      verifiedPages: Object.freeze([...checkpoint.verifiedPages, verifiedPage]),
+      terminal: correctionStop || returnedToken === null,
+      verifiedPages,
       outcome: null,
     });
+    if (correctionStop) {
+      checkpoint = Object.freeze({
+        ...checkpoint,
+        outcome: buildPersistedOutcome(endpointKind, verifiedPages, context),
+      });
+      journal.save(checkpoint);
+      const persistedCorrection = journal.load();
+      if (persistedCorrection === null) reject("checkpoint-invalid");
+      const validatedCorrection = validateLoadedCheckpoint(
+        endpointKind,
+        context,
+        persistedCorrection,
+      );
+      if (
+        validatedCorrection.outcome?.terminalReason !== "correction-unsupported" ||
+        validatedCorrection.outcome.records.length !== 0
+      ) {
+        reject("checkpoint-invalid");
+      }
+      return Object.freeze([]);
+    }
     journal.save(checkpoint);
   }
   if (!checkpoint.terminal) return Object.freeze([]);
@@ -1798,7 +1932,7 @@ function runChain(
   journal.save(checkpoint);
   const persisted = journal.load();
   if (persisted === null) reject("checkpoint-invalid");
-  const validated = validateLoadedCheckpoint(endpointKind, expectedContextIdentityHash, persisted);
+  const validated = validateLoadedCheckpoint(endpointKind, context, persisted);
   if (validated.outcome === null) reject("checkpoint-invalid");
   const recomputed = buildPersistedOutcome(endpointKind, validated.verifiedPages, context);
   if (!sameCanonical(recomputed, validated.outcome)) reject("checkpoint-invalid");
@@ -2276,17 +2410,20 @@ test("wire fixture catalog is closed, original synthetic, inert, and fully enume
     "wire-grammar/valid-pages.json",
     "wire-grammar/grammar-faults.json",
     "wire-grammar/pagination-delivery-faults.json",
+    "wire-grammar/hostile-atomicity-faults.json",
     "wire-grammar/bar-translation.json",
   ]);
   assert.equal(validFixture.cases.length, 9);
   assert.equal(grammarFixture.cases.length, 50);
   assert.equal(paginationFixture.cases.length, 19);
+  assert.equal(hostileAtomicityFixture.cases.length, 8);
   const identifiers = [
     ...validFixture.cases,
     ...grammarFixture.cases,
     ...paginationFixture.cases,
+    ...hostileAtomicityFixture.cases,
   ].map((entry) => entry.caseId);
-  assert.equal(new Set(identifiers).size, 78);
+  assert.equal(new Set(identifiers).size, 86);
   const matrixText = readFileSync("docs/contracts/pr-2e-p1-10-wire-acceptance-matrix.md", "utf8");
   for (const identifier of identifiers) {
     assert.equal(matrixText.includes(`\`${identifier}\``), true, identifier);
@@ -2298,6 +2435,7 @@ test("wire fixture catalog is closed, original synthetic, inert, and fully enume
     readFileSync(`${FIXTURE_ROOT}/valid-pages.json`, "utf8"),
     readFileSync(`${FIXTURE_ROOT}/grammar-faults.json`, "utf8"),
     readFileSync(`${FIXTURE_ROOT}/pagination-delivery-faults.json`, "utf8"),
+    readFileSync(`${FIXTURE_ROOT}/hostile-atomicity-faults.json`, "utf8"),
   ].join("\n");
   for (const forbidden of [
     "https://",
@@ -2339,6 +2477,242 @@ test("all 50 grammar-fault fixtures execute every literal operation and disposit
   assert.equal(executed.size, grammarFixture.cases.length);
   assert.ok(vectorCount > 300, `expanded only ${vectorCount} literal vectors`);
   assert.deepEqual(mismatches, []);
+});
+
+test("all 8 hostile-atomicity recipes execute with literal zero-trap and zero-output counters", async () => {
+  const executedCases = new Set<string>();
+  const executedRecipes = new Set<string>();
+
+  for (const fixtureCase of hostileAtomicityFixture.cases) {
+    executedCases.add(fixtureCase.caseId);
+    const recipes = fixtureCase["runtimeValueRecipes"] as readonly PlainRecord[];
+    let accessorCalls = 0;
+    let proxyTrapCalls = 0;
+    let laterSchemaReads = 0;
+    let terminalDecisions = 0;
+    let records = 0;
+    let quarantines = 0;
+    const normalizationCalls = 0;
+    const replacements = 0;
+    const selections = 0;
+    const reversibleStateMutations = 0;
+    let observedErrorCode: string | null = null;
+
+    const throwingAccessorObject = (propertyAlias: string): PlainRecord => {
+      const value = Object.create(null) as PlainRecord;
+      Object.defineProperty(value, propertyAlias, {
+        enumerable: true,
+        configurable: true,
+        get() {
+          laterSchemaReads += 1;
+          accessorCalls += 1;
+          throw new Error("synthetic-hostile-accessor");
+        },
+      });
+      return value;
+    };
+    const throwingProxy = (): object =>
+      new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            laterSchemaReads += 1;
+            proxyTrapCalls += 1;
+            throw new Error("synthetic-hostile-proxy");
+          },
+          ownKeys() {
+            laterSchemaReads += 1;
+            proxyTrapCalls += 1;
+            throw new Error("synthetic-hostile-proxy");
+          },
+          getOwnPropertyDescriptor() {
+            laterSchemaReads += 1;
+            proxyTrapCalls += 1;
+            throw new Error("synthetic-hostile-proxy");
+          },
+          get() {
+            laterSchemaReads += 1;
+            proxyTrapCalls += 1;
+            throw new Error("synthetic-hostile-proxy");
+          },
+        },
+      );
+    const observeAdmission = (admission: PageAdmission): void => {
+      terminalDecisions += admission.terminalReason === "correction-unsupported" ? 1 : 0;
+      records += admission.records.length;
+      quarantines += admission.quarantines.length;
+      assert.equal(admission.barObservations.length, 0);
+    };
+    const expectRejected = (operation: () => unknown): void => {
+      try {
+        operation();
+        assert.fail(`${fixtureCase.caseId} unexpectedly admitted`);
+      } catch (error) {
+        if (error instanceof WireContractError) {
+          observedErrorCode = error.code;
+          return;
+        }
+        throw error;
+      }
+    };
+
+    for (const recipe of recipes) {
+      executedRecipes.add(recipe["recipeId"] as string);
+    }
+
+    switch (fixtureCase["operation"]) {
+      case "append-runtime-values-after-first-valid-update": {
+        const page = cloneAndModel(fixtureWire(fixtureCase["baseCaseId"] as string));
+        const [, items] = firstGroup(page, "trades");
+        for (const recipe of recipes) {
+          if (recipe["kind"] === "literal-null") {
+            items.push(null);
+          } else if (recipe["kind"] === "object-with-throwing-own-accessor") {
+            items.push(throwingAccessorObject(recipe["propertyAlias"] as string));
+          } else {
+            reject("fixture-operation-unknown");
+          }
+        }
+        observeAdmission(admitPage("trades", page));
+        break;
+      }
+      case "append-runtime-symbol-group-after-first-valid-update-group": {
+        const page = cloneAndModel(fixtureWire(fixtureCase["baseCaseId"] as string));
+        const groups = page["trades"] as PlainRecord;
+        groups[(fixtureCase["placement"] as PlainRecord)["symbolAlias"] as string] = [
+          throwingProxy(),
+        ];
+        observeAdmission(admitPage("trades", page));
+        break;
+      }
+      case "construct-runtime-page-chain-with-hostile-page-after-valid-update": {
+        const updatePage = cloneAndModel(fixtureWire(fixtureCase["baseCaseId"] as string));
+        updatePage["next_page_token"] = "peas-synthetic-opaque-stop-before-page-one";
+        const hostilePage = throwingAccessorObject(recipes[0]?.["propertyAlias"] as string);
+        const journal = new MemoryJournal();
+        try {
+          records += runChain(
+            "trades",
+            [
+              {
+                ordinal: 0,
+                page: updatePage,
+                presentedRequestToken: null,
+                logicalRequestId: "peas-synthetic-immediate-u-stop",
+              },
+              {
+                ordinal: 1,
+                page: hostilePage,
+                presentedRequestToken: "peas-synthetic-opaque-stop-before-page-one",
+                logicalRequestId: "peas-synthetic-immediate-u-stop",
+              },
+            ],
+            journal,
+          ).length;
+          const outcome = journal.load()?.outcome;
+          terminalDecisions += outcome?.terminalReason === "correction-unsupported" ? 1 : 0;
+          quarantines += outcome?.quarantines.length ?? 0;
+        } finally {
+          journal.close();
+        }
+        break;
+      }
+      case "replace-first-array-index-with-runtime-accessor": {
+        const page = cloneAndModel(fixtureWire(fixtureCase["baseCaseId"] as string));
+        const [, items] = firstGroup(page, "bars");
+        Object.defineProperty(items, recipes[0]?.["index"] as number, {
+          enumerable: true,
+          configurable: true,
+          get() {
+            accessorCalls += 1;
+            throw new Error("synthetic-hostile-index-accessor");
+          },
+        });
+        expectRejected(() => admitPage("bars", page));
+        break;
+      }
+      case "replace-first-item-numeric-field-with-runtime-proxy": {
+        const page = cloneAndModel(fixtureWire(fixtureCase["baseCaseId"] as string));
+        firstItem(page, "bars")[fixtureCase["field"] as string] = throwingProxy();
+        expectRejected(() => admitPage("bars", page));
+        break;
+      }
+      case "set-first-symbol-array-runtime-prototype": {
+        const page = cloneAndModel(fixtureWire(fixtureCase["baseCaseId"] as string));
+        const [, items] = firstGroup(page, "bars");
+        Object.setPrototypeOf(items, Object.freeze(Object.create(null)));
+        expectRejected(() => admitPage("bars", page));
+        break;
+      }
+      case "add-extra-own-property-to-first-symbol-array": {
+        const page = cloneAndModel(fixtureWire(fixtureCase["baseCaseId"] as string));
+        const [, items] = firstGroup(page, "bars");
+        Object.defineProperty(items, recipes[0]?.["propertyAlias"] as string, {
+          enumerable: recipes[0]?.["enumerable"] as boolean,
+          configurable: true,
+          value: true,
+        });
+        expectRejected(() => admitPage("bars", page));
+        break;
+      }
+      case "replace-first-item-condition-member-with-runtime-value": {
+        for (const recipe of recipes) {
+          const page = cloneAndModel(fixtureWire(fixtureCase["baseCaseId"] as string));
+          const conditionValues = firstItem(page, "trades")[
+            fixtureCase["field"] as string
+          ] as unknown[];
+          const index = fixtureCase["index"] as number;
+          if (recipe["kind"] === "array-index-throwing-accessor") {
+            Object.defineProperty(conditionValues, index, {
+              enumerable: true,
+              configurable: true,
+              get() {
+                accessorCalls += 1;
+                throw new Error("synthetic-hostile-nested-accessor");
+              },
+            });
+          } else if (recipe["kind"] === "proxy-with-throwing-traps") {
+            conditionValues[index] = throwingProxy();
+          } else {
+            reject("fixture-operation-unknown");
+          }
+          expectRejected(() => admitPage("trades", page));
+        }
+        break;
+      }
+      default:
+        reject("fixture-operation-unknown");
+    }
+
+    await Promise.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const expected = fixtureCase["expectedCounters"] as PlainRecord;
+    const actual: PlainRecord = {
+      terminalDecisions,
+      laterSchemaReads,
+      accessorCalls,
+      proxyTrapCalls,
+      records,
+      quarantines,
+      normalizationCalls,
+      replacements,
+      selections,
+      reversibleStateMutations,
+      postReturnActivity: 0,
+    };
+    for (const [counter, expectedValue] of Object.entries(expected)) {
+      assert.equal(actual[counter], expectedValue, `${fixtureCase.caseId}:${counter}`);
+    }
+    if (fixtureCase["expectedErrorCode"] !== undefined) {
+      assert.equal(observedErrorCode, fixtureCase["expectedErrorCode"], fixtureCase.caseId);
+    } else {
+      assert.equal(observedErrorCode, null, fixtureCase.caseId);
+    }
+  }
+
+  assert.equal(executedCases.size, 8);
+  assert.equal(executedCases.size, hostileAtomicityFixture.cases.length);
+  assert.equal(executedRecipes.size, 10);
 });
 
 test("exact RFC3339 Z and numeric-offset parsing preserves lexical precision and canonical UTC", () => {
@@ -2543,13 +2917,120 @@ test("quote/trade conditions, tapes, updates, and absent sequence authority neve
     const result = admitPage("trades", modelValue(page));
     assert.equal(result.records.length, 0);
     assert.equal(result.terminalReason, "correction-unsupported");
-    assert.equal(result.quarantines.length, 2);
+    assert.deepEqual(result.quarantines, [
+      {
+        endpointKind: "trades",
+        reason: "correction-unsupported",
+        symbol: "PEASLIL",
+        itemIndex: 0,
+      },
+    ]);
+    assert.equal(result.barObservations.length, 0);
   }
   for (const update of ["", "replaced", "CANCELED", null, 1, true, [], {}]) {
     const page = structuredClone(trade);
     firstItem(page, "trades")["u"] = update;
     expectWireError("schema-invalid", () => admitPage("trades", modelValue(page)));
   }
+});
+
+test("valid trade updates stop at first, middle, and last positions before hostile successors", () => {
+  let accessorCalls = 0;
+  let proxyTrapCalls = 0;
+  const throwingItemAccessor = (): PlainRecord => {
+    const value = Object.create(null) as PlainRecord;
+    Object.defineProperty(value, "syntheticLaterField", {
+      enumerable: true,
+      get() {
+        accessorCalls += 1;
+        throw new Error("synthetic-post-u-accessor");
+      },
+    });
+    return value;
+  };
+  const throwingItemProxy = (): object =>
+    new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          proxyTrapCalls += 1;
+          throw new Error("synthetic-post-u-proxy");
+        },
+        ownKeys() {
+          proxyTrapCalls += 1;
+          throw new Error("synthetic-post-u-proxy");
+        },
+        getOwnPropertyDescriptor() {
+          proxyTrapCalls += 1;
+          throw new Error("synthetic-post-u-proxy");
+        },
+        get() {
+          proxyTrapCalls += 1;
+          throw new Error("synthetic-post-u-proxy");
+        },
+      },
+    );
+  const base = cloneAndModel(fixtureWire("wire-trades-terminal-grouped"));
+  const normal = structuredClone(firstItem(base, "trades"));
+
+  for (const update of ["canceled", "incorrect", "corrected"] as const) {
+    for (const position of ["first", "middle", "last"] as const) {
+      const updateItem = structuredClone(normal);
+      updateItem["u"] = update;
+      const groups: PlainRecord = {};
+      let expectedItemIndex = 0;
+      if (position === "first") {
+        groups["PEASLIL"] = [updateItem, null];
+      } else if (position === "middle") {
+        expectedItemIndex = 1;
+        groups["PEASLIL"] = [structuredClone(normal), updateItem, throwingItemAccessor()];
+      } else {
+        expectedItemIndex = 1;
+        groups["PEASLIL"] = [structuredClone(normal), updateItem];
+        groups["PEASUMB"] = [throwingItemProxy()];
+      }
+      const result = admitPage("trades", {
+        trades: groups,
+        next_page_token: "peas-synthetic-must-not-resume-after-u",
+      });
+      assert.equal(result.terminal, true);
+      assert.equal(result.privateNextToken, null);
+      assert.equal(result.terminalReason, "correction-unsupported");
+      assert.deepEqual(result.records, []);
+      assert.deepEqual(result.barObservations, []);
+      assert.deepEqual(result.quarantines, [
+        {
+          endpointKind: "trades",
+          reason: "correction-unsupported",
+          symbol: "PEASLIL",
+          itemIndex: expectedItemIndex,
+        },
+      ]);
+      assert.deepEqual(result.publicSummary, {
+        endpointKind: "trades",
+        recordCount: 0,
+        quarantineCount: 1,
+        terminalReason: "correction-unsupported",
+      });
+      for (const forbiddenState of [
+        "replacement",
+        "replacements",
+        "selection",
+        "selections",
+        "reversibleState",
+        "providerRecordKey",
+        "providerRevisionKey",
+      ]) {
+        assert.equal(Object.hasOwn(result, forbiddenState), false, forbiddenState);
+      }
+      const resolved = resolveCompleteChain("trades", [result]);
+      assert.equal(resolved.terminalReason, "correction-unsupported");
+      assert.deepEqual(resolved.records, []);
+      assert.equal(resolved.barObservationCount, 0);
+    }
+  }
+  assert.equal(accessorCalls, 0);
+  assert.equal(proxyTrapCalls, 0);
 });
 
 test("decimal and integer lexical grammar, machine limits, and one-over bounds are exact", () => {

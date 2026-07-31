@@ -1,6 +1,6 @@
 # PR 2E P1-10 Alpaca wire-grammar amendment orchestration
 
-Status: authorized narrowed amendment integrated; candidate validation pending; PR 2F remains stopped
+Status: external amendment NO_GO repaired; new candidate validation pending; PR 2F remains stopped
 
 ## Frozen base and preservation boundary
 
@@ -87,6 +87,28 @@ auditor:
 | Hostile-object and tokenizer bounds were incomplete. | Proxy/cycle/accessor/sparse/inherited inputs reject inertly; depth, node, parser-token, key, array, text, token, page, aggregate, and fact ceilings have distinct exact/one-over proofs. |
 | Persisted terminal outcomes and context were trusted without complete independent reconstruction. | Every load validates exact checkpoint shape, page bytes/digests, token continuity, endpoint kind, complete context identity, budgets, and recomputed terminal outcome in both memory and SQLite; only page-local `rawArtifactId` is excluded from context identity. |
 | Only five of 50 grammar-fault fixtures were consumed, and two literal recipes contradicted their claimed boundary. | All 50 cases now execute every expanded literal operation. Bar negative/zero prices reject under the strict-positive grammar, and the grouped record recipe now totals exactly 10,000/10,001. |
+
+## First external amendment review and bounded repair
+
+Exact amendment candidate `add3bc99862eaa2998b3dee0bbc0004b4b5f1e23`, tree
+`515d46a938023c52b031c51383ba6f315c255b3c`, passed the complete local sequence
+and same-SHA GitHub Actions run `30587959302` (Windows `91023676959`, Ubuntu
+`91023677016`, and scale-10k `91028992510` succeeded; the release-policy-only
+scale-100k and reconciliation jobs skipped). The existing external audit task reviewed that exact
+candidate in a fresh detached clean worktree and returned `CONTRACT_NO_GO`. The report is
+immutable and identified these two findings:
+
+| Finding | Authority and failure | Exclusive repair and claimed closure |
+| --- | --- | --- |
+| P0: `u` did not stop same-page item parsing. | The human-authorized disposition and this amendment require the first fully validated documented update marker to terminate `correction-unsupported`. The reviewed model validated every item before detecting `u`, so a malformed later same-page item overrode the terminal outcome as `schema-invalid`. | The executable owner changed descriptor-ordered traversal to return immediately after the first fully validated `u`, clear continuation, durably persist/reconstruct the terminal outcome, and reject a checkpoint containing any later page. Cartesian `canceled`/`incorrect`/`corrected` × first/middle/last vectors prove zero later same-item/symbol/page reads and zero record/replacement/selection/reversible state. |
+| P1: nested hostile arrays and values could execute user code. | The accepted inert-rejection claim requires recursive zero getter/Proxy-trap execution. Array index descriptors, custom prototypes, extra properties, and nested Proxy values were not all rejected before access. | The executable owner added passive-Proxy-first recursive descriptor admission; exact array prototype, length, dense own data indexes, and no extra/symbol/accessor properties; descriptor-only child reads; and zero-call nested accessor/Proxy tests. The fixture owner added an original-synthetic 8-case/10-recipe hostile-atomicity catalog, and the matrix owner lists and executes every literal recipe. |
+
+The repair changes only the same authorized contract, original-synthetic fixture, executable-test,
+and integration-status paths. It adds no provider call, credential access, production transport,
+provider payload, migration, port, FMP implementation, outcome, financial effect, or PR 2F change.
+The first focused integration rerun passed `26/26`; complete same-SHA local and hosted evidence
+must be regenerated after the new repair candidate is frozen. A fresh whole-package re-review by
+the same external task remains mandatory.
 
 ## Validation and review sequence
 
