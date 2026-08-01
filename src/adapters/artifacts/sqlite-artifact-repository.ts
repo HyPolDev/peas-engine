@@ -217,6 +217,38 @@ export class SqliteArtifactRepository {
     return this.#database.name;
   }
 
+  retentionDigestUseDenied(digest: string): boolean {
+    return (
+      this.#database
+        .prepare(`SELECT 1 present FROM market_retention_digest_denials WHERE artifact_digest = ?
+          UNION ALL SELECT 1 present FROM market_retention_artifact_tombstones
+          WHERE artifact_digest = ? LIMIT 1`)
+        .get(digest, digest) !== undefined
+    );
+  }
+
+  retentionTombstoned(digest: string): boolean {
+    return (
+      this.#database
+        .prepare(
+          "SELECT 1 present FROM market_retention_artifact_tombstones WHERE artifact_digest = ?",
+        )
+        .get(digest) !== undefined
+    );
+  }
+
+  retentionProviderUseDenied(provider: string): boolean {
+    const rows = this.#database
+      .prepare("SELECT provider_lane FROM market_retention_provider_denials ORDER BY provider_lane")
+      .all() as Array<{ provider_lane: "alpaca" | "fmp" }>;
+    return rows.some(({ provider_lane: lane }) => {
+      const expected = `prv1_${canonicalHash("peas/artifact-provider-identifier/v1", {
+        value: lane,
+      })}`;
+      return provider === expected;
+    });
+  }
+
   claimWriter(ownerToken: string, nowMs: number, durationMs: number): number {
     return this.#database
       .transaction(() => {
