@@ -16,6 +16,7 @@ import {
 } from "./artifact-integration.js";
 import type { JournalEntry, JournalIdentityInput } from "./journal.js";
 import { validateJournalEntries } from "./journal.js";
+import type { ArtifactRetentionController } from "./retention/contracts.js";
 
 function sortIds(values: readonly string[]): readonly string[] {
   return Object.freeze(
@@ -110,21 +111,76 @@ export function replayAcquisitionLedger(
 export async function replayVerifiedAcquisition(
   input: Readonly<{
     artifactStore: ArtifactStore;
+    retention: ArtifactRetentionController;
     artifacts: readonly CommittedArtifactExpectation[];
     ledger: readonly ObservationLedgerEntryV1[];
     executionId: string;
     pageSize: number;
   }>,
 ): Promise<readonly ObservationLedgerEntryV1[]> {
-  const observations = new Set<string>();
-  for (const artifact of [...input.artifacts].sort((left, right) =>
+  const ledger = validateObservationLedgerBundle(input.ledger);
+  const declarations = new Map(
+    ledger.flatMap((entry) =>
+      entry.facts.kind === "acquisition.declared"
+        ? [[entry.facts.acquisitionObservationId, entry.facts] as const]
+        : [],
+    ),
+  );
+  const required = new Map<string, CommittedArtifactExpectation>();
+  for (const entry of ledger) {
+    if (entry.facts.kind !== "artifact.committed") continue;
+    const declaration = declarations.get(entry.facts.acquisitionObservationId);
+    if (declaration === undefined) throw new TypeError("replay-artifact-acquisition-missing");
+    const expectation: CommittedArtifactExpectation = Object.freeze({
+      artifactObservationId: entry.facts.vaultObservationId,
+      artifactDigest: entry.facts.artifactDigest,
+      artifactSizeBytes: entry.facts.sizeBytes,
+      artifactObservationHash: entry.facts.vaultObservationHash,
+      retrievalAttemptId: declaration.retrievalAttemptId,
+      requestIdentityHash: declaration.sanitizedRequestIdentityHash,
+      provider: declaration.provider,
+    });
+    const prior = required.get(expectation.artifactObservationId);
+    if (
+      prior !== undefined &&
+      canonicalJson(prior as unknown as JsonValue) !==
+        canonicalJson(expectation as unknown as JsonValue)
+    ) {
+      throw new TypeError("replay-ledger-artifact-conflict");
+    }
+    required.set(expectation.artifactObservationId, expectation);
+  }
+  const supplied = new Map<string, CommittedArtifactExpectation>();
+  for (const artifact of input.artifacts) {
+    const prior = supplied.get(artifact.artifactObservationId);
+    if (
+      prior !== undefined &&
+      canonicalJson(prior as unknown as JsonValue) !==
+        canonicalJson(artifact as unknown as JsonValue)
+    ) {
+      throw new TypeError("replay-artifact-expectation-conflict");
+    }
+    supplied.set(artifact.artifactObservationId, artifact);
+  }
+  if (
+    supplied.size !== required.size ||
+    [...required].some(([id, expectation]) => {
+      const artifact = supplied.get(id);
+      return (
+        artifact === undefined ||
+        canonicalJson(artifact as unknown as JsonValue) !==
+          canonicalJson(expectation as unknown as JsonValue)
+      );
+    })
+  ) {
+    throw new TypeError("replay-artifact-coverage-mismatch");
+  }
+  for (const artifact of [...supplied.values()].sort((left, right) =>
     left.artifactObservationId.localeCompare(right.artifactObservationId),
   )) {
-    if (observations.has(artifact.artifactObservationId)) continue;
-    await verifyCommittedArtifact(input.artifactStore, artifact);
-    observations.add(artifact.artifactObservationId);
+    await verifyCommittedArtifact(input.artifactStore, artifact, input.retention);
   }
-  return replayAcquisitionLedger(input.ledger, input.executionId, input.pageSize);
+  return replayAcquisitionLedger(ledger, input.executionId, input.pageSize);
 }
 
 /**

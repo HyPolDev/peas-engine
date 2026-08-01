@@ -103,11 +103,13 @@ export interface RetentionArtifactBoundary {
 }
 
 export interface ArtifactRetentionJournal {
-  registerOwnership(ownership: RetentionOwnership): void;
+  registerOwnershipAndApplyActiveStop(ownership: RetentionOwnership): boolean;
   listOwnership(
     providerLane: RetentionProviderLane,
     providerId: string,
   ): readonly RetentionOwnership[];
+  ownershipForDigest(digest: string): readonly RetentionOwnership[];
+  ownershipForDerivedId(derivedId: string): readonly RetentionOwnership[];
   recordStopAndDenials(stop: RetentionStopEvent, derivedIds: readonly string[]): void;
   providerUseDenied(providerLane: RetentionProviderLane, providerId: string): boolean;
   digestUseDenied(digest: string): boolean;

@@ -12,7 +12,12 @@ import {
   derivePrivateTokenHash,
   planPageAdmission,
 } from "./journal.js";
-import { evaluateRollingQuota, type DeadlineProof, validateDeadlineProof } from "./quota.js";
+import {
+  evaluateRollingQuota,
+  retryFitsAcquisitionDeadline,
+  type DeadlineProof,
+  validateDeadlineProof,
+} from "./quota.js";
 import {
   type RetryContext,
   type RetryDelayProof,
@@ -232,6 +237,7 @@ const CHECKPOINT_FOR_EVENT: Partial<
   Readonly<Record<AcquisitionEvent["kind"], JournalCheckpointKind>>
 > = {
   "begin-preflight": "acquisition-declared",
+  "preflight-approved": "request-started",
   "dispatch-started": "attempt-started",
   "response-accepted": "request-succeeded",
   "artifact-store-committed": "artifact-committed",
@@ -491,7 +497,10 @@ function deriveNext(
       if (
         event.deadlineProof.acquisitionDeclaredMonotonicMs !==
           snapshot.acquisitionDeclaredMonotonicMs ||
-        event.deadlineProof.nowMonotonicMs !== event.proof.nowMonotonicMs
+        event.deadlineProof.nowMonotonicMs !== event.proof.nowMonotonicMs ||
+        event.deadlineProof.attemptStartedMonotonicMs !== event.proof.nowMonotonicMs ||
+        event.proof.nowMonotonicMs - snapshot.acquisitionDeclaredMonotonicMs >=
+          MARKET_ACQUISITION_LIMITS.acquisitionDeadlineMs
       ) {
         throw new TypeError("deadline-proof-mismatch");
       }
@@ -533,6 +542,15 @@ function deriveNext(
       }
       const decision = decideRetry(event.context);
       if (decision.kind !== "retry") throw new TypeError(`retry-${decision.reason}`);
+      if (
+        !retryFitsAcquisitionDeadline(
+          event.proof.nowMonotonicMs,
+          decision.delayMs,
+          snapshot.acquisitionDeclaredMonotonicMs,
+        )
+      ) {
+        throw new RangeError("retry-acquisition-deadline");
+      }
       return immutableSnapshot({ ...next, pendingRetryDelayMs: decision.delayMs });
     }
     case "retry-delay-elapsed": {

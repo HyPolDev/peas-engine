@@ -157,6 +157,97 @@ test("retention arithmetic enforces exact 3650/30-day boundaries and earlier dea
   );
 });
 
+test("trusted-time use guards deny artifact and derived use exactly at expiry across SQLite restart", async (t) => {
+  const expiry = captureMs + 10;
+  for (const kind of ["memory", "sqlite"] as const) {
+    const directory = await mkdtemp(join(tmpdir(), `peas-p1-10-expiry-${kind}-`));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const filename = join(directory, "retention.sqlite");
+    let now = expiry - 1;
+    let database = kind === "sqlite" ? openSqliteDatabase(filename, migrations) : undefined;
+    let journal: ArtifactRetentionJournal =
+      database === undefined
+        ? new MemoryArtifactRetentionJournal()
+        : new SqliteArtifactRetentionJournal(database);
+    controller(journal, new SyntheticArtifactBoundary(), () => now).registerOwnership(
+      ownership({ expiresAtMs: expiry }),
+    );
+    database?.close();
+    if (kind === "sqlite") {
+      database = openSqliteDatabase(filename, migrations);
+      journal = new SqliteArtifactRetentionJournal(database);
+    }
+    const restarted = controller(journal, new SyntheticArtifactBoundary(), () => now);
+    assert.doesNotThrow(() => restarted.assertArtifactUseAllowed(digest));
+    assert.doesNotThrow(() => restarted.assertDerivedUseAllowed(derivedId));
+    now = expiry;
+    assert.throws(() => restarted.assertArtifactUseAllowed(digest), isSafeAcquisitionError);
+    assert.throws(() => restarted.assertDerivedUseAllowed(derivedId), isSafeAcquisitionError);
+    now = expiry + 1;
+    assert.throws(() => restarted.assertArtifactUseAllowed(digest), isSafeAcquisitionError);
+    database?.close();
+  }
+});
+
+test("ownership registered during or after a provider stop is atomically denied and settled", async () => {
+  const journal = new MemoryArtifactRetentionJournal();
+  const artifacts = new SyntheticArtifactBoundary();
+  const secondDigest = createHash("sha256").update("second synthetic artifact").digest("hex");
+  const secondDerived = identifier("drv1_", "7");
+  const worker = controller(
+    journal,
+    artifacts,
+    () => stop().effectiveAtMs,
+    (checkpoint) => {
+      if (checkpoint !== "retention-stop-denials-committed") return;
+      artifacts.present.add(secondDigest);
+      assert.throws(
+        () =>
+          worker.registerOwnership(
+            ownership({
+              artifactObservationId: identifier("aob1_", "8"),
+              artifactDigest: secondDigest,
+              derivedIds: [secondDerived],
+            }),
+          ),
+        isSafeAcquisitionError,
+      );
+    },
+  );
+  worker.registerOwnership(ownership());
+  const receipt = await worker.enforceStop(stop());
+  assert.deepEqual(receipt.artifactDigests, [digest, secondDigest].sort());
+  assert.equal(artifacts.present.size, 0);
+  assert.equal(journal.digestUseDenied(secondDigest), true);
+  assert.equal(journal.derivedUseDenied(secondDerived), true);
+
+  const thirdDigest = createHash("sha256").update("third synthetic artifact").digest("hex");
+  assert.throws(
+    () =>
+      worker.registerOwnership(
+        ownership({
+          artifactObservationId: identifier("aob1_", "9"),
+          artifactDigest: thirdDigest,
+          derivedIds: [],
+        }),
+      ),
+    isSafeAcquisitionError,
+  );
+  assert.equal(journal.digestUseDenied(thirdDigest), true);
+});
+
+test("existing receipts revalidate absence and physical attempt counts use unique ordinals", async () => {
+  const journal = new MemoryArtifactRetentionJournal();
+  const artifacts = new SyntheticArtifactBoundary();
+  const worker = controller(journal, artifacts, () => stop().effectiveAtMs);
+  worker.registerOwnership(ownership());
+  const receipt = await worker.enforceStop(stop());
+  assert.equal(receipt.attemptCount, 1);
+  assert.equal(journal.attemptsFor(receipt.planId, digest).length, 2);
+  artifacts.present.add(digest);
+  await assert.rejects(() => worker.enforceStop(stop()), isSafeAcquisitionError);
+});
+
 test("stop installs denial before erasure and follows the accepted durable sequence", async () => {
   const journal = new MemoryArtifactRetentionJournal();
   const artifacts = new SyntheticArtifactBoundary();

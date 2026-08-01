@@ -26,6 +26,7 @@ import {
   MarketAcquisitionLedger,
   verifyCommittedArtifact,
 } from "../src/adapters/market-acquisition/artifact-integration.js";
+import { ALLOW_ALL_RETENTION } from "./p1-10-repair-fixtures.js";
 import {
   canonicalReplayProjection,
   replayAcquisitionLedger,
@@ -314,27 +315,36 @@ function buildLiveLedger(): readonly ObservationLedgerEntryV1[] {
 
 test("artifact verification reconciles attempt, observation, metadata, digest, and consumed bytes", async () => {
   const fixture = artifactStoreDouble();
-  const verified = await verifyCommittedArtifact(fixture.store, {
-    artifactObservationId,
-    artifactDigest: digest,
-    artifactSizeBytes: bytes.byteLength,
-    artifactObservationHash,
-    retrievalAttemptId,
-    requestIdentityHash,
-    provider: "alpaca",
-  });
+  const verified = await verifyCommittedArtifact(
+    fixture.store,
+    {
+      artifactObservationId,
+      artifactDigest: digest,
+      artifactSizeBytes: bytes.byteLength,
+      artifactObservationHash,
+      retrievalAttemptId,
+      requestIdentityHash,
+      provider: "alpaca",
+    },
+    ALLOW_ALL_RETENTION,
+  );
   assert.equal(verified.consumedSizeBytes, bytes.byteLength);
   assert.equal(fixture.readCalls(), 1);
   await assert.rejects(
     () =>
-      verifyCommittedArtifact(fixture.store, {
-        artifactObservationId,
-        artifactDigest: digest,
-        artifactSizeBytes: bytes.byteLength + 1,
-        artifactObservationHash,
-        retrievalAttemptId,
-        requestIdentityHash,
-      }),
+      verifyCommittedArtifact(
+        fixture.store,
+        {
+          artifactObservationId,
+          artifactDigest: digest,
+          artifactSizeBytes: bytes.byteLength + 1,
+          artifactObservationHash,
+          retrievalAttemptId,
+          requestIdentityHash,
+          provider: "alpaca",
+        },
+        ALLOW_ALL_RETENTION,
+      ),
     /artifact-metadata-mismatch/u,
   );
 });
@@ -401,6 +411,7 @@ test("replay is page-size invariant, omits request facts, and re-verifies artifa
   const fixture = artifactStoreDouble();
   await replayVerifiedAcquisition({
     artifactStore: fixture.store,
+    retention: ALLOW_ALL_RETENTION,
     artifacts: [
       {
         artifactObservationId,
@@ -409,6 +420,7 @@ test("replay is page-size invariant, omits request facts, and re-verifies artifa
         artifactObservationHash,
         retrievalAttemptId,
         requestIdentityHash,
+        provider: "alpaca",
       },
       {
         artifactObservationId,
@@ -417,6 +429,7 @@ test("replay is page-size invariant, omits request facts, and re-verifies artifa
         artifactObservationHash,
         retrievalAttemptId,
         requestIdentityHash,
+        provider: "alpaca",
       },
     ],
     ledger: live,
@@ -444,4 +457,42 @@ test("duplicate and conflicting delivery classification is order-independent", (
       digests: [first, second].sort(),
     });
   }
+});
+
+test("verified replay requires exact complete ledger-to-artifact coverage and conflicting duplicates reject", async () => {
+  const ledger = buildLiveLedger();
+  const fixture = artifactStoreDouble();
+  const expected = {
+    artifactObservationId,
+    artifactDigest: digest,
+    artifactSizeBytes: bytes.byteLength,
+    artifactObservationHash,
+    retrievalAttemptId,
+    requestIdentityHash,
+    provider: "alpaca",
+  } as const;
+  const replay = (artifacts: readonly (typeof expected)[]) =>
+    replayVerifiedAcquisition({
+      artifactStore: fixture.store,
+      retention: ALLOW_ALL_RETENTION,
+      artifacts,
+      ledger,
+      executionId: `p1-10-exact-coverage-${artifacts.length}`,
+      pageSize: 2,
+    });
+  await assert.rejects(() => replay([]), /replay-artifact-coverage-mismatch/u);
+  await assert.rejects(
+    () =>
+      replay([expected, { ...expected, artifactObservationId: hash("unexpected-observation") }]),
+    /replay-artifact-coverage-mismatch|non-JSON undefined/u,
+  );
+  await assert.rejects(
+    () => replay([expected, { ...expected, provider: "substituted" } as never]),
+    /replay-artifact-expectation-conflict/u,
+  );
+  await assert.rejects(
+    () => replay([{ ...expected, artifactObservationHash: undefined } as never]),
+    /replay-artifact-coverage-mismatch|non-JSON undefined/u,
+  );
+  assert.equal(fixture.readCalls(), 0);
 });

@@ -16,6 +16,14 @@ import {
   type AlpacaWireEndpointKind,
   type AlpacaWireParseContext,
 } from "../src/adapters/market-acquisition/alpaca/wire.js";
+import {
+  createJournalEntry,
+  journalEntryBody,
+  TERMINAL_TOKEN_HASH,
+  type JournalCheckpointBody,
+  type JournalEntry,
+} from "../src/adapters/market-acquisition/journal.js";
+import { completeChainProof } from "./p1-10-repair-fixtures.js";
 
 type PlainRecord = Record<string, unknown>;
 type ValidCase = Readonly<{
@@ -151,12 +159,22 @@ test("production complete-chain resolution deduplicates and quarantines globally
   const source = valid.cases.find((entry) => entry.caseId === "wire-bars-terminal-grouped");
   assert.ok(source);
   const raw = JSON.stringify(source.wire);
-  const first = admitAlpacaHistoricalPage("bars", parseAlpacaHistoricalJson(raw), context);
+  const firstWire = { ...(source.wire as PlainRecord), next_page_token: "synthetic-next" };
+  const first = admitAlpacaHistoricalPage(
+    "bars",
+    parseAlpacaHistoricalJson(JSON.stringify(firstWire)),
+    context,
+  );
   const redelivery = admitAlpacaHistoricalPage("bars", parseAlpacaHistoricalJson(raw), {
     ...context,
+    marketAcquisitionId: `maq1_${"8".repeat(64)}`,
     rawArtifactId: `mar1_${"f".repeat(64)}`,
   });
-  const duplicateResolution = resolveAlpacaHistoricalChain("bars", [first, redelivery]);
+  const duplicateResolution = resolveAlpacaHistoricalChain(
+    "bars",
+    [first, redelivery],
+    completeChainProof([first, redelivery]),
+  );
   assert.equal(duplicateResolution.records.length, 2);
   assert.equal(duplicateResolution.quarantines.length, 0);
   assert.equal(duplicateResolution.barObservationCount, 4);
@@ -164,15 +182,127 @@ test("production complete-chain resolution deduplicates and quarantines globally
   const conflict = admitAlpacaHistoricalPage(
     "bars",
     parseAlpacaHistoricalJson(raw.replace('"h":62.875', '"h":63.875')),
-    { ...context, rawArtifactId: `mar1_${"9".repeat(64)}` },
+    {
+      ...context,
+      marketAcquisitionId: `maq1_${"7".repeat(64)}`,
+      rawArtifactId: `mar1_${"9".repeat(64)}`,
+    },
   );
-  const conflictResolution = resolveAlpacaHistoricalChain("bars", [first, conflict]);
+  const conflictResolution = resolveAlpacaHistoricalChain(
+    "bars",
+    [first, conflict],
+    completeChainProof([first, conflict]),
+  );
   assert.equal(conflictResolution.records.length, 1);
   assert.equal(conflictResolution.quarantines.length, 2);
   assert.equal(new Set(conflictResolution.quarantines.map((entry) => entry.reason)).size, 1);
   assert.equal(
     conflictResolution.quarantines[0]?.reason,
     "market.provider-observation-invalid/conflicting-content",
+  );
+});
+
+test("complete-chain proof rejects missing zero, gaps, loops, substitutions, repeated and terminal anomalies", () => {
+  const source = valid.cases.find((entry) => entry.caseId === "wire-bars-terminal-grouped");
+  assert.ok(source);
+  const terminalWire = source.wire as PlainRecord;
+  const page = (token: string | null, ordinal: number) =>
+    admitAlpacaHistoricalPage(
+      "bars",
+      parseAlpacaHistoricalJson(JSON.stringify({ ...terminalWire, next_page_token: token })),
+      {
+        ...context,
+        marketAcquisitionId: `maq1_${String(ordinal + 1).repeat(64)}`,
+        rawArtifactId: `mar1_${String(ordinal + 4).repeat(64)}`,
+      },
+    );
+  const first = page("next-a", 0);
+  const terminal = page(null, 1);
+  const proof = completeChainProof([first, terminal]);
+  const rebuild = (
+    mutate: (entry: JournalEntry, body: JournalCheckpointBody) => JournalCheckpointBody,
+  ) => {
+    const rows: JournalEntry[] = [];
+    for (const entry of proof.journal) {
+      rows.push(
+        createJournalEntry(
+          rows.at(-1) ?? null,
+          entry.marketAcquisitionJournalId,
+          entry.checkpointKind,
+          mutate(entry, journalEntryBody(entry)),
+        ),
+      );
+    }
+    return { ...proof, journal: rows };
+  };
+  assert.throws(() => resolveAlpacaHistoricalChain("bars", [terminal], proof));
+  assert.throws(() =>
+    resolveAlpacaHistoricalChain(
+      "bars",
+      [first, terminal],
+      rebuild((entry, body) =>
+        entry.checkpointKind === "attempt-started" && entry.pageOrdinal === 1
+          ? { ...body, pageOrdinal: 2 }
+          : body,
+      ),
+    ),
+  );
+  assert.throws(() =>
+    resolveAlpacaHistoricalChain(
+      "bars",
+      [first, terminal],
+      rebuild((entry, body) =>
+        entry.checkpointKind === "attempt-started" && entry.pageOrdinal === 1
+          ? { ...body, pageOrdinal: 0 }
+          : body,
+      ),
+    ),
+  );
+  assert.throws(() =>
+    resolveAlpacaHistoricalChain(
+      "bars",
+      [{ ...first, rawArtifactId: `mar1_${"f".repeat(64)}` }, terminal],
+      proof,
+    ),
+  );
+  assert.throws(() =>
+    resolveAlpacaHistoricalChain(
+      "bars",
+      [{ ...first, terminal: true, privateNextToken: null }, terminal],
+      proof,
+    ),
+  );
+  assert.throws(() =>
+    resolveAlpacaHistoricalChain(
+      "bars",
+      [first, { ...terminal, terminal: false, privateNextToken: "missing-terminal" }],
+      proof,
+    ),
+  );
+  const secondLoop = page("next-a", 1);
+  const third = page(null, 2);
+  assert.throws(() =>
+    resolveAlpacaHistoricalChain(
+      "bars",
+      [first, secondLoop, third],
+      completeChainProof([first, secondLoop, third]),
+    ),
+  );
+  assert.throws(() =>
+    resolveAlpacaHistoricalChain(
+      "bars",
+      [first, terminal],
+      rebuild((entry, body) =>
+        entry.checkpointKind === "page-checkpointed" && entry.pageOrdinal === 0
+          ? {
+              ...body,
+              nextTokenHash: TERMINAL_TOKEN_HASH,
+              nextResumableTokenMaterial: null,
+              nextContinuationBindingHash: null,
+            }
+          : body,
+      ),
+    ),
   );
 });
 
@@ -305,8 +435,9 @@ test("production parser reject and quarantine branches remain executable and ine
     parsed("wire-quotes-terminal-grouped"),
     context,
   );
-  assert.equal(resolveAlpacaHistoricalChain("quotes", [quote]).records.length, 0);
-  expectWireCode("schema-invalid", () => resolveAlpacaHistoricalChain("bars", [quote]));
+  const proof = completeChainProof([quote]);
+  assert.equal(resolveAlpacaHistoricalChain("quotes", [quote], proof).records.length, 0);
+  expectWireCode("schema-invalid", () => resolveAlpacaHistoricalChain("bars", [quote], proof));
   assert.equal(
     parseAndAdmitAlpacaHistoricalPage(
       "bars",

@@ -1,4 +1,4 @@
-import type { AlpacaAuthorizationHeaders } from "../credentials.js";
+import type { AlpacaDispatchCapability } from "../credentials.js";
 import type {
   MarketAcquisitionSafeError,
   ValidatedMarketAcquisitionConfiguration,
@@ -56,7 +56,10 @@ export type AlpacaTransportRequest = Readonly<{
   requestIdentityHash: string;
   pageOrdinal: number;
   query: readonly AlpacaQueryPair[];
-  authorizationHeaders: AlpacaAuthorizationHeaders;
+  authorizationHeaders: Readonly<{
+    "APCA-API-KEY-ID": string;
+    "APCA-API-SECRET-KEY": string;
+  }>;
   signal: AbortSignal;
 }>;
 
@@ -97,7 +100,12 @@ export interface AlpacaTransport {
 
 export interface AlpacaVerifiedPageSink<T> extends AlpacaAttemptResource {
   write(bytes: Uint8Array): Promise<void>;
-  completeAndVerify(): Promise<T>;
+  /**
+   * Atomically commits and verifies the artifact and registers its retention ownership against
+   * the journal's active provider-stop state. A stop race must reject this operation and leave no
+   * usable artifact result.
+   */
+  completeVerifyAndRegisterOwnership(): Promise<T>;
 }
 
 export interface AlpacaDeadlineHandle {
@@ -107,16 +115,17 @@ export interface AlpacaDeadlineHandle {
 }
 
 export interface AlpacaDeadlineScheduler {
-  arm(delayMs: 30_000): AlpacaDeadlineHandle;
+  arm(delayMs: number): AlpacaDeadlineHandle;
 }
 
 export type AlpacaAttemptInput<T> = Readonly<{
   plan: ValidatedMarketAcquisitionConfiguration;
   page: AlpacaPageAuthority;
-  authorizationHeaders: AlpacaAuthorizationHeaders;
+  dispatchCapability: AlpacaDispatchCapability;
   transport: AlpacaTransport;
   artifactSink: AlpacaVerifiedPageSink<T>;
   deadlineScheduler: AlpacaDeadlineScheduler;
+  attemptBudgetMs: number;
 }>;
 
 export type AlpacaAttemptSuccess<T> = Readonly<{

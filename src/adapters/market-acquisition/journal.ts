@@ -11,6 +11,7 @@ export const GENESIS_HASH = "genesis";
 
 export const JOURNAL_CHECKPOINT_KINDS = Object.freeze([
   "acquisition-declared",
+  "request-started",
   "attempt-started",
   "request-succeeded",
   "artifact-committed",
@@ -550,6 +551,165 @@ function validateCheckpointSemantics(entry: JournalEntry): void {
   assertSortedUnique(entry.causalParentFactIds, "causal-parent-facts");
 }
 
+const ARTIFACT_FIELDS = Object.freeze([
+  "artifactObservationId",
+  "artifactDigest",
+  "artifactSizeBytes",
+  "artifactObservationHash",
+  "artifactContentId",
+  "rawArtifactId",
+] as const);
+
+const ARTIFACT_REQUIRED = new Set<JournalCheckpointKind>([
+  "artifact-committed",
+  "artifact-verified",
+  "page-checkpointed",
+  "chain-complete",
+  "normalization-started",
+  "normalization-complete",
+  "selection-started",
+  "completed",
+]);
+
+const NONTERMINAL_TRANSITIONS: Readonly<
+  Record<JournalCheckpointKind, readonly JournalCheckpointKind[]>
+> = Object.freeze({
+  "acquisition-declared": ["request-started", "stopped", "failed-clean", "quarantined"],
+  "request-started": ["attempt-started", "stopped", "failed-clean", "quarantined"],
+  "attempt-started": [
+    "attempt-started",
+    "request-succeeded",
+    "stopped",
+    "failed-clean",
+    "quarantined",
+  ],
+  "request-succeeded": [
+    "attempt-started",
+    "artifact-committed",
+    "stopped",
+    "failed-clean",
+    "quarantined",
+  ],
+  "artifact-committed": ["artifact-verified", "stopped", "failed-clean", "quarantined"],
+  "artifact-verified": ["page-checkpointed", "stopped", "failed-clean", "quarantined"],
+  "page-checkpointed": ["attempt-started", "chain-complete", "stopped", "failed-clean"],
+  "chain-complete": ["normalization-started", "stopped", "failed-clean", "quarantined"],
+  "normalization-started": ["normalization-complete", "stopped", "failed-clean", "quarantined"],
+  "normalization-complete": ["selection-started", "stopped", "failed-clean", "quarantined"],
+  "selection-started": ["completed", "stopped", "failed-clean", "quarantined"],
+  completed: [],
+  stopped: [],
+  "failed-clean": [],
+  quarantined: [],
+});
+
+function artifactTuple(entry: JournalEntry): readonly unknown[] | null {
+  const values = ARTIFACT_FIELDS.map((field) => entry[field]);
+  const present = values.map((value) => value !== null);
+  if (present.some(Boolean) && !present.every(Boolean)) {
+    throw new TypeError("journal-artifact-tuple-partial");
+  }
+  return present.every(Boolean) ? values : null;
+}
+
+function pinnedArtifactTuple(entry: JournalEntry): readonly unknown[] | null {
+  const tuple = artifactTuple(entry);
+  return tuple === null
+    ? null
+    : [
+        entry.acquisitionObservationId,
+        entry.marketAcquisitionId,
+        entry.requestIdentityHash,
+        entry.providerId,
+        entry.attemptId,
+        entry.retrievalAttemptId,
+        entry.attemptOrdinal,
+        ...tuple,
+      ];
+}
+
+function validateCheckpointTransition(previous: JournalEntry | null, entry: JournalEntry): void {
+  const tuple = artifactTuple(entry);
+  if (ARTIFACT_REQUIRED.has(entry.checkpointKind) && tuple === null) {
+    throw new TypeError("journal-artifact-tuple-required");
+  }
+  if (
+    ["acquisition-declared", "request-started", "attempt-started", "request-succeeded"].includes(
+      entry.checkpointKind,
+    ) &&
+    tuple !== null
+  ) {
+    throw new TypeError("journal-artifact-tuple-premature");
+  }
+  if (previous === null) {
+    if (entry.checkpointKind !== "acquisition-declared" || entry.pageOrdinal !== 0) {
+      throw new TypeError("journal-initial-checkpoint-invalid");
+    }
+    return;
+  }
+  if (!NONTERMINAL_TRANSITIONS[previous.checkpointKind].includes(entry.checkpointKind)) {
+    throw new TypeError("journal-checkpoint-transition-invalid");
+  }
+  const afterPage = previous.checkpointKind === "page-checkpointed";
+  const advancesPage = afterPage && entry.checkpointKind === "attempt-started";
+  if (entry.pageOrdinal !== previous.pageOrdinal + (advancesPage ? 1 : 0)) {
+    throw new TypeError("journal-page-transition-invalid");
+  }
+  if (advancesPage) {
+    if (
+      previous.nextTokenHash === null ||
+      previous.nextTokenHash === TERMINAL_TOKEN_HASH ||
+      previous.nextContinuationBindingHash === null ||
+      entry.currentTokenHash !== previous.nextTokenHash ||
+      entry.currentContinuationBindingHash !== previous.nextContinuationBindingHash
+    ) {
+      throw new TypeError("journal-continuation-transition-invalid");
+    }
+  }
+  if (entry.checkpointKind === "chain-complete") {
+    if (
+      previous.checkpointKind !== "page-checkpointed" ||
+      previous.nextTokenHash !== TERMINAL_TOKEN_HASH
+    ) {
+      throw new TypeError("journal-chain-completion-invalid");
+    }
+  }
+  if (
+    previous.pageOrdinal === entry.pageOrdinal &&
+    pinnedArtifactTuple(previous) !== null &&
+    pinnedArtifactTuple(entry) !== null &&
+    canonicalJson(pinnedArtifactTuple(previous) as JsonValue) !==
+      canonicalJson(pinnedArtifactTuple(entry) as JsonValue)
+  ) {
+    throw new TypeError("journal-artifact-tuple-conflict");
+  }
+  if (
+    [
+      "acquisition-declared",
+      "request-started",
+      "attempt-started",
+      "request-succeeded",
+      "artifact-committed",
+      "artifact-verified",
+    ].includes(entry.checkpointKind)
+  ) {
+    if (
+      entry.nextTokenHash !== null ||
+      entry.nextResumableTokenMaterial !== null ||
+      entry.nextContinuationBindingHash !== null
+    ) {
+      throw new TypeError("journal-next-token-premature");
+    }
+  } else if (
+    entry.checkpointKind === "page-checkpointed" &&
+    (entry.nextTokenHash === null ||
+      (entry.nextTokenHash === TERMINAL_TOKEN_HASH) !==
+        (entry.nextResumableTokenMaterial === null && entry.nextContinuationBindingHash === null))
+  ) {
+    throw new TypeError("journal-next-token-fields-invalid");
+  }
+}
+
 export function validateJournalEntries(
   entries: readonly JournalEntry[],
   expectedIdentity: JournalIdentityInput,
@@ -563,6 +723,7 @@ export function validateJournalEntries(
   let previousRecords = 0;
   let previousFacts = 0;
   let previousAttempts = 0;
+  const consumedContinuationTokens = new Set<string>();
   for (const entry of entries) {
     assertExactKeys(entry, ENTRY_KEYS, "journal-entry");
     canonicalJson(entry as unknown as JsonValue);
@@ -595,6 +756,13 @@ export function validateJournalEntries(
     }
     if (terminalSeen) throw new TypeError("journal-after-terminal");
     validateCheckpointSemantics(entry);
+    if (entry.pageOrdinal > 0 && entry.checkpointKind === "attempt-started") {
+      if (consumedContinuationTokens.has(entry.currentTokenHash)) {
+        throw new TypeError("journal-continuation-token-loop");
+      }
+      consumedContinuationTokens.add(entry.currentTokenHash);
+    }
+    validateCheckpointTransition(previous, entry);
     terminalSeen = entry.terminalState !== null;
     previousPages = entry.cumulativeSuccessfulPages;
     previousBytes = entry.cumulativeVerifiedBytes;

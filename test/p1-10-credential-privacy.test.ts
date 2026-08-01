@@ -5,6 +5,7 @@ import {
   ALPACA_KEY_ID_ENV,
   ALPACA_SECRET_KEY_ENV,
   authorizeCredentialLoad,
+  establishCredentialAuthorizationEvidence,
   fmpLaneDisabled,
   withAlpacaAuthorization,
   type RuntimeSecretSource,
@@ -19,21 +20,13 @@ import {
   projectHostileValue,
   safeAcquisitionError,
 } from "../src/adapters/market-acquisition/redaction.js";
+import { credentialAuthorizationInput, validatedRepairPlan } from "./p1-10-repair-fixtures.js";
 
-const permit = authorizeCredentialLoad({
-  configurationAccepted: true,
-  liveRunEnabled: true,
-  authorityAccepted: true,
-  identityAccepted: true,
-  queryAndBoundsAccepted: true,
-  zeroSpendAccepted: true,
-  quotaAndDeadlinesAccepted: true,
-  trustedTimeAccepted: true,
-  requestStartedRecorded: true,
-  retentionReady: true,
-});
+const evidenceInput = credentialAuthorizationInput(validatedRepairPlan());
+const evidence = establishCredentialAuthorizationEvidence(evidenceInput);
+const permit = authorizeCredentialLoad(evidence);
 
-test("Alpaca credentials load only within an admitted attempt and mutable headers are cleared", async () => {
+test("Alpaca credentials load only into an immutable dispatch capability", async () => {
   const reads: string[] = [];
   const source: RuntimeSecretSource = {
     read(name) {
@@ -41,15 +34,13 @@ test("Alpaca credentials load only within an admitted attempt and mutable header
       return name === ALPACA_KEY_ID_ENV ? "synthetic-key-id" : "synthetic-secret";
     },
   };
-  let captured: Record<string, string> | undefined;
-  const result = await withAlpacaAuthorization(permit, source, async (headers) => {
-    captured = headers as Record<string, string>;
-    assert.deepEqual(Object.keys(headers).sort(), ["APCA-API-KEY-ID", "APCA-API-SECRET-KEY"]);
+  const result = await withAlpacaAuthorization(permit, source, async (capability) => {
+    assert.equal(Object.isFrozen(capability), true);
+    assert.deepEqual(Object.keys(capability), ["kind"]);
     return "settled";
   });
   assert.deepEqual(result, { ok: true, value: "settled" });
   assert.deepEqual(reads, [ALPACA_KEY_ID_ENV, ALPACA_SECRET_KEY_ENV]);
-  assert.deepEqual(Object.keys(captured ?? {}), []);
 });
 
 test("missing credentials return a closed error and never invoke transport", async () => {
@@ -87,11 +78,12 @@ test("a structurally forged permit and incomplete proof cannot read credentials"
     () =>
       withAlpacaAuthorization(
         {
-          kind: "p1-10-credential-preflight-passed",
-          providerLane: "alpaca",
-          nonSecretGatesPassed: true,
-          retentionReady: true,
-        },
+          kind: "p1-10-credential-capability",
+          requestIdentityHash: evidenceInput.plan.requestIdentityHash,
+          acquisitionConfigurationHash: evidenceInput.plan.acquisitionConfigurationHash,
+          acquisitionObservationId: evidenceInput.acquisitionObservationId,
+          retrievalAttemptId: evidenceInput.retrievalAttemptId,
+        } as never,
         {
           read() {
             reads += 1;
@@ -100,18 +92,51 @@ test("a structurally forged permit and incomplete proof cannot read credentials"
         },
         async () => "unreachable",
       ),
-    /completed non-secret preflight/u,
+    /durable-preconditions/u,
   );
   assert.equal(reads, 0);
   assert.throws(
     () =>
-      authorizeCredentialLoad({
-        configurationAccepted: true,
-        liveRunEnabled: true,
+      establishCredentialAuthorizationEvidence({
+        ...evidenceInput,
+        acquisitionObservationId: "wrong-acquisition",
       }),
-    /Every non-secret credential preflight gate must pass/u,
+    /acquisition-identity/u,
+  );
+  assert.throws(
+    () =>
+      establishCredentialAuthorizationEvidence({
+        ...evidenceInput,
+        journal: [...evidenceInput.journal].reverse(),
+      }),
+    /journal|checkpoint|hash-chain/u,
+  );
+  assert.throws(
+    () =>
+      establishCredentialAuthorizationEvidence({
+        ...evidenceInput,
+        ledger: evidenceInput.ledger.slice(0, 2),
+      }),
+    /request-started/u,
+  );
+  assert.throws(
+    () =>
+      establishCredentialAuthorizationEvidence({
+        ...evidenceInput,
+        journal: evidenceInput.journal.slice(0, 1),
+      }),
+    /request-started|checkpoint/u,
   );
   assert.equal(reads, 0);
+  assert.throws(
+    () => authorizeCredentialLoad({ kind: "p1-10-durable-credential-evidence" } as never),
+    /evidence-capability-invalid/u,
+  );
+});
+
+test("the low-level attempt executor is not a caller-invocable module export", async () => {
+  const module = await import("../src/adapters/market-acquisition/alpaca/adapter.js");
+  assert.equal("executeAlpacaAttempt" in module, false);
 });
 
 test("FMP reservation is disabled and exposes no credential-reader capability", () => {

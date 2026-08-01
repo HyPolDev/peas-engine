@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
+import { canonicalJson, type JsonValue } from "../../core/json.js";
 
 import type {
   ArtifactStore,
@@ -26,6 +27,7 @@ import {
   TERMINAL_TOKEN_HASH,
   validateJournalEntries,
 } from "./journal.js";
+import type { ArtifactRetentionController } from "./retention/contracts.js";
 
 const HASH = /^[0-9a-f]{64}$/u;
 
@@ -208,7 +210,7 @@ export type CommittedArtifactExpectation = Readonly<{
   artifactObservationHash: string;
   retrievalAttemptId: string;
   requestIdentityHash: string;
-  provider?: string;
+  provider: string;
 }>;
 
 export type VerifiedAcquisitionArtifact = Readonly<{
@@ -221,6 +223,7 @@ export type VerifiedAcquisitionArtifact = Readonly<{
 export async function verifyCommittedArtifact(
   store: ArtifactStore,
   expected: CommittedArtifactExpectation,
+  retention: ArtifactRetentionController,
 ): Promise<VerifiedAcquisitionArtifact> {
   if (
     !HASH.test(expected.artifactDigest) ||
@@ -231,6 +234,7 @@ export async function verifyCommittedArtifact(
   ) {
     throw new TypeError("artifact-expectation-invalid");
   }
+  retention.assertArtifactUseAllowed(expected.artifactDigest);
   const observation = await store.getObservation(expected.artifactObservationId);
   if (
     observation === undefined ||
@@ -238,7 +242,7 @@ export async function verifyCommittedArtifact(
     observation.observationHash !== expected.artifactObservationHash ||
     observation.attemptId !== expected.retrievalAttemptId ||
     observation.request.identityHash !== expected.requestIdentityHash ||
-    (expected.provider !== undefined && observation.provider !== expected.provider)
+    observation.provider !== expected.provider
   ) {
     throw new TypeError("artifact-observation-mismatch");
   }
@@ -393,6 +397,7 @@ export class DeliveryConflictRegistry {
 
 export type RestartDecision =
   | Readonly<{ kind: "preflight"; pageOrdinal: number; transportAllowed: true }>
+  | Readonly<{ kind: "load-credentials"; pageOrdinal: number; transportAllowed: false }>
   | Readonly<{ kind: "fresh-attempt"; pageOrdinal: number; transportAllowed: true }>
   | Readonly<{ kind: "append-artifact-verification"; pageOrdinal: number; transportAllowed: false }>
   | Readonly<{ kind: "append-page-checkpoint"; pageOrdinal: number; transportAllowed: false }>
@@ -422,6 +427,7 @@ function artifactExpectation(entry: JournalEntry): CommittedArtifactExpectation 
     artifactObservationHash: entry.artifactObservationHash,
     retrievalAttemptId: entry.retrievalAttemptId,
     requestIdentityHash: entry.requestIdentityHash,
+    provider: "alpaca",
   };
 }
 
@@ -432,6 +438,7 @@ export async function decideAcquisitionRestart(
     expectedIdentity: JournalIdentityInput;
     expectedConfigurationHash: string;
     artifactStore: ArtifactStore;
+    retention: ArtifactRetentionController;
   }>,
 ): Promise<RestartDecision> {
   const entries = await input.journal.load(input.journalId);
@@ -445,7 +452,7 @@ export async function decideAcquisitionRestart(
   ) {
     throw new TypeError("journal-conflict");
   }
-  const verifiedObservations = new Set<string>();
+  const verifiedObservations = new Map<string, string>();
   for (const entry of entries) {
     if (
       ![
@@ -462,9 +469,17 @@ export async function decideAcquisitionRestart(
       continue;
     }
     const expected = artifactExpectation(entry);
-    if (expected !== null && !verifiedObservations.has(expected.artifactObservationId)) {
-      await verifyCommittedArtifact(input.artifactStore, expected);
-      verifiedObservations.add(expected.artifactObservationId);
+    if (expected === null) {
+      throw new TypeError("journal-artifact-tuple-required");
+    }
+    const tuple = canonicalJson(expected as unknown as JsonValue);
+    const prior = verifiedObservations.get(expected.artifactObservationId);
+    if (prior !== undefined && prior !== tuple) {
+      throw new TypeError("journal-artifact-expectation-conflict");
+    }
+    if (prior === undefined) {
+      await verifyCommittedArtifact(input.artifactStore, expected, input.retention);
+      verifiedObservations.set(expected.artifactObservationId, tuple);
     }
   }
   const latest = entries.at(-1);
@@ -480,6 +495,8 @@ export async function decideAcquisitionRestart(
   switch (latest.checkpointKind) {
     case "acquisition-declared":
       return { kind: "preflight", pageOrdinal: latest.pageOrdinal, transportAllowed: true };
+    case "request-started":
+      return { kind: "load-credentials", pageOrdinal: latest.pageOrdinal, transportAllowed: false };
     case "attempt-started":
     case "request-succeeded":
       return { kind: "fresh-attempt", pageOrdinal: latest.pageOrdinal, transportAllowed: true };

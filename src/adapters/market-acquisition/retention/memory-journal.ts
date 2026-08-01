@@ -28,15 +28,35 @@ export class MemoryArtifactRetentionJournal implements ArtifactRetentionJournal 
   readonly #receipts = new Map<string, RetentionReceipt>();
   readonly #checkpoints = new Map<string, RetentionCheckpoint>();
 
-  registerOwnership(value: RetentionOwnership): void {
+  registerOwnershipAndApplyActiveStop(value: RetentionOwnership): boolean {
     const existing = this.#ownership.get(value.ownershipId);
     if (existing !== undefined) replayEqual("Ownership", existing, value);
     else this.#ownership.set(value.ownershipId, structuredClone(value));
+    const denied = this.providerUseDenied(value.providerLane, value.providerId);
+    if (denied) {
+      this.#digestDenials.add(value.artifactDigest);
+      for (const derivedId of value.derivedIds) this.#derivedDenials.add(derivedId);
+    }
+    return !denied;
   }
 
   listOwnership(lane: RetentionProviderLane, providerId: string): readonly RetentionOwnership[] {
     return [...this.#ownership.values()]
       .filter((value) => value.providerLane === lane && value.providerId === providerId)
+      .sort((left, right) => left.ownershipId.localeCompare(right.ownershipId))
+      .map((value) => structuredClone(value));
+  }
+
+  ownershipForDigest(digest: string): readonly RetentionOwnership[] {
+    return [...this.#ownership.values()]
+      .filter((value) => value.artifactDigest === digest)
+      .sort((left, right) => left.ownershipId.localeCompare(right.ownershipId))
+      .map((value) => structuredClone(value));
+  }
+
+  ownershipForDerivedId(derivedId: string): readonly RetentionOwnership[] {
+    return [...this.#ownership.values()]
+      .filter((value) => value.derivedIds.includes(derivedId))
       .sort((left, right) => left.ownershipId.localeCompare(right.ownershipId))
       .map((value) => structuredClone(value));
   }

@@ -382,6 +382,24 @@ test("retry keeps a logical page stable and creates a fresh physical attempt", a
   assert.equal(machine.snapshot.attemptOrdinal, 1);
 });
 
+test("production retry transition refuses to wait when a full next attempt cannot fit", async () => {
+  const machine = new AcquisitionStateMachine(initialSnapshot());
+  await advanceToActive(machine);
+  await assert.rejects(
+    () =>
+      machine.applyAcquisitionEvent({
+        kind: "retry-cleanup-complete",
+        proof: proof(machine, ACQUISITION_DEADLINE_MS - ATTEMPT_DEADLINE_MS + 1),
+        context: {
+          failure: { kind: "pre-response-transport" },
+          pageAttemptsStarted: 1,
+          acquisitionAttemptsStarted: 1,
+        },
+      }),
+    /retry-acquisition-deadline/u,
+  );
+});
+
 test("rolling quota and deadline proofs preserve exact boundaries", () => {
   const thirtyStarts = Array.from({ length: 30 }, (_, index) => index);
   assert.equal(evaluateRollingQuota(thirtyStarts, 59_999, 30, 300_000).kind, "wait");

@@ -41,7 +41,8 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
     this.#registerPolicy(FMP_PRIVATE_ARTIFACT_POLICY);
   }
 
-  registerOwnership(value: RetentionOwnership): void {
+  registerOwnershipAndApplyActiveStop(value: RetentionOwnership): boolean {
+    let allowed = true;
     this.#database
       .transaction(() => {
         const json = canonicalJson(value as unknown as JsonValue);
@@ -86,8 +87,26 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
             .all(value.ownershipId) as Array<{ derived_id: string }>
         ).map((row) => row.derived_id);
         sameRecord("Derivation ownership", persistedDerived, [...value.derivedIds].sort());
+        const active = this.#database
+          .prepare(`SELECT stop_event_id FROM market_retention_provider_denials
+            WHERE provider_lane = ? AND provider_id = ?`)
+          .get(value.providerLane, value.providerId) as { stop_event_id: string } | undefined;
+        if (active !== undefined) {
+          allowed = false;
+          this.#database
+            .prepare(
+              "INSERT OR IGNORE INTO market_retention_digest_denials (stop_event_id, artifact_digest) VALUES (?, ?)",
+            )
+            .run(active.stop_event_id, value.artifactDigest);
+          const denyDerived = this.#database.prepare(
+            "INSERT OR IGNORE INTO market_retention_derivation_denials (stop_event_id, derived_id) VALUES (?, ?)",
+          );
+          for (const derivedId of value.derivedIds)
+            denyDerived.run(active.stop_event_id, derivedId);
+        }
       })
       .immediate();
+    return allowed;
   }
 
   listOwnership(lane: RetentionProviderLane, providerId: string): readonly RetentionOwnership[] {
@@ -96,6 +115,28 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
         FROM market_retention_ownership
         WHERE provider_lane = ? AND provider_id = ? ORDER BY ownership_id`)
       .all(lane, providerId) as JsonRow[];
+    return rows.map((row) =>
+      parseRecord<RetentionOwnership>(row, "peas/market-acquisition-retention-ownership-record/v1"),
+    );
+  }
+
+  ownershipForDigest(digest: string): readonly RetentionOwnership[] {
+    const rows = this.#database
+      .prepare(`SELECT ownership_json AS json, ownership_hash AS hash
+        FROM market_retention_ownership WHERE artifact_digest = ? ORDER BY ownership_id`)
+      .all(digest) as JsonRow[];
+    return rows.map((row) =>
+      parseRecord<RetentionOwnership>(row, "peas/market-acquisition-retention-ownership-record/v1"),
+    );
+  }
+
+  ownershipForDerivedId(derivedId: string): readonly RetentionOwnership[] {
+    const rows = this.#database
+      .prepare(`SELECT o.ownership_json AS json, o.ownership_hash AS hash
+        FROM market_retention_ownership o
+        JOIN market_retention_derivation_ownership d ON d.ownership_id = o.ownership_id
+        WHERE d.derived_id = ? ORDER BY o.ownership_id`)
+      .all(derivedId) as JsonRow[];
     return rows.map((row) =>
       parseRecord<RetentionOwnership>(row, "peas/market-acquisition-retention-ownership-record/v1"),
     );

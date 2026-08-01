@@ -7,6 +7,13 @@ import {
 } from "../contracts.js";
 import type { RetryFailure } from "../retry.js";
 import { parseRetryAfterMs } from "../retry.js";
+import {
+  authorizeCredentialLoad,
+  withAlpacaAuthorization,
+  type CredentialAuthorizationEvidence,
+  type CredentialPreflightPermit,
+  type RuntimeSecretSource,
+} from "../credentials.js";
 import type {
   AlpacaAttemptFailure,
   AlpacaAttemptInput,
@@ -87,45 +94,62 @@ function classifyHttp(response: AlpacaTransportResponse): never {
   return failure("http-nonretryable", "response-headers", retryFailure);
 }
 
-async function settleAll(resources: readonly AlpacaAttemptResource[]): Promise<boolean> {
-  let settled = true;
-  for (const resource of resources) {
-    try {
-      await resource.settle();
-    } catch {
-      settled = false;
-    }
-  }
-  return settled;
+async function boundedBoolean(
+  operation: Promise<unknown>,
+  expired: Promise<void>,
+): Promise<boolean> {
+  let completed = false;
+  let immediate = false;
+  const guarded = operation.then(
+    () => {
+      completed = true;
+      immediate = true;
+      return true;
+    },
+    () => {
+      completed = true;
+      immediate = false;
+      return false;
+    },
+  );
+  await Promise.resolve();
+  if (completed) return immediate;
+  return Promise.race([guarded, expired.then(() => false)]);
 }
 
-async function abortDestroyAll(resources: readonly AlpacaAttemptResource[]): Promise<boolean> {
-  let clean = true;
-  for (const resource of resources) {
-    try {
-      await resource.abort();
-    } catch {
-      clean = false;
-    }
-  }
-  for (const resource of resources) {
-    try {
-      await resource.destroy();
-    } catch {
-      clean = false;
-    }
-  }
-  return (await settleAll(resources)) && clean;
+async function settleAll(
+  resources: readonly AlpacaAttemptResource[],
+  expired: Promise<void>,
+): Promise<boolean> {
+  const outcomes = await Promise.all(
+    resources.map((resource) => boundedBoolean(resource.settle(), expired)),
+  );
+  return outcomes.every(Boolean);
+}
+
+async function abortDestroyAll(
+  resources: readonly AlpacaAttemptResource[],
+  expired: Promise<void>,
+): Promise<boolean> {
+  const aborted = await Promise.all(
+    resources.map((resource) => boundedBoolean(resource.abort(), expired)),
+  );
+  const destroyed = await Promise.all(
+    resources.map((resource) => boundedBoolean(resource.destroy(), expired)),
+  );
+  return (
+    (await settleAll(resources, expired)) && aborted.every(Boolean) && destroyed.every(Boolean)
+  );
 }
 
 async function settleTimer(handle: AlpacaDeadlineHandle): Promise<boolean> {
+  const settled = await boundedBoolean(handle.settle(), handle.expired);
   try {
     handle.cancel();
-    await handle.settle();
-    return true;
   } catch {
     return false;
   }
+  return settled;
 }
 
 function safeFailure(attempt: AttemptFailure, resourcesSettled: boolean): AlpacaAttemptFailure {
@@ -160,13 +184,23 @@ function safeFailure(attempt: AttemptFailure, resourcesSettled: boolean): Alpaca
  * transport: production code can reach this boundary only by explicitly supplying the reviewed
  * transport, validated plan, credential-boundary headers, private sink, and deadline scheduler.
  */
-export async function executeAlpacaAttempt<T>(
+async function executeAlpacaAttempt<T>(
   input: AlpacaAttemptInput<T>,
 ): Promise<AlpacaAttemptResult<T>> {
   const abortController = new AbortController();
+  if (
+    !Number.isSafeInteger(input.attemptBudgetMs) ||
+    input.attemptBudgetMs < 1 ||
+    input.attemptBudgetMs > MARKET_ACQUISITION_LIMITS.attemptDeadlineMs
+  ) {
+    return safeFailure(
+      new AttemptFailure("acquisition-deadline", "request-preflight", { kind: "authorization" }),
+      false,
+    );
+  }
   let deadline: AlpacaDeadlineHandle;
   try {
-    deadline = input.deadlineScheduler.arm(MARKET_ACQUISITION_LIMITS.attemptDeadlineMs);
+    deadline = input.deadlineScheduler.arm(input.attemptBudgetMs);
   } catch {
     return safeFailure(
       new AttemptFailure("attempt-timeout", "request-started", { kind: "cleanup-unprovable" }),
@@ -195,7 +229,7 @@ export async function executeAlpacaAttempt<T>(
     const requestLease = buildAlpacaTransportRequest(
       input.plan,
       input.page,
-      input.authorizationHeaders,
+      input.dispatchCapability,
       abortController.signal,
     );
     try {
@@ -259,7 +293,7 @@ export async function executeAlpacaAttempt<T>(
     }
     let artifact: T;
     try {
-      artifact = await run(input.artifactSink.completeAndVerify());
+      artifact = await run(input.artifactSink.completeVerifyAndRegisterOwnership());
     } catch (error) {
       if (error instanceof DeadlineElapsed) {
         return failure("attempt-timeout", "artifact-commit", { kind: "artifact" });
@@ -267,29 +301,15 @@ export async function executeAlpacaAttempt<T>(
       return failure("artifact-store-failed", "artifact-commit", { kind: "artifact" });
     }
     const resources = [response.body, ...response.siblingResources];
-    const responseSettled = await settleAll(resources);
-    const transportSettled = await input.transport.settle().then(
-      () => true,
-      () => false,
-    );
-    const sinkSettled = await input.artifactSink.settle().then(
-      () => true,
-      () => false,
-    );
+    const responseSettled = await settleAll(resources, deadline.expired);
+    const transportSettled = await boundedBoolean(input.transport.settle(), deadline.expired);
+    const sinkSettled = await boundedBoolean(input.artifactSink.settle(), deadline.expired);
     const timerSettled = await settleTimer(deadline);
     const resourcesSettled = responseSettled && transportSettled && sinkSettled && timerSettled;
     if (!resourcesSettled) {
-      await abortDestroyAll([input.artifactSink, ...resources]);
-      try {
-        await input.transport.abort();
-      } catch {
-        // Cleanup is already classified as unprovable.
-      }
-      try {
-        await input.transport.settle();
-      } catch {
-        // Cleanup is already classified as unprovable.
-      }
+      await abortDestroyAll([input.artifactSink, ...resources], deadline.expired);
+      await boundedBoolean(input.transport.abort(), deadline.expired);
+      await boundedBoolean(input.transport.settle(), deadline.expired);
       return safeFailure(
         new AttemptFailure("partial-cleanup-failed", "cleanup", {
           kind: "cleanup-unprovable",
@@ -313,31 +333,90 @@ export async function executeAlpacaAttempt<T>(
             kind: "authorization",
           });
     abortController.abort();
-    let transportAborted = true;
-    try {
-      await input.transport.abort();
-    } catch {
-      transportAborted = false;
-    }
+    const transportAborted = await boundedBoolean(input.transport.abort(), deadline.expired);
     const resources: AlpacaAttemptResource[] = [input.artifactSink];
     if (response !== null) resources.push(response.body, ...response.siblingResources);
-    const ownedResourcesSettled = await abortDestroyAll(resources);
-    const transportSettled = await input.transport.settle().then(
-      () => true,
-      () => false,
-    );
+    const ownedResourcesSettled = await abortDestroyAll(resources, deadline.expired);
+    const transportSettled = await boundedBoolean(input.transport.settle(), deadline.expired);
     const resourcesSettled = transportAborted && ownedResourcesSettled && transportSettled;
     if (inflight !== null) {
       try {
-        await inflight;
-      } catch {
-        // Settlement, not the rejected provider/library value, is the only relevant fact.
-      }
+        await boundedBoolean(inflight, deadline.expired);
+      } catch {}
     }
     const timerSettled = await settleTimer(deadline);
     return safeFailure(
       attempt,
       resourcesSettled && timerSettled && (!timedOut || inflight === null),
     );
+  }
+}
+
+export type AlpacaProductionAttemptInput<T> = Readonly<
+  Omit<AlpacaAttemptInput<T>, "plan" | "dispatchCapability" | "attemptBudgetMs"> & {
+    plan: AlpacaAttemptInput<T>["plan"];
+    evidence: CredentialAuthorizationEvidence;
+    acquisitionDeclaredMonotonicMs: number;
+    nowMonotonicMs: number;
+  }
+>;
+
+/** Sole live composition boundary: durable evidence -> credentials -> bounded dispatch. */
+export class AlpacaProductionAttemptBoundary {
+  readonly #secrets: RuntimeSecretSource;
+
+  constructor(secrets: RuntimeSecretSource) {
+    this.#secrets = secrets;
+  }
+
+  async execute<T>(input: AlpacaProductionAttemptInput<T>): Promise<AlpacaAttemptResult<T>> {
+    const { acquisitionDeclaredMonotonicMs, nowMonotonicMs } = input;
+    if (
+      !Number.isSafeInteger(acquisitionDeclaredMonotonicMs) ||
+      !Number.isSafeInteger(nowMonotonicMs) ||
+      nowMonotonicMs < acquisitionDeclaredMonotonicMs
+    ) {
+      return safeFailure(
+        new AttemptFailure("configuration-invalid", "request-preflight", { kind: "authorization" }),
+        false,
+      );
+    }
+    const remaining =
+      MARKET_ACQUISITION_LIMITS.acquisitionDeadlineMs -
+      (nowMonotonicMs - acquisitionDeclaredMonotonicMs);
+    if (remaining < 1) {
+      return safeFailure(
+        new AttemptFailure("acquisition-deadline", "request-preflight", { kind: "authorization" }),
+        false,
+      );
+    }
+    let permit: CredentialPreflightPermit;
+    try {
+      permit = authorizeCredentialLoad(input.evidence);
+    } catch {
+      return safeFailure(
+        new AttemptFailure("configuration-invalid", "request-preflight", { kind: "authorization" }),
+        false,
+      );
+    }
+    const authorized = await withAlpacaAuthorization(permit, this.#secrets, (dispatchCapability) =>
+      executeAlpacaAttempt({
+        plan: input.plan,
+        page: input.page,
+        dispatchCapability,
+        transport: input.transport,
+        artifactSink: input.artifactSink,
+        deadlineScheduler: input.deadlineScheduler,
+        attemptBudgetMs: Math.min(MARKET_ACQUISITION_LIMITS.attemptDeadlineMs, remaining),
+      }),
+    );
+    return authorized.ok
+      ? authorized.value
+      : safeFailure(
+          new AttemptFailure("credential-unavailable", "credential-load", {
+            kind: "authorization",
+          }),
+          true,
+        );
   }
 }

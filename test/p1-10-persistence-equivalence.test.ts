@@ -24,10 +24,12 @@ import {
   createJournalEntry,
   deriveLogicalPageIdentityHash,
   deriveMarketAcquisitionJournalId,
+  journalEntryBody,
 } from "../src/adapters/market-acquisition/journal.js";
 import { MemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
 import { canonicalJournalProjection } from "../src/adapters/market-acquisition/replay.js";
 import { SqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
+import { ALLOW_ALL_RETENTION } from "./p1-10-repair-fixtures.js";
 
 const hash = (member: string): string =>
   canonicalHash("peas/p1-10-persistence-equivalence-test/v1", { member });
@@ -190,7 +192,8 @@ function history(): Readonly<{
     kind: Parameters<typeof createJournalEntry>[2],
     checkpoint: JournalCheckpointBody,
   ): void => {
-    const stage = kind === "page-checkpointed" ? null : stages[stageIndex++];
+    const stage =
+      kind === "page-checkpointed" || kind === "attempt-started" ? null : stages[stageIndex++];
     const evidence =
       stage === null || stage === undefined
         ? { ...checkpoint, stageLedgerFactId: null, causalParentFactIds: [] }
@@ -204,6 +207,7 @@ function history(): Readonly<{
     rows.push(createJournalEntry(rows.at(-1) ?? null, journalId, kind, evidence));
   };
   append("acquisition-declared", body());
+  append("request-started", body());
   append("attempt-started", body({ cumulativeAttempts: 1, quotaWindowEvidence: [1_000] }));
   append("request-succeeded", body({ cumulativeAttempts: 1, quotaWindowEvidence: [1_000] }));
   const artifact = {
@@ -355,10 +359,42 @@ test("SQLite close/reopen preserves every exact durable prefix", async (t) => {
   }
 });
 
+test("restart journals reject partial and conflicting checkpoint artifact identities", async () => {
+  const { rows } = history();
+  const committed = rows.find((row) => row.checkpointKind === "artifact-committed");
+  const verified = rows.find((row) => row.checkpointKind === "artifact-verified");
+  assert.ok(committed);
+  assert.ok(verified);
+  for (const testCase of [
+    {
+      prefix: committed.journalSequence,
+      kind: "artifact-committed" as const,
+      mutation: { ...journalEntryBody(committed), artifactDigest: null },
+    },
+    {
+      prefix: verified.journalSequence,
+      kind: "artifact-verified" as const,
+      mutation: {
+        ...journalEntryBody(verified),
+        retrievalAttemptId: prefixed("rat1_", "conflict"),
+      },
+    },
+  ]) {
+    const journal = new MemoryAcquisitionJournal(identity);
+    for (const row of rows.slice(0, testCase.prefix)) await journal.append(row);
+    const prior = (await journal.load(journalId)).at(-1) ?? null;
+    await assert.rejects(
+      () => journal.append(createJournalEntry(prior, journalId, testCase.kind, testCase.mutation)),
+      /artifact-tuple/u,
+    );
+  }
+});
+
 test("restart decisions never re-request committed or verified pages", async () => {
   const { rows } = history();
   const expected = [
     "preflight",
+    "load-credentials",
     "fresh-attempt",
     "fresh-attempt",
     "append-artifact-verification",
@@ -374,9 +410,10 @@ test("restart decisions never re-request committed or verified pages", async () 
       expectedIdentity: identity,
       expectedConfigurationHash: CONFIGURATION_HASH,
       artifactStore: artifactStoreDouble(),
+      retention: ALLOW_ALL_RETENTION,
     });
     assert.equal(decision.kind, expected[prefix - 1]);
-    if (prefix >= 4) assert.equal(decision.transportAllowed, false);
+    if (prefix === 2 || prefix >= 5) assert.equal(decision.transportAllowed, false);
   }
   const journal = new MemoryAcquisitionJournal(identity);
   for (const row of rows) await journal.append(row);
@@ -388,6 +425,7 @@ test("restart decisions never re-request committed or verified pages", async () 
         expectedIdentity: identity,
         expectedConfigurationHash: hash("changed-configuration"),
         artifactStore: artifactStoreDouble(),
+        retention: ALLOW_ALL_RETENTION,
       }),
     /journal-conflict/u,
   );

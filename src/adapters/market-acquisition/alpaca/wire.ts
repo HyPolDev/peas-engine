@@ -14,6 +14,13 @@ import {
   canonicalDecimalFromToken,
   deriveCanonicalProviderPayloadDigest,
 } from "../../../providers/market-reference/normalization.js";
+import {
+  TERMINAL_TOKEN_HASH,
+  derivePrivateTokenHash,
+  type JournalEntry,
+  type JournalIdentityInput,
+  validateJournalEntries,
+} from "../journal.js";
 
 export type AlpacaWireEndpointKind = "quotes" | "trades" | "bars";
 type PlainRecord = Record<string, unknown>;
@@ -43,6 +50,9 @@ export type AlpacaBarObservation = Readonly<{
 
 export type AlpacaWirePageAdmission = Readonly<{
   endpointKind: AlpacaWireEndpointKind;
+  marketAcquisitionId: string;
+  rawArtifactId: string;
+  wireItemCount: number;
   terminal: boolean;
   privateNextToken: string | null;
   records: readonly RecordedMarketRecordV1[];
@@ -791,6 +801,9 @@ export function admitAlpacaHistoricalPage(
         ]);
         return Object.freeze({
           endpointKind: kind,
+          marketAcquisitionId: context.marketAcquisitionId,
+          rawArtifactId: context.rawArtifactId,
+          wireItemCount: recordCount,
           terminal: true,
           privateNextToken: null,
           records: Object.freeze([]),
@@ -894,6 +907,9 @@ export function admitAlpacaHistoricalPage(
   });
   return Object.freeze({
     endpointKind: kind,
+    marketAcquisitionId: context.marketAcquisitionId,
+    rawArtifactId: context.rawArtifactId,
+    wireItemCount: recordCount,
     terminal: token === null,
     privateNextToken: token as string | null,
     records: Object.freeze(records),
@@ -922,8 +938,58 @@ function semanticRecordProjection(record: RecordedMarketRecordV1): JsonValue {
 export function resolveAlpacaHistoricalChain(
   endpointKind: AlpacaWireEndpointKind,
   admissions: readonly AlpacaWirePageAdmission[],
+  proof: Readonly<{
+    journal: readonly JournalEntry[];
+    expectedIdentity: JournalIdentityInput;
+  }>,
 ): AlpacaWireChainResolution {
+  validateJournalEntries(proof.journal, proof.expectedIdentity);
   if (admissions.some((entry) => entry.endpointKind !== endpointKind)) reject("schema-invalid");
+  const pages = proof.journal.filter((entry) => entry.checkpointKind === "page-checkpointed");
+  const chainCompletions = proof.journal.filter(
+    (entry) => entry.checkpointKind === "chain-complete",
+  );
+  if (
+    admissions.length === 0 ||
+    pages.length !== admissions.length ||
+    chainCompletions.length !== 1 ||
+    proof.journal.at(-1)?.checkpointKind !== "chain-complete"
+  ) {
+    reject("page-chain-incomplete");
+  }
+  let terminalCount = 0;
+  for (const [index, admission] of admissions.entries()) {
+    const page = pages[index] ?? reject("page-chain-incomplete");
+    if (
+      page.pageOrdinal !== index ||
+      page.marketAcquisitionId !== admission.marketAcquisitionId ||
+      page.rawArtifactId !== admission.rawArtifactId ||
+      !page.admittedMarketAcquisitionIds.includes(admission.marketAcquisitionId) ||
+      page.pageRecordCount !== admission.wireItemCount
+    ) {
+      reject("page-chain-substitution");
+    }
+    if (admission.terminal) {
+      terminalCount += 1;
+      if (
+        admission.privateNextToken !== null ||
+        page.nextTokenHash !== TERMINAL_TOKEN_HASH ||
+        page.nextContinuationBindingHash !== null ||
+        index !== admissions.length - 1
+      ) {
+        reject("page-chain-terminal-invalid");
+      }
+    } else if (
+      admission.privateNextToken === null ||
+      page.nextTokenHash !== derivePrivateTokenHash(admission.privateNextToken) ||
+      page.nextContinuationBindingHash === null
+    ) {
+      reject("page-chain-continuation-invalid");
+    }
+  }
+  if (terminalCount !== 1 || chainCompletions[0]?.pageOrdinal !== pages.at(-1)?.pageOrdinal) {
+    reject("page-chain-terminal-invalid");
+  }
   const quarantines = admissions.flatMap((entry) => entry.quarantines);
   const terminalReason = admissions.some(
     (entry) => entry.terminalReason === "correction-unsupported",

@@ -9,7 +9,11 @@ import {
   ROUTE_POLICY_VERSION,
   type ValidatedMarketAcquisitionConfiguration,
 } from "../contracts.js";
-import type { AlpacaAuthorizationHeaders } from "../credentials.js";
+import {
+  resolveAlpacaDispatchCapability,
+  type AlpacaDispatchCapability,
+  type AlpacaAuthorizationHeaders,
+} from "../credentials.js";
 import {
   deriveMarketAcquisitionConfigurationIdentity,
   deriveMarketAcquisitionRequestIdentity,
@@ -202,12 +206,14 @@ function queryFor(
 export function buildAlpacaTransportRequest(
   plan: ValidatedMarketAcquisitionConfiguration,
   page: AlpacaPageAuthority,
-  authorizationHeaders: AlpacaAuthorizationHeaders,
+  dispatchCapability: AlpacaDispatchCapability,
   signal: AbortSignal,
 ): AlpacaTransportRequestLease {
   validatePlan(plan);
   if (!(signal instanceof AbortSignal) || signal.aborted) invalid();
-  const headers = validateAuthorizationHeaders(authorizationHeaders);
+  const headers = validateAuthorizationHeaders(
+    resolveAlpacaDispatchCapability(dispatchCapability, plan),
+  );
   const queryLease = queryFor(plan, page);
   const request: AlpacaTransportRequest = Object.freeze({
     method: "GET",
