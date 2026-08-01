@@ -2,14 +2,18 @@
 
 ## Checkpoint and authority
 
-This is the stacked, offline implementation wave authorized after the fresh external contract
-review returned `GO` for the immutable PR 2E candidate:
+This is the stacked, offline implementation wave authorized after the final external contract
+review returned `CONTRACT_GO` for the immutable amended PR 2E candidate and its merge was verified:
 
 ```text
-acceptedPr2eCandidateSha = 038fb381963cd822d2e7f81e55d45d26f1d2c9e5
-acceptedPr2eTree = d6fb3258c29c5b97f5cf7edab6d74c0d80386c16
+acceptedPreAmendmentSha = 038fb381963cd822d2e7f81e55d45d26f1d2c9e5
+acceptedPreAmendmentTree = d6fb3258c29c5b97f5cf7edab6d74c0d80386c16
+acceptedPr2eCandidateSha = f16ea4fcec1eda1126e9a3e446c77b76ddf15678
+acceptedPr2eTree = f2fb2b35adb0a22265eaefc2dc6309fa2e4fb3b7
+mergedPr2eCommit = bda45d8ef8f97c35dec614f79e5e3ca81a7bfe93
 implementationBranch = dev/pr-2f-p1-10-historical-sip-acquisition
-implementationBase = 038fb381963cd822d2e7f81e55d45d26f1d2c9e5
+implementationOriginalBase = 038fb381963cd822d2e7f81e55d45d26f1d2c9e5
+mergedAuthorityIntegrationCommit = 420b40a65dd2cec45e8bbeff726b800c8d9b0e5e
 ```
 
 The human owner separately authorized exactly the retention architecture in
@@ -35,19 +39,19 @@ including:
 - `docs/audit/pr-2e-p1-10-*.md`; and
 - the accepted PR 2D and P1-09 authority chain.
 
-Every integration checkpoint must prove these paths have zero diff from
-`038fb381963cd822d2e7f81e55d45d26f1d2c9e5`. A required change to any accepted byte is a stop
+Every integration checkpoint must prove these paths have zero diff from merged PR 2E commit
+`bda45d8ef8f97c35dec614f79e5e3ca81a7bfe93`. A required change to any accepted byte is a stop
 condition and requires a new contract-amendment review and renewed authorization.
 
 ## Exclusive implementation ownership
 
-| Lane | Exclusive production ownership | Exclusive test ownership |
-| --- | --- | --- |
-| A — runtime/configuration/identity | `src/adapters/market-acquisition/contracts.ts`, `configuration.ts`, `identity.ts` | `test/p1-10-configuration.test.ts` |
-| B — state/retry/quota/journal | `state-machine.ts`, `retry.ts`, `quota.ts`, `journal.ts` | `test/p1-10-state-machine.test.ts` |
+| Lane                                | Exclusive production ownership                                                                                                                                                                                                                                                                 | Exclusive test ownership                                                                                                                                         |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A — runtime/configuration/identity  | `src/adapters/market-acquisition/contracts.ts`, `configuration.ts`, `identity.ts`                                                                                                                                                                                                              | `test/p1-10-configuration.test.ts`                                                                                                                               |
+| B — state/retry/quota/journal       | `state-machine.ts`, `retry.ts`, `quota.ts`, `journal.ts`                                                                                                                                                                                                                                       | `test/p1-10-state-machine.test.ts`                                                                                                                               |
 | C — credentials/redaction/retention | `credentials.ts`, `redaction.ts`, `private-artifact-policy.ts`, `retention/**`, `migrations/006_market_acquisition_retention.sql`; retention-only hooks in `src/adapters/artifacts/durable-artifact-store.ts`, `sqlite-artifact-repository.ts`, `trusted-filesystem.ts`, and `runtime-root.ts` | `test/p1-10-credential-privacy.test.ts`, `test/p1-10-retention.test.ts`, new `test/fixtures/p1-10-retention-*` helpers, and new retention-only hard-kill scripts |
-| D — Alpaca adapter | `src/adapters/market-acquisition/alpaca/**` | `test/p1-10-alpaca-adapter.test.ts` |
-| E — artifact/ledger/restart/replay | `artifact-integration.ts`, `replay.ts`, `memory-journal.ts`, `sqlite-journal.ts` | `test/p1-10-artifact-replay.test.ts`, `test/p1-10-persistence-equivalence.test.ts` |
+| D — Alpaca adapter                  | `src/adapters/market-acquisition/alpaca/**`                                                                                                                                                                                                                                                    | `test/p1-10-alpaca-adapter.test.ts`                                                                                                                              |
+| E — artifact/ledger/restart/replay  | `artifact-integration.ts`, `replay.ts`, `memory-journal.ts`, `sqlite-journal.ts`                                                                                                                                                                                                               | `test/p1-10-artifact-replay.test.ts`, `test/p1-10-persistence-equivalence.test.ts`                                                                               |
 
 No FMP production file may be added.
 
@@ -82,6 +86,18 @@ must not edit another lane's files.
    Windows CI, and `PEAS_SCALE_10K=1 npm run test:scale`.
 7. Freeze one clean implementation candidate SHA and stop for a fresh independent implementation
    audit. Do not self-authorize completion or merge.
+
+## Pre-freeze implementation checkpoint
+
+The authorized offline implementation is complete against merged PR 2E commit
+`bda45d8ef8f97c35dec614f79e5e3ca81a7bfe93`. It includes the deterministic production wire
+boundary, artifact/ledger/replay integration, memory and SQLite persistence, and the previously
+authorized retention architecture. Original-synthetic tests cover direct and integrated wire
+admission, canonical early terminal-update handling, hostile later values, restart/every-prefix
+equivalence, and deterministic replay. Focused and complete pre-freeze offline gates are green,
+including format, lint, typecheck, build, tests, coverage, mutation, hard-kill, reconciliation,
+memory/SQLite evidence, and scale 10k. Candidate freeze, clean exact-SHA reruns, hosted
+Ubuntu/Windows/scale evidence, and independent detached audit remain pending.
 
 ## Mandatory stop conditions
 

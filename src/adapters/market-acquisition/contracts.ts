@@ -1,7 +1,7 @@
 import { canonicalHash } from "../../core/hash.js";
 import type { JsonValue } from "../../core/json.js";
 
-export const ACCEPTED_PR_2E_CANDIDATE_SHA = "038fb381963cd822d2e7f81e55d45d26f1d2c9e5" as const;
+export const ACCEPTED_PR_2E_CANDIDATE_SHA = "f16ea4fcec1eda1126e9a3e446c77b76ddf15678" as const;
 export const AUTHORIZATION_MODE = "p1-09-approved" as const;
 export const ROUTE_POLICY_VERSION = "p1-10-frozen-historical-multi-symbol-v1" as const;
 export const ZERO_SPEND_POLICY_VERSION = "p1-10-zero-spend-policy-v1" as const;
