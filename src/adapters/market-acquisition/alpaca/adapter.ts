@@ -9,8 +9,10 @@ import type { RetryFailure } from "../retry.js";
 import { parseRetryAfterMs } from "../retry.js";
 import {
   authorizeCredentialLoad,
+  assertCredentialIsolatedAlpacaTransport,
+  type DurableCredentialAuthorizationBoundary,
   withAlpacaAuthorization,
-  type CredentialAuthorizationEvidence,
+  type CredentialAuthorizationRequest,
   type CredentialPreflightPermit,
   type RuntimeSecretSource,
 } from "../credentials.js";
@@ -21,9 +23,11 @@ import type {
   AlpacaAttemptResult,
   AlpacaBodyRead,
   AlpacaDeadlineHandle,
+  AlpacaTransportRequestLease,
   AlpacaTransportResponse,
 } from "./contracts.js";
 import { buildAlpacaTransportRequest } from "./request.js";
+import { assertRetentionOwnedAlpacaPageSink } from "./retained-sink.js";
 
 class DeadlineElapsed {}
 
@@ -143,13 +147,12 @@ async function abortDestroyAll(
 }
 
 async function settleTimer(handle: AlpacaDeadlineHandle): Promise<boolean> {
-  const settled = await boundedBoolean(handle.settle(), handle.expired);
   try {
     handle.cancel();
   } catch {
     return false;
   }
-  return settled;
+  return boundedBoolean(handle.settle(), handle.expired);
 }
 
 function safeFailure(attempt: AttemptFailure, resourcesSettled: boolean): AlpacaAttemptFailure {
@@ -184,27 +187,25 @@ function safeFailure(attempt: AttemptFailure, resourcesSettled: boolean): Alpaca
  * transport: production code can reach this boundary only by explicitly supplying the reviewed
  * transport, validated plan, credential-boundary headers, private sink, and deadline scheduler.
  */
+type AuthorizedAlpacaAttemptInput<T> = Readonly<{
+  dispatchCapability: AlpacaAttemptInput<T>["dispatchCapability"];
+  transport: AlpacaAttemptInput<T>["transport"];
+  artifactSink: AlpacaAttemptInput<T>["artifactSink"];
+  requestLease: AlpacaTransportRequestLease;
+  abortController: AbortController;
+  deadline: AlpacaDeadlineHandle;
+}>;
+
 async function executeAlpacaAttempt<T>(
-  input: AlpacaAttemptInput<T>,
+  input: AuthorizedAlpacaAttemptInput<T>,
 ): Promise<AlpacaAttemptResult<T>> {
-  const abortController = new AbortController();
-  if (
-    !Number.isSafeInteger(input.attemptBudgetMs) ||
-    input.attemptBudgetMs < 1 ||
-    input.attemptBudgetMs > MARKET_ACQUISITION_LIMITS.attemptDeadlineMs
-  ) {
-    return safeFailure(
-      new AttemptFailure("acquisition-deadline", "request-preflight", { kind: "authorization" }),
-      false,
-    );
-  }
-  let deadline: AlpacaDeadlineHandle;
+  const { abortController, deadline } = input;
   try {
-    deadline = input.deadlineScheduler.arm(input.attemptBudgetMs);
+    assertRetentionOwnedAlpacaPageSink(input.artifactSink);
   } catch {
     return safeFailure(
-      new AttemptFailure("attempt-timeout", "request-started", { kind: "cleanup-unprovable" }),
-      false,
+      new AttemptFailure("configuration-invalid", "request-preflight", { kind: "authorization" }),
+      true,
     );
   }
   let response: AlpacaTransportResponse | null = null;
@@ -226,21 +227,17 @@ async function executeAlpacaAttempt<T>(
     return outcome;
   };
   try {
-    const requestLease = buildAlpacaTransportRequest(
-      input.plan,
-      input.page,
-      input.dispatchCapability,
-      abortController.signal,
-    );
     try {
-      response = await run(input.transport.dispatch(requestLease.request));
+      response = await run(
+        input.transport.dispatch(input.requestLease.request, input.dispatchCapability),
+      );
     } catch (error) {
       if (error instanceof DeadlineElapsed) {
         return failure("attempt-timeout", "dispatch", { kind: "pre-response-transport" });
       }
       return failure("transport-failed", "dispatch", { kind: "pre-response-transport" });
     } finally {
-      requestLease.release();
+      input.requestLease.release();
     }
     validateResponse(response);
     if (response.status !== 200) classifyHttp(response);
@@ -355,7 +352,7 @@ async function executeAlpacaAttempt<T>(
 export type AlpacaProductionAttemptInput<T> = Readonly<
   Omit<AlpacaAttemptInput<T>, "plan" | "dispatchCapability" | "attemptBudgetMs"> & {
     plan: AlpacaAttemptInput<T>["plan"];
-    evidence: CredentialAuthorizationEvidence;
+    credentialAuthorization: CredentialAuthorizationRequest;
     acquisitionDeclaredMonotonicMs: number;
     nowMonotonicMs: number;
   }
@@ -364,12 +361,25 @@ export type AlpacaProductionAttemptInput<T> = Readonly<
 /** Sole live composition boundary: durable evidence -> credentials -> bounded dispatch. */
 export class AlpacaProductionAttemptBoundary {
   readonly #secrets: RuntimeSecretSource;
+  readonly #authorization: DurableCredentialAuthorizationBoundary;
 
-  constructor(secrets: RuntimeSecretSource) {
+  constructor(secrets: RuntimeSecretSource, authorization: DurableCredentialAuthorizationBoundary) {
     this.#secrets = secrets;
+    this.#authorization = authorization;
   }
 
   async execute<T>(input: AlpacaProductionAttemptInput<T>): Promise<AlpacaAttemptResult<T>> {
+    try {
+      assertRetentionOwnedAlpacaPageSink(input.artifactSink);
+      assertCredentialIsolatedAlpacaTransport(input.transport);
+    } catch {
+      return safeFailure(
+        new AttemptFailure("configuration-invalid", "request-preflight", {
+          kind: "authorization",
+        }),
+        true,
+      );
+    }
     const { acquisitionDeclaredMonotonicMs, nowMonotonicMs } = input;
     if (
       !Number.isSafeInteger(acquisitionDeclaredMonotonicMs) ||
@@ -390,33 +400,79 @@ export class AlpacaProductionAttemptBoundary {
         false,
       );
     }
-    let permit: CredentialPreflightPermit;
+    const abortController = new AbortController();
+    let requestLease: AlpacaTransportRequestLease;
     try {
-      permit = authorizeCredentialLoad(input.evidence);
+      requestLease = buildAlpacaTransportRequest(input.plan, input.page, abortController.signal);
     } catch {
       return safeFailure(
-        new AttemptFailure("configuration-invalid", "request-preflight", { kind: "authorization" }),
+        new AttemptFailure("configuration-invalid", "request-preflight", {
+          kind: "authorization",
+        }),
+        true,
+      );
+    }
+    let deadline: AlpacaDeadlineHandle;
+    try {
+      if (typeof input.deadlineScheduler.arm !== "function") {
+        throw new TypeError("alpaca-deadline-scheduler-invalid");
+      }
+      const scheduled = input.deadlineScheduler.arm(
+        Math.min(MARKET_ACQUISITION_LIMITS.attemptDeadlineMs, remaining),
+      );
+      if (
+        scheduled === null ||
+        typeof scheduled !== "object" ||
+        !(scheduled.expired instanceof Promise) ||
+        typeof scheduled.cancel !== "function" ||
+        typeof scheduled.settle !== "function"
+      ) {
+        throw new TypeError("alpaca-deadline-handle-invalid");
+      }
+      deadline = Object.freeze({
+        expired: scheduled.expired,
+        cancel: scheduled.cancel.bind(scheduled),
+        settle: scheduled.settle.bind(scheduled),
+      });
+    } catch {
+      requestLease.release();
+      return safeFailure(
+        new AttemptFailure("attempt-timeout", "request-started", {
+          kind: "cleanup-unprovable",
+        }),
         false,
+      );
+    }
+    let permit: CredentialPreflightPermit;
+    try {
+      const evidence = await this.#authorization.establish(input.credentialAuthorization);
+      permit = authorizeCredentialLoad(evidence);
+    } catch {
+      requestLease.release();
+      const timerSettled = await settleTimer(deadline);
+      return safeFailure(
+        new AttemptFailure("configuration-invalid", "request-preflight", { kind: "authorization" }),
+        timerSettled,
       );
     }
     const authorized = await withAlpacaAuthorization(permit, this.#secrets, (dispatchCapability) =>
       executeAlpacaAttempt({
-        plan: input.plan,
-        page: input.page,
         dispatchCapability,
         transport: input.transport,
         artifactSink: input.artifactSink,
-        deadlineScheduler: input.deadlineScheduler,
-        attemptBudgetMs: Math.min(MARKET_ACQUISITION_LIMITS.attemptDeadlineMs, remaining),
+        requestLease,
+        abortController,
+        deadline,
       }),
     );
-    return authorized.ok
-      ? authorized.value
-      : safeFailure(
-          new AttemptFailure("credential-unavailable", "credential-load", {
-            kind: "authorization",
-          }),
-          true,
-        );
+    if (authorized.ok) return authorized.value;
+    requestLease.release();
+    const timerSettled = await settleTimer(deadline);
+    return safeFailure(
+      new AttemptFailure("credential-unavailable", "credential-load", {
+        kind: "authorization",
+      }),
+      timerSettled,
+    );
   }
 }

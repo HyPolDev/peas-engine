@@ -4,6 +4,7 @@ import type {
   ValidatedMarketAcquisitionConfiguration,
 } from "../contracts.js";
 import type { RetryFailure } from "../retry.js";
+import type { RetentionOwnership } from "../retention/contracts.js";
 
 export type AlpacaQueryFieldName =
   | "symbols"
@@ -56,10 +57,6 @@ export type AlpacaTransportRequest = Readonly<{
   requestIdentityHash: string;
   pageOrdinal: number;
   query: readonly AlpacaQueryPair[];
-  authorizationHeaders: Readonly<{
-    "APCA-API-KEY-ID": string;
-    "APCA-API-SECRET-KEY": string;
-  }>;
   signal: AbortSignal;
 }>;
 
@@ -93,7 +90,10 @@ export type AlpacaTransportResponse = Readonly<{
 }>;
 
 export interface AlpacaTransport {
-  dispatch(request: AlpacaTransportRequest): Promise<AlpacaTransportResponse>;
+  dispatch(
+    request: AlpacaTransportRequest,
+    authorization: AlpacaDispatchCapability,
+  ): Promise<AlpacaTransportResponse>;
   abort(): Promise<void>;
   settle(): Promise<void>;
 }
@@ -106,6 +106,17 @@ export interface AlpacaVerifiedPageSink<T> extends AlpacaAttemptResource {
    * usable artifact result.
    */
   completeVerifyAndRegisterOwnership(): Promise<T>;
+}
+
+export type AlpacaPreparedArtifactCommit<T> = Readonly<{
+  ownership: Omit<RetentionOwnership, "ownershipId">;
+  commit(): Promise<T>;
+}>;
+
+/** Lower-level sink hidden behind the retention-owning production composition. */
+export interface AlpacaArtifactCommitSink<T> extends AlpacaAttemptResource {
+  write(bytes: Uint8Array): Promise<void>;
+  prepareVerifiedCommit(): Promise<AlpacaPreparedArtifactCommit<T>>;
 }
 
 export interface AlpacaDeadlineHandle {

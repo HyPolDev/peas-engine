@@ -1,8 +1,4 @@
 import {
-  validateObservationLedgerBundle,
-  type ObservationLedgerEntryV1,
-} from "../../providers/observation-ledger.js";
-import {
   ACCEPTED_PR_2E_CANDIDATE_SHA,
   AUTHORIZATION_MODE,
   type ValidatedMarketAcquisitionConfiguration,
@@ -13,9 +9,22 @@ import {
   deriveMarketAcquisitionRequestIdentity,
   ZERO_SPEND_POLICY_ID,
 } from "./identity.js";
-import { type JournalEntry, type JournalIdentityInput, validateJournalEntries } from "./journal.js";
+import { assertValidatedMarketAcquisitionConfiguration } from "./configuration.js";
+import {
+  type AcquisitionJournal,
+  type JournalIdentityInput,
+  createJournalEntry,
+  deriveMarketAcquisitionJournalId,
+  journalEntryBody,
+  validateJournalEntries,
+} from "./journal.js";
 import { safeAcquisitionError, type SafeAcquisitionError } from "./redaction.js";
 import type { ArtifactRetentionJournal } from "./retention/contracts.js";
+import type {
+  AlpacaTransport,
+  AlpacaTransportRequest,
+  AlpacaTransportResponse,
+} from "./alpaca/contracts.js";
 
 export const ALPACA_KEY_ID_ENV = "PEAS_ALPACA_API_KEY_ID";
 export const ALPACA_SECRET_KEY_ENV = "PEAS_ALPACA_API_SECRET_KEY";
@@ -27,14 +36,12 @@ export interface RuntimeSecretSource {
   read(name: CredentialReadName): unknown;
 }
 
-export type CredentialAuthorizationInput = Readonly<{
+export type CredentialAuthorizationRequest = Readonly<{
   plan: ValidatedMarketAcquisitionConfiguration;
   acquisitionObservationId: string;
   retrievalAttemptId: string;
   journalIdentity: JournalIdentityInput;
-  journal: readonly JournalEntry[];
-  ledger: readonly ObservationLedgerEntryV1[];
-  retentionJournal: ArtifactRetentionJournal;
+  marketAcquisitionJournalId: string;
 }>;
 
 export type CredentialAuthorizationEvidence = Readonly<{
@@ -73,8 +80,10 @@ type DispatchBinding = PermitBinding & Readonly<{ headers: AlpacaAuthorizationHe
 const issuedPermits = new WeakMap<object, PermitBinding>();
 const issuedDispatchCapabilities = new WeakMap<object, DispatchBinding>();
 const establishedEvidence = new WeakMap<object, PermitBinding>();
+const credentialIsolatedTransports = new WeakSet<object>();
 
 function validatePlan(plan: ValidatedMarketAcquisitionConfiguration): void {
+  assertValidatedMarketAcquisitionConfiguration(plan);
   const route = ALPACA_ROUTE_REGISTRY[plan.kind];
   if (
     !Object.isFrozen(plan) ||
@@ -116,57 +125,74 @@ function validatePlan(plan: ValidatedMarketAcquisitionConfiguration): void {
   }
 }
 
-export function establishCredentialAuthorizationEvidence(
-  input: CredentialAuthorizationInput,
-): CredentialAuthorizationEvidence {
-  validatePlan(input.plan);
-  if (input.retentionJournal.providerUseDenied("alpaca", input.journalIdentity.providerId)) {
-    throw new TypeError("credential-retention-denied");
+/**
+ * Owned durable authorization composition. Callers provide identities, never journal or ledger
+ * arrays; the boundary reloads and validates the committed request-started checkpoint itself.
+ */
+export class DurableCredentialAuthorizationBoundary {
+  readonly #journal: AcquisitionJournal;
+  readonly #retentionJournal: ArtifactRetentionJournal;
+
+  constructor(journal: AcquisitionJournal, retentionJournal: ArtifactRetentionJournal) {
+    this.#journal = journal;
+    this.#retentionJournal = retentionJournal;
   }
-  validateJournalEntries(input.journal, input.journalIdentity);
-  const ledger = validateObservationLedgerBundle(input.ledger);
-  const declaration = ledger.find(
-    (entry) =>
-      entry.facts.kind === "acquisition.declared" &&
-      entry.facts.acquisitionObservationId === input.acquisitionObservationId,
-  );
-  if (
-    declaration?.facts.kind !== "acquisition.declared" ||
-    declaration.facts.provider !== "alpaca" ||
-    declaration.facts.retrievalAttemptId !== input.retrievalAttemptId ||
-    declaration.facts.sanitizedRequestIdentityHash !== input.plan.requestIdentityHash
-  ) {
-    throw new TypeError("credential-acquisition-identity-invalid");
+
+  async establish(input: CredentialAuthorizationRequest): Promise<CredentialAuthorizationEvidence> {
+    validatePlan(input.plan);
+    if (
+      input.marketAcquisitionJournalId !== deriveMarketAcquisitionJournalId(input.journalIdentity)
+    ) {
+      throw new TypeError("credential-journal-identity-invalid");
+    }
+    if (this.#retentionJournal.providerUseDenied("alpaca", input.journalIdentity.providerId)) {
+      throw new TypeError("credential-retention-denied");
+    }
+    const journal = await this.#journal.load(input.marketAcquisitionJournalId);
+    validateJournalEntries(journal, input.journalIdentity);
+    const latest = journal.at(-1);
+    if (
+      latest?.checkpointKind !== "request-started" ||
+      latest.requestIdentityHash !== input.plan.requestIdentityHash ||
+      latest.acquisitionConfigurationHash !== input.plan.acquisitionConfigurationHash ||
+      latest.acquisitionObservationId !== input.acquisitionObservationId ||
+      latest.retrievalAttemptId !== input.retrievalAttemptId ||
+      latest.stageLedgerFactId === null ||
+      latest.causalParentFactIds.length !== 1
+    ) {
+      throw new TypeError("credential-request-started-evidence-invalid");
+    }
+    const attemptStarted = createJournalEntry(
+      latest,
+      input.marketAcquisitionJournalId,
+      "attempt-started",
+      Object.freeze({
+        ...journalEntryBody(latest),
+        cumulativeAttempts: latest.cumulativeAttempts + 1,
+      }),
+    );
+    if (!(await this.#journal.claimAttemptStarted(latest.journalEntryHash, attemptStarted))) {
+      throw new TypeError("credential-attempt-already-claimed");
+    }
+    const claimed = await this.#journal.load(input.marketAcquisitionJournalId);
+    validateJournalEntries(claimed, input.journalIdentity);
+    if (claimed.at(-1)?.journalEntryHash !== attemptStarted.journalEntryHash) {
+      throw new TypeError("credential-attempt-claim-unprovable");
+    }
+    if (this.#retentionJournal.providerUseDenied("alpaca", input.journalIdentity.providerId)) {
+      throw new TypeError("credential-retention-denied");
+    }
+    const evidence = Object.freeze({ kind: "p1-10-durable-credential-evidence" as const });
+    establishedEvidence.set(
+      evidence,
+      Object.freeze({
+        plan: input.plan,
+        acquisitionObservationId: input.acquisitionObservationId,
+        retrievalAttemptId: input.retrievalAttemptId,
+      }),
+    );
+    return evidence;
   }
-  const started = ledger.find(
-    (entry) =>
-      entry.facts.kind === "request.started" &&
-      entry.facts.acquisitionObservationId === input.acquisitionObservationId &&
-      entry.parentEntryIds.includes(declaration.entryId),
-  );
-  const latest = input.journal.at(-1);
-  if (
-    started === undefined ||
-    latest?.checkpointKind !== "request-started" ||
-    latest.requestIdentityHash !== input.plan.requestIdentityHash ||
-    latest.acquisitionConfigurationHash !== input.plan.acquisitionConfigurationHash ||
-    latest.acquisitionObservationId !== input.acquisitionObservationId ||
-    latest.retrievalAttemptId !== input.retrievalAttemptId ||
-    latest.stageLedgerFactId !== started.entryId ||
-    !latest.causalParentFactIds.includes(declaration.entryId)
-  ) {
-    throw new TypeError("credential-request-started-evidence-invalid");
-  }
-  const evidence = Object.freeze({ kind: "p1-10-durable-credential-evidence" as const });
-  establishedEvidence.set(
-    evidence,
-    Object.freeze({
-      plan: input.plan,
-      acquisitionObservationId: input.acquisitionObservationId,
-      retrievalAttemptId: input.retrievalAttemptId,
-    }),
-  );
-  return evidence;
 }
 
 export function authorizeCredentialLoad(
@@ -174,6 +200,7 @@ export function authorizeCredentialLoad(
 ): CredentialPreflightPermit {
   const binding = establishedEvidence.get(evidence);
   if (binding === undefined) throw new TypeError("credential-evidence-capability-invalid");
+  establishedEvidence.delete(evidence);
   const permit = Object.freeze({
     kind: "p1-10-credential-capability" as const,
     requestIdentityHash: binding.plan.requestIdentityHash,
@@ -198,8 +225,10 @@ export async function withAlpacaAuthorization<T>(
   if (binding === undefined) {
     throw new TypeError("credential-boundary-requires-durable-preconditions");
   }
+  issuedPermits.delete(permit);
   let keyId: unknown;
   let secretKey: unknown;
+  let capability: AlpacaDispatchCapability | undefined;
   try {
     keyId = source.read(ALPACA_KEY_ID_ENV);
     secretKey = source.read(ALPACA_SECRET_KEY_ENV);
@@ -214,31 +243,86 @@ export async function withAlpacaAuthorization<T>(
       "APCA-API-KEY-ID": keyId,
       "APCA-API-SECRET-KEY": secretKey,
     });
-    const capability = Object.freeze({ kind: "p1-10-alpaca-dispatch-capability" as const });
+    capability = Object.freeze({ kind: "p1-10-alpaca-dispatch-capability" as const });
     issuedDispatchCapabilities.set(capability, Object.freeze({ ...binding, headers }));
     return { ok: true, value: await operation(capability) };
   } catch {
     return credentialUnavailable();
   } finally {
+    if (capability !== undefined) issuedDispatchCapabilities.delete(capability);
     keyId = undefined;
     secretKey = undefined;
   }
 }
 
-export function resolveAlpacaDispatchCapability(
+function resolveAlpacaDispatchCapability(
   capability: AlpacaDispatchCapability,
-  plan: ValidatedMarketAcquisitionConfiguration,
+  request: AlpacaTransportRequest,
 ): AlpacaAuthorizationHeaders {
   const binding = issuedDispatchCapabilities.get(capability);
   if (
     binding === undefined ||
-    binding.plan !== plan ||
-    binding.plan.requestIdentityHash !== plan.requestIdentityHash ||
-    binding.plan.acquisitionConfigurationHash !== plan.acquisitionConfigurationHash
+    binding.plan.requestIdentityHash !== request.requestIdentityHash ||
+    binding.plan.route.path !== request.path ||
+    binding.plan.route.endpointChannelId !== request.endpointChannelId
   ) {
     throw new TypeError("alpaca-dispatch-capability-invalid");
   }
+  issuedDispatchCapabilities.delete(capability);
   return binding.headers;
+}
+
+export type AlpacaCredentialIsolatedTransportDriver = Readonly<{
+  dispatch(request: AlpacaTransportRequest): Promise<AlpacaTransportResponse>;
+  abort(): Promise<void>;
+  settle(): Promise<void>;
+}>;
+
+/**
+ * Owns authorization consumption. The lower driver sees only the frozen non-secret request; the
+ * exact frozen header record is validated and retained only inside this module for the capability
+ * callback lifetime.
+ */
+export function createCredentialIsolatedAlpacaTransport(
+  driver: AlpacaCredentialIsolatedTransportDriver,
+): AlpacaTransport {
+  if (
+    typeof driver.dispatch !== "function" ||
+    typeof driver.abort !== "function" ||
+    typeof driver.settle !== "function"
+  ) {
+    throw new TypeError("alpaca-transport-driver-invalid");
+  }
+  const dispatch = driver.dispatch.bind(driver);
+  const abort = driver.abort.bind(driver);
+  const settle = driver.settle.bind(driver);
+  const transport: AlpacaTransport = Object.freeze({
+    async dispatch(
+      request: AlpacaTransportRequest,
+      authorization: AlpacaDispatchCapability,
+    ): Promise<AlpacaTransportResponse> {
+      const headers = resolveAlpacaDispatchCapability(authorization, request);
+      if (
+        !Object.isFrozen(headers) ||
+        Object.keys(headers).length !== 2 ||
+        headers["APCA-API-KEY-ID"].length === 0 ||
+        headers["APCA-API-SECRET-KEY"].length === 0
+      ) {
+        throw new TypeError("alpaca-authorization-record-invalid");
+      }
+      return dispatch(request);
+    },
+    abort,
+    settle,
+  });
+  credentialIsolatedTransports.add(transport);
+  return transport;
+}
+
+export function assertCredentialIsolatedAlpacaTransport(value: AlpacaTransport): void {
+  if (!credentialIsolatedTransports.has(value)) {
+    throw new TypeError("credential-isolated-alpaca-transport-required");
+  }
 }
 
 export function fmpLaneDisabled(): CredentialAttemptResult<never> {

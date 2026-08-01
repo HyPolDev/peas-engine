@@ -1,15 +1,24 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import {
   ALPACA_KEY_ID_ENV,
   ALPACA_SECRET_KEY_ENV,
+  DurableCredentialAuthorizationBoundary,
   authorizeCredentialLoad,
-  establishCredentialAuthorizationEvidence,
+  createCredentialIsolatedAlpacaTransport,
   fmpLaneDisabled,
   withAlpacaAuthorization,
+  type AlpacaDispatchCapability,
   type RuntimeSecretSource,
 } from "../src/adapters/market-acquisition/credentials.js";
+import { buildAlpacaTransportRequest } from "../src/adapters/market-acquisition/alpaca/request.js";
+import { MemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
+import { SqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
+import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
 import {
   ACCESSOR,
   BYTE_LIMIT,
@@ -20,13 +29,12 @@ import {
   projectHostileValue,
   safeAcquisitionError,
 } from "../src/adapters/market-acquisition/redaction.js";
-import { credentialAuthorizationInput, validatedRepairPlan } from "./p1-10-repair-fixtures.js";
-
-const evidenceInput = credentialAuthorizationInput(validatedRepairPlan());
-const evidence = establishCredentialAuthorizationEvidence(evidenceInput);
-const permit = authorizeCredentialLoad(evidence);
+import { credentialAuthorizationFixture, validatedRepairPlan } from "./p1-10-repair-fixtures.js";
 
 test("Alpaca credentials load only into an immutable dispatch capability", async () => {
+  const plan = validatedRepairPlan();
+  const fixture = await credentialAuthorizationFixture(plan);
+  const permit = authorizeCredentialLoad(await fixture.authorization.establish(fixture.request));
   const reads: string[] = [];
   const source: RuntimeSecretSource = {
     read(name) {
@@ -34,16 +42,49 @@ test("Alpaca credentials load only into an immutable dispatch capability", async
       return name === ALPACA_KEY_ID_ENV ? "synthetic-key-id" : "synthetic-secret";
     },
   };
+  let retained: AlpacaDispatchCapability | null = null;
+  let dispatches = 0;
+  const requestLease = buildAlpacaTransportRequest(
+    plan,
+    { kind: "first-page", pageOrdinal: 0 },
+    new AbortController().signal,
+  );
+  const transport = createCredentialIsolatedAlpacaTransport({
+    async dispatch() {
+      dispatches += 1;
+      return {} as never;
+    },
+    async abort() {},
+    async settle() {},
+  });
   const result = await withAlpacaAuthorization(permit, source, async (capability) => {
     assert.equal(Object.isFrozen(capability), true);
     assert.deepEqual(Object.keys(capability), ["kind"]);
+    retained = capability;
+    await transport.dispatch(requestLease.request, capability);
+    await assert.rejects(
+      () => transport.dispatch(requestLease.request, capability),
+      /dispatch-capability-invalid/u,
+    );
     return "settled";
   });
+  requestLease.release();
   assert.deepEqual(result, { ok: true, value: "settled" });
   assert.deepEqual(reads, [ALPACA_KEY_ID_ENV, ALPACA_SECRET_KEY_ENV]);
+  assert.ok(retained !== null);
+  assert.equal(dispatches, 1);
+  await assert.rejects(
+    () => transport.dispatch(requestLease.request, retained as AlpacaDispatchCapability),
+    /dispatch-capability-invalid/u,
+  );
+  await assert.rejects(() => withAlpacaAuthorization(permit, source, async () => "reused"));
+  const credentials = await import("../src/adapters/market-acquisition/credentials.js");
+  assert.equal("resolveAlpacaDispatchCapability" in credentials, false);
 });
 
 test("missing credentials return a closed error and never invoke transport", async () => {
+  const fixture = await credentialAuthorizationFixture(validatedRepairPlan());
+  const permit = authorizeCredentialLoad(await fixture.authorization.establish(fixture.request));
   let operations = 0;
   const reads: string[] = [];
   const result = await withAlpacaAuthorization(
@@ -73,16 +114,18 @@ test("missing credentials return a closed error and never invoke transport", asy
 });
 
 test("a structurally forged permit and incomplete proof cannot read credentials", async () => {
+  const plan = validatedRepairPlan();
+  const fixture = await credentialAuthorizationFixture(plan);
   let reads = 0;
   await assert.rejects(
     () =>
       withAlpacaAuthorization(
         {
           kind: "p1-10-credential-capability",
-          requestIdentityHash: evidenceInput.plan.requestIdentityHash,
-          acquisitionConfigurationHash: evidenceInput.plan.acquisitionConfigurationHash,
-          acquisitionObservationId: evidenceInput.acquisitionObservationId,
-          retrievalAttemptId: evidenceInput.retrievalAttemptId,
+          requestIdentityHash: plan.requestIdentityHash,
+          acquisitionConfigurationHash: plan.acquisitionConfigurationHash,
+          acquisitionObservationId: fixture.request.acquisitionObservationId,
+          retrievalAttemptId: fixture.request.retrievalAttemptId,
         } as never,
         {
           read() {
@@ -95,37 +138,22 @@ test("a structurally forged permit and incomplete proof cannot read credentials"
     /durable-preconditions/u,
   );
   assert.equal(reads, 0);
-  assert.throws(
+  await assert.rejects(
     () =>
-      establishCredentialAuthorizationEvidence({
-        ...evidenceInput,
+      fixture.authorization.establish({
+        ...fixture.request,
         acquisitionObservationId: "wrong-acquisition",
-      }),
-    /acquisition-identity/u,
-  );
-  assert.throws(
-    () =>
-      establishCredentialAuthorizationEvidence({
-        ...evidenceInput,
-        journal: [...evidenceInput.journal].reverse(),
-      }),
-    /journal|checkpoint|hash-chain/u,
-  );
-  assert.throws(
-    () =>
-      establishCredentialAuthorizationEvidence({
-        ...evidenceInput,
-        ledger: evidenceInput.ledger.slice(0, 2),
       }),
     /request-started/u,
   );
-  assert.throws(
-    () =>
-      establishCredentialAuthorizationEvidence({
-        ...evidenceInput,
-        journal: evidenceInput.journal.slice(0, 1),
-      }),
-    /request-started|checkpoint/u,
+  const emptyJournal = new MemoryAcquisitionJournal(fixture.request.journalIdentity);
+  const missingPersistence = new DurableCredentialAuthorizationBoundary(
+    emptyJournal,
+    fixture.retentionJournal,
+  );
+  await assert.rejects(
+    () => missingPersistence.establish(fixture.request),
+    /journal-empty|request-started/u,
   );
   assert.equal(reads, 0);
   assert.throws(
@@ -134,9 +162,79 @@ test("a structurally forged permit and incomplete proof cannot read credentials"
   );
 });
 
+test("durable attempt claims exclude replay and concurrent remint before one secret read", async () => {
+  const fixture = await credentialAuthorizationFixture(validatedRepairPlan());
+  const outcomes = await Promise.allSettled([
+    fixture.authorization.establish(fixture.request),
+    fixture.authorization.establish(fixture.request),
+  ]);
+  const fulfilled = outcomes.filter(
+    (
+      outcome,
+    ): outcome is PromiseFulfilledResult<
+      Awaited<ReturnType<typeof fixture.authorization.establish>>
+    > => outcome.status === "fulfilled",
+  );
+  assert.equal(fulfilled.length, 1);
+  assert.equal(outcomes.filter((outcome) => outcome.status === "rejected").length, 1);
+  const accepted = fulfilled[0];
+  assert.ok(accepted !== undefined);
+  const journal = await fixture.journal.load(fixture.request.marketAcquisitionJournalId);
+  assert.equal(journal.at(-1)?.checkpointKind, "attempt-started");
+  assert.equal(journal.at(-1)?.cumulativeAttempts, 1);
+  let reads = 0;
+  let operations = 0;
+  const result = await withAlpacaAuthorization(
+    authorizeCredentialLoad(accepted.value),
+    {
+      read() {
+        reads += 1;
+        return reads === 1 ? "synthetic-key-id" : "synthetic-secret";
+      },
+    },
+    async () => {
+      operations += 1;
+      return "authorized-once";
+    },
+  );
+  assert.deepEqual(result, { ok: true, value: "authorized-once" });
+  assert.equal(reads, 2);
+  assert.equal(operations, 1);
+  await assert.rejects(
+    () => fixture.authorization.establish(fixture.request),
+    /request-started|already-claimed/u,
+  );
+});
+
+test("a persisted attempt claim cannot be reminted after SQLite cold restart", async (t) => {
+  const fixture = await credentialAuthorizationFixture(validatedRepairPlan());
+  const directory = await mkdtemp(join(tmpdir(), "peas-p1-10-credential-claim-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filename = join(directory, "claim.sqlite");
+  const migrations = loadMigrations(join(process.cwd(), "migrations"));
+  let database = openSqliteDatabase(filename, migrations);
+  let journal = new SqliteAcquisitionJournal(database, fixture.request.journalIdentity);
+  for (const entry of fixture.entries) await journal.append(entry);
+  const first = new DurableCredentialAuthorizationBoundary(journal, fixture.retentionJournal);
+  await first.establish(fixture.request);
+  database.close();
+  database = openSqliteDatabase(filename, migrations);
+  journal = new SqliteAcquisitionJournal(database, fixture.request.journalIdentity);
+  const restarted = new DurableCredentialAuthorizationBoundary(journal, fixture.retentionJournal);
+  await assert.rejects(
+    () => restarted.establish(fixture.request),
+    /request-started|already-claimed/u,
+  );
+  const entries = await journal.load(fixture.request.marketAcquisitionJournalId);
+  assert.equal(entries.filter((entry) => entry.checkpointKind === "attempt-started").length, 1);
+  database.close();
+});
+
 test("the low-level attempt executor is not a caller-invocable module export", async () => {
   const module = await import("../src/adapters/market-acquisition/alpaca/adapter.js");
   assert.equal("executeAlpacaAttempt" in module, false);
+  const credentials = await import("../src/adapters/market-acquisition/credentials.js");
+  assert.equal("establishCredentialAuthorizationEvidence" in credentials, false);
 });
 
 test("FMP reservation is disabled and exposes no credential-reader capability", () => {

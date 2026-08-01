@@ -5,6 +5,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { DurableArtifactStore } from "../src/adapters/artifacts/durable-artifact-store.js";
+import { RetentionEnforcedArtifactStore } from "../src/adapters/market-acquisition/retention/artifact-access.js";
+import { DefaultArtifactRetentionController } from "../src/adapters/market-acquisition/retention/controller.js";
+import { MemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
+import { ALPACA_PRIVATE_ARTIFACT_POLICY } from "../src/adapters/market-acquisition/private-artifact-policy.js";
 import { artifactRuntimePaths } from "../src/adapters/artifacts/runtime-root.js";
 import { SqliteArtifactRepository } from "../src/adapters/artifacts/sqlite-artifact-repository.js";
 import { loadRecordedMarketFixture } from "../src/adapters/market-reference/recorded-market-loader.js";
@@ -291,9 +295,49 @@ test("checked bytes survive durable ArtifactStore restart and observation page s
     }),
   );
   try {
+    const retention = new DefaultArtifactRetentionController({
+      journal: new MemoryArtifactRetentionJournal(),
+      artifacts: {
+        settleActiveReadersAndWriters: () => store.settleForRetention(),
+        async eraseDigestCopies(artifactDigest) {
+          return {
+            artifactDigest,
+            erasedCopies: { content: 0, staging: 0, snapshot: 0, quarantine: 0 },
+            alreadyAbsent: true,
+          };
+        },
+        async verifyDigestCopiesAbsent() {
+          return true;
+        },
+      },
+      nowMs: () => clock.nowMs(),
+    });
+    const authorityId = (prefix: string, member: string): string =>
+      `${prefix}_${canonicalHash("peas/market-reference-persistence-retention/v1", { member })}`;
+    for (const seed of authority.seeds) {
+      const member = authority.manifest.retrievedMembers.find((value) => value.role === seed.role);
+      assert.ok(member !== undefined);
+      retention.registerOwnership({
+        policyId: ALPACA_PRIVATE_ARTIFACT_POLICY.policyId,
+        providerLane: "alpaca",
+        providerId: authorityId("mpv1", seed.attempt.provider),
+        datasetId: authorityId("mds1", "dataset"),
+        feedId: authorityId("mfd1", "feed"),
+        endpointChannelId: authorityId("mec1", seed.role),
+        artifactObservationId: authorityId("aob1", member.selectedObservationId),
+        artifactDigest: seed.artifactHash,
+        artifactSizeBytes: seed.sizeBytes,
+        derivedIds: [],
+        trustedCaptureMs: seed.retrievedAtMs,
+        expiresAtMs: seed.retrievedAtMs + ALPACA_PRIVATE_ARTIFACT_POLICY.maximumRetentionMs,
+      });
+    }
     const durable = await bounded(
       "restarted recorded fixture load",
-      loadRecordedMarketFixture(store, authority.manifest),
+      loadRecordedMarketFixture(
+        new RetentionEnforcedArtifactStore(store, retention),
+        authority.manifest,
+      ),
     );
     assert.equal(durable.status, "verified");
     assert.equal(canonical(durable.normalizedFacts), canonical(memory.result.normalizedFacts));

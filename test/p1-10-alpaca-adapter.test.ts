@@ -18,8 +18,9 @@ import type {
   AlpacaTransport,
   AlpacaTransportRequest,
   AlpacaTransportResponse,
-  AlpacaVerifiedPageSink,
+  AlpacaArtifactCommitSink,
 } from "../src/adapters/market-acquisition/alpaca/contracts.js";
+import { RetentionOwnedAlpacaPageSink } from "../src/adapters/market-acquisition/alpaca/retained-sink.js";
 import { openSqliteDatabase } from "../src/adapters/sqlite/database.js";
 import { decideAcquisitionRestart } from "../src/adapters/market-acquisition/artifact-integration.js";
 import {
@@ -30,10 +31,8 @@ import {
   type ValidatedMarketAcquisitionConfiguration,
 } from "../src/adapters/market-acquisition/contracts.js";
 import { validateMarketAcquisitionConfiguration } from "../src/adapters/market-acquisition/configuration.js";
-import type {
-  AlpacaAuthorizationHeaders,
-  CredentialAuthorizationEvidence,
-} from "../src/adapters/market-acquisition/credentials.js";
+import type { AlpacaAuthorizationHeaders } from "../src/adapters/market-acquisition/credentials.js";
+import { createCredentialIsolatedAlpacaTransport } from "../src/adapters/market-acquisition/credentials.js";
 import {
   ALPACA_ROUTE_REGISTRY,
   ZERO_SPEND_POLICY_ID,
@@ -57,6 +56,9 @@ import {
   type RetryFailure,
 } from "../src/adapters/market-acquisition/retry.js";
 import { SqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
+import { DefaultArtifactRetentionController } from "../src/adapters/market-acquisition/retention/controller.js";
+import type { RetentionArtifactBoundary } from "../src/adapters/market-acquisition/retention/contracts.js";
+import { MemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
 import {
   AcquisitionStateMachine,
   createInitialAcquisitionSnapshot,
@@ -64,7 +66,11 @@ import {
   type AcquisitionMachineSnapshot,
   type AcquisitionTransitionPlan,
 } from "../src/adapters/market-acquisition/state-machine.js";
-import { ALLOW_ALL_RETENTION, credentialEvidence } from "./p1-10-repair-fixtures.js";
+import {
+  ALLOW_ALL_RETENTION,
+  credentialAuthorizationFixture,
+  retentionGuardedArtifactStore,
+} from "./p1-10-repair-fixtures.js";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 let unexpectedNetworkCalls = 0;
@@ -91,38 +97,63 @@ const HEADERS: AlpacaAuthorizationHeaders = Object.freeze({
   "APCA-API-SECRET-KEY": "y",
 });
 
+function adapterRetention(): DefaultArtifactRetentionController {
+  const artifacts: RetentionArtifactBoundary = {
+    async settleActiveReadersAndWriters() {
+      return true;
+    },
+    async eraseDigestCopies(artifactDigest) {
+      return {
+        artifactDigest,
+        erasedCopies: { content: 0, staging: 0, snapshot: 0, quarantine: 0 },
+        alreadyAbsent: true,
+      };
+    },
+    async verifyDigestCopiesAbsent() {
+      return true;
+    },
+  };
+  return new DefaultArtifactRetentionController({
+    journal: new MemoryArtifactRetentionJournal(),
+    artifacts,
+    nowMs: () => 0,
+  });
+}
+
 async function executeAlpacaAttempt<T>(
   input: Readonly<{
     plan: ValidatedMarketAcquisitionConfiguration;
     page: AlpacaPageAuthority;
     authorizationHeaders: AlpacaAuthorizationHeaders;
     transport: AlpacaTransport;
-    artifactSink: AlpacaVerifiedPageSink<T>;
+    artifactSink: AlpacaArtifactCommitSink<T>;
     deadlineScheduler: AlpacaDeadlineScheduler;
     acquisitionDeclaredMonotonicMs?: number;
     nowMonotonicMs?: number;
   }>,
 ) {
   assert.equal(Object.isFrozen(input.authorizationHeaders), true);
-  const boundary = new AlpacaProductionAttemptBoundary({
-    read(name) {
-      return name.endsWith("KEY_ID")
-        ? input.authorizationHeaders["APCA-API-KEY-ID"]
-        : input.authorizationHeaders["APCA-API-SECRET-KEY"];
+  const credentialFixture = await credentialAuthorizationFixture(input.plan);
+  const boundary = new AlpacaProductionAttemptBoundary(
+    {
+      read(name) {
+        return name.endsWith("KEY_ID")
+          ? input.authorizationHeaders["APCA-API-KEY-ID"]
+          : input.authorizationHeaders["APCA-API-SECRET-KEY"];
+      },
     },
-  });
-  let evidence: CredentialAuthorizationEvidence;
-  try {
-    evidence = credentialEvidence(input.plan);
-  } catch {
-    evidence = { kind: "p1-10-durable-credential-evidence" as const };
-  }
+    credentialFixture.authorization,
+  );
   return boundary.execute({
     plan: input.plan,
-    evidence,
+    credentialAuthorization: credentialFixture.request,
     page: input.page,
-    transport: input.transport,
-    artifactSink: input.artifactSink,
+    transport: createCredentialIsolatedAlpacaTransport({
+      dispatch: (request) => input.transport.dispatch(request, {} as never),
+      abort: () => input.transport.abort(),
+      settle: () => input.transport.settle(),
+    }),
+    artifactSink: new RetentionOwnedAlpacaPageSink(input.artifactSink, adapterRetention()),
     deadlineScheduler: input.deadlineScheduler,
     acquisitionDeclaredMonotonicMs: input.acquisitionDeclaredMonotonicMs ?? 0,
     nowMonotonicMs: input.nowMonotonicMs ?? 0,
@@ -299,7 +330,7 @@ class BodyDouble extends ResourceDouble implements AlpacaResponseBody {
   }
 }
 
-class SinkDouble extends ResourceDouble implements AlpacaVerifiedPageSink<string> {
+class SinkDouble extends ResourceDouble implements AlpacaArtifactCommitSink<string> {
   bytes = 0;
   constructor(
     counters: ResourceCounts,
@@ -313,9 +344,28 @@ class SinkDouble extends ResourceDouble implements AlpacaVerifiedPageSink<string
     if (this.failWrite) throw new Error("synthetic sink failure");
     this.bytes += bytes.byteLength;
   }
-  async completeVerifyAndRegisterOwnership(): Promise<string> {
-    this.counters.complete += 1;
-    return `verified:${this.bytes}`;
+  async prepareVerifiedCommit() {
+    const bytes = this.bytes;
+    return Object.freeze({
+      ownership: Object.freeze({
+        policyId: "p1-10-alpaca-private-retention-v1",
+        providerLane: "alpaca" as const,
+        providerId: `mpv1_${"1".repeat(64)}`,
+        datasetId: `mds1_${"2".repeat(64)}`,
+        feedId: `mfd1_${"3".repeat(64)}`,
+        endpointChannelId: `mec1_${"4".repeat(64)}`,
+        artifactObservationId: `mao1_${"5".repeat(64)}`,
+        artifactDigest: "6".repeat(64),
+        artifactSizeBytes: bytes,
+        derivedIds: [],
+        trustedCaptureMs: 0,
+        expiresAtMs: 1,
+      }),
+      commit: async () => {
+        this.counters.complete += 1;
+        return `verified:${bytes}`;
+      },
+    });
   }
 }
 
@@ -397,6 +447,35 @@ class PendingSettleTimer extends TimerDouble {
   override arm(delayMs: number): AlpacaDeadlineHandle {
     const handle = super.arm(delayMs);
     return { ...handle, settle: neverSettles };
+  }
+}
+
+class CancelDependentTimer implements AlpacaDeadlineScheduler {
+  #expire: (() => void) | null = null;
+  #settle: (() => void) | null = null;
+  cancelled = 0;
+  settled = 0;
+  arm(): AlpacaDeadlineHandle {
+    const expired = new Promise<void>((resolve) => {
+      this.#expire = resolve;
+    });
+    const settled = new Promise<void>((resolve) => {
+      this.#settle = resolve;
+    });
+    return {
+      expired,
+      cancel: () => {
+        this.cancelled += 1;
+        this.#settle?.();
+      },
+      settle: async () => {
+        this.settled += 1;
+        await settled;
+      },
+    };
+  }
+  expire(): void {
+    this.#expire?.();
   }
 }
 
@@ -839,8 +918,7 @@ test("clean adapter retry has byte-identical memory and SQLite restart boundarie
         journalId: memoryBoundary.journalId,
         expectedIdentity: memoryBoundary.identity,
         expectedConfigurationHash: plan.acquisitionConfigurationHash,
-        artifactStore: {} as ArtifactStore,
-        retention: ALLOW_ALL_RETENTION,
+        artifactStore: retentionGuardedArtifactStore({} as ArtifactStore, []),
       }),
       { kind: "fresh-attempt", pageOrdinal: 0, transportAllowed: true },
     );
@@ -867,8 +945,7 @@ test("clean adapter retry has byte-identical memory and SQLite restart boundarie
         journalId: sqliteBoundary.journalId,
         expectedIdentity: sqliteBoundary.identity,
         expectedConfigurationHash: plan.acquisitionConfigurationHash,
-        artifactStore: {} as ArtifactStore,
-        retention: ALLOW_ALL_RETENTION,
+        artifactStore: retentionGuardedArtifactStore({} as ArtifactStore, []),
       }),
       { kind: "fresh-attempt", pageOrdinal: 0, transportAllowed: true },
     );
@@ -920,9 +997,8 @@ test("frozen quotes, trades, and bars compile exact GET route and closed query p
     );
     assert.equal(transport.request?.query.find(([field]) => field === "feed")?.[1], "sip");
     assert.equal(transport.request?.query.find(([field]) => field === "sort")?.[1], "asc");
-    assert.equal(Object.isFrozen(transport.request?.authorizationHeaders), true);
-    assert.notEqual(transport.request?.authorizationHeaders, HEADERS);
-    assert.deepEqual(transport.request?.authorizationHeaders, HEADERS);
+    assert.equal("authorizationHeaders" in (transport.request ?? {}), false);
+    assert.equal(JSON.stringify(transport.request).includes("APCA-API"), false);
     assert.equal(timer.armedWith, 30_000);
   }
   assert.equal(unexpectedNetworkCalls, 0);
@@ -962,6 +1038,40 @@ test("production boundary uses the minimum remaining acquisition budget and reje
   assert.equal(oneTimer.armedWith, 1);
 });
 
+test("caller and test-double sinks cannot attest atomic artifact ownership", async () => {
+  const plan = validatedPlan();
+  assert.throws(
+    () => new RetentionOwnedAlpacaPageSink(new SinkDouble(counts()), ALLOW_ALL_RETENTION),
+    /owned-artifact-retention-controller-required/u,
+  );
+  const credentialFixture = await credentialAuthorizationFixture(plan);
+  let credentialReads = 0;
+  const boundary = new AlpacaProductionAttemptBoundary(
+    {
+      read() {
+        credentialReads += 1;
+        return "unreachable";
+      },
+    },
+    credentialFixture.authorization,
+  );
+  const counters = counts();
+  const result = await boundary.execute({
+    plan,
+    credentialAuthorization: credentialFixture.request,
+    page: firstPage(),
+    transport: new TransportDouble(counters, response(new BodyDouble(counters, []))),
+    artifactSink: new SinkDouble(counters) as never,
+    deadlineScheduler: new TimerDouble(),
+    acquisitionDeclaredMonotonicMs: 0,
+    nowMonotonicMs: 0,
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.error.reasonCode, "configuration-invalid");
+  assert.equal(credentialReads, 0);
+  assert.equal(counters.transport, 0);
+});
+
 test("15-minute equality dispatches and one nanosecond newer stops before transport", async () => {
   const equality = validateMarketAcquisitionConfiguration(configuration("quotes", BOUNDARY_NS));
   assert.equal(equality.ok, true);
@@ -996,6 +1106,99 @@ test("forged validated plans and unauthorized first-page continuation reject wit
     assert.equal(counters.transport, 0);
     assert.equal(counters.write, 0);
   }
+});
+
+test("all non-secret request, scheduler, and transport rejection precedes credential claim", async () => {
+  const plan = validatedPlan();
+  const invalidContinuation = {
+    ...continuationPage(plan),
+    currentTokenHash: "0".repeat(64),
+  } as AlpacaPageAuthority;
+  for (const rejection of ["continuation", "scheduler", "scheduler-handle", "transport"] as const) {
+    const fixture = await credentialAuthorizationFixture(plan);
+    const counters = counts();
+    let credentialReads = 0;
+    const rawTransport = new TransportDouble(counters, response(new BodyDouble(counters, [])));
+    const isolatedTransport = createCredentialIsolatedAlpacaTransport({
+      dispatch: (request) => rawTransport.dispatch(request),
+      abort: () => rawTransport.abort(),
+      settle: () => rawTransport.settle(),
+    });
+    const boundary = new AlpacaProductionAttemptBoundary(
+      {
+        read() {
+          credentialReads += 1;
+          return "must-not-be-read";
+        },
+      },
+      fixture.authorization,
+    );
+    const result = await boundary.execute({
+      plan,
+      credentialAuthorization: fixture.request,
+      page: rejection === "continuation" ? invalidContinuation : firstPage(),
+      transport: rejection === "transport" ? rawTransport : isolatedTransport,
+      artifactSink: new RetentionOwnedAlpacaPageSink(new SinkDouble(counters), adapterRetention()),
+      deadlineScheduler:
+        rejection === "scheduler"
+          ? ({ arm: null } as unknown as AlpacaDeadlineScheduler)
+          : rejection === "scheduler-handle"
+            ? ({ arm: () => Object.freeze({}) } as unknown as AlpacaDeadlineScheduler)
+            : new TimerDouble(),
+      acquisitionDeclaredMonotonicMs: 0,
+      nowMonotonicMs: 0,
+    });
+    assert.equal(result.ok, false, rejection);
+    assert.equal(credentialReads, 0, rejection);
+    assert.equal(counters.transport, 0, rejection);
+    const journal = await fixture.journal.load(fixture.request.marketAcquisitionJournalId);
+    assert.equal(journal.at(-1)?.checkpointKind, "request-started", rejection);
+  }
+});
+
+test("a hostile retained transport request contains no plaintext credential surface", async () => {
+  const plan = validatedPlan();
+  const fixture = await credentialAuthorizationFixture(plan);
+  const counters = counts();
+  let retained: AlpacaTransportRequest | null = null;
+  const rawTransport = new TransportDouble(counters, response(new BodyDouble(counters, [])));
+  const transport = createCredentialIsolatedAlpacaTransport({
+    async dispatch(request) {
+      retained = request;
+      return rawTransport.dispatch(request);
+    },
+    abort: () => rawTransport.abort(),
+    settle: () => rawTransport.settle(),
+  });
+  let reads = 0;
+  const boundary = new AlpacaProductionAttemptBoundary(
+    {
+      read(name) {
+        reads += 1;
+        return name.endsWith("KEY_ID") ? "hostile-key-sentinel" : "hostile-secret-sentinel";
+      },
+    },
+    fixture.authorization,
+  );
+  const result = await boundary.execute({
+    plan,
+    credentialAuthorization: fixture.request,
+    page: firstPage(),
+    transport,
+    artifactSink: new RetentionOwnedAlpacaPageSink(new SinkDouble(counters), adapterRetention()),
+    deadlineScheduler: new TimerDouble(),
+    acquisitionDeclaredMonotonicMs: 0,
+    nowMonotonicMs: 0,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(reads, 2);
+  assert.ok(retained !== null);
+  assert.equal("authorizationHeaders" in retained, false);
+  assert.equal(
+    JSON.stringify(retained).includes("hostile-key-sentinel") ||
+      JSON.stringify(retained).includes("hostile-secret-sentinel"),
+    false,
+  );
 });
 
 test("verified continuation binding adds one opaque page field and substitutions reject", async () => {
@@ -1227,6 +1430,55 @@ test("successful verified-page completion settles every resource before return",
   const snapshot = { ...counters };
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(counters, snapshot);
+});
+
+test("timer cancellation precedes settlement on success, failure, and deadline paths", async () => {
+  const successCounters = counts();
+  const successTimer = new CancelDependentTimer();
+  const success = await executeAlpacaAttempt({
+    plan: validatedPlan(),
+    page: firstPage(),
+    authorizationHeaders: HEADERS,
+    transport: new TransportDouble(successCounters, response(new BodyDouble(successCounters, []))),
+    artifactSink: new SinkDouble(successCounters),
+    deadlineScheduler: successTimer,
+  });
+  assert.equal(success.ok, true);
+  assert.deepEqual([successTimer.cancelled, successTimer.settled], [1, 1]);
+
+  const failureCounters = counts();
+  const failureTimer = new CancelDependentTimer();
+  const failure = await executeAlpacaAttempt({
+    plan: validatedPlan(),
+    page: firstPage(),
+    authorizationHeaders: HEADERS,
+    transport: new TransportDouble(
+      failureCounters,
+      response(new BodyDouble(failureCounters, []), { status: 500 }),
+    ),
+    artifactSink: new SinkDouble(failureCounters),
+    deadlineScheduler: failureTimer,
+  });
+  assert.equal(failure.ok, false);
+  if (!failure.ok) assert.equal(failure.resourcesSettled, true);
+  assert.deepEqual([failureTimer.cancelled, failureTimer.settled], [1, 1]);
+
+  const deadlineCounters = counts();
+  const deadlineTimer = new CancelDependentTimer();
+  const pending = executeAlpacaAttempt({
+    plan: validatedPlan(),
+    page: firstPage(),
+    authorizationHeaders: HEADERS,
+    transport: new HangingTransport(deadlineCounters),
+    artifactSink: new SinkDouble(deadlineCounters),
+    deadlineScheduler: deadlineTimer,
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  deadlineTimer.expire();
+  const deadline = await pending;
+  assert.equal(deadline.ok, false);
+  if (!deadline.ok) assert.equal(deadline.resourcesSettled, true);
+  assert.deepEqual([deadlineTimer.cancelled, deadlineTimer.settled], [1, 1]);
 });
 
 test("pending-forever body, sibling, sink, transport, abort, destroy, and timer settlement cannot exceed the absolute attempt deadline", async () => {

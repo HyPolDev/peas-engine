@@ -704,11 +704,11 @@ export class AcquisitionStateMachine {
   #snapshot: AcquisitionMachineSnapshot;
   readonly #persist: PersistTransitionPlan;
 
-  constructor(
-    snapshot: AcquisitionMachineSnapshot,
-    persist: PersistTransitionPlan = async () => {},
-  ) {
+  constructor(snapshot: AcquisitionMachineSnapshot, persist: PersistTransitionPlan) {
     validateSnapshot(snapshot);
+    if (typeof persist !== "function") {
+      throw new TypeError("acquisition-durable-persistence-required");
+    }
     this.#snapshot = immutableSnapshot(snapshot);
     this.#persist = persist;
   }

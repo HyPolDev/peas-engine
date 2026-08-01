@@ -9,14 +9,13 @@ import {
   type ObservationLedgerEntryV1,
   type ObservationLedgerFactsV1,
 } from "../../providers/observation-ledger.js";
-import type { ArtifactStore } from "../../artifacts/artifact-store.js";
 import {
   type CommittedArtifactExpectation,
   verifyCommittedArtifact,
 } from "./artifact-integration.js";
 import type { JournalEntry, JournalIdentityInput } from "./journal.js";
 import { validateJournalEntries } from "./journal.js";
-import type { ArtifactRetentionController } from "./retention/contracts.js";
+import type { RetentionEnforcedArtifactStore } from "./retention/artifact-access.js";
 
 function sortIds(values: readonly string[]): readonly string[] {
   return Object.freeze(
@@ -110,8 +109,7 @@ export function replayAcquisitionLedger(
 
 export async function replayVerifiedAcquisition(
   input: Readonly<{
-    artifactStore: ArtifactStore;
-    retention: ArtifactRetentionController;
+    artifactStore: RetentionEnforcedArtifactStore;
     artifacts: readonly CommittedArtifactExpectation[];
     ledger: readonly ObservationLedgerEntryV1[];
     executionId: string;
@@ -178,7 +176,7 @@ export async function replayVerifiedAcquisition(
   for (const artifact of [...supplied.values()].sort((left, right) =>
     left.artifactObservationId.localeCompare(right.artifactObservationId),
   )) {
-    await verifyCommittedArtifact(input.artifactStore, artifact, input.retention);
+    await verifyCommittedArtifact(input.artifactStore, artifact);
   }
   return replayAcquisitionLedger(ledger, input.executionId, input.pageSize);
 }

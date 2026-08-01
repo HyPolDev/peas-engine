@@ -139,4 +139,58 @@ export class SqliteAcquisitionJournal implements AcquisitionJournal {
       })
       .immediate();
   }
+
+  async claimAttemptStarted(
+    expectedRequestStartedHash: string,
+    entry: JournalEntry,
+  ): Promise<boolean> {
+    if (entry.checkpointKind !== "attempt-started") return false;
+    const entryJson = canonicalJson(entry as unknown as JsonValue);
+    assertJsonWithinLimits(entry as unknown as JsonValue, JOURNAL_ENTRY_LIMITS);
+    return this.#database
+      .transaction(() => {
+        const rows = this.#database
+          .prepare(
+            `SELECT journal_sequence, entry_json
+             FROM market_acquisition_journal_entries
+             WHERE market_acquisition_journal_id = ?
+             ORDER BY journal_sequence`,
+          )
+          .all(this.#journalId) as JournalRow[];
+        const current = rows.map((row, index) => {
+          if (row.journal_sequence !== BigInt(index)) throw new TypeError("journal-sequence-gap");
+          return parseEntry(row.entry_json);
+        });
+        const latest = current.at(-1);
+        if (
+          latest?.checkpointKind !== "request-started" ||
+          latest.journalEntryHash !== expectedRequestStartedHash
+        ) {
+          return false;
+        }
+        const claimed = parseEntry(entryJson);
+        validateJournalEntries([...current, claimed], this.#expectedIdentity);
+        this.#database
+          .prepare(
+            `INSERT INTO market_acquisition_journal_entries (
+              market_acquisition_journal_id,
+              journal_sequence,
+              prior_journal_entry_hash,
+              journal_entry_hash,
+              checkpoint_kind,
+              entry_json
+            ) VALUES (?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            this.#journalId,
+            BigInt(entry.journalSequence),
+            entry.priorJournalEntryHash,
+            entry.journalEntryHash,
+            entry.checkpointKind,
+            entryJson,
+          );
+        return true;
+      })
+      .immediate();
+  }
 }

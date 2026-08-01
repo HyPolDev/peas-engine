@@ -203,7 +203,11 @@ test("the integrated reducer completes one page and persists each plan before mu
 });
 
 test("rejected evidence and failed durable append are byte-atomic", async () => {
-  const machine = new AcquisitionStateMachine(initialSnapshot());
+  assert.throws(
+    () => new AcquisitionStateMachine(initialSnapshot(), undefined as never),
+    /durable-persistence-required/u,
+  );
+  const machine = new AcquisitionStateMachine(initialSnapshot(), async () => {});
   const before = canonicalJson(machine.snapshot as unknown as JsonValue);
   await assert.rejects(
     () =>
@@ -321,7 +325,7 @@ test("retry policy is closed across status, Retry-After, identity, and budget ca
 });
 
 test("retry keeps a logical page stable and creates a fresh physical attempt", async () => {
-  const machine = new AcquisitionStateMachine(initialSnapshot());
+  const machine = new AcquisitionStateMachine(initialSnapshot(), async () => {});
   await advanceToActive(machine);
   const logicalPage = machine.snapshot.logicalPageIdentityHash;
   const firstAttempt = machine.snapshot.attemptId;
@@ -383,7 +387,7 @@ test("retry keeps a logical page stable and creates a fresh physical attempt", a
 });
 
 test("production retry transition refuses to wait when a full next attempt cannot fit", async () => {
-  const machine = new AcquisitionStateMachine(initialSnapshot());
+  const machine = new AcquisitionStateMachine(initialSnapshot(), async () => {});
   await advanceToActive(machine);
   await assert.rejects(
     () =>

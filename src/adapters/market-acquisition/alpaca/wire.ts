@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import { isProxy } from "node:util/types";
 
 import { canonicalHash } from "../../../core/hash.js";
@@ -16,11 +17,16 @@ import {
 } from "../../../providers/market-reference/normalization.js";
 import {
   TERMINAL_TOKEN_HASH,
+  deriveMarketAcquisitionJournalId,
   derivePrivateTokenHash,
+  type AcquisitionJournal,
   type JournalEntry,
   type JournalIdentityInput,
   validateJournalEntries,
 } from "../journal.js";
+import type { ValidatedMarketAcquisitionConfiguration } from "../contracts.js";
+import { assertValidatedMarketAcquisitionConfiguration } from "../configuration.js";
+import { ALPACA_ROUTE_REGISTRY } from "../identity.js";
 
 export type AlpacaWireEndpointKind = "quotes" | "trades" | "bars";
 type PlainRecord = Record<string, unknown>;
@@ -75,6 +81,31 @@ export type AlpacaWireChainResolution = Readonly<{
   barObservationCount: number;
 }>;
 
+type AuthenticatedAdmissionBinding = Readonly<{
+  artifactDigest: string;
+  artifactSizeBytes: number;
+  admissionHash: string;
+}>;
+
+const authenticatedAdmissions = new WeakMap<object, AuthenticatedAdmissionBinding>();
+const wireAdmissionAuthorities = new WeakMap<
+  object,
+  Readonly<{
+    endpointKind: AlpacaWireEndpointKind;
+    artifactDigest: string;
+    artifactSizeBytes: number;
+    context: AlpacaWireParseContext;
+  }>
+>();
+
+export type AlpacaWireAdmissionAuthority = Readonly<{
+  kind: "p1-10-durable-wire-admission-authority";
+}>;
+
+export const ALPACA_WIRE_CALENDAR_VERSION = "peas-p1-10-original-synthetic-calendar-v1" as const;
+const ALPACA_WIRE_DURABLE_CLOCK_BASIS_ID = `clk1_${"e".repeat(64)}`;
+const ALPACA_WIRE_DURABLE_RECORDED_MS = 1_998_976_380_000;
+
 export type AlpacaWireParseContext = Readonly<{
   requestedSymbols: readonly string[];
   instrumentIds: Readonly<Record<string, string>>;
@@ -92,6 +123,95 @@ export type AlpacaWireParseContext = Readonly<{
   timeframe: "1Min";
   adjustment: "raw";
 }>;
+
+/** Issues page semantics only from a validated plan and an exact durable artifact checkpoint. */
+export class DurableAlpacaWireAdmissionBoundary {
+  readonly #journal: AcquisitionJournal;
+
+  constructor(journal: AcquisitionJournal) {
+    this.#journal = journal;
+  }
+
+  async issue(
+    input: Readonly<{
+      plan: ValidatedMarketAcquisitionConfiguration;
+      expectedIdentity: JournalIdentityInput;
+      marketAcquisitionJournalId: string;
+    }>,
+  ): Promise<AlpacaWireAdmissionAuthority> {
+    const { plan } = input;
+    try {
+      assertValidatedMarketAcquisitionConfiguration(plan);
+    } catch {
+      reject("page-semantic-authority-invalid");
+    }
+    if (
+      !Object.isFrozen(plan) ||
+      plan.route !== ALPACA_ROUTE_REGISTRY[plan.kind] ||
+      input.marketAcquisitionJournalId !== deriveMarketAcquisitionJournalId(input.expectedIdentity)
+    ) {
+      reject("page-semantic-authority-invalid");
+    }
+    const journal = await this.#journal.load(input.marketAcquisitionJournalId);
+    validateJournalEntries(journal, input.expectedIdentity);
+    const latest = journal.at(-1);
+    if (latest === undefined) {
+      throw new AlpacaWireContractError("page-semantic-authority-invalid");
+    }
+    if (
+      latest.checkpointKind !== "artifact-verified" ||
+      latest.requestIdentityHash !== plan.requestIdentityHash ||
+      latest.acquisitionConfigurationHash !== plan.acquisitionConfigurationHash ||
+      latest.providerId !== plan.route.providerId ||
+      latest.datasetId !== plan.route.datasetId ||
+      latest.feedId !== plan.route.feedId ||
+      latest.endpointChannelId !== plan.route.endpointChannelId ||
+      latest.artifactDigest === null ||
+      latest.artifactSizeBytes === null ||
+      latest.rawArtifactId === null
+    ) {
+      throw new AlpacaWireContractError("page-semantic-authority-invalid");
+    }
+    const artifactDigest = latest.artifactDigest;
+    const artifactSizeBytes = latest.artifactSizeBytes;
+    const rawArtifactId = latest.rawArtifactId;
+    if (artifactDigest === null || artifactSizeBytes === null || rawArtifactId === null) {
+      throw new AlpacaWireContractError("page-semantic-authority-invalid");
+    }
+    const context: AlpacaWireParseContext = Object.freeze({
+      requestedSymbols: Object.freeze(plan.instruments.map((value) => value.symbol)),
+      instrumentIds: Object.freeze(
+        Object.fromEntries(plan.instruments.map((value) => [value.symbol, value.instrumentId])),
+      ),
+      queryStartNs: BigInt(plan.queryStartNs),
+      queryEndNs: BigInt(plan.queryEndNs),
+      entitlementSnapshotId: plan.entitlementSnapshotId,
+      marketAcquisitionId: latest.marketAcquisitionId,
+      rawArtifactId,
+      calendarVersion: ALPACA_WIRE_CALENDAR_VERSION,
+      durableClockBasisId: ALPACA_WIRE_DURABLE_CLOCK_BASIS_ID,
+      durablyRecordedAtMs: ALPACA_WIRE_DURABLE_RECORDED_MS,
+      durableLogicalAtMs: ALPACA_WIRE_DURABLE_RECORDED_MS,
+      sessionKind: "regular-continuous",
+      primaryCorpusMember: true,
+      timeframe: "1Min",
+      adjustment: "raw",
+    });
+    const authority = Object.freeze({
+      kind: "p1-10-durable-wire-admission-authority" as const,
+    });
+    wireAdmissionAuthorities.set(
+      authority,
+      Object.freeze({
+        endpointKind: plan.kind as AlpacaWireEndpointKind,
+        artifactDigest,
+        artifactSizeBytes,
+        context,
+      }),
+    );
+    return authority;
+  }
+}
 
 export class AlpacaWireContractError extends Error {
   constructor(readonly code: string) {
@@ -924,9 +1044,51 @@ export function admitAlpacaHistoricalPage(
 export function parseAndAdmitAlpacaHistoricalPage(
   kind: AlpacaWireEndpointKind,
   bytes: Uint8Array,
-  context: AlpacaWireParseContext,
+  authority: AlpacaWireAdmissionAuthority,
 ): AlpacaWirePageAdmission {
-  return admitAlpacaHistoricalPage(kind, decodeAlpacaHistoricalJson(bytes), context);
+  const snapshot = Buffer.from(bytes);
+  const binding = wireAdmissionAuthorities.get(authority);
+  const artifactDigest = createHash("sha256").update(snapshot).digest("hex");
+  if (
+    binding === undefined ||
+    binding.endpointKind !== kind ||
+    binding.artifactDigest !== artifactDigest ||
+    binding.artifactSizeBytes !== snapshot.byteLength
+  ) {
+    snapshot.fill(0);
+    return reject("page-semantic-authority-invalid");
+  }
+  wireAdmissionAuthorities.delete(authority);
+  const admission = admitAlpacaHistoricalPage(
+    kind,
+    decodeAlpacaHistoricalJson(snapshot),
+    binding.context,
+  );
+  authenticatedAdmissions.set(
+    admission,
+    Object.freeze({
+      artifactDigest,
+      artifactSizeBytes: snapshot.byteLength,
+      admissionHash: canonicalHash(
+        "peas/alpaca-authenticated-page-admission/v1",
+        admission as unknown as JsonValue,
+      ),
+    }),
+  );
+  snapshot.fill(0);
+  return admission;
+}
+
+/** Read-only artifact identity for constructing the durable page checkpoint. */
+export function authenticatedAlpacaAdmissionArtifact(
+  admission: AlpacaWirePageAdmission,
+): Readonly<{ artifactDigest: string; artifactSizeBytes: number }> {
+  const binding = authenticatedAdmissions.get(admission);
+  if (binding === undefined) return reject("page-semantic-evidence-invalid");
+  return Object.freeze({
+    artifactDigest: binding.artifactDigest,
+    artifactSizeBytes: binding.artifactSizeBytes,
+  });
 }
 
 function semanticRecordProjection(record: RecordedMarketRecordV1): JsonValue {
@@ -960,6 +1122,19 @@ export function resolveAlpacaHistoricalChain(
   let terminalCount = 0;
   for (const [index, admission] of admissions.entries()) {
     const page = pages[index] ?? reject("page-chain-incomplete");
+    const authenticated = authenticatedAdmissions.get(admission);
+    if (
+      authenticated === undefined ||
+      authenticated.admissionHash !==
+        canonicalHash(
+          "peas/alpaca-authenticated-page-admission/v1",
+          admission as unknown as JsonValue,
+        ) ||
+      page.artifactDigest !== authenticated.artifactDigest ||
+      page.artifactSizeBytes !== authenticated.artifactSizeBytes
+    ) {
+      reject("page-semantic-evidence-invalid");
+    }
     if (
       page.pageOrdinal !== index ||
       page.marketAcquisitionId !== admission.marketAcquisitionId ||

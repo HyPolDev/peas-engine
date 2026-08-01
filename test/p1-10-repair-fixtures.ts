@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 
+import type { ArtifactStore } from "../src/artifacts/artifact-store.js";
 import { canonicalHash } from "../src/core/hash.js";
 import { MarketAcquisitionLedger } from "../src/adapters/market-acquisition/artifact-integration.js";
 import { validateMarketAcquisitionConfiguration } from "../src/adapters/market-acquisition/configuration.js";
@@ -10,9 +11,8 @@ import {
   type ValidatedMarketAcquisitionConfiguration,
 } from "../src/adapters/market-acquisition/contracts.js";
 import {
-  establishCredentialAuthorizationEvidence,
-  type CredentialAuthorizationEvidence,
-  type CredentialAuthorizationInput,
+  DurableCredentialAuthorizationBoundary,
+  type CredentialAuthorizationRequest,
 } from "../src/adapters/market-acquisition/credentials.js";
 import {
   ALPACA_ROUTE_REGISTRY,
@@ -30,9 +30,19 @@ import {
   journalEntryBody,
   type JournalCheckpointBody,
 } from "../src/adapters/market-acquisition/journal.js";
-import type { AlpacaWirePageAdmission } from "../src/adapters/market-acquisition/alpaca/wire.js";
+import { MemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
+import {
+  authenticatedAlpacaAdmissionArtifact,
+  type AlpacaWirePageAdmission,
+} from "../src/adapters/market-acquisition/alpaca/wire.js";
 import { MemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
-import type { ArtifactRetentionController } from "../src/adapters/market-acquisition/retention/contracts.js";
+import { DefaultArtifactRetentionController } from "../src/adapters/market-acquisition/retention/controller.js";
+import { RetentionEnforcedArtifactStore } from "../src/adapters/market-acquisition/retention/artifact-access.js";
+import { ALPACA_PRIVATE_ARTIFACT_POLICY } from "../src/adapters/market-acquisition/private-artifact-policy.js";
+import type {
+  ArtifactRetentionController,
+  RetentionOwnership,
+} from "../src/adapters/market-acquisition/retention/contracts.js";
 import { deriveAcquisitionObservationId } from "../src/providers/observation-ledger.js";
 
 const WALL_NS = 1_800_000_000_000_000_000n;
@@ -47,15 +57,76 @@ const CLOCK_BASIS_ID = `clk1_${canonicalHash("peas/clock-basis/v1", {
 })}`;
 
 export const ALLOW_ALL_RETENTION: ArtifactRetentionController = Object.freeze({
-  registerOwnership() {
-    throw new Error("unused test retention registration");
+  registerOwnership(input: Omit<RetentionOwnership, "ownershipId">) {
+    return Object.freeze({ ...input, ownershipId: `own1_${"f".repeat(64)}` });
   },
   async enforceStop() {
     throw new Error("unused test retention stop");
   },
+  async commitArtifact<T>(
+    _input: Omit<RetentionOwnership, "ownershipId">,
+    commit: () => Promise<T>,
+  ): Promise<T> {
+    return commit();
+  },
+  registerDerivedLineage() {},
+  beginUse() {
+    return Object.freeze({ assertAllowed() {}, onStop() {}, release() {} });
+  },
   assertArtifactUseAllowed() {},
   assertDerivedUseAllowed() {},
 });
+
+export function retentionGuardedArtifactStore(
+  store: ArtifactStore,
+  artifacts: readonly Readonly<{
+    artifactDigest: string;
+    artifactSizeBytes: number;
+    artifactObservationId?: string;
+  }>[],
+): RetentionEnforcedArtifactStore {
+  const authorityId = (prefix: string, member: string): string =>
+    `${prefix}_${canonicalHash("peas/p1-10-repair-retention-authority/v1", { member })}`;
+  const controller = new DefaultArtifactRetentionController({
+    journal: new MemoryArtifactRetentionJournal(),
+    artifacts: {
+      async settleActiveReadersAndWriters() {
+        return true;
+      },
+      async eraseDigestCopies(artifactDigest) {
+        return {
+          artifactDigest,
+          erasedCopies: { content: 0, staging: 0, snapshot: 0, quarantine: 0 },
+          alreadyAbsent: true,
+        };
+      },
+      async verifyDigestCopiesAbsent() {
+        return true;
+      },
+    },
+    nowMs: () => 0,
+  });
+  for (const artifact of artifacts) {
+    controller.registerOwnership({
+      policyId: ALPACA_PRIVATE_ARTIFACT_POLICY.policyId,
+      providerLane: "alpaca",
+      providerId: authorityId("mpv1", artifact.artifactDigest),
+      datasetId: authorityId("mds1", "dataset"),
+      feedId: authorityId("mfd1", "feed"),
+      endpointChannelId: authorityId("mec1", "endpoint"),
+      artifactObservationId: authorityId(
+        "aob1",
+        artifact.artifactObservationId ?? artifact.artifactDigest,
+      ),
+      artifactDigest: artifact.artifactDigest,
+      artifactSizeBytes: artifact.artifactSizeBytes,
+      derivedIds: [],
+      trustedCaptureMs: 0,
+      expiresAtMs: ALPACA_PRIVATE_ARTIFACT_POLICY.maximumRetentionMs,
+    });
+  }
+  return new RetentionEnforcedArtifactStore(store, controller);
+}
 
 function timestamp(epochNs: bigint): string {
   const milliseconds = epochNs / 1_000_000n;
@@ -142,9 +213,9 @@ export function validatedRepairPlan(
   return result.value;
 }
 
-export function credentialAuthorizationInput(
+export async function credentialAuthorizationFixture(
   plan: ValidatedMarketAcquisitionConfiguration,
-): CredentialAuthorizationInput {
+) {
   const digest = (member: string): string =>
     canonicalHash("peas/p1-10-repair-credential-evidence/v1", { member });
   const retrievalAttemptId = `rat1_${digest("retrieval-attempt")}`;
@@ -262,21 +333,24 @@ export function credentialAuthorizationInput(
       started.parentEntryIds.filter((id) => id !== ledger.clockDeclaration.entryId),
     ),
   );
-  return Object.freeze({
+  const journal = new MemoryAcquisitionJournal(journalIdentity);
+  await journal.append(declared);
+  await journal.append(requestStarted);
+  const retentionJournal = new MemoryArtifactRetentionJournal();
+  const request: CredentialAuthorizationRequest = Object.freeze({
     plan,
     acquisitionObservationId,
     retrievalAttemptId,
     journalIdentity,
-    journal: Object.freeze([declared, requestStarted]),
-    ledger: ledger.entries,
-    retentionJournal: new MemoryArtifactRetentionJournal(),
+    marketAcquisitionJournalId: journalId,
   });
-}
-
-export function credentialEvidence(
-  plan: ValidatedMarketAcquisitionConfiguration,
-): CredentialAuthorizationEvidence {
-  return establishCredentialAuthorizationEvidence(credentialAuthorizationInput(plan));
+  return Object.freeze({
+    request,
+    journal,
+    retentionJournal,
+    authorization: new DurableCredentialAuthorizationBoundary(journal, retentionJournal),
+    entries: Object.freeze([declared, requestStarted]),
+  });
 }
 
 export function completeChainProof(admissions: readonly AlpacaWirePageAdmission[]): Readonly<{
@@ -381,10 +455,11 @@ export function completeChainProof(admissions: readonly AlpacaWirePageAdmission[
         quotaWindowEvidence: Array.from({ length: cumulativeAttempts }, (_, index) => index),
       }),
     );
-    const artifactSizeBytes = admission.wireItemCount + 1;
+    const authenticatedArtifact = authenticatedAlpacaAdmissionArtifact(admission);
+    const artifactSizeBytes = authenticatedArtifact.artifactSizeBytes;
     const artifact = {
       artifactObservationId: hash(`observation-${pageOrdinal}`),
-      artifactDigest: hash(`artifact-${pageOrdinal}`),
+      artifactDigest: authenticatedArtifact.artifactDigest,
       artifactSizeBytes,
       artifactObservationHash: hash(`observation-hash-${pageOrdinal}`),
       artifactContentId: `mac1_${hash(`content-${pageOrdinal}`)}`,

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
@@ -7,6 +8,7 @@ import { canonicalJson, type JsonValue } from "../src/core/json.js";
 import { normalizeRecordedMarketRecords } from "../src/providers/market-reference/normalization.js";
 import {
   AlpacaWireContractError,
+  DurableAlpacaWireAdmissionBoundary,
   admitAlpacaHistoricalPage,
   decodeAlpacaHistoricalJson,
   parseAlpacaHistoricalJson,
@@ -16,8 +18,24 @@ import {
   type AlpacaWireEndpointKind,
   type AlpacaWireParseContext,
 } from "../src/adapters/market-acquisition/alpaca/wire.js";
+import { validateMarketAcquisitionConfiguration } from "../src/adapters/market-acquisition/configuration.js";
 import {
+  ACCEPTED_PR_2E_CANDIDATE_SHA,
+  type MarketAcquisitionConfigurationInput,
+  type ValidatedMarketAcquisitionConfiguration,
+} from "../src/adapters/market-acquisition/contracts.js";
+import {
+  ALPACA_ROUTE_REGISTRY,
+  ZERO_SPEND_POLICY_ID,
+  ZERO_SPEND_POLICY_PREIMAGE,
+} from "../src/adapters/market-acquisition/identity.js";
+import { MemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
+import {
+  GENESIS_HASH,
+  NO_TOKEN_HASH,
   createJournalEntry,
+  deriveLogicalPageIdentityHash,
+  deriveMarketAcquisitionJournalId,
   journalEntryBody,
   TERMINAL_TOKEN_HASH,
   type JournalCheckpointBody,
@@ -92,6 +110,193 @@ function parsed(caseId: string): PlainRecord {
   return parseAlpacaHistoricalJson(JSON.stringify(fixture.wire)) as PlainRecord;
 }
 
+function wirePlan(kind: AlpacaWireEndpointKind): ValidatedMarketAcquisitionConfiguration {
+  const route = ALPACA_ROUTE_REGISTRY[kind];
+  const wallNs = endNs + 900_000_000_000n;
+  const clockBasisId = `clk1_${canonicalHash("peas/clock-basis/v1", {
+    wallClock: "system-utc",
+    synchronization: "verified-bound",
+    maximumErrorMs: 0,
+    monotonicClock: "process-monotonic-us",
+    monotonicSessionId: "p1-10-wire-authority-session",
+  })}`;
+  const timestamp = (value: bigint): string => {
+    const milliseconds = value / 1_000_000n;
+    const fraction = (value % 1_000_000_000n).toString().padStart(9, "0");
+    return `${new Date(Number(milliseconds)).toISOString().slice(0, 19)}.${fraction}Z`;
+  };
+  const common = {
+    symbols: symbols.join(","),
+    start: timestamp(startNs),
+    end: timestamp(endNs),
+    limit: "10000",
+    feed: "sip" as const,
+    sort: "asc" as const,
+  };
+  const input: MarketAcquisitionConfigurationInput = {
+    schemaVersion: 1,
+    acceptedContractCandidateSha: ACCEPTED_PR_2E_CANDIDATE_SHA,
+    lane: "alpaca-historical-sip",
+    kind,
+    providerId: route.providerId,
+    datasetId: route.datasetId,
+    feedId: route.feedId,
+    endpointChannelId: route.endpointChannelId,
+    entitlementSnapshotId: context.entitlementSnapshotId,
+    routePolicyVersion: "p1-10-frozen-historical-multi-symbol-v1",
+    aliasAuthorityCatalogId: `maac1_${"b".repeat(64)}`,
+    instruments: symbols.map((symbol) => ({ instrumentId: instrumentIds[symbol] ?? "", symbol })),
+    queryFields: kind === "bars" ? { ...common, timeframe: "1Min", adjustment: "raw" } : common,
+    trustedClockEvidence: {
+      available: true,
+      basisId: clockBasisId,
+      wallClock: "system-utc",
+      synchronization: "verified-bound",
+      maximumErrorNs: 0n,
+      maximumErrorBounded: true,
+      monotonicClock: "process-monotonic-us",
+      monotonicSessionId: "p1-10-wire-authority-session",
+      priorSample: {
+        sampleId: "wire-prior",
+        previousSampleId: null,
+        basisId: clockBasisId,
+        wallClock: "system-utc",
+        synchronization: "verified-bound",
+        wallNs: wallNs - 1n,
+        monotonicClock: "process-monotonic-us",
+        monotonicSessionId: "p1-10-wire-authority-session",
+        monotonicUs: 100n,
+      },
+      currentSample: {
+        sampleId: "wire-current",
+        previousSampleId: "wire-prior",
+        basisId: clockBasisId,
+        wallClock: "system-utc",
+        synchronization: "verified-bound",
+        wallNs,
+        monotonicClock: "process-monotonic-us",
+        monotonicSessionId: "p1-10-wire-authority-session",
+        monotonicUs: 101n,
+      },
+    },
+    liveEnabled: true,
+    authorizationMode: "p1-09-approved",
+    capability: "historical-market-reference",
+    sourceRole: "primary",
+    fallbackKind: "none",
+    zeroIncrementalSpend: true,
+    costStatus: "zero-incremental-spend-approved",
+    zeroSpendPolicyId: ZERO_SPEND_POLICY_ID,
+    zeroSpendPolicyPreimage: ZERO_SPEND_POLICY_PREIMAGE,
+    runDecision: "allow",
+    retentionPolicyReadiness: "ready",
+  };
+  const result = validateMarketAcquisitionConfiguration(input);
+  assert.equal(result.ok, true, result.ok ? undefined : result.error.reasonCode);
+  if (!result.ok) throw new Error("wire authority plan must validate");
+  return result.value;
+}
+
+async function authenticatedAdmission(
+  endpointKind: AlpacaWireEndpointKind,
+  wire: PlainRecord,
+  parseContext: AlpacaWireParseContext,
+  authorityPlan?: ValidatedMarketAcquisitionConfiguration,
+) {
+  const bytes = Buffer.from(JSON.stringify(wire), "utf8");
+  const plan = wirePlan(endpointKind);
+  const expectedIdentity = {
+    schemaVersion: 1 as const,
+    requestIdentityHash: plan.requestIdentityHash,
+    providerId: plan.route.providerId,
+    datasetId: plan.route.datasetId,
+    feedId: plan.route.feedId,
+    endpointChannelId: plan.route.endpointChannelId,
+  };
+  const journalId = deriveMarketAcquisitionJournalId(expectedIdentity);
+  const hash = (member: string): string =>
+    canonicalHash("peas/p1-10-wire-authority-fixture/v1", { endpointKind, member });
+  const body = (overrides: Partial<JournalCheckpointBody> = {}): JournalCheckpointBody => ({
+    schemaVersion: 1,
+    runSessionNonce: "p1-10-wire-authority-run",
+    acquisitionObservationId: `aob1_${hash("acquisition-observation")}`,
+    marketAcquisitionId: parseContext.marketAcquisitionId,
+    admittedMarketAcquisitionIds: [],
+    requestIdentityHash: plan.requestIdentityHash,
+    acquisitionConfigurationHash: plan.acquisitionConfigurationHash,
+    providerId: plan.route.providerId,
+    datasetId: plan.route.datasetId,
+    feedId: plan.route.feedId,
+    endpointChannelId: plan.route.endpointChannelId,
+    authorizationMode: "p1-09-approved",
+    logicalPageIdentityHash: deriveLogicalPageIdentityHash({
+      requestIdentityHash: plan.requestIdentityHash,
+      pageOrdinal: 0,
+      currentTokenHash: NO_TOKEN_HASH,
+    }),
+    pageOrdinal: 0,
+    currentTokenHash: NO_TOKEN_HASH,
+    currentResumableTokenMaterial: null,
+    nextTokenHash: null,
+    nextResumableTokenMaterial: null,
+    currentContinuationBindingHash: null,
+    nextContinuationBindingHash: null,
+    attemptId: `mat1_${hash("attempt")}`,
+    retrievalAttemptId: `rat1_${hash("retrieval-attempt")}`,
+    attemptOrdinal: 0,
+    artifactObservationId: null,
+    artifactDigest: null,
+    artifactSizeBytes: null,
+    artifactObservationHash: null,
+    artifactContentId: null,
+    rawArtifactId: null,
+    stageLedgerFactId: null,
+    causalParentFactIds: [],
+    pageRecordCount: null,
+    pageNormalizedFactCount: null,
+    pageChainHash: GENESIS_HASH,
+    cumulativeSuccessfulPages: 0,
+    cumulativeVerifiedBytes: 0,
+    cumulativeRecords: 0,
+    cumulativeNormalizedFacts: 0,
+    cumulativeAttempts: 0,
+    acquisitionDeadlineBasis: "offline-monotonic-basis-v1",
+    quotaWindowEvidence: [],
+    terminalState: null,
+    terminalReasonCode: null,
+    incomplete: true,
+    ...overrides,
+  });
+  const entries: JournalEntry[] = [];
+  const append = (kind: Parameters<typeof createJournalEntry>[2], value: JournalCheckpointBody) => {
+    entries.push(createJournalEntry(entries.at(-1) ?? null, journalId, kind, value));
+  };
+  append("acquisition-declared", body());
+  append("request-started", body());
+  append("attempt-started", body({ cumulativeAttempts: 1, quotaWindowEvidence: [0] }));
+  append("request-succeeded", body({ cumulativeAttempts: 1, quotaWindowEvidence: [0] }));
+  const artifact = {
+    artifactObservationId: hash("artifact-observation"),
+    artifactDigest: createHash("sha256").update(bytes).digest("hex"),
+    artifactSizeBytes: bytes.byteLength,
+    artifactObservationHash: hash("artifact-observation-hash"),
+    artifactContentId: `mac1_${hash("artifact-content")}`,
+    rawArtifactId: parseContext.rawArtifactId,
+    cumulativeAttempts: 1,
+    quotaWindowEvidence: [0],
+  } as const;
+  append("artifact-committed", body(artifact));
+  append("artifact-verified", body(artifact));
+  const journal = new MemoryAcquisitionJournal(expectedIdentity);
+  for (const entry of entries) await journal.append(entry);
+  const authority = await new DurableAlpacaWireAdmissionBoundary(journal).issue({
+    plan: authorityPlan ?? plan,
+    expectedIdentity,
+    marketAcquisitionJournalId: journalId,
+  });
+  return parseAndAdmitAlpacaHistoricalPage(endpointKind, bytes, authority);
+}
+
 function firstItem(page: PlainRecord, endpointKind: AlpacaWireEndpointKind): PlainRecord {
   const groups = page[dataField[endpointKind]] as PlainRecord;
   const symbol = Object.keys(groups)[0];
@@ -155,17 +360,13 @@ test("production bar projection is byte-identical to the accepted translation fi
   }
 });
 
-test("production complete-chain resolution deduplicates and quarantines globally", () => {
+test("production complete-chain resolution deduplicates and quarantines globally", async () => {
   const source = valid.cases.find((entry) => entry.caseId === "wire-bars-terminal-grouped");
   assert.ok(source);
   const raw = JSON.stringify(source.wire);
   const firstWire = { ...(source.wire as PlainRecord), next_page_token: "synthetic-next" };
-  const first = admitAlpacaHistoricalPage(
-    "bars",
-    parseAlpacaHistoricalJson(JSON.stringify(firstWire)),
-    context,
-  );
-  const redelivery = admitAlpacaHistoricalPage("bars", parseAlpacaHistoricalJson(raw), {
+  const first = await authenticatedAdmission("bars", firstWire, context);
+  const redelivery = await authenticatedAdmission("bars", JSON.parse(raw) as PlainRecord, {
     ...context,
     marketAcquisitionId: `maq1_${"8".repeat(64)}`,
     rawArtifactId: `mar1_${"f".repeat(64)}`,
@@ -179,9 +380,9 @@ test("production complete-chain resolution deduplicates and quarantines globally
   assert.equal(duplicateResolution.quarantines.length, 0);
   assert.equal(duplicateResolution.barObservationCount, 4);
 
-  const conflict = admitAlpacaHistoricalPage(
+  const conflict = await authenticatedAdmission(
     "bars",
-    parseAlpacaHistoricalJson(raw.replace('"h":62.875', '"h":63.875')),
+    JSON.parse(raw.replace('"h":62.875', '"h":63.875')) as PlainRecord,
     {
       ...context,
       marketAcquisitionId: `maq1_${"7".repeat(64)}`,
@@ -202,23 +403,36 @@ test("production complete-chain resolution deduplicates and quarantines globally
   );
 });
 
-test("complete-chain proof rejects missing zero, gaps, loops, substitutions, repeated and terminal anomalies", () => {
+test("complete-chain proof rejects missing zero, gaps, loops, substitutions, repeated and terminal anomalies", async () => {
   const source = valid.cases.find((entry) => entry.caseId === "wire-bars-terminal-grouped");
   assert.ok(source);
   const terminalWire = source.wire as PlainRecord;
   const page = (token: string | null, ordinal: number) =>
-    admitAlpacaHistoricalPage(
+    authenticatedAdmission(
       "bars",
-      parseAlpacaHistoricalJson(JSON.stringify({ ...terminalWire, next_page_token: token })),
+      { ...terminalWire, next_page_token: token },
       {
         ...context,
         marketAcquisitionId: `maq1_${String(ordinal + 1).repeat(64)}`,
         rawArtifactId: `mar1_${String(ordinal + 4).repeat(64)}`,
       },
     );
-  const first = page("next-a", 0);
-  const terminal = page(null, 1);
+  const first = await page("next-a", 0);
+  const terminal = await page(null, 1);
   const proof = completeChainProof([first, terminal]);
+  const forgedSemantic = {
+    ...terminal,
+    barObservations: terminal.barObservations.map((observation) => ({
+      ...observation,
+      record:
+        observation.record === null
+          ? null
+          : { ...observation.record, calendarVersion: "forged-calendar-version" },
+    })),
+  };
+  expectWireCode("page-semantic-evidence-invalid", () =>
+    resolveAlpacaHistoricalChain("bars", [first, forgedSemantic], proof),
+  );
   const rebuild = (
     mutate: (entry: JournalEntry, body: JournalCheckpointBody) => JournalCheckpointBody,
   ) => {
@@ -279,8 +493,8 @@ test("complete-chain proof rejects missing zero, gaps, loops, substitutions, rep
       proof,
     ),
   );
-  const secondLoop = page("next-a", 1);
-  const third = page(null, 2);
+  const secondLoop = await page("next-a", 1);
+  const third = await page(null, 2);
   assert.throws(() =>
     resolveAlpacaHistoricalChain(
       "bars",
@@ -327,7 +541,7 @@ test("production tokenizer rejects duplicate names, noncanonical numbers, and in
   );
 });
 
-test("production parser reject and quarantine branches remain executable and inert", () => {
+test("production parser reject and quarantine branches remain executable and inert", async () => {
   for (const raw of [
     "",
     '"unterminated',
@@ -430,21 +644,30 @@ test("production parser reject and quarantine branches remain executable and ine
   assert.equal(unknownCalendar.records.length, 0);
   assert.equal(unknownCalendar.quarantines.length, 2);
 
-  const quote = admitAlpacaHistoricalPage(
-    "quotes",
-    parsed("wire-quotes-terminal-grouped"),
-    context,
-  );
+  const quoteFixture = valid.cases.find((entry) => entry.caseId === "wire-quotes-terminal-grouped");
+  assert.ok(quoteFixture);
+  const quote = await authenticatedAdmission("quotes", quoteFixture.wire, context);
   const proof = completeChainProof([quote]);
   assert.equal(resolveAlpacaHistoricalChain("quotes", [quote], proof).records.length, 0);
   expectWireCode("schema-invalid", () => resolveAlpacaHistoricalChain("bars", [quote], proof));
-  assert.equal(
-    parseAndAdmitAlpacaHistoricalPage(
-      "bars",
-      Buffer.from(JSON.stringify(barSource.wire), "utf8"),
-      context,
-    ).records.length,
-    2,
+  assert.equal((await authenticatedAdmission("bars", barSource.wire, context)).records.length, 2);
+  expectWireCode("page-semantic-authority-invalid", () =>
+    parseAndAdmitAlpacaHistoricalPage("bars", Buffer.from(JSON.stringify(barSource.wire), "utf8"), {
+      ...context,
+      calendarVersion: "forged-before-issuance",
+    } as never),
+  );
+  const trustedPlan = wirePlan("bars");
+  const forgedPlan = Object.freeze({
+    ...trustedPlan,
+    instruments: Object.freeze([
+      Object.freeze({ instrumentId: `min1_${"9".repeat(64)}`, symbol: symbols[0] }),
+    ]),
+  }) as ValidatedMarketAcquisitionConfiguration;
+  await assert.rejects(
+    () => authenticatedAdmission("bars", barSource.wire, context, forgedPlan),
+    (error: unknown) =>
+      error instanceof AlpacaWireContractError && error.code === "page-semantic-authority-invalid",
   );
   assert.ok(BigInt(parseAlpacaWireTimestamp("1960-01-02T00:00:00Z").timestamp.epochNs) < 0n);
 });

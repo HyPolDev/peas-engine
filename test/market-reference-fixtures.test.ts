@@ -1751,18 +1751,24 @@ test("full registry-bound manifest drives verified bytes through normalization a
   const projected = recordedMarketArtifactProjection(checkedManifest);
   const checkpointRead = await loadRecordedMarketArtifacts(authority.store, projected);
   assert.equal(checkpointRead.status, "verified", JSON.stringify(checkpointRead));
+  const retentionLease = authority.store.createUseLease(
+    checkedManifest.retrievedMembers.map((member) => member.artifactDigest),
+  );
   const checkpointFacts = normalizeVerifiedRecordedMarketFixture(
     checkedManifest,
     checkpointRead.members,
+    retentionLease,
   );
   const checkpointEvaluations = evaluateRecordedMarketFixtureSelections(
     checkedManifest,
     checkpointFacts,
+    retentionLease,
   );
   const checkpointCatalogOutcomes = await evaluateRecordedLoaderCatalog(
     checkedManifest,
     checkpointRead.members,
     checkpointFacts,
+    retentionLease,
   );
   const result = await loadRecordedMarketFixture(authority.store, checkedManifest);
   assert.equal(result.status, "verified", JSON.stringify(result));

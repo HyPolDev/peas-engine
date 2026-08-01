@@ -104,6 +104,10 @@ export interface RetentionArtifactBoundary {
 
 export interface ArtifactRetentionJournal {
   registerOwnershipAndApplyActiveStop(ownership: RetentionOwnership): boolean;
+  registerDerivedLineageAndApplyActiveStop(
+    ownershipId: string,
+    derivedIds: readonly string[],
+  ): boolean;
   listOwnership(
     providerLane: RetentionProviderLane,
     providerId: string,
@@ -112,6 +116,7 @@ export interface ArtifactRetentionJournal {
   ownershipForDerivedId(derivedId: string): readonly RetentionOwnership[];
   recordStopAndDenials(stop: RetentionStopEvent, derivedIds: readonly string[]): void;
   providerUseDenied(providerLane: RetentionProviderLane, providerId: string): boolean;
+  reconciliationUseDenied(trustedNowMs: number): boolean;
   digestUseDenied(digest: string): boolean;
   derivedUseDenied(derivedId: string): boolean;
   recordPlan(plan: RetentionErasurePlan): void;
@@ -128,7 +133,22 @@ export interface ArtifactRetentionJournal {
 
 export interface ArtifactRetentionController {
   registerOwnership(input: Omit<RetentionOwnership, "ownershipId">): RetentionOwnership;
+  commitArtifact<T>(
+    input: Omit<RetentionOwnership, "ownershipId">,
+    commit: () => Promise<T>,
+  ): Promise<T>;
+  registerDerivedLineage(artifactDigests: readonly string[], derivedIds: readonly string[]): void;
+  beginUse(
+    artifactDigests?: readonly string[],
+    derivedIds?: readonly string[],
+  ): RetentionOperationLease;
   enforceStop(input: Omit<RetentionStopEvent, "stopEventId">): Promise<RetentionReceipt>;
   assertArtifactUseAllowed(digest: string): void;
   assertDerivedUseAllowed(derivedId: string): void;
+}
+
+export interface RetentionOperationLease {
+  assertAllowed(): void;
+  onStop(handler: () => void): void;
+  release(): void;
 }

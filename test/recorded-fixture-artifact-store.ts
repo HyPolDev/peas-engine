@@ -10,6 +10,10 @@ import type {
   SafeHttpResponseMetadata,
   VerifiedArtifactRead,
 } from "../src/artifacts/artifact-store.js";
+import { RetentionEnforcedArtifactStore } from "../src/adapters/market-acquisition/retention/artifact-access.js";
+import { DefaultArtifactRetentionController } from "../src/adapters/market-acquisition/retention/controller.js";
+import { MemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
+import { ALPACA_PRIVATE_ARTIFACT_POLICY } from "../src/adapters/market-acquisition/private-artifact-policy.js";
 import { deriveObservationId } from "../src/artifacts/identity.js";
 import { validateRetrievalAttempt } from "../src/artifacts/validation.js";
 import { canonicalHash } from "../src/core/hash.js";
@@ -74,7 +78,11 @@ export function recordedFixtureArtifactStore(
   fixtureRoot: string,
   seeds: readonly RecordedFixtureSeedMember[],
   options: FixtureStoreOptions = {},
-): Readonly<{ store: ArtifactStore; counters: FixtureStoreCounters }> {
+): Readonly<{
+  store: RetentionEnforcedArtifactStore;
+  unsafeStore: ArtifactStore;
+  counters: FixtureStoreCounters;
+}> {
   const observationCalls = new Map<string, number>();
   const readCalls = new Map<string, number>();
   const streamStarts = new Map<string, number>();
@@ -165,8 +173,47 @@ export function recordedFixtureArtifactStore(
       throw new Error("fixture store does not reconcile");
     },
   };
+  const retention = new DefaultArtifactRetentionController({
+    journal: new MemoryArtifactRetentionJournal(),
+    artifacts: {
+      async settleActiveReadersAndWriters() {
+        return true;
+      },
+      async eraseDigestCopies(artifactDigest) {
+        return {
+          artifactDigest,
+          erasedCopies: { content: 0, staging: 0, snapshot: 0, quarantine: 0 },
+          alreadyAbsent: true,
+        };
+      },
+      async verifyDigestCopiesAbsent() {
+        return true;
+      },
+    },
+    nowMs: () => 0,
+  });
+  for (const seed of seeds) {
+    const observation = fixtureObservation(seed);
+    const authorityId = (prefix: string, member: string): string =>
+      `${prefix}_${canonicalHash("peas/recorded-fixture-retention-authority/v1", { member })}`;
+    retention.registerOwnership({
+      policyId: ALPACA_PRIVATE_ARTIFACT_POLICY.policyId,
+      providerLane: "alpaca",
+      providerId: authorityId("mpv1", seed.attempt.provider),
+      datasetId: authorityId("mds1", "dataset"),
+      feedId: authorityId("mfd1", "feed"),
+      endpointChannelId: authorityId("mec1", seed.role),
+      artifactObservationId: authorityId("aob1", observation.observationId),
+      artifactDigest: seed.artifactHash,
+      artifactSizeBytes: seed.sizeBytes,
+      derivedIds: [],
+      trustedCaptureMs: seed.retrievedAtMs,
+      expiresAtMs: seed.retrievedAtMs + ALPACA_PRIVATE_ARTIFACT_POLICY.maximumRetentionMs,
+    });
+  }
   return {
-    store,
+    store: new RetentionEnforcedArtifactStore(store, retention),
+    unsafeStore: store,
     counters: {
       observationCalls,
       readCalls,

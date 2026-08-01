@@ -187,14 +187,14 @@ test("recorded fixture resumes deterministically at every lookup/read/normalize/
   const beforeLookupAuthority = recordedFixtureArtifactStore(
     authority.fixtureRoot,
     authority.seeds,
-  );
-  const beforeLookup = await loadRecordedMarketFixture(
     {
-      ...beforeLookupAuthority.store,
-      async getObservation() {
+      observation() {
         throw new Error("synthetic restart before observation lookup");
       },
     },
+  );
+  const beforeLookup = await loadRecordedMarketFixture(
+    beforeLookupAuthority.store,
     authority.manifest,
   );
   assert.equal(beforeLookup.status, "rejected");
@@ -242,12 +242,23 @@ test("recorded fixture resumes deterministically at every lookup/read/normalize/
       bytes: Uint8Array.from(Buffer.from(bytes, "base64")),
     }),
   );
-  const normalized = normalizeVerifiedRecordedMarketFixture(authority.manifest, resumedMembers);
+  const retentionLease = verifiedReadAuthority.store.createUseLease(
+    authority.manifest.retrievedMembers.map((member) => member.artifactDigest),
+  );
+  const normalized = normalizeVerifiedRecordedMarketFixture(
+    authority.manifest,
+    resumedMembers,
+    retentionLease,
+  );
   assert.equal(canonical(normalized), canonical(baseline.normalizedFacts));
 
   const factCheckpoint = canonical(normalized);
   const resumedFacts = JSON.parse(factCheckpoint) as NormalizedMarketFactV1[];
-  const evaluations = evaluateRecordedMarketFixtureSelections(authority.manifest, resumedFacts);
+  const evaluations = evaluateRecordedMarketFixtureSelections(
+    authority.manifest,
+    resumedFacts,
+    retentionLease,
+  );
   assert.equal(canonical(evaluations), canonical(baseline.evaluations));
 
   const cleanRestart = await loadCheckedRecordedMarketFixture();

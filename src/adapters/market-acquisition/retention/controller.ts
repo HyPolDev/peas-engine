@@ -19,6 +19,7 @@ import type {
   RetentionErasureAttempt,
   RetentionErasurePlan,
   RetentionOwnership,
+  RetentionOperationLease,
   RetentionReceipt,
   RetentionStopEvent,
   RetentionTombstone,
@@ -36,6 +37,7 @@ import {
 
 const ID = /^[a-z][a-z0-9]*_[0-9a-f]{64}$/u;
 const POLICY_ID = /^[a-z0-9][a-z0-9-]{0,127}$/u;
+const ownedRetentionControllers = new WeakSet<object>();
 
 export type RetentionFaultBoundary = (checkpoint: string) => void | Promise<void>;
 
@@ -65,6 +67,12 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
   readonly #artifacts: RetentionArtifactBoundary;
   readonly #nowMs: () => number;
   readonly #faultBoundary: RetentionFaultBoundary;
+  #admissionClosed = false;
+  #pendingStops = 0;
+  #activeOperations = 0;
+  readonly #operationIdleWaiting: Array<() => void> = [];
+  readonly #operationStopHandlers = new Set<() => void>();
+  #stopTail: Promise<void> = Promise.resolve();
 
   constructor(dependencies: {
     journal: ArtifactRetentionJournal;
@@ -76,6 +84,7 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
     this.#artifacts = dependencies.artifacts;
     this.#nowMs = dependencies.nowMs;
     this.#faultBoundary = dependencies.faultBoundary ?? (() => undefined);
+    ownedRetentionControllers.add(this);
   }
 
   registerOwnership(input: Omit<RetentionOwnership, "ownershipId">): RetentionOwnership {
@@ -94,7 +103,143 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
     return value;
   }
 
+  beginUse(
+    artifactDigests: readonly string[] = [],
+    derivedIds: readonly string[] = [],
+  ): RetentionOperationLease {
+    const digests = sortedSet(artifactDigests);
+    const derived = sortedSet(derivedIds);
+    const assertAllowed = (): void => {
+      if (this.#admissionClosed) {
+        throw safeAcquisitionError("retention-stop-required", "artifact-verify");
+      }
+      if (
+        digests.length === 0 &&
+        derived.length === 0 &&
+        this.#journal.reconciliationUseDenied(this.#trustedNow())
+      ) {
+        throw safeAcquisitionError("retention-stop-required", "artifact-verify");
+      }
+      for (const digest of digests) this.#assertArtifactUseAllowed(digest);
+      for (const derivedId of derived) this.#assertDerivedUseAllowed(derivedId);
+    };
+    assertAllowed();
+    this.#activeOperations += 1;
+    let released = false;
+    let stopHandler: (() => void) | null = null;
+    return Object.freeze({
+      assertAllowed,
+      onStop: (handler: () => void): void => {
+        if (released || typeof handler !== "function") {
+          throw new TypeError("retention-operation-stop-handler-invalid");
+        }
+        if (stopHandler !== null) this.#operationStopHandlers.delete(stopHandler);
+        stopHandler = handler;
+        this.#operationStopHandlers.add(handler);
+        if (this.#admissionClosed) handler();
+      },
+      release: (): void => {
+        if (released) return;
+        released = true;
+        if (stopHandler !== null) this.#operationStopHandlers.delete(stopHandler);
+        this.#activeOperations -= 1;
+        if (this.#activeOperations === 0) {
+          for (const waiter of this.#operationIdleWaiting.splice(
+            0,
+            this.#operationIdleWaiting.length,
+          ))
+            waiter();
+        }
+      },
+    });
+  }
+
+  async commitArtifact<T>(
+    input: Omit<RetentionOwnership, "ownershipId">,
+    commit: () => Promise<T>,
+  ): Promise<T> {
+    this.#validateOwnership(input);
+    const operation = this.beginUse();
+    let committed = false;
+    try {
+      this.registerOwnership(input);
+      const artifact = await commit();
+      committed = true;
+      operation.assertAllowed();
+      this.#assertArtifactUseAllowed(input.artifactDigest);
+      return artifact;
+    } catch (error) {
+      if (committed) {
+        try {
+          await this.#artifacts.eraseDigestCopies(input.artifactDigest);
+          if (!(await this.#artifacts.verifyDigestCopiesAbsent(input.artifactDigest))) {
+            throw new Error("retention-commit-rollback-unprovable");
+          }
+        } catch {
+          throw safeAcquisitionError("retention-erasure-unprovable", "retention-erase");
+        }
+      }
+      throw error;
+    } finally {
+      operation.release();
+    }
+  }
+
+  registerDerivedLineage(artifactDigests: readonly string[], derivedIds: readonly string[]): void {
+    const digests = sortedSet(artifactDigests);
+    const derived = sortedUnique(derivedIds);
+    if (digests.length === 0 || derived.length === 0) {
+      throw safeAcquisitionError("retention-policy-invalid", "normalization");
+    }
+    const operation = this.beginUse(digests);
+    try {
+      for (const digest of digests) {
+        const ownership = this.#journal.ownershipForDigest(digest);
+        if (ownership.length === 0) {
+          throw safeAcquisitionError("retention-stop-required", "normalization");
+        }
+        for (const value of ownership) {
+          if (!this.#journal.registerDerivedLineageAndApplyActiveStop(value.ownershipId, derived)) {
+            throw safeAcquisitionError("retention-stop-required", "normalization");
+          }
+        }
+      }
+      operation.assertAllowed();
+      for (const derivedId of derived) this.#assertDerivedUseAllowed(derivedId);
+    } finally {
+      operation.release();
+    }
+  }
+
   async enforceStop(input: Omit<RetentionStopEvent, "stopEventId">): Promise<RetentionReceipt> {
+    this.#pendingStops += 1;
+    this.#admissionClosed = true;
+    for (const handler of [...this.#operationStopHandlers]) {
+      try {
+        handler();
+      } catch {
+        // Admission remains closed; settlement still waits for the operation lease.
+      }
+    }
+    const predecessor = this.#stopTail;
+    let releaseStop!: () => void;
+    this.#stopTail = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    await predecessor;
+    try {
+      if (this.#activeOperations > 0) {
+        await new Promise<void>((resolve) => this.#operationIdleWaiting.push(resolve));
+      }
+      return await this.#enforceStop(input);
+    } finally {
+      releaseStop();
+      this.#pendingStops -= 1;
+      if (this.#pendingStops === 0) this.#admissionClosed = false;
+    }
+  }
+
+  async #enforceStop(input: Omit<RetentionStopEvent, "stopEventId">): Promise<RetentionReceipt> {
     this.#validateStop(input);
     const stop: RetentionStopEvent = {
       ...input,
@@ -133,7 +278,7 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
     } as const;
     const planId = deriveRetentionPlanId(planBody);
     const planWithoutHash = { ...planBody, planId };
-    const plan: RetentionErasurePlan = {
+    let plan: RetentionErasurePlan = {
       ...planWithoutHash,
       planHash: deriveRetentionPlanHash(planWithoutHash),
     };
@@ -148,9 +293,29 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
       if (!(await this.#artifacts.settleActiveReadersAndWriters())) {
         throw safeAcquisitionError("retention-erasure-unprovable", "retention-verify");
       }
-      await this.#verifyPlanErased(plan);
-      await this.#ensureCheckpoint(plan, priorReceipt);
-      return priorReceipt;
+      try {
+        await this.#verifyPlanErased(plan);
+        await this.#ensureCheckpoint(plan, priorReceipt);
+        return priorReceipt;
+      } catch {
+        const recoveryBody = {
+          ...planBody,
+          predecessorReceiptId: priorReceipt.receiptId,
+        } as const;
+        const recoveryPlanId = deriveRetentionPlanId(recoveryBody);
+        const recoveryWithoutHash = { ...recoveryBody, planId: recoveryPlanId };
+        plan = {
+          ...recoveryWithoutHash,
+          planHash: deriveRetentionPlanHash(recoveryWithoutHash),
+        };
+        this.#journal.recordPlan(plan);
+        const recoveredPlan = this.#journal.getPlan(plan.planId);
+        if (
+          recoveredPlan === undefined ||
+          recomputeRetentionPlanHash(recoveredPlan) !== plan.planHash
+        )
+          throw safeAcquisitionError("retention-erasure-unprovable", "retention-plan");
+      }
     }
 
     this.#assertDeadline(input.deadlineMs);
@@ -165,9 +330,7 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
     for (const digest of plan.artifactDigests) {
       this.#assertDeadline(input.deadlineMs);
       if (this.#journal.hasTombstone(digest)) {
-        if (!(await this.#artifacts.verifyDigestCopiesAbsent(digest)))
-          throw safeAcquisitionError("retention-erasure-unprovable", "retention-verify");
-        continue;
+        if (await this.#artifacts.verifyDigestCopiesAbsent(digest)) continue;
       }
       const priorAttempts = this.#journal.attemptsFor(plan.planId, digest);
       const attemptOrdinal =
@@ -205,17 +368,19 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
       });
       await this.#faultBoundary(`retention-physical-erasure-complete:${digest}`);
 
-      const tombstoneBody = {
-        planId: plan.planId,
-        artifactDigest: digest,
-        recordedAtMs: this.#trustedNow(),
-      };
-      const tombstone: RetentionTombstone = {
-        ...tombstoneBody,
-        tombstoneId: deriveRetentionTombstoneId(tombstoneBody),
-      };
-      this.#journal.recordTombstone(tombstone);
-      await this.#faultBoundary(`retention-tombstone-committed:${digest}`);
+      if (!this.#journal.hasTombstone(digest)) {
+        const tombstoneBody = {
+          planId: plan.planId,
+          artifactDigest: digest,
+          recordedAtMs: this.#trustedNow(),
+        };
+        const tombstone: RetentionTombstone = {
+          ...tombstoneBody,
+          tombstoneId: deriveRetentionTombstoneId(tombstoneBody),
+        };
+        this.#journal.recordTombstone(tombstone);
+        await this.#faultBoundary(`retention-tombstone-committed:${digest}`);
+      }
     }
 
     await this.#verifyPlanErased(plan);
@@ -224,7 +389,7 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
       canonicalJson(latestOwnership.map((value) => value.ownershipId) as unknown as JsonValue) !==
       canonicalJson(ownership.map((value) => value.ownershipId) as unknown as JsonValue)
     ) {
-      return this.enforceStop(input);
+      return this.#enforceStop(input);
     }
     await this.#faultBoundary("retention-erasure-verified");
 
@@ -233,7 +398,9 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
       planHash: plan.planHash,
       artifactDigests: plan.artifactDigests,
       artifactObservationIds: plan.artifactObservationIds,
-      priorSizeBytes: ownership.reduce((sum, value) => {
+      priorSizeBytes: [
+        ...new Map(ownership.map((value) => [value.artifactDigest, value])).values(),
+      ].reduce((sum, value) => {
         const next = sum + value.artifactSizeBytes;
         if (!Number.isSafeInteger(next)) throw new RangeError("Retention byte total is unsafe");
         return next;
@@ -262,21 +429,37 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
   }
 
   assertArtifactUseAllowed(digest: string): void {
+    if (this.#admissionClosed)
+      throw safeAcquisitionError("retention-stop-required", "artifact-verify");
+    this.#assertArtifactUseAllowed(digest);
+  }
+
+  #assertArtifactUseAllowed(digest: string): void {
     assertArtifactDigest(digest);
     const now = this.#trustedNow();
+    const ownership = this.#journal.ownershipForDigest(digest);
     if (
+      ownership.length === 0 ||
       this.#journal.digestUseDenied(digest) ||
-      this.#journal.ownershipForDigest(digest).some((value) => now >= value.expiresAtMs)
+      ownership.some((value) => now >= value.expiresAtMs)
     )
       throw safeAcquisitionError("retention-stop-required", "artifact-verify");
   }
 
   assertDerivedUseAllowed(derivedId: string): void {
+    if (this.#admissionClosed)
+      throw safeAcquisitionError("retention-stop-required", "normalization");
+    this.#assertDerivedUseAllowed(derivedId);
+  }
+
+  #assertDerivedUseAllowed(derivedId: string): void {
     assertId(derivedId, "Derived identifier");
     const now = this.#trustedNow();
+    const ownership = this.#journal.ownershipForDerivedId(derivedId);
     if (
+      ownership.length === 0 ||
       this.#journal.derivedUseDenied(derivedId) ||
-      this.#journal.ownershipForDerivedId(derivedId).some((value) => now >= value.expiresAtMs)
+      ownership.some((value) => now >= value.expiresAtMs)
     )
       throw safeAcquisitionError("retention-stop-required", "normalization");
   }
@@ -387,6 +570,12 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
     const value = this.#nowMs();
     assertSafeTime(value, "Trusted retention time");
     return value;
+  }
+}
+
+export function assertOwnedArtifactRetentionController(value: ArtifactRetentionController): void {
+  if (!ownedRetentionControllers.has(value)) {
+    throw new TypeError("owned-artifact-retention-controller-required");
   }
 }
 

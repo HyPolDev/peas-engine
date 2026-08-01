@@ -776,6 +776,8 @@ export function validateJournalEntries(
 export interface AcquisitionJournal {
   load(marketAcquisitionJournalId: string): Promise<readonly JournalEntry[]>;
   append(entry: JournalEntry): Promise<void>;
+  /** Atomically consumes one exact request-started checkpoint with its attempt-started claim. */
+  claimAttemptStarted(expectedRequestStartedHash: string, entry: JournalEntry): Promise<boolean>;
 }
 
 export function journalEntryBody(entry: JournalEntry): JournalCheckpointBody {

@@ -2,11 +2,7 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { canonicalJson, type JsonValue } from "../../core/json.js";
 
-import type {
-  ArtifactStore,
-  ArtifactObservation,
-  StoreArtifactResult,
-} from "../../artifacts/artifact-store.js";
+import type { ArtifactObservation, StoreArtifactResult } from "../../artifacts/artifact-store.js";
 import {
   createClockBasis,
   createObservationLedgerEntry,
@@ -27,7 +23,10 @@ import {
   TERMINAL_TOKEN_HASH,
   validateJournalEntries,
 } from "./journal.js";
-import type { ArtifactRetentionController } from "./retention/contracts.js";
+import {
+  assertRetentionEnforcedArtifactStore,
+  type RetentionEnforcedArtifactStore,
+} from "./retention/artifact-access.js";
 
 const HASH = /^[0-9a-f]{64}$/u;
 
@@ -221,10 +220,10 @@ export type VerifiedAcquisitionArtifact = Readonly<{
 }>;
 
 export async function verifyCommittedArtifact(
-  store: ArtifactStore,
+  store: RetentionEnforcedArtifactStore,
   expected: CommittedArtifactExpectation,
-  retention: ArtifactRetentionController,
 ): Promise<VerifiedAcquisitionArtifact> {
+  assertRetentionEnforcedArtifactStore(store);
   if (
     !HASH.test(expected.artifactDigest) ||
     !HASH.test(expected.artifactObservationHash) ||
@@ -234,7 +233,6 @@ export async function verifyCommittedArtifact(
   ) {
     throw new TypeError("artifact-expectation-invalid");
   }
-  retention.assertArtifactUseAllowed(expected.artifactDigest);
   const observation = await store.getObservation(expected.artifactObservationId);
   if (
     observation === undefined ||
@@ -437,8 +435,7 @@ export async function decideAcquisitionRestart(
     journalId: string;
     expectedIdentity: JournalIdentityInput;
     expectedConfigurationHash: string;
-    artifactStore: ArtifactStore;
-    retention: ArtifactRetentionController;
+    artifactStore: RetentionEnforcedArtifactStore;
   }>,
 ): Promise<RestartDecision> {
   const entries = await input.journal.load(input.journalId);
@@ -478,7 +475,7 @@ export async function decideAcquisitionRestart(
       throw new TypeError("journal-artifact-expectation-conflict");
     }
     if (prior === undefined) {
-      await verifyCommittedArtifact(input.artifactStore, expected, input.retention);
+      await verifyCommittedArtifact(input.artifactStore, expected);
       verifiedObservations.set(expected.artifactObservationId, tuple);
     }
   }

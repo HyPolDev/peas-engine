@@ -109,6 +109,37 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
     return allowed;
   }
 
+  registerDerivedLineageAndApplyActiveStop(
+    ownershipId: string,
+    derivedIds: readonly string[],
+  ): boolean {
+    let allowed = true;
+    this.#database
+      .transaction(() => {
+        const ownership = this.#ownership(ownershipId);
+        if (ownership === undefined) throw new Error("Retention ownership is missing");
+        const insert = this.#database.prepare(
+          "INSERT OR IGNORE INTO market_retention_derivation_ownership (ownership_id, derived_id) VALUES (?, ?)",
+        );
+        for (const derivedId of derivedIds) insert.run(ownershipId, derivedId);
+        const active = this.#database
+          .prepare(`SELECT stop_event_id FROM market_retention_provider_denials
+            WHERE provider_lane = ? AND provider_id = ?`)
+          .get(ownership.providerLane, ownership.providerId) as
+          | { stop_event_id: string }
+          | undefined;
+        if (active !== undefined) {
+          allowed = false;
+          const deny = this.#database.prepare(
+            "INSERT OR IGNORE INTO market_retention_derivation_denials (stop_event_id, derived_id) VALUES (?, ?)",
+          );
+          for (const derivedId of derivedIds) deny.run(active.stop_event_id, derivedId);
+        }
+      })
+      .immediate();
+    return allowed;
+  }
+
   listOwnership(lane: RetentionProviderLane, providerId: string): readonly RetentionOwnership[] {
     const rows = this.#database
       .prepare(`SELECT ownership_json AS json, ownership_hash AS hash
@@ -116,7 +147,12 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
         WHERE provider_lane = ? AND provider_id = ? ORDER BY ownership_id`)
       .all(lane, providerId) as JsonRow[];
     return rows.map((row) =>
-      parseRecord<RetentionOwnership>(row, "peas/market-acquisition-retention-ownership-record/v1"),
+      this.#withDerived(
+        parseRecord<RetentionOwnership>(
+          row,
+          "peas/market-acquisition-retention-ownership-record/v1",
+        ),
+      ),
     );
   }
 
@@ -126,7 +162,12 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
         FROM market_retention_ownership WHERE artifact_digest = ? ORDER BY ownership_id`)
       .all(digest) as JsonRow[];
     return rows.map((row) =>
-      parseRecord<RetentionOwnership>(row, "peas/market-acquisition-retention-ownership-record/v1"),
+      this.#withDerived(
+        parseRecord<RetentionOwnership>(
+          row,
+          "peas/market-acquisition-retention-ownership-record/v1",
+        ),
+      ),
     );
   }
 
@@ -138,7 +179,12 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
         WHERE d.derived_id = ? ORDER BY o.ownership_id`)
       .all(derivedId) as JsonRow[];
     return rows.map((row) =>
-      parseRecord<RetentionOwnership>(row, "peas/market-acquisition-retention-ownership-record/v1"),
+      this.#withDerived(
+        parseRecord<RetentionOwnership>(
+          row,
+          "peas/market-acquisition-retention-ownership-record/v1",
+        ),
+      ),
     );
   }
 
@@ -207,6 +253,16 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
           "SELECT 1 present FROM market_retention_provider_denials WHERE provider_lane = ? AND provider_id = ?",
         )
         .get(lane, providerId) !== undefined
+    );
+  }
+
+  reconciliationUseDenied(trustedNowMs: number): boolean {
+    return (
+      this.#database
+        .prepare(`SELECT 1 AS denied FROM market_retention_provider_denials
+          UNION ALL SELECT 1 AS denied FROM market_retention_ownership
+          WHERE expires_at_ms <= ? LIMIT 1`)
+        .get(trustedNowMs) !== undefined
     );
   }
   digestUseDenied(digest: string): boolean {
@@ -465,5 +521,16 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
           row,
           "peas/market-acquisition-retention-ownership-record/v1",
         );
+  }
+
+  #withDerived(value: RetentionOwnership): RetentionOwnership {
+    const derivedIds = (
+      this.#database
+        .prepare(
+          "SELECT derived_id FROM market_retention_derivation_ownership WHERE ownership_id = ? ORDER BY derived_id",
+        )
+        .all(value.ownershipId) as Array<{ derived_id: string }>
+    ).map((row) => row.derived_id);
+    return { ...value, derivedIds };
   }
 }

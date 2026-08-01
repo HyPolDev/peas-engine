@@ -18,6 +18,7 @@ function replayEqual(label: string, existing: unknown, next: unknown): void {
 
 export class MemoryArtifactRetentionJournal implements ArtifactRetentionJournal {
   readonly #ownership = new Map<string, RetentionOwnership>();
+  readonly #derivedOwnership = new Map<string, Set<string>>();
   readonly #stops = new Map<string, RetentionStopEvent>();
   readonly #providerDenials = new Set<string>();
   readonly #digestDenials = new Set<string>();
@@ -32,6 +33,9 @@ export class MemoryArtifactRetentionJournal implements ArtifactRetentionJournal 
     const existing = this.#ownership.get(value.ownershipId);
     if (existing !== undefined) replayEqual("Ownership", existing, value);
     else this.#ownership.set(value.ownershipId, structuredClone(value));
+    const lineage = this.#derivedOwnership.get(value.ownershipId) ?? new Set<string>();
+    for (const derivedId of value.derivedIds) lineage.add(derivedId);
+    this.#derivedOwnership.set(value.ownershipId, lineage);
     const denied = this.providerUseDenied(value.providerLane, value.providerId);
     if (denied) {
       this.#digestDenials.add(value.artifactDigest);
@@ -40,25 +44,46 @@ export class MemoryArtifactRetentionJournal implements ArtifactRetentionJournal 
     return !denied;
   }
 
+  registerDerivedLineageAndApplyActiveStop(
+    ownershipId: string,
+    derivedIds: readonly string[],
+  ): boolean {
+    const ownership = this.#ownership.get(ownershipId);
+    if (ownership === undefined) throw new Error("Retention ownership is missing");
+    const lineage = this.#derivedOwnership.get(ownershipId) ?? new Set<string>();
+    for (const derivedId of derivedIds) lineage.add(derivedId);
+    this.#derivedOwnership.set(ownershipId, lineage);
+    const denied = this.providerUseDenied(ownership.providerLane, ownership.providerId);
+    if (denied) for (const derivedId of derivedIds) this.#derivedDenials.add(derivedId);
+    return !denied;
+  }
+
+  #withDerived(value: RetentionOwnership): RetentionOwnership {
+    return {
+      ...structuredClone(value),
+      derivedIds: [...(this.#derivedOwnership.get(value.ownershipId) ?? [])].sort(),
+    };
+  }
+
   listOwnership(lane: RetentionProviderLane, providerId: string): readonly RetentionOwnership[] {
     return [...this.#ownership.values()]
       .filter((value) => value.providerLane === lane && value.providerId === providerId)
       .sort((left, right) => left.ownershipId.localeCompare(right.ownershipId))
-      .map((value) => structuredClone(value));
+      .map((value) => this.#withDerived(value));
   }
 
   ownershipForDigest(digest: string): readonly RetentionOwnership[] {
     return [...this.#ownership.values()]
       .filter((value) => value.artifactDigest === digest)
       .sort((left, right) => left.ownershipId.localeCompare(right.ownershipId))
-      .map((value) => structuredClone(value));
+      .map((value) => this.#withDerived(value));
   }
 
   ownershipForDerivedId(derivedId: string): readonly RetentionOwnership[] {
     return [...this.#ownership.values()]
-      .filter((value) => value.derivedIds.includes(derivedId))
+      .filter((value) => this.#derivedOwnership.get(value.ownershipId)?.has(derivedId) === true)
       .sort((left, right) => left.ownershipId.localeCompare(right.ownershipId))
-      .map((value) => structuredClone(value));
+      .map((value) => this.#withDerived(value));
   }
 
   recordStopAndDenials(stop: RetentionStopEvent, derivedIds: readonly string[]): void {
@@ -73,6 +98,12 @@ export class MemoryArtifactRetentionJournal implements ArtifactRetentionJournal 
 
   providerUseDenied(lane: RetentionProviderLane, providerId: string): boolean {
     return this.#providerDenials.has(`${lane}:${providerId}`);
+  }
+  reconciliationUseDenied(trustedNowMs: number): boolean {
+    return (
+      this.#providerDenials.size > 0 ||
+      [...this.#ownership.values()].some((ownership) => trustedNowMs >= ownership.expiresAtMs)
+    );
   }
   digestUseDenied(digest: string): boolean {
     return this.#digestDenials.has(digest) || this.#tombstones.has(digest);

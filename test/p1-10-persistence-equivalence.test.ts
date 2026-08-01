@@ -29,7 +29,7 @@ import {
 import { MemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
 import { canonicalJournalProjection } from "../src/adapters/market-acquisition/replay.js";
 import { SqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
-import { ALLOW_ALL_RETENTION } from "./p1-10-repair-fixtures.js";
+import { retentionGuardedArtifactStore } from "./p1-10-repair-fixtures.js";
 
 const hash = (member: string): string =>
   canonicalHash("peas/p1-10-persistence-equivalence-test/v1", { member });
@@ -409,8 +409,13 @@ test("restart decisions never re-request committed or verified pages", async () 
       journalId,
       expectedIdentity: identity,
       expectedConfigurationHash: CONFIGURATION_HASH,
-      artifactStore: artifactStoreDouble(),
-      retention: ALLOW_ALL_RETENTION,
+      artifactStore: retentionGuardedArtifactStore(artifactStoreDouble(), [
+        {
+          artifactDigest,
+          artifactSizeBytes: artifactBytes.byteLength,
+          artifactObservationId,
+        },
+      ]),
     });
     assert.equal(decision.kind, expected[prefix - 1]);
     if (prefix === 2 || prefix >= 5) assert.equal(decision.transportAllowed, false);
@@ -424,8 +429,13 @@ test("restart decisions never re-request committed or verified pages", async () 
         journalId,
         expectedIdentity: identity,
         expectedConfigurationHash: hash("changed-configuration"),
-        artifactStore: artifactStoreDouble(),
-        retention: ALLOW_ALL_RETENTION,
+        artifactStore: retentionGuardedArtifactStore(artifactStoreDouble(), [
+          {
+            artifactDigest,
+            artifactSizeBytes: artifactBytes.byteLength,
+            artifactObservationId,
+          },
+        ]),
       }),
     /journal-conflict/u,
   );

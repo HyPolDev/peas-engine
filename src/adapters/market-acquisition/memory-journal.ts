@@ -43,4 +43,22 @@ export class MemoryAcquisitionJournal implements AcquisitionJournal {
     validateJournalEntries(prospective, this.#expectedIdentity);
     this.#entries.push(prospective.at(-1) as JournalEntry);
   }
+
+  async claimAttemptStarted(
+    expectedRequestStartedHash: string,
+    entry: JournalEntry,
+  ): Promise<boolean> {
+    const latest = this.#entries.at(-1);
+    if (
+      latest?.checkpointKind !== "request-started" ||
+      latest.journalEntryHash !== expectedRequestStartedHash ||
+      entry.checkpointKind !== "attempt-started"
+    ) {
+      return false;
+    }
+    const prospective = [...this.#entries, cloneEntry(entry)];
+    validateJournalEntries(prospective, this.#expectedIdentity);
+    this.#entries.push(prospective.at(-1) as JournalEntry);
+    return true;
+  }
 }
