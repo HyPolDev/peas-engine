@@ -129,8 +129,17 @@ async function settleTimer(handle: AlpacaDeadlineHandle): Promise<boolean> {
 }
 
 function safeFailure(attempt: AttemptFailure, resourcesSettled: boolean): AlpacaAttemptFailure {
+  const settledAttempt =
+    resourcesSettled && attempt.retryFailure.kind === "clean-partial-body-transport"
+      ? new AttemptFailure(
+          attempt.reason,
+          attempt.stage,
+          { kind: "clean-partial-body-transport", resourcesSettled: true },
+          attempt.laneDisabled,
+        )
+      : attempt;
   const finalAttempt = resourcesSettled
-    ? attempt
+    ? settledAttempt
     : new AttemptFailure(
         "partial-cleanup-failed",
         "cleanup",

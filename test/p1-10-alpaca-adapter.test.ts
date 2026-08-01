@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
+import type { ArtifactStore } from "../src/artifacts/artifact-store.js";
 import { canonicalHash } from "../src/core/hash.js";
+import { canonicalJson, type JsonValue } from "../src/core/json.js";
 import { executeAlpacaAttempt } from "../src/adapters/market-acquisition/alpaca/adapter.js";
 import type {
   AlpacaAttemptResource,
@@ -15,6 +20,8 @@ import type {
   AlpacaTransportResponse,
   AlpacaVerifiedPageSink,
 } from "../src/adapters/market-acquisition/alpaca/contracts.js";
+import { openSqliteDatabase } from "../src/adapters/sqlite/database.js";
+import { decideAcquisitionRestart } from "../src/adapters/market-acquisition/artifact-integration.js";
 import {
   ACCEPTED_PR_2E_CANDIDATE_SHA,
   MARKET_ACQUISITION_LIMITS,
@@ -32,9 +39,28 @@ import {
 import {
   deriveContinuationBindingHash,
   deriveLogicalPageIdentityHash,
+  deriveMarketAcquisitionJournalId,
   derivePrivateTokenHash,
   NO_TOKEN_HASH,
+  createJournalEntry,
+  type AcquisitionJournal,
+  type JournalCheckpointBody,
 } from "../src/adapters/market-acquisition/journal.js";
+import { MemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
+import {
+  MAX_ATTEMPTS_PER_ACQUISITION,
+  MAX_ATTEMPTS_PER_PAGE,
+  decideRetry,
+  type RetryFailure,
+} from "../src/adapters/market-acquisition/retry.js";
+import { SqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
+import {
+  AcquisitionStateMachine,
+  createInitialAcquisitionSnapshot,
+  type AcquisitionEventProof,
+  type AcquisitionMachineSnapshot,
+  type AcquisitionTransitionPlan,
+} from "../src/adapters/market-acquisition/state-machine.js";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 let unexpectedNetworkCalls = 0;
@@ -166,16 +192,24 @@ function counts(): ResourceCounts {
   return { abort: 0, destroy: 0, settle: 0, read: 0, write: 0, complete: 0, transport: 0 };
 }
 
+type ResourceFailure = "abort" | "destroy" | "settle" | null;
+
 class ResourceDouble implements AlpacaAttemptResource {
-  constructor(protected readonly counters: ResourceCounts) {}
+  constructor(
+    protected readonly counters: ResourceCounts,
+    private readonly failure: ResourceFailure = null,
+  ) {}
   async abort(): Promise<void> {
     this.counters.abort += 1;
+    if (this.failure === "abort") throw new Error("synthetic abort failure");
   }
   async destroy(): Promise<void> {
     this.counters.destroy += 1;
+    if (this.failure === "destroy") throw new Error("synthetic destroy failure");
   }
   async settle(): Promise<void> {
     this.counters.settle += 1;
+    if (this.failure === "settle") throw new Error("synthetic settle failure");
   }
 }
 
@@ -184,10 +218,18 @@ class BodyDouble extends ResourceDouble implements AlpacaResponseBody {
   #index = 0;
   #pendingResolve: ((value: AlpacaBodyRead) => void) | null = null;
   readonly #hangAfterChunks: boolean;
-  constructor(counters: ResourceCounts, chunks: readonly Uint8Array[], hangAfterChunks = false) {
-    super(counters);
+  readonly #throwAfterChunks: boolean;
+  constructor(
+    counters: ResourceCounts,
+    chunks: readonly Uint8Array[],
+    hangAfterChunks = false,
+    throwAfterChunks = false,
+    cleanupFailure: ResourceFailure = null,
+  ) {
+    super(counters, cleanupFailure);
     this.#chunks = chunks;
     this.#hangAfterChunks = hangAfterChunks;
+    this.#throwAfterChunks = throwAfterChunks;
   }
   async read(): Promise<AlpacaBodyRead> {
     this.counters.read += 1;
@@ -196,15 +238,22 @@ class BodyDouble extends ResourceDouble implements AlpacaResponseBody {
       this.#index += 1;
       return { done: false, bytes: chunk };
     }
+    if (this.#throwAfterChunks) throw new Error("synthetic partial-body transport failure");
     if (!this.#hangAfterChunks) return { done: true };
     return new Promise((resolve) => {
       this.#pendingResolve = resolve;
     });
   }
   override async abort(): Promise<void> {
-    await super.abort();
+    let failure: unknown = null;
+    try {
+      await super.abort();
+    } catch (error) {
+      failure = error;
+    }
     this.#pendingResolve?.({ done: true });
     this.#pendingResolve = null;
+    if (failure !== null) throw failure;
   }
 }
 
@@ -213,8 +262,9 @@ class SinkDouble extends ResourceDouble implements AlpacaVerifiedPageSink<string
   constructor(
     counters: ResourceCounts,
     private readonly failWrite = false,
+    cleanupFailure: ResourceFailure = null,
   ) {
-    super(counters);
+    super(counters, cleanupFailure);
   }
   async write(bytes: Uint8Array): Promise<void> {
     this.counters.write += 1;
@@ -232,6 +282,7 @@ class TimerDouble implements AlpacaDeadlineScheduler {
   cancelled = 0;
   settled = 0;
   armedWith: number | null = null;
+  constructor(private readonly failSettle = false) {}
   arm(delayMs: 30_000): AlpacaDeadlineHandle {
     this.armedWith = delayMs;
     const expired = new Promise<void>((resolve) => {
@@ -244,6 +295,7 @@ class TimerDouble implements AlpacaDeadlineScheduler {
       },
       settle: async () => {
         this.settled += 1;
+        if (this.failSettle) throw new Error("synthetic timer settle failure");
       },
     };
   }
@@ -257,6 +309,7 @@ class TransportDouble implements AlpacaTransport {
   constructor(
     private readonly counters: ResourceCounts,
     private readonly response: AlpacaTransportResponse,
+    private readonly failure: ResourceFailure = null,
   ) {}
   async dispatch(request: AlpacaTransportRequest): Promise<AlpacaTransportResponse> {
     this.counters.transport += 1;
@@ -265,9 +318,11 @@ class TransportDouble implements AlpacaTransport {
   }
   async abort(): Promise<void> {
     this.counters.abort += 1;
+    if (this.failure === "abort") throw new Error("synthetic transport abort failure");
   }
   async settle(): Promise<void> {
     this.counters.settle += 1;
+    if (this.failure === "settle") throw new Error("synthetic transport settle failure");
   }
 }
 
@@ -349,6 +404,363 @@ function continuationPage(plan: ValidatedMarketAcquisitionConfiguration): Alpaca
     preceding: { ...preceding, nextContinuationBindingHash },
   };
 }
+
+type PartialBodyFailureKind = "transport" | "timeout";
+type CleanupFailureKind =
+  | `${"body" | "sibling" | "sink"}-${"abort" | "destroy" | "settle"}`
+  | `transport-${"abort" | "settle"}`
+  | "timer-settle"
+  | null;
+
+function cleanupOperation(
+  cleanupFailure: CleanupFailureKind,
+  owner: "body" | "sibling" | "sink" | "transport",
+): ResourceFailure {
+  for (const operation of ["abort", "destroy", "settle"] as const) {
+    if (cleanupFailure === `${owner}-${operation}`) return operation;
+  }
+  return null;
+}
+
+async function partialBodyFailure(
+  kind: PartialBodyFailureKind,
+  cleanupFailure: CleanupFailureKind = null,
+) {
+  const counters = counts();
+  const body = new BodyDouble(
+    counters,
+    [Uint8Array.from([1, 2, 3])],
+    kind === "timeout",
+    kind === "transport",
+    cleanupOperation(cleanupFailure, "body"),
+  );
+  const sibling = new ResourceDouble(counters, cleanupOperation(cleanupFailure, "sibling"));
+  const sink = new SinkDouble(counters, false, cleanupOperation(cleanupFailure, "sink"));
+  const transport = new TransportDouble(
+    counters,
+    response(body, { siblingResources: [sibling] }),
+    cleanupOperation(cleanupFailure, "transport"),
+  );
+  const timer = new TimerDouble(cleanupFailure === "timer-settle");
+  const promise = executeAlpacaAttempt({
+    plan: validatedPlan(),
+    page: firstPage(),
+    authorizationHeaders: HEADERS,
+    transport,
+    artifactSink: sink,
+    deadlineScheduler: timer,
+  });
+  if (kind === "timeout") {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    timer.expire();
+  }
+  const result = await promise;
+  assert.equal(result.ok, false);
+  if (result.ok) throw new Error("synthetic partial-body failure unexpectedly succeeded");
+  return { result, counters, sink, timer };
+}
+
+function retryDecision(
+  failure: RetryFailure,
+  pageAttemptsStarted: number,
+  acquisitionAttemptsStarted: number,
+) {
+  return decideRetry({ failure, pageAttemptsStarted, acquisitionAttemptsStarted });
+}
+
+function journalIdentity(plan: ValidatedMarketAcquisitionConfiguration) {
+  return {
+    schemaVersion: 1,
+    requestIdentityHash: plan.requestIdentityHash,
+    providerId: plan.route.providerId,
+    datasetId: plan.route.datasetId,
+    feedId: plan.route.feedId,
+    endpointChannelId: plan.route.endpointChannelId,
+  } as const;
+}
+
+function eventProof(
+  snapshot: AcquisitionMachineSnapshot,
+  nowMonotonicMs: number,
+  resourcesSettled = true,
+): AcquisitionEventProof {
+  return {
+    requestIdentityHash: snapshot.requestIdentityHash,
+    acquisitionConfigurationHash: snapshot.acquisitionConfigurationHash,
+    marketAcquisitionJournalId: snapshot.marketAcquisitionJournalId,
+    runSessionNonce: snapshot.runSessionNonce,
+    nowMonotonicMs,
+    resourcesSettled,
+  };
+}
+
+function checkpointBody(
+  snapshot: AcquisitionMachineSnapshot,
+  plan: ValidatedMarketAcquisitionConfiguration,
+): JournalCheckpointBody {
+  return {
+    schemaVersion: 1,
+    runSessionNonce: snapshot.runSessionNonce,
+    acquisitionObservationId: canonicalHash("peas/p1-10-adapter-retry-test/v1", {
+      member: "acquisition-observation",
+    }),
+    marketAcquisitionId: `maq1_${canonicalHash("peas/p1-10-adapter-retry-test/v1", {
+      member: "market-acquisition",
+    })}`,
+    admittedMarketAcquisitionIds: [],
+    requestIdentityHash: snapshot.requestIdentityHash,
+    acquisitionConfigurationHash: snapshot.acquisitionConfigurationHash,
+    providerId: plan.route.providerId,
+    datasetId: plan.route.datasetId,
+    feedId: plan.route.feedId,
+    endpointChannelId: plan.route.endpointChannelId,
+    authorizationMode: "p1-09-approved",
+    logicalPageIdentityHash: snapshot.logicalPageIdentityHash,
+    pageOrdinal: snapshot.pageOrdinal,
+    currentTokenHash: snapshot.currentTokenHash,
+    currentResumableTokenMaterial: null,
+    nextTokenHash: null,
+    nextResumableTokenMaterial: null,
+    currentContinuationBindingHash: snapshot.currentContinuationBindingHash,
+    nextContinuationBindingHash: null,
+    attemptId:
+      snapshot.attemptId ??
+      `mat1_${canonicalHash("peas/p1-10-adapter-retry-test/v1", { member: "pending-attempt" })}`,
+    retrievalAttemptId:
+      snapshot.retrievalAttemptId ??
+      `rat1_${canonicalHash("peas/p1-10-adapter-retry-test/v1", { member: "pending-attempt" })}`,
+    attemptOrdinal: snapshot.attemptOrdinal ?? 0,
+    artifactObservationId: null,
+    artifactDigest: null,
+    artifactSizeBytes: null,
+    artifactObservationHash: null,
+    artifactContentId: null,
+    rawArtifactId: null,
+    stageLedgerFactId: null,
+    causalParentFactIds: [],
+    pageRecordCount: null,
+    pageNormalizedFactCount: null,
+    pageChainHash: snapshot.pageChainHash,
+    cumulativeSuccessfulPages: snapshot.budgets.successfulPages,
+    cumulativeVerifiedBytes: snapshot.budgets.verifiedBytes,
+    cumulativeRecords: snapshot.budgets.records,
+    cumulativeNormalizedFacts: snapshot.budgets.normalizedFacts,
+    cumulativeAttempts: snapshot.budgets.attempts,
+    acquisitionDeadlineBasis: "offline-monotonic-basis-v1",
+    quotaWindowEvidence: snapshot.quotaWindowEvidence,
+    terminalState: null,
+    terminalReasonCode: null,
+    incomplete: true,
+  };
+}
+
+async function persistPlan(
+  journal: AcquisitionJournal,
+  journalId: string,
+  plan: ValidatedMarketAcquisitionConfiguration,
+  transition: AcquisitionTransitionPlan,
+): Promise<void> {
+  if (transition.checkpointKind === null) return;
+  const rows = await journal.load(journalId);
+  await journal.append(
+    createJournalEntry(
+      rows.at(-1) ?? null,
+      journalId,
+      transition.checkpointKind,
+      checkpointBody(transition.next, plan),
+    ),
+  );
+}
+
+async function driveCleanFailureToRetryBoundary(
+  failureKind: PartialBodyFailureKind,
+  journal: AcquisitionJournal,
+  plan: ValidatedMarketAcquisitionConfiguration,
+) {
+  const identity = journalIdentity(plan);
+  const journalId = deriveMarketAcquisitionJournalId(identity);
+  const initial = createInitialAcquisitionSnapshot({
+    requestIdentityHash: plan.requestIdentityHash,
+    acquisitionConfigurationHash: plan.acquisitionConfigurationHash,
+    marketAcquisitionJournalId: journalId,
+    runSessionNonce: "offline-adapter-retry-session-v1",
+    acquisitionDeclaredMonotonicMs: 0,
+  });
+  const machine = new AcquisitionStateMachine(initial, (transition) =>
+    persistPlan(journal, journalId, plan, transition),
+  );
+  await machine.applyAcquisitionEvent({
+    kind: "begin-preflight",
+    proof: eventProof(machine.snapshot, 0),
+  });
+  await machine.applyAcquisitionEvent({
+    kind: "preflight-approved",
+    proof: eventProof(machine.snapshot, 0),
+  });
+  await machine.applyAcquisitionEvent({
+    kind: "credentials-loaded",
+    proof: eventProof(machine.snapshot, 0),
+  });
+  await machine.applyAcquisitionEvent({
+    kind: "dispatch-started",
+    proof: eventProof(machine.snapshot, 1_000, false),
+    entitlementQuotaLimit: 30,
+    deadlineProof: {
+      acquisitionDeclaredMonotonicMs: 0,
+      attemptStartedMonotonicMs: 1_000,
+      nowMonotonicMs: 1_000,
+    },
+  });
+  const logicalPageIdentityHash = machine.snapshot.logicalPageIdentityHash;
+  const attemptId = machine.snapshot.attemptId;
+  const { result, counters } = await partialBodyFailure(failureKind);
+  await machine.applyAcquisitionEvent({
+    kind: "retry-cleanup-complete",
+    proof: eventProof(machine.snapshot, 1_001, result.resourcesSettled),
+    context: {
+      failure: result.retryFailure,
+      pageAttemptsStarted: machine.snapshot.pageAttemptsStarted,
+      acquisitionAttemptsStarted: machine.snapshot.budgets.attempts,
+    },
+  });
+  assert.equal(machine.snapshot.currentState, "waiting-retry");
+  assert.equal(machine.snapshot.logicalPageIdentityHash, logicalPageIdentityHash);
+  assert.equal(machine.snapshot.attemptId, attemptId);
+  assert.equal(machine.snapshot.budgets.attempts, 1);
+  assert.equal(machine.snapshot.budgets.successfulPages, 0);
+  assert.equal(machine.snapshot.budgets.records, 0);
+  assert.equal(machine.snapshot.pendingRetryDelayMs, 1_000);
+  assert.equal(counters.complete, 0);
+  return { identity, journalId };
+}
+
+test("adapter-produced cleaned partial-body failures retry the same page within exact budgets", async () => {
+  for (const failureKind of ["transport", "timeout"] as const) {
+    const { result, counters, sink, timer } = await partialBodyFailure(failureKind);
+    assert.equal(result.resourcesSettled, true, failureKind);
+    assert.deepEqual(result.retryFailure, {
+      kind: "clean-partial-body-transport",
+      resourcesSettled: true,
+    });
+    assert.deepEqual(retryDecision(result.retryFailure, 1, 1), {
+      kind: "retry",
+      delayMs: 1_000,
+      retryOrdinal: 1,
+    });
+    assert.deepEqual(retryDecision(result.retryFailure, 2, 2), {
+      kind: "retry",
+      delayMs: 2_000,
+      retryOrdinal: 2,
+    });
+    assert.deepEqual(retryDecision(result.retryFailure, MAX_ATTEMPTS_PER_PAGE, 3), {
+      kind: "stop",
+      reason: "attempt-budget-exhausted",
+    });
+    assert.deepEqual(retryDecision(result.retryFailure, 1, MAX_ATTEMPTS_PER_ACQUISITION), {
+      kind: "stop",
+      reason: "attempt-budget-exhausted",
+    });
+    assert.equal(sink.bytes, 3);
+    assert.equal(counters.abort, 4);
+    assert.equal(counters.destroy, 3);
+    assert.equal(counters.settle, 4);
+    assert.equal(counters.read, 2);
+    assert.equal(counters.write, 1);
+    assert.equal(counters.complete, 0);
+    assert.equal(timer.cancelled, 1);
+    assert.equal(timer.settled, 1);
+    const stable = { ...counters, timerCancelled: timer.cancelled, timerSettled: timer.settled };
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(
+      { ...counters, timerCancelled: timer.cancelled, timerSettled: timer.settled },
+      stable,
+    );
+  }
+});
+
+test("every unproved partial-body cleanup category remains terminal", async () => {
+  const cleanupFailures = [
+    "body-abort",
+    "body-destroy",
+    "body-settle",
+    "sibling-abort",
+    "sibling-destroy",
+    "sibling-settle",
+    "sink-abort",
+    "sink-destroy",
+    "sink-settle",
+    "transport-abort",
+    "transport-settle",
+    "timer-settle",
+  ] as const satisfies readonly Exclude<CleanupFailureKind, null>[];
+  for (const failureKind of ["transport", "timeout"] as const) {
+    for (const cleanupFailure of cleanupFailures) {
+      const { result } = await partialBodyFailure(failureKind, cleanupFailure);
+      assert.equal(result.resourcesSettled, false, `${failureKind}:${cleanupFailure}`);
+      assert.equal(result.retryFailure.kind, "cleanup-unprovable");
+      assert.deepEqual(retryDecision(result.retryFailure, 1, 1), {
+        kind: "stop",
+        reason: "cleanup-unprovable",
+      });
+    }
+  }
+});
+
+test("clean adapter retry has byte-identical memory and SQLite restart boundaries", async (t) => {
+  const plan = validatedPlan();
+  const projections: string[] = [];
+  for (const failureKind of ["transport", "timeout"] as const) {
+    const identity = journalIdentity(plan);
+    const memory = new MemoryAcquisitionJournal(identity);
+    const memoryBoundary = await driveCleanFailureToRetryBoundary(failureKind, memory, plan);
+    const memoryRows = await memory.load(memoryBoundary.journalId);
+    assert.equal(memoryRows.length, 2);
+    const beforeRestart = canonicalJson(memoryRows as unknown as JsonValue);
+    assert.deepEqual(
+      await decideAcquisitionRestart({
+        journal: memory,
+        journalId: memoryBoundary.journalId,
+        expectedIdentity: memoryBoundary.identity,
+        expectedConfigurationHash: plan.acquisitionConfigurationHash,
+        artifactStore: {} as ArtifactStore,
+      }),
+      { kind: "fresh-attempt", pageOrdinal: 0, transportAllowed: true },
+    );
+    assert.equal(
+      canonicalJson((await memory.load(memoryBoundary.journalId)) as unknown as JsonValue),
+      beforeRestart,
+    );
+
+    const directory = mkdtempSync(join(tmpdir(), `peas-p1-10-adapter-retry-${failureKind}-`));
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    const filename = join(directory, "journal.sqlite");
+    let database = openSqliteDatabase(filename, []);
+    let sqlite = new SqliteAcquisitionJournal(database, identity);
+    const sqliteBoundary = await driveCleanFailureToRetryBoundary(failureKind, sqlite, plan);
+    const sqliteRows = await sqlite.load(sqliteBoundary.journalId);
+    assert.equal(canonicalJson(sqliteRows as unknown as JsonValue), beforeRestart);
+    database.close();
+
+    database = openSqliteDatabase(filename, []);
+    sqlite = new SqliteAcquisitionJournal(database, identity);
+    assert.deepEqual(
+      await decideAcquisitionRestart({
+        journal: sqlite,
+        journalId: sqliteBoundary.journalId,
+        expectedIdentity: sqliteBoundary.identity,
+        expectedConfigurationHash: plan.acquisitionConfigurationHash,
+        artifactStore: {} as ArtifactStore,
+      }),
+      { kind: "fresh-attempt", pageOrdinal: 0, transportAllowed: true },
+    );
+    const afterRestart = await sqlite.load(sqliteBoundary.journalId);
+    assert.equal(canonicalJson(afterRestart as unknown as JsonValue), beforeRestart);
+    projections.push(beforeRestart);
+    database.close();
+  }
+  assert.equal(new Set(projections).size, 1);
+  assert.equal(unexpectedNetworkCalls, 0);
+});
 
 async function successfulAttempt(
   kind: AlpacaAcquisitionKind = "quotes",
