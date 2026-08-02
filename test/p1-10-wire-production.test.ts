@@ -748,6 +748,7 @@ async function authenticatedAdmission(
           sqliteFilename,
           loadMigrations(`${process.cwd()}/migrations`),
           expectedIdentity,
+          guarded,
         );
   const authority = await admissionBoundary.issue({
     plan: authorityPlan ?? plan,

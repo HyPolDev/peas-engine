@@ -35,9 +35,13 @@ import {
   assertOwnedAlpacaWireSemanticEvidenceStore,
   assertAcceptedAlpacaWireSemanticEvidence,
   createSqliteAlpacaWireSemanticEvidenceStore,
+  revalidateOwnedAlpacaWireSemanticEvidence,
 } from "./wire-semantic-evidence.js";
 import { openSqliteDatabase, type Migration, type SqliteDatabase } from "../../sqlite/database.js";
 import { createSqliteAcquisitionJournal } from "../sqlite-journal.js";
+import type { RetentionEnforcedArtifactStore } from "../retention/artifact-access.js";
+import type { ArtifactRetentionJournal } from "../retention/contracts.js";
+import { createSqliteArtifactRetentionJournal } from "../retention/sqlite-journal.js";
 export {
   DurableAlpacaWireSemanticEvidenceBoundary,
   openSqliteDurableAlpacaWireSemanticEvidenceBoundary,
@@ -148,16 +152,22 @@ export type AlpacaWireParseContext = Readonly<{
 export class DurableAlpacaWireAdmissionBoundary {
   readonly #journal: AcquisitionJournal;
   readonly #evidence: AlpacaWireSemanticEvidenceStore;
+  readonly #artifacts: RetentionEnforcedArtifactStore | undefined;
+  readonly #retention: ArtifactRetentionJournal | undefined;
 
   constructor(
     journal: AcquisitionJournal,
     evidence: AlpacaWireSemanticEvidenceStore,
+    artifacts?: RetentionEnforcedArtifactStore,
+    retention?: ArtifactRetentionJournal,
     authority?: object,
   ) {
     assertOwnedAcquisitionJournal(journal);
     assertOwnedAlpacaWireSemanticEvidenceStore(evidence);
     this.#journal = journal;
     this.#evidence = evidence;
+    this.#artifacts = artifacts;
+    this.#retention = retention;
     if (authority === WIRE_ADMISSION_BOUNDARY_CONSTRUCTION_AUTHORITY) {
       wireAdmissionBoundaries.add(this);
     }
@@ -231,6 +241,15 @@ export class DurableAlpacaWireAdmissionBoundary {
       plan.queryStartNs.toString(),
       plan.queryEndNs.toString(),
     );
+    if (this.#artifacts !== undefined && this.#retention !== undefined) {
+      await revalidateOwnedAlpacaWireSemanticEvidence(
+        semantic,
+        plan,
+        latest.retrievalAttemptId,
+        this.#artifacts,
+        this.#retention,
+      );
+    }
     const pageStage = ledgerById.get(semantic.stageLedgerFactId);
     const authorityStage = ledgerById.get(semantic.semanticAuthorityStageLedgerFactId);
     const authorityCommit = authorityStage?.parentEntryIds
@@ -310,10 +329,14 @@ export class DurableAlpacaWireAdmissionBoundary {
 function constructAlpacaWireAdmissionBoundary(
   journal: AcquisitionJournal,
   evidence: AlpacaWireSemanticEvidenceStore,
+  artifacts?: RetentionEnforcedArtifactStore,
+  retention?: ArtifactRetentionJournal,
 ): DurableAlpacaWireAdmissionBoundary {
   const boundary = new DurableAlpacaWireAdmissionBoundary(
     journal,
     evidence,
+    artifacts,
+    retention,
     WIRE_ADMISSION_BOUNDARY_CONSTRUCTION_AUTHORITY,
   );
   Object.freeze(boundary);
@@ -324,12 +347,14 @@ export function openSqliteDurableAlpacaWireAdmissionBoundary(
   filename: string,
   migrations: readonly Migration[],
   expectedIdentity: JournalIdentityInput,
+  artifacts: RetentionEnforcedArtifactStore,
 ): DurableAlpacaWireAdmissionBoundary {
   const database = openSqliteDatabase(filename, migrations);
   try {
     const journal = createSqliteAcquisitionJournal(database, expectedIdentity);
     const evidence = createSqliteAlpacaWireSemanticEvidenceStore(database);
-    const boundary = constructAlpacaWireAdmissionBoundary(journal, evidence);
+    const retention = createSqliteArtifactRetentionJournal(database);
+    const boundary = constructAlpacaWireAdmissionBoundary(journal, evidence, artifacts, retention);
     productionWireAdmissionDatabases.set(boundary, database);
     return boundary;
   } catch (error) {

@@ -319,6 +319,66 @@ export function assertAcceptedAlpacaWireSemanticEvidence(
   }
 }
 
+/** Re-proves raw persisted semantic rows at the live use boundary. */
+export async function revalidateOwnedAlpacaWireSemanticEvidence(
+  value: AlpacaWireSemanticEvidenceV1,
+  plan: ValidatedMarketAcquisitionConfiguration,
+  retrievalAttemptId: string,
+  artifacts: RetentionEnforcedArtifactStore,
+  retention: ArtifactRetentionJournal,
+): Promise<void> {
+  assertAcceptedAlpacaWireSemanticEvidence(
+    value,
+    plan.requestIdentityHash,
+    plan.queryStartNs.toString(),
+    plan.queryEndNs.toString(),
+  );
+  await verifyCommittedArtifact(artifacts, {
+    artifactObservationId: value.artifactObservationId,
+    artifactDigest: value.artifactDigest,
+    artifactSizeBytes: value.artifactSizeBytes,
+    artifactObservationHash: value.artifactObservationHash,
+    retrievalAttemptId,
+    requestIdentityHash: plan.requestIdentityHash,
+    provider: "alpaca",
+  });
+  const ownership = retention
+    .ownershipForDigest(value.artifactDigest)
+    .filter(
+      (entry) =>
+        entry.providerLane === "alpaca" &&
+        entry.providerId === plan.route.providerId &&
+        entry.datasetId === plan.route.datasetId &&
+        entry.feedId === plan.route.feedId &&
+        entry.endpointChannelId === plan.route.endpointChannelId &&
+        entry.artifactObservationId === value.artifactObservationId &&
+        entry.artifactDigest === value.artifactDigest &&
+        entry.artifactSizeBytes === value.artifactSizeBytes,
+    );
+  if (ownership.length !== 1) throw new TypeError("wire-semantic-corpus-admission-invalid");
+  const semantic = await loadSemanticAuthorityBytes(artifacts, {
+    artifactObservationId: value.semanticAuthorityObservationId,
+    artifactDigest: value.semanticAuthorityDigest,
+    artifactSizeBytes: value.semanticAuthoritySizeBytes,
+    artifactObservationHash: value.semanticAuthorityObservationHash,
+    retrievalAttemptId,
+    requestIdentityHash: plan.requestIdentityHash,
+    provider: "alpaca",
+  });
+  if (
+    semantic.authorityId !== value.semanticAuthorityId ||
+    semantic.requestIdentityHash !== plan.requestIdentityHash ||
+    semantic.pageArtifactObservationId !== value.artifactObservationId ||
+    semantic.pageArtifactDigest !== value.artifactDigest ||
+    semantic.calendarDigest !== value.calendarDigest ||
+    semantic.corpusAdmissionHash !== value.corpusAdmissionHash ||
+    canonicalJson(semantic.calendarEntries as unknown as JsonValue) !==
+      canonicalJson(value.calendarEntries as unknown as JsonValue)
+  ) {
+    throw new TypeError("wire-semantic-authority-binding-invalid");
+  }
+}
+
 function sameEvidence(existing: AlpacaWireSemanticEvidenceV1, value: AlpacaWireSemanticEvidenceV1) {
   if (
     canonicalJson(existing as unknown as JsonValue) !== canonicalJson(value as unknown as JsonValue)
