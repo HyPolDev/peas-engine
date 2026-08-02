@@ -1,7 +1,11 @@
 import { lstat, opendir } from "node:fs/promises";
 import { resolve } from "node:path";
+import { isProxy } from "node:util/types";
 
-import type { DurableArtifactStore } from "../../artifacts/durable-artifact-store.js";
+import {
+  type DurableArtifactStore,
+  assertOwnedDurableArtifactStore,
+} from "../../artifacts/durable-artifact-store.js";
 import { artifactRuntimePaths, assertPathBelowRuntimeRoot } from "../../artifacts/runtime-root.js";
 import {
   eraseTrustedFileMatchingDigest,
@@ -12,6 +16,8 @@ import { digestContentPath } from "../private-artifact-policy.js";
 import type { ErasureCopyKind, ErasureResult, RetentionArtifactBoundary } from "./contracts.js";
 
 const MAX_PRIVATE_DIRECTORY_ENTRIES = 1_024;
+const ownedVaultBoundaries = new WeakSet<object>();
+const vaultCoordinatorRoots = new WeakMap<object, DurableArtifactStore>();
 
 async function directoryNames(path: string, device: number): Promise<readonly string[]> {
   const info = await lstat(path);
@@ -57,19 +63,29 @@ export class VaultArtifactRetentionBoundary implements RetentionArtifactBoundary
     settlementTimeoutMs?: number;
   }): Promise<VaultArtifactRetentionBoundary> {
     const runtimeRoot = resolve(input.runtimeRoot);
+    assertOwnedDurableArtifactStore(input.store, runtimeRoot);
     const rootInfo = await lstat(runtimeRoot);
     if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink())
       throw new Error("Retention runtime root is not trusted");
-    return new VaultArtifactRetentionBoundary(
+    const boundary = new VaultArtifactRetentionBoundary(
       input.store,
       runtimeRoot,
       rootInfo.dev,
       input.settlementTimeoutMs ?? 30_000,
     );
+    ownedVaultBoundaries.add(boundary);
+    vaultCoordinatorRoots.set(boundary, input.store);
+    Object.freeze(boundary);
+    return boundary;
   }
 
-  settleActiveReadersAndWriters(): Promise<boolean> {
-    return this.#store.settleForRetention(this.#settlementTimeoutMs);
+  async settleActiveReadersAndWriters(): Promise<boolean> {
+    this.#store.closeRetentionAdmission();
+    try {
+      return await this.#store.settleForRetention(this.#settlementTimeoutMs);
+    } finally {
+      this.#store.reopenRetentionAdmission();
+    }
   }
 
   async eraseDigestCopies(digest: string): Promise<ErasureResult> {
@@ -139,5 +155,27 @@ export class VaultArtifactRetentionBoundary implements RetentionArtifactBoundary
       }
     }
     return true;
+  }
+}
+
+/** Module-owned serialization key shared by every boundary opened over the same durable store. */
+export function ownedVaultRetentionCoordinatorRoot(
+  value: RetentionArtifactBoundary,
+): DurableArtifactStore {
+  assertOwnedVaultArtifactRetentionBoundary(value);
+  const root = vaultCoordinatorRoots.get(value);
+  if (root === undefined) throw new TypeError("owned-vault-retention-boundary-required");
+  return root;
+}
+
+export function assertOwnedVaultArtifactRetentionBoundary(
+  value: RetentionArtifactBoundary,
+): asserts value is VaultArtifactRetentionBoundary {
+  if (
+    !ownedVaultBoundaries.has(value) ||
+    isProxy(value) ||
+    Object.getPrototypeOf(value) !== VaultArtifactRetentionBoundary.prototype
+  ) {
+    throw new TypeError("owned-vault-retention-boundary-required");
   }
 }

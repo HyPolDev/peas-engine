@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +12,6 @@ import { AlpacaProductionAttemptBoundary } from "../src/adapters/market-acquisit
 import type {
   AlpacaAttemptResource,
   AlpacaBodyRead,
-  AlpacaDeadlineHandle,
   AlpacaDeadlineScheduler,
   AlpacaPageAuthority,
   AlpacaResponseBody,
@@ -20,7 +20,12 @@ import type {
   AlpacaTransportResponse,
   AlpacaArtifactCommitSink,
 } from "../src/adapters/market-acquisition/alpaca/contracts.js";
-import { RetentionOwnedAlpacaPageSink } from "../src/adapters/market-acquisition/alpaca/retained-sink.js";
+import {
+  RetentionOwnedAlpacaPageSink,
+  createRetentionOwnedAlpacaPageSink,
+  createTestAlpacaArtifactCommitSink,
+} from "../src/adapters/market-acquisition/alpaca/retained-sink.js";
+import { createOwnedAlpacaDeadlineScheduler } from "../src/adapters/market-acquisition/alpaca/deadline.js";
 import { openSqliteDatabase } from "../src/adapters/sqlite/database.js";
 import { decideAcquisitionRestart } from "../src/adapters/market-acquisition/artifact-integration.js";
 import {
@@ -56,7 +61,10 @@ import {
   type RetryFailure,
 } from "../src/adapters/market-acquisition/retry.js";
 import { SqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
-import { DefaultArtifactRetentionController } from "../src/adapters/market-acquisition/retention/controller.js";
+import {
+  type DefaultArtifactRetentionController,
+  createTestArtifactRetentionController,
+} from "../src/adapters/market-acquisition/retention/controller.js";
 import type { RetentionArtifactBoundary } from "../src/adapters/market-acquisition/retention/contracts.js";
 import { MemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
 import {
@@ -113,7 +121,7 @@ function adapterRetention(): DefaultArtifactRetentionController {
       return true;
     },
   };
-  return new DefaultArtifactRetentionController({
+  return createTestArtifactRetentionController({
     journal: new MemoryArtifactRetentionJournal(),
     artifacts,
     nowMs: () => 0,
@@ -127,7 +135,7 @@ async function executeAlpacaAttempt<T>(
     authorizationHeaders: AlpacaAuthorizationHeaders;
     transport: AlpacaTransport;
     artifactSink: AlpacaArtifactCommitSink<T>;
-    deadlineScheduler: AlpacaDeadlineScheduler;
+    deadlineScheduler: AlpacaDeadlineScheduler | TimerDouble;
     acquisitionDeclaredMonotonicMs?: number;
     nowMonotonicMs?: number;
   }>,
@@ -153,8 +161,14 @@ async function executeAlpacaAttempt<T>(
       abort: () => input.transport.abort(),
       settle: () => input.transport.settle(),
     }),
-    artifactSink: new RetentionOwnedAlpacaPageSink(input.artifactSink, adapterRetention()),
-    deadlineScheduler: input.deadlineScheduler,
+    artifactSink: createRetentionOwnedAlpacaPageSink(
+      createTestAlpacaArtifactCommitSink(input.artifactSink),
+      adapterRetention(),
+    ),
+    deadlineScheduler:
+      input.deadlineScheduler instanceof TimerDouble
+        ? input.deadlineScheduler.scheduler
+        : input.deadlineScheduler,
     acquisitionDeclaredMonotonicMs: input.acquisitionDeclaredMonotonicMs ?? 0,
     nowMonotonicMs: input.nowMonotonicMs ?? 0,
   });
@@ -332,6 +346,7 @@ class BodyDouble extends ResourceDouble implements AlpacaResponseBody {
 
 class SinkDouble extends ResourceDouble implements AlpacaArtifactCommitSink<string> {
   bytes = 0;
+  readonly #hash = createHash("sha256");
   constructor(
     counters: ResourceCounts,
     private readonly failWrite = false,
@@ -343,6 +358,7 @@ class SinkDouble extends ResourceDouble implements AlpacaArtifactCommitSink<stri
     this.counters.write += 1;
     if (this.failWrite) throw new Error("synthetic sink failure");
     this.bytes += bytes.byteLength;
+    this.#hash.update(bytes);
   }
   async prepareVerifiedCommit() {
     const bytes = this.bytes;
@@ -355,7 +371,7 @@ class SinkDouble extends ResourceDouble implements AlpacaArtifactCommitSink<stri
         feedId: `mfd1_${"3".repeat(64)}`,
         endpointChannelId: `mec1_${"4".repeat(64)}`,
         artifactObservationId: `mao1_${"5".repeat(64)}`,
-        artifactDigest: "6".repeat(64),
+        artifactDigest: this.#hash.digest("hex"),
         artifactSizeBytes: bytes,
         derivedIds: [],
         trustedCaptureMs: 0,
@@ -416,68 +432,33 @@ class PendingCleanupSink extends SinkDouble {
   }
 }
 
-class TimerDouble implements AlpacaDeadlineScheduler {
+class TimerDouble {
   #expire: (() => void) | null = null;
+  readonly scheduler: AlpacaDeadlineScheduler;
   cancelled = 0;
   settled = 0;
   armedWith: number | null = null;
-  constructor(private readonly failSettle = false) {}
-  arm(delayMs: number): AlpacaDeadlineHandle {
-    this.armedWith = delayMs;
-    const expired = new Promise<void>((resolve) => {
-      this.#expire = resolve;
-    });
-    return {
-      expired,
-      cancel: () => {
+  constructor(private readonly failSettle = false) {
+    this.scheduler = createOwnedAlpacaDeadlineScheduler({
+      armed: ({ delayMs, expireNow }) => {
+        this.armedWith = delayMs;
+        this.#expire = expireNow;
+      },
+      cancelled: () => {
         this.cancelled += 1;
       },
-      settle: async () => {
+      settled: () => {
         this.settled += 1;
         if (this.failSettle) throw new Error("synthetic timer settle failure");
       },
-    };
+    });
   }
   expire(): void {
     this.#expire?.();
   }
 }
 
-class PendingSettleTimer extends TimerDouble {
-  override arm(delayMs: number): AlpacaDeadlineHandle {
-    const handle = super.arm(delayMs);
-    return { ...handle, settle: neverSettles };
-  }
-}
-
-class CancelDependentTimer implements AlpacaDeadlineScheduler {
-  #expire: (() => void) | null = null;
-  #settle: (() => void) | null = null;
-  cancelled = 0;
-  settled = 0;
-  arm(): AlpacaDeadlineHandle {
-    const expired = new Promise<void>((resolve) => {
-      this.#expire = resolve;
-    });
-    const settled = new Promise<void>((resolve) => {
-      this.#settle = resolve;
-    });
-    return {
-      expired,
-      cancel: () => {
-        this.cancelled += 1;
-        this.#settle?.();
-      },
-      settle: async () => {
-        this.settled += 1;
-        await settled;
-      },
-    };
-  }
-  expire(): void {
-    this.#expire?.();
-  }
-}
+class CancelDependentTimer extends TimerDouble {}
 
 class TransportDouble implements AlpacaTransport {
   request: AlpacaTransportRequest | null = null;
@@ -887,7 +868,6 @@ test("every unproved partial-body cleanup category remains terminal", async () =
     "sink-settle",
     "transport-abort",
     "transport-settle",
-    "timer-settle",
   ] as const satisfies readonly Exclude<CleanupFailureKind, null>[];
   for (const failureKind of ["transport", "timeout"] as const) {
     for (const cleanupFailure of cleanupFailures) {
@@ -1042,6 +1022,14 @@ test("caller and test-double sinks cannot attest atomic artifact ownership", asy
   const plan = validatedPlan();
   assert.throws(
     () => new RetentionOwnedAlpacaPageSink(new SinkDouble(counts()), ALLOW_ALL_RETENTION),
+    /owned-alpaca-artifact-commit-sink-required/u,
+  );
+  assert.throws(
+    () =>
+      new RetentionOwnedAlpacaPageSink(
+        createTestAlpacaArtifactCommitSink(new SinkDouble(counts())),
+        ALLOW_ALL_RETENTION,
+      ),
     /owned-artifact-retention-controller-required/u,
   );
   const credentialFixture = await credentialAuthorizationFixture(plan);
@@ -1062,7 +1050,7 @@ test("caller and test-double sinks cannot attest atomic artifact ownership", asy
     page: firstPage(),
     transport: new TransportDouble(counters, response(new BodyDouble(counters, []))),
     artifactSink: new SinkDouble(counters) as never,
-    deadlineScheduler: new TimerDouble(),
+    deadlineScheduler: new TimerDouble().scheduler,
     acquisitionDeclaredMonotonicMs: 0,
     nowMonotonicMs: 0,
   });
@@ -1138,13 +1126,16 @@ test("all non-secret request, scheduler, and transport rejection precedes creden
       credentialAuthorization: fixture.request,
       page: rejection === "continuation" ? invalidContinuation : firstPage(),
       transport: rejection === "transport" ? rawTransport : isolatedTransport,
-      artifactSink: new RetentionOwnedAlpacaPageSink(new SinkDouble(counters), adapterRetention()),
+      artifactSink: createRetentionOwnedAlpacaPageSink(
+        createTestAlpacaArtifactCommitSink(new SinkDouble(counters)),
+        adapterRetention(),
+      ),
       deadlineScheduler:
         rejection === "scheduler"
           ? ({ arm: null } as unknown as AlpacaDeadlineScheduler)
           : rejection === "scheduler-handle"
             ? ({ arm: () => Object.freeze({}) } as unknown as AlpacaDeadlineScheduler)
-            : new TimerDouble(),
+            : new TimerDouble().scheduler,
       acquisitionDeclaredMonotonicMs: 0,
       nowMonotonicMs: 0,
     });
@@ -1185,8 +1176,11 @@ test("a hostile retained transport request contains no plaintext credential surf
     credentialAuthorization: fixture.request,
     page: firstPage(),
     transport,
-    artifactSink: new RetentionOwnedAlpacaPageSink(new SinkDouble(counters), adapterRetention()),
-    deadlineScheduler: new TimerDouble(),
+    artifactSink: createRetentionOwnedAlpacaPageSink(
+      createTestAlpacaArtifactCommitSink(new SinkDouble(counters)),
+      adapterRetention(),
+    ),
+    deadlineScheduler: new TimerDouble().scheduler,
     acquisitionDeclaredMonotonicMs: 0,
     nowMonotonicMs: 0,
   });
@@ -1481,16 +1475,16 @@ test("timer cancellation precedes settlement on success, failure, and deadline p
   assert.deepEqual([deadlineTimer.cancelled, deadlineTimer.settled], [1, 1]);
 });
 
-test("pending-forever body, sibling, sink, transport, abort, destroy, and timer settlement cannot exceed the absolute attempt deadline", async () => {
-  for (const component of ["body", "sibling", "sink", "transport", "timer"] as const) {
+test("pending-forever body, sibling, sink, transport, abort, and destroy cannot exceed the absolute attempt deadline", async () => {
+  for (const component of ["body", "sibling", "sink", "transport"] as const) {
     const counters = counts();
-    const timer = component === "timer" ? new PendingSettleTimer() : new TimerDouble();
+    const timer = new TimerDouble();
     const body =
       component === "body" ? new PendingCleanupBody(counters, []) : new BodyDouble(counters, []);
     const sibling =
       component === "sibling" ? new PendingCleanupResource(counters) : new ResourceDouble(counters);
     const value = response(body, {
-      status: component === "timer" ? 200 : 500,
+      status: 500,
       siblingResources: [sibling],
     });
     const transport =

@@ -44,6 +44,7 @@ import type { SqliteArtifactRepository } from "./sqlite-artifact-repository.js";
 import type { ReconciliationPhase } from "./sqlite-artifact-repository.js";
 import type { ReconciliationActionPlan } from "./sqlite-artifact-repository.js";
 import { VaultWriterLease } from "./writer-lease.js";
+import { isProxy } from "node:util/types";
 import { artifactRuntimePaths, configuredPeasRuntimeRoot } from "./runtime-root.js";
 import {
   assertTrustedPath,
@@ -108,6 +109,8 @@ async function boundedDirectoryEntries(
   return names.sort();
 }
 
+const ownedDurableArtifactStores = new WeakMap<object, string>();
+
 class Semaphore {
   readonly #limit: number;
   #active = 0;
@@ -151,7 +154,11 @@ export class DurableArtifactStore implements ArtifactStore {
   readonly #faultBoundary: ArtifactFaultBoundary;
   #reservedBytes = 0;
   #activeReaders = 0;
+  #activeReadConstructions = 0;
   readonly #readerIdleWaiting: Array<() => void> = [];
+  #retentionAdmissionClosed = false;
+  readonly #reconciliationControllers = new Set<AbortController>();
+  readonly #reconciliationIdleWaiting: Array<() => void> = [];
 
   private constructor(
     repository: SqliteArtifactRepository,
@@ -231,7 +238,7 @@ export class DurableArtifactStore implements ArtifactStore {
         ? {}
         : { faultBoundary: dependencies.faultBoundary }),
     });
-    return new DurableArtifactStore(
+    const store = new DurableArtifactStore(
       dependencies.repository,
       dependencies.clock,
       config,
@@ -239,6 +246,9 @@ export class DurableArtifactStore implements ArtifactStore {
       lease,
       dependencies.faultBoundary ?? NOOP_FAULT_BOUNDARY,
     );
+    ownedDurableArtifactStores.set(store, resolve(config.runtimeRoot));
+    Object.freeze(store);
+    return store;
   }
 
   async close(): Promise<void> {
@@ -246,6 +256,9 @@ export class DurableArtifactStore implements ArtifactStore {
   }
 
   async store(request: StoreArtifactRequest): Promise<StoreArtifactResult> {
+    if (this.#retentionAdmissionClosed) {
+      throw new ArtifactVaultError("artifact-integrity-failure", "Artifact use is denied");
+    }
     const attemptDraft = validateRetrievalAttempt(request.attempt);
     const response = validateHttpResponseMetadata(request.response);
     if (this.#repository.retentionProviderUseDenied(attemptDraft.provider))
@@ -462,6 +475,16 @@ export class DurableArtifactStore implements ArtifactStore {
       }
       await syncDirectory(dirname(finalPath));
       await this.#checkpoint("content-sync");
+      if (
+        this.#retentionAdmissionClosed ||
+        this.#repository.retentionProviderUseDenied(attemptDraft.provider)
+      ) {
+        await rm(finalPath, { force: true });
+        throw new ArtifactVaultError(
+          "artifact-integrity-failure",
+          "Artifact acquisition was stopped by retention policy",
+        );
+      }
       await this.#lease.renewAndAssert();
       this.#repository.markIntentContentInstalled(intent.intentId, this.#lease.fence());
       await this.#checkpoint("content-installed-transition");
@@ -512,106 +535,127 @@ export class DurableArtifactStore implements ArtifactStore {
 
   async stat(digest: ArtifactDigest): Promise<ArtifactMetadata | undefined> {
     assertArtifactDigest(digest);
-    if (this.#repository.retentionDigestUseDenied(digest))
+    if (this.#retentionAdmissionClosed || this.#repository.retentionDigestUseDenied(digest))
       throw new ArtifactVaultError("artifact-not-found", "Artifact use is denied");
     return this.#repository.stat(digest);
   }
 
   async read(digest: ArtifactDigest): Promise<VerifiedArtifactRead> {
-    assertArtifactDigest(digest);
-    if (this.#repository.retentionDigestUseDenied(digest))
-      throw new ArtifactVaultError("artifact-not-found", "Artifact use is denied");
-    const artifact = this.#repository.stat(digest);
-    if (artifact === undefined)
-      throw new ArtifactVaultError("artifact-not-found", "Artifact does not exist");
-    const source = await this.#contentPath(digest, false, false);
-    const snapshotId = randomUUID();
-    const snapshotPath = safeChild(this.#paths.snapshots, `${snapshotId}.verified`);
-    await assertTrustedPath(this.#paths.root, snapshotPath, this.#paths.device);
-    let sourceHandle: FileHandle;
+    this.#activeReadConstructions += 1;
+    let constructionReleased = false;
+    const releaseConstruction = (): void => {
+      if (constructionReleased) return;
+      constructionReleased = true;
+      this.#activeReadConstructions -= 1;
+      this.#notifyReaderIdle();
+    };
     try {
-      sourceHandle = await open(source, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    } catch (error) {
-      await this.#incident("missing-content", null, digest, artifact.sizeBytes, null);
-      throw new ArtifactVaultError(
-        "artifact-integrity-failure",
-        "Committed artifact content is missing",
-        { cause: error },
-      );
-    }
-    const snapshotHandle = await open(snapshotPath, "wx+", 0o600);
-    await this.#checkpoint("snapshot-create");
-    try {
-      const sourceInfo = await sourceHandle.stat();
-      if (!sourceInfo.isFile() || sourceInfo.nlink !== 1)
-        throw new Error("Artifact content is not a trusted single-owner regular file");
-      const hash = createHash("sha256");
-      const buffer = Buffer.allocUnsafe(this.#config.streamHighWaterMarkBytes);
-      let sizeBytes = 0;
-      let position = 0;
-      for (;;) {
-        const { bytesRead } = await sourceHandle.read(buffer, 0, buffer.length, position);
-        if (bytesRead === 0) break;
-        const chunk = buffer.subarray(0, bytesRead);
-        sizeBytes = assertSafeByteAddition(sizeBytes, bytesRead);
-        if (sizeBytes > artifact.sizeBytes) {
-          throw new ArtifactVaultError(
-            "artifact-integrity-failure",
-            "Artifact exceeded committed size during snapshot verification",
-          );
-        }
-        hash.update(chunk);
-        await snapshotHandle.write(chunk);
-        position += bytesRead;
-      }
-      await snapshotHandle.sync();
-      await this.#checkpoint("snapshot-sync");
-      const digestRead = hash.digest("hex");
-      if (digestRead !== artifact.digest || sizeBytes !== artifact.sizeBytes) {
+      assertArtifactDigest(digest);
+      if (this.#retentionAdmissionClosed || this.#repository.retentionDigestUseDenied(digest))
+        throw new ArtifactVaultError("artifact-not-found", "Artifact use is denied");
+      const artifact = this.#repository.stat(digest);
+      if (artifact === undefined)
+        throw new ArtifactVaultError("artifact-not-found", "Artifact does not exist");
+      const source = await this.#contentPath(digest, false, false);
+      const snapshotId = randomUUID();
+      const snapshotPath = safeChild(this.#paths.snapshots, `${snapshotId}.verified`);
+      await assertTrustedPath(this.#paths.root, snapshotPath, this.#paths.device);
+      let sourceHandle: FileHandle;
+      try {
+        sourceHandle = await open(source, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+      } catch (error) {
+        await this.#incident("missing-content", null, digest, artifact.sizeBytes, null);
         throw new ArtifactVaultError(
           "artifact-integrity-failure",
-          "Artifact failed snapshot verification",
+          "Committed artifact content is missing",
+          { cause: error },
         );
       }
-      await this.#checkpoint("snapshot-verification-complete");
-      await sourceHandle.close();
-      const stream = snapshotHandle.createReadStream({ start: 0, autoClose: true });
-      this.#activeReaders += 1;
-      let readerSettled = false;
-      const cleanup = (): void => {
-        if (!readerSettled) {
-          readerSettled = true;
-          this.#activeReaders -= 1;
-          if (this.#activeReaders === 0)
-            for (const waiter of this.#readerIdleWaiting.splice(0, this.#readerIdleWaiting.length))
-              waiter();
+      const snapshotHandle = await open(snapshotPath, "wx+", 0o600);
+      await this.#checkpoint("snapshot-create");
+      try {
+        const sourceInfo = await sourceHandle.stat();
+        if (!sourceInfo.isFile() || sourceInfo.nlink !== 1)
+          throw new Error("Artifact content is not a trusted single-owner regular file");
+        const hash = createHash("sha256");
+        const buffer = Buffer.allocUnsafe(this.#config.streamHighWaterMarkBytes);
+        let sizeBytes = 0;
+        let position = 0;
+        for (;;) {
+          const { bytesRead } = await sourceHandle.read(buffer, 0, buffer.length, position);
+          if (bytesRead === 0) break;
+          const chunk = buffer.subarray(0, bytesRead);
+          sizeBytes = assertSafeByteAddition(sizeBytes, bytesRead);
+          if (sizeBytes > artifact.sizeBytes) {
+            throw new ArtifactVaultError(
+              "artifact-integrity-failure",
+              "Artifact exceeded committed size during snapshot verification",
+            );
+          }
+          hash.update(chunk);
+          await snapshotHandle.write(chunk);
+          position += bytesRead;
         }
-        void rm(snapshotPath, { force: true });
-      };
-      stream.once("end", cleanup);
-      stream.once("close", cleanup);
-      stream.once("error", cleanup);
-      return { artifact, stream };
-    } catch (error) {
-      try {
+        await snapshotHandle.sync();
+        await this.#checkpoint("snapshot-sync");
+        const digestRead = hash.digest("hex");
+        if (digestRead !== artifact.digest || sizeBytes !== artifact.sizeBytes) {
+          throw new ArtifactVaultError(
+            "artifact-integrity-failure",
+            "Artifact failed snapshot verification",
+          );
+        }
+        await this.#checkpoint("snapshot-verification-complete");
         await sourceHandle.close();
-      } catch {
-        // Preserve the verification failure.
+        const stream = snapshotHandle.createReadStream({ start: 0, autoClose: true });
+        this.#activeReaders += 1;
+        let readerSettled = false;
+        const cleanup = (): void => {
+          if (!readerSettled) {
+            readerSettled = true;
+            this.#activeReaders -= 1;
+            this.#notifyReaderIdle();
+          }
+          void rm(snapshotPath, { force: true });
+        };
+        stream.once("end", cleanup);
+        stream.once("close", cleanup);
+        stream.once("error", cleanup);
+        if (this.#retentionAdmissionClosed || this.#repository.retentionDigestUseDenied(digest)) {
+          stream.destroy();
+          throw new ArtifactVaultError("artifact-not-found", "Artifact use is denied");
+        }
+        return { artifact, stream };
+      } catch (error) {
+        try {
+          await sourceHandle.close();
+        } catch {
+          // Preserve the verification failure.
+        }
+        try {
+          await snapshotHandle.close();
+        } catch {
+          // Preserve the verification failure.
+        }
+        try {
+          await rm(snapshotPath, { force: true });
+        } catch {
+          // Preserve the verification failure.
+        }
+        if (this.#retentionAdmissionClosed) throw error;
+        await this.#checkpoint("snapshot-removal");
+        await this.#incident(
+          "snapshot-verification-failure",
+          null,
+          digest,
+          artifact.sizeBytes,
+          null,
+        );
+        await this.#quarantine(source, digest);
+        throw error;
       }
-      try {
-        await snapshotHandle.close();
-      } catch {
-        // Preserve the verification failure.
-      }
-      try {
-        await rm(snapshotPath, { force: true });
-      } catch {
-        // Preserve the verification failure.
-      }
-      await this.#checkpoint("snapshot-removal");
-      await this.#incident("snapshot-verification-failure", null, digest, artifact.sizeBytes, null);
-      await this.#quarantine(source, digest);
-      throw error;
+    } finally {
+      releaseConstruction();
     }
   }
 
@@ -627,7 +671,7 @@ export class DurableArtifactStore implements ArtifactStore {
     limit: number,
   ): Promise<ArtifactPage<ArtifactObservation>> {
     assertArtifactDigest(digest);
-    if (this.#repository.retentionDigestUseDenied(digest))
+    if (this.#retentionAdmissionClosed || this.#repository.retentionDigestUseDenied(digest))
       throw new ArtifactVaultError("artifact-not-found", "Artifact use is denied");
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000)
       throw new RangeError("Invalid page limit");
@@ -650,289 +694,578 @@ export class DurableArtifactStore implements ArtifactStore {
       maxBytes < this.#config.maxArtifactBytes
     )
       throw new RangeError("Invalid reconciliation budget");
-    const started = Date.now();
-    let processed = 0;
-    let bytesHashed = 0;
-    let rowsVisited = 0;
-    let directoryEntriesRead = 0;
-    let persistedRowsVisited = 0;
-    let persistedItems = 0;
-    let persistedBytesHashed = 0;
-    let persistedDirectoryEntries = 0;
-    await this.#lease.renewAndAssert();
-    const opened = this.#repository.openReconciliationCall(
-      requestedCursor,
-      startNew,
-      completedRunId,
-      this.#lease.fence(),
-    );
-    await this.#checkpoint("reconciliation-call-opened");
-    if (opened.kind === "receipt") return opened.report;
-    let state = opened.state;
-    const report = {
-      runId: state.runId,
-      validArtifacts: 0,
-      adoptedOrphans: 0,
-      abandonedStages: 0,
-      expiredStages: 0,
-      quarantinedObjects: 0,
-      missingArtifacts: 0,
-      incidents: [] as string[],
-      continuationCursor: null as string | null,
-      rowsVisited: 0,
-      directoryEntriesRead: 0,
-      bytesHashed: 0,
-      elapsedMs: 0,
-    };
-    const result = (cursor: string | null): ReconciliationReport => ({
-      ...report,
-      continuationCursor: cursor,
-      rowsVisited,
-      directoryEntriesRead,
-      bytesHashed,
-      elapsedMs: Date.now() - started,
-    });
-    const exhausted = (): boolean =>
-      processed >= maxItems ||
-      Date.now() - started >= maxElapsedMs ||
-      maxBytes - bytesHashed < this.#config.maxArtifactBytes;
-    const advance = async (
-      phase: ReconciliationPhase,
-      shard: number,
-      afterKey: string,
-    ): Promise<void> => {
-      await this.#lease.renewAndAssert();
-      state = this.#repository.advanceReconciliationState(
-        state,
-        {
-          phase,
-          shard,
-          afterKey,
-          rowsVisited: rowsVisited - persistedRowsVisited,
-          itemsProcessed: processed - persistedItems,
-          bytesHashed: bytesHashed - persistedBytesHashed,
-          directoryEntriesRead: directoryEntriesRead - persistedDirectoryEntries,
-        },
-        this.#lease.fence(),
-      );
-      persistedRowsVisited = rowsVisited;
-      persistedItems = processed;
-      persistedBytesHashed = bytesHashed;
-      persistedDirectoryEntries = directoryEntriesRead;
-    };
-    const planAction = async (
-      input: Parameters<SqliteArtifactRepository["planReconciliationAction"]>[1],
-    ): Promise<ReconciliationActionPlan> => {
-      await this.#lease.renewAndAssert();
-      const planned = this.#repository.planReconciliationAction(state, input, this.#lease.fence());
-      state = planned.state;
-      await this.#checkpoint("reconciliation-action-plan-commit");
-      return planned.plan;
-    };
-    const applyAction = async (
-      plan: ReconciliationActionPlan,
-      phase: ReconciliationPhase,
-      shard: number,
-      afterKey: string,
-      application: Parameters<SqliteArtifactRepository["applyReconciliationAction"]>[3],
-    ): Promise<void> => {
-      await this.#lease.renewAndAssert();
-      state = this.#repository.applyReconciliationAction(
-        state,
-        plan.actionKey,
-        {
-          phase,
-          shard,
-          afterKey,
-          rowsVisited: rowsVisited - persistedRowsVisited,
-          itemsProcessed: processed - persistedItems,
-          bytesHashed: bytesHashed - persistedBytesHashed,
-          directoryEntriesRead: directoryEntriesRead - persistedDirectoryEntries,
-        },
-        application,
-        this.#lease.fence(),
-      );
-      await this.#checkpoint("reconciliation-action-application-commit");
-      persistedRowsVisited = rowsVisited;
-      persistedItems = processed;
-      persistedBytesHashed = bytesHashed;
-      persistedDirectoryEntries = directoryEntriesRead;
-    };
-    const evidenceNext: Record<string, ReconciliationPhase> = {
-      attempts: "outcomes",
-      outcomes: "blobs",
-      blobs: "observations",
-      observations: "incidents",
-      incidents: "install-intents",
-    };
-    while (!exhausted()) {
-      if (state.phase in evidenceNext) {
-        const remaining = maxItems - processed;
-        const page = this.#repository.verifyEvidencePage(
-          state.phase as "attempts" | "outcomes" | "blobs" | "observations" | "incidents",
-          state.afterKey,
-          remaining,
-        );
-        rowsVisited += page.visited;
-        processed += Math.max(1, page.visited);
-        await advance(
-          page.done ? (evidenceNext[state.phase] as ReconciliationPhase) : state.phase,
-          0,
-          page.done ? "" : page.lastKey,
-        );
-        continue;
+    if (
+      this.#retentionAdmissionClosed ||
+      this.#repository.retentionReconciliationUseDenied(this.#clock.nowMs())
+    ) {
+      throw new ArtifactVaultError("artifact-integrity-failure", "Reconciliation use is denied");
+    }
+    const reconciliation = new AbortController();
+    this.#reconciliationControllers.add(reconciliation);
+    const assertRunning = (): void => {
+      if (
+        reconciliation.signal.aborted ||
+        this.#retentionAdmissionClosed ||
+        this.#repository.retentionReconciliationUseDenied(this.#clock.nowMs())
+      ) {
+        throw new ArtifactVaultError("artifact-integrity-failure", "Reconciliation was stopped");
       }
-      const pending = this.#repository.readPendingReconciliationAction(state);
-      if (pending !== undefined) {
-        const payload = pending.payload as unknown as {
-          next: { phase: ReconciliationPhase; shard: number; afterKey: string };
-        };
-        let application: Parameters<SqliteArtifactRepository["applyReconciliationAction"]>[3] = {
-          resultingIdentity: null,
-          resultingDigest: null,
-          resultingSizeBytes: null,
-        };
-        if (pending.actionKind === "quarantine") {
-          if (pending.sourceRelativePath === null)
-            throw new Error("Pending quarantine source is missing");
-          const source = safeChild(this.#paths.root, pending.sourceRelativePath);
-          const replayed = await this.#replayQuarantine(pending, source);
-          application = {
-            resultingIdentity: replayed.identity,
-            resultingDigest: replayed.digest,
-            resultingSizeBytes: replayed.sizeBytes,
-          };
-          report.quarantinedObjects += 1;
-        } else if (pending.actionKind === "remove-snapshot") {
-          if (pending.sourceRelativePath === null)
-            throw new Error("Pending snapshot source is missing");
-          const source = safeChild(this.#paths.root, pending.sourceRelativePath);
-          await this.#lease.renewAndAssert();
-          await rm(source, { force: true });
-          await syncDirectory(dirname(source));
-        } else if (pending.actionKind === "adopt-orphan") {
-          if (pending.sourceRelativePath === null)
-            throw new Error("Pending orphan source is missing");
-          const source = safeChild(this.#paths.root, pending.sourceRelativePath);
-          const verified = await hashFile(source);
-          if (
-            verified.digest !== pending.expectedDigest ||
-            verified.sizeBytes !== pending.expectedSizeBytes
-          )
-            throw new ArtifactVaultError(
-              "artifact-integrity-failure",
-              "Orphan bytes changed after reconciliation planning",
-            );
-          bytesHashed += verified.sizeBytes;
-          application = {
-            resultingIdentity: await filesystemIdentity(source),
-            resultingDigest: verified.digest,
-            resultingSizeBytes: verified.sizeBytes,
-          };
-          report.adoptedOrphans += 1;
-        }
-        if (pending.incident !== null) {
-          report.incidents.push(pending.incident.incidentId);
-          if (pending.incident.kind === "missing-content") report.missingArtifacts += 1;
-          if (pending.incident.kind === "expired-stage") report.expiredStages += 1;
-          if (pending.incident.kind === "abandoned-stage") report.abandonedStages += 1;
-        }
-        processed += 1;
-        await applyAction(
-          pending,
-          payload.next.phase,
-          payload.next.shard,
-          payload.next.afterKey,
+    };
+    try {
+      assertRunning();
+      const started = Date.now();
+      let processed = 0;
+      let bytesHashed = 0;
+      let rowsVisited = 0;
+      let directoryEntriesRead = 0;
+      let persistedRowsVisited = 0;
+      let persistedItems = 0;
+      let persistedBytesHashed = 0;
+      let persistedDirectoryEntries = 0;
+      await this.#lease.renewAndAssert();
+      assertRunning();
+      const opened = this.#repository.openReconciliationCall(
+        requestedCursor,
+        startNew,
+        completedRunId,
+        this.#lease.fence(),
+      );
+      await this.#checkpoint("reconciliation-call-opened");
+      if (opened.kind === "receipt") return opened.report;
+      let state = opened.state;
+      const report = {
+        runId: state.runId,
+        validArtifacts: 0,
+        adoptedOrphans: 0,
+        abandonedStages: 0,
+        expiredStages: 0,
+        quarantinedObjects: 0,
+        missingArtifacts: 0,
+        incidents: [] as string[],
+        continuationCursor: null as string | null,
+        rowsVisited: 0,
+        directoryEntriesRead: 0,
+        bytesHashed: 0,
+        elapsedMs: 0,
+      };
+      const result = (cursor: string | null): ReconciliationReport => ({
+        ...report,
+        continuationCursor: cursor,
+        rowsVisited,
+        directoryEntriesRead,
+        bytesHashed,
+        elapsedMs: Date.now() - started,
+      });
+      const exhausted = (): boolean =>
+        processed >= maxItems ||
+        Date.now() - started >= maxElapsedMs ||
+        maxBytes - bytesHashed < this.#config.maxArtifactBytes;
+      const advance = async (
+        phase: ReconciliationPhase,
+        shard: number,
+        afterKey: string,
+      ): Promise<void> => {
+        assertRunning();
+        await this.#lease.renewAndAssert();
+        assertRunning();
+        state = this.#repository.advanceReconciliationState(
+          state,
+          {
+            phase,
+            shard,
+            afterKey,
+            rowsVisited: rowsVisited - persistedRowsVisited,
+            itemsProcessed: processed - persistedItems,
+            bytesHashed: bytesHashed - persistedBytesHashed,
+            directoryEntriesRead: directoryEntriesRead - persistedDirectoryEntries,
+          },
+          this.#lease.fence(),
+        );
+        persistedRowsVisited = rowsVisited;
+        persistedItems = processed;
+        persistedBytesHashed = bytesHashed;
+        persistedDirectoryEntries = directoryEntriesRead;
+      };
+      const planAction = async (
+        input: Parameters<SqliteArtifactRepository["planReconciliationAction"]>[1],
+      ): Promise<ReconciliationActionPlan> => {
+        assertRunning();
+        await this.#lease.renewAndAssert();
+        assertRunning();
+        const planned = this.#repository.planReconciliationAction(
+          state,
+          input,
+          this.#lease.fence(),
+        );
+        state = planned.state;
+        await this.#checkpoint("reconciliation-action-plan-commit");
+        assertRunning();
+        return planned.plan;
+      };
+      const applyAction = async (
+        plan: ReconciliationActionPlan,
+        phase: ReconciliationPhase,
+        shard: number,
+        afterKey: string,
+        application: Parameters<SqliteArtifactRepository["applyReconciliationAction"]>[3],
+      ): Promise<void> => {
+        assertRunning();
+        await this.#lease.renewAndAssert();
+        assertRunning();
+        state = this.#repository.applyReconciliationAction(
+          state,
+          plan.actionKey,
+          {
+            phase,
+            shard,
+            afterKey,
+            rowsVisited: rowsVisited - persistedRowsVisited,
+            itemsProcessed: processed - persistedItems,
+            bytesHashed: bytesHashed - persistedBytesHashed,
+            directoryEntriesRead: directoryEntriesRead - persistedDirectoryEntries,
+          },
           application,
+          this.#lease.fence(),
         );
-        continue;
-      }
-      if (state.phase === "install-intents") {
-        const intents = this.#repository.readPendingIntentPage(state.afterKey, 1);
-        const intent = intents[0];
-        rowsVisited += intents.length;
-        if (intent === undefined) {
-          await advance("snapshots", 0, "");
-          processed += 1;
-          continue;
-        }
-        const stagePath = safeChild(this.#paths.staging, `${intent.stagingId}.part`);
-        const contentPath = await this.#contentPath(intent.digest, true, false);
-        const verify = async (path: string): Promise<boolean> => {
-          try {
-            const value = await hashFile(path, Number.MAX_SAFE_INTEGER, 2);
-            bytesHashed += value.sizeBytes;
-            return value.digest === intent.digest && value.sizeBytes === intent.sizeBytes;
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-            throw error;
-          }
-        };
-        const contentPresent = await verify(contentPath);
-        const stagePresent = await verify(stagePath);
-        if (!contentPresent && !stagePresent) {
-          await this.#lease.renewAndAssert();
-          this.#repository.abortIntent(
-            intent.intentId,
-            {
-              attemptId: intent.attemptId,
-              outcome: "expired",
-              completedAtMs: this.#clock.nowMs(),
-              reasonCode: "install-content-missing",
-              detailHash: null,
-            } as RetrievalAttemptOutcome,
-            this.#lease.fence(),
+        await this.#checkpoint("reconciliation-action-application-commit");
+        assertRunning();
+        persistedRowsVisited = rowsVisited;
+        persistedItems = processed;
+        persistedBytesHashed = bytesHashed;
+        persistedDirectoryEntries = directoryEntriesRead;
+      };
+      const evidenceNext: Record<string, ReconciliationPhase> = {
+        attempts: "outcomes",
+        outcomes: "blobs",
+        blobs: "observations",
+        observations: "incidents",
+        incidents: "install-intents",
+      };
+      while (!exhausted()) {
+        assertRunning();
+        if (state.phase in evidenceNext) {
+          const remaining = maxItems - processed;
+          const page = this.#repository.verifyEvidencePage(
+            state.phase as "attempts" | "outcomes" | "blobs" | "observations" | "incidents",
+            state.afterKey,
+            remaining,
           );
-        } else {
-          if (!contentPresent) {
-            await this.#lease.renewAndAssert();
-            await assertTrustedPath(this.#paths.root, contentPath, this.#paths.device);
-            await link(stagePath, contentPath);
-          }
-          await this.#lease.renewAndAssert();
-          this.#repository.markIntentContentInstalled(intent.intentId, this.#lease.fence());
-          this.#repository.commitIntentSuccess(intent.intentId, this.#lease.fence());
-          await this.#lease.renewAndAssert();
-          await rm(stagePath, { force: true });
-          this.#repository.markIntentStageCleaned(intent.intentId, this.#lease.fence());
+          rowsVisited += page.visited;
+          processed += Math.max(1, page.visited);
+          await advance(
+            page.done ? (evidenceNext[state.phase] as ReconciliationPhase) : state.phase,
+            0,
+            page.done ? "" : page.lastKey,
+          );
+          continue;
         }
-        await advance("install-intents", 0, intent.intentId);
-        processed += 1;
-        continue;
-      }
-      if (state.phase === "snapshots" || state.phase === "staging") {
-        const root = state.phase === "snapshots" ? this.#paths.snapshots : this.#paths.staging;
-        const names = await boundedDirectoryEntries(root, this.#paths.device);
-        directoryEntriesRead += names.length;
-        const name = names.find((candidate) => candidate > state.afterKey);
-        if (name === undefined) {
-          await advance(state.phase === "snapshots" ? "staging" : "open-attempts", 0, "");
+        const pending = this.#repository.readPendingReconciliationAction(state);
+        if (pending !== undefined) {
+          const payload = pending.payload as unknown as {
+            next: { phase: ReconciliationPhase; shard: number; afterKey: string };
+          };
+          let application: Parameters<SqliteArtifactRepository["applyReconciliationAction"]>[3] = {
+            resultingIdentity: null,
+            resultingDigest: null,
+            resultingSizeBytes: null,
+          };
+          if (pending.actionKind === "quarantine") {
+            if (pending.sourceRelativePath === null)
+              throw new Error("Pending quarantine source is missing");
+            const source = safeChild(this.#paths.root, pending.sourceRelativePath);
+            assertRunning();
+            const replayed = await this.#replayQuarantine(pending, source);
+            assertRunning();
+            application = {
+              resultingIdentity: replayed.identity,
+              resultingDigest: replayed.digest,
+              resultingSizeBytes: replayed.sizeBytes,
+            };
+            report.quarantinedObjects += 1;
+          } else if (pending.actionKind === "remove-snapshot") {
+            if (pending.sourceRelativePath === null)
+              throw new Error("Pending snapshot source is missing");
+            const source = safeChild(this.#paths.root, pending.sourceRelativePath);
+            await this.#lease.renewAndAssert();
+            assertRunning();
+            await rm(source, { force: true });
+            assertRunning();
+            await syncDirectory(dirname(source));
+            assertRunning();
+          } else if (pending.actionKind === "adopt-orphan") {
+            if (pending.sourceRelativePath === null)
+              throw new Error("Pending orphan source is missing");
+            const source = safeChild(this.#paths.root, pending.sourceRelativePath);
+            assertRunning();
+            const verified = await hashFile(source);
+            assertRunning();
+            if (
+              verified.digest !== pending.expectedDigest ||
+              verified.sizeBytes !== pending.expectedSizeBytes
+            )
+              throw new ArtifactVaultError(
+                "artifact-integrity-failure",
+                "Orphan bytes changed after reconciliation planning",
+              );
+            bytesHashed += verified.sizeBytes;
+            assertRunning();
+            const sourceIdentity = await filesystemIdentity(source);
+            assertRunning();
+            application = {
+              resultingIdentity: sourceIdentity,
+              resultingDigest: verified.digest,
+              resultingSizeBytes: verified.sizeBytes,
+            };
+            report.adoptedOrphans += 1;
+          }
+          if (pending.incident !== null) {
+            report.incidents.push(pending.incident.incidentId);
+            if (pending.incident.kind === "missing-content") report.missingArtifacts += 1;
+            if (pending.incident.kind === "expired-stage") report.expiredStages += 1;
+            if (pending.incident.kind === "abandoned-stage") report.abandonedStages += 1;
+          }
+          processed += 1;
+          await applyAction(
+            pending,
+            payload.next.phase,
+            payload.next.shard,
+            payload.next.afterKey,
+            application,
+          );
+          continue;
+        }
+        if (state.phase === "install-intents") {
+          const intents = this.#repository.readPendingIntentPage(state.afterKey, 1);
+          const intent = intents[0];
+          rowsVisited += intents.length;
+          if (intent === undefined) {
+            await advance("snapshots", 0, "");
+            processed += 1;
+            continue;
+          }
+          const stagePath = safeChild(this.#paths.staging, `${intent.stagingId}.part`);
+          assertRunning();
+          const contentPath = await this.#contentPath(intent.digest, true, false);
+          assertRunning();
+          const verify = async (path: string): Promise<boolean> => {
+            try {
+              assertRunning();
+              const value = await hashFile(path, Number.MAX_SAFE_INTEGER, 2);
+              assertRunning();
+              bytesHashed += value.sizeBytes;
+              return value.digest === intent.digest && value.sizeBytes === intent.sizeBytes;
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+              throw error;
+            }
+          };
+          const contentPresent = await verify(contentPath);
+          const stagePresent = await verify(stagePath);
+          if (!contentPresent && !stagePresent) {
+            await this.#lease.renewAndAssert();
+            assertRunning();
+            this.#repository.abortIntent(
+              intent.intentId,
+              {
+                attemptId: intent.attemptId,
+                outcome: "expired",
+                completedAtMs: this.#clock.nowMs(),
+                reasonCode: "install-content-missing",
+                detailHash: null,
+              } as RetrievalAttemptOutcome,
+              this.#lease.fence(),
+            );
+          } else {
+            if (!contentPresent) {
+              await this.#lease.renewAndAssert();
+              assertRunning();
+              await assertTrustedPath(this.#paths.root, contentPath, this.#paths.device);
+              assertRunning();
+              await link(stagePath, contentPath);
+              assertRunning();
+            }
+            await this.#lease.renewAndAssert();
+            assertRunning();
+            this.#repository.markIntentContentInstalled(intent.intentId, this.#lease.fence());
+            this.#repository.commitIntentSuccess(intent.intentId, this.#lease.fence());
+            await this.#lease.renewAndAssert();
+            assertRunning();
+            await rm(stagePath, { force: true });
+            assertRunning();
+            this.#repository.markIntentStageCleaned(intent.intentId, this.#lease.fence());
+          }
+          await advance("install-intents", 0, intent.intentId);
           processed += 1;
           continue;
         }
-        const path = safeChild(root, name);
-        if (state.phase === "snapshots") {
-          await planAction({
-            actionKind: "remove-snapshot",
-            sourceRelativePath: relative(this.#paths.root, path),
-            sourceIdentity: await filesystemIdentity(path),
-            expectedDigest: null,
-            expectedSizeBytes: null,
-            incident: null,
-            identity: { name },
-            payload: {
-              next: { phase: "snapshots", shard: 0, afterKey: name },
-            },
-            recordedAtMs: this.#clock.nowMs(),
-          });
+        if (state.phase === "snapshots" || state.phase === "staging") {
+          const root = state.phase === "snapshots" ? this.#paths.snapshots : this.#paths.staging;
+          assertRunning();
+          const names = await boundedDirectoryEntries(root, this.#paths.device);
+          assertRunning();
+          directoryEntriesRead += names.length;
+          const name = names.find((candidate) => candidate > state.afterKey);
+          if (name === undefined) {
+            await advance(state.phase === "snapshots" ? "staging" : "open-attempts", 0, "");
+            processed += 1;
+            continue;
+          }
+          const path = safeChild(root, name);
+          if (state.phase === "snapshots") {
+            await planAction({
+              actionKind: "remove-snapshot",
+              sourceRelativePath: relative(this.#paths.root, path),
+              sourceIdentity: await filesystemIdentity(path),
+              expectedDigest: null,
+              expectedSizeBytes: null,
+              incident: null,
+              identity: { name },
+              payload: {
+                next: { phase: "snapshots", shard: 0, afterKey: name },
+              },
+              recordedAtMs: this.#clock.nowMs(),
+            });
+            continue;
+          } else {
+            const stagingId = name.endsWith(".part") ? name.slice(0, -5) : null;
+            const attempt =
+              stagingId === null ? undefined : this.#repository.getAttemptByStagingId(stagingId);
+            if (attempt === undefined) {
+              const verified = await hashFile(path);
+              assertRunning();
+              bytesHashed += verified.sizeBytes;
+              await planAction({
+                actionKind: "quarantine",
+                sourceRelativePath: relative(this.#paths.root, path),
+                sourceIdentity: await filesystemIdentity(path),
+                expectedDigest: verified.digest,
+                expectedSizeBytes: verified.sizeBytes,
+                incident: {
+                  kind: "invalid-orphan",
+                  stagingId,
+                  claimedDigest: null,
+                  expectedSizeBytes: null,
+                  actualSizeBytes: verified.sizeBytes,
+                  detailHash: null,
+                  facts: {
+                    name,
+                    stagingId,
+                    digest: verified.digest,
+                    sizeBytes: verified.sizeBytes,
+                  },
+                },
+                identity: {
+                  name,
+                  stagingId,
+                  digest: verified.digest,
+                  sizeBytes: verified.sizeBytes,
+                },
+                payload: {
+                  next: { phase: "staging", shard: 0, afterKey: name },
+                },
+                recordedAtMs: this.#clock.nowMs(),
+              });
+              continue;
+            } else if (this.#repository.getOutcome(attempt.attemptId) !== undefined) {
+              const verified = await hashFile(path);
+              bytesHashed += verified.sizeBytes;
+              const outcome = this.#repository.getOutcome(attempt.attemptId);
+              await planAction({
+                actionKind: "quarantine",
+                sourceRelativePath: relative(this.#paths.root, path),
+                sourceIdentity: await filesystemIdentity(path),
+                expectedDigest: verified.digest,
+                expectedSizeBytes: verified.sizeBytes,
+                incident: {
+                  kind: "abandoned-stage",
+                  stagingId,
+                  claimedDigest: null,
+                  expectedSizeBytes: null,
+                  actualSizeBytes: verified.sizeBytes,
+                  detailHash: outcome?.detailHash ?? null,
+                  facts: {
+                    stagingId,
+                    attemptId: attempt.attemptId,
+                    outcome: outcome?.outcome ?? "unknown",
+                    digest: verified.digest,
+                    sizeBytes: verified.sizeBytes,
+                  },
+                },
+                identity: {
+                  stagingId,
+                  attemptId: attempt.attemptId,
+                  outcome: outcome?.outcome ?? "unknown",
+                  digest: verified.digest,
+                },
+                payload: {
+                  next: { phase: "staging", shard: 0, afterKey: name },
+                },
+                recordedAtMs: this.#clock.nowMs(),
+              });
+              continue;
+            } else if (this.#clock.nowMs() - attempt.recordedAtMs >= this.#config.stageExpiryMs) {
+              const verified = await hashFile(path);
+              bytesHashed += verified.sizeBytes;
+              const outcome: RetrievalAttemptOutcome = {
+                attemptId: attempt.attemptId,
+                outcome: "expired",
+                completedAtMs: this.#clock.nowMs(),
+                reasonCode: "stage-expired",
+                detailHash: null,
+              };
+              await planAction({
+                actionKind: "quarantine",
+                sourceRelativePath: relative(this.#paths.root, path),
+                sourceIdentity: await filesystemIdentity(path),
+                expectedDigest: verified.digest,
+                expectedSizeBytes: verified.sizeBytes,
+                incident: {
+                  kind: "expired-stage",
+                  stagingId,
+                  claimedDigest: null,
+                  expectedSizeBytes: null,
+                  actualSizeBytes: verified.sizeBytes,
+                  detailHash: null,
+                  facts: { stagingId, digest: verified.digest, sizeBytes: verified.sizeBytes },
+                },
+                identity: { stagingId, attemptId: attempt.attemptId, digest: verified.digest },
+                payload: {
+                  outcome: outcome as unknown as JsonValue,
+                  next: { phase: "staging", shard: 0, afterKey: name },
+                },
+                recordedAtMs: outcome.completedAtMs,
+              });
+              continue;
+            }
+          }
+          await advance(state.phase, 0, name);
+          processed += 1;
           continue;
-        } else {
-          const stagingId = name.endsWith(".part") ? name.slice(0, -5) : null;
-          const attempt =
-            stagingId === null ? undefined : this.#repository.getAttemptByStagingId(stagingId);
+        }
+        if (state.phase === "open-attempts") {
+          const attempts = this.#repository.readOpenAttemptsPage(state.afterKey, 1);
+          const attempt = attempts[0];
+          rowsVisited += attempts.length;
           if (attempt === undefined) {
-            const verified = await hashFile(path);
+            await advance("content", 0, "");
+          } else {
+            const stagePath = safeChild(this.#paths.staging, `${attempt.stagingId}.part`);
+            let present = true;
+            try {
+              await lstat(stagePath);
+            } catch {
+              present = false;
+            }
+            if (
+              !present &&
+              this.#clock.nowMs() - attempt.recordedAtMs >= this.#config.stageExpiryMs
+            ) {
+              const outcome: RetrievalAttemptOutcome = {
+                attemptId: attempt.attemptId,
+                outcome: "expired",
+                completedAtMs: this.#clock.nowMs(),
+                reasonCode: "stage-missing",
+                detailHash: null,
+              };
+              await planAction({
+                actionKind: "expire-attempt",
+                sourceRelativePath: relative(this.#paths.root, stagePath),
+                sourceIdentity: null,
+                expectedDigest: null,
+                expectedSizeBytes: null,
+                incident: null,
+                identity: { attemptId: attempt.attemptId, reasonCode: outcome.reasonCode },
+                payload: {
+                  outcome: outcome as unknown as JsonValue,
+                  next: { phase: "open-attempts", shard: 0, afterKey: attempt.attemptId },
+                },
+                recordedAtMs: outcome.completedAtMs,
+              });
+              const pendingPlan = this.#repository.readPendingReconciliationAction(state);
+              if (pendingPlan === undefined)
+                throw new Error("Expired-attempt plan was not persisted");
+              processed += 1;
+              await applyAction(pendingPlan, "open-attempts", 0, attempt.attemptId, {
+                resultingIdentity: null,
+                resultingDigest: null,
+                resultingSizeBytes: null,
+              });
+              report.expiredStages += 1;
+              continue;
+            }
+            await advance("open-attempts", 0, attempt.attemptId);
+          }
+          processed += 1;
+          continue;
+        }
+        if (state.phase === "content") {
+          assertRunning();
+          const leaf = await this.#nextContentLeaf(state.shard);
+          assertRunning();
+          directoryEntriesRead += leaf.entriesRead;
+          if (leaf.done) {
+            await advance("missing-content", 0, "");
+            processed += 1;
+            continue;
+          }
+          if (leaf.shard !== state.shard) {
+            await advance("content", leaf.shard, "");
+            processed += 1;
+            continue;
+          }
+          const name = leaf.names.find((candidate) => candidate > state.afterKey);
+          if (name === undefined) {
+            await advance("content", state.shard + 1, "");
+            processed += 1;
+            continue;
+          }
+          const path = safeChild(leaf.path, name);
+          try {
+            assertArtifactDigest(name);
+            if (this.#repository.retentionTombstoned(name))
+              throw new ArtifactVaultError(
+                "artifact-integrity-failure",
+                "Tombstoned artifact content is still present",
+              );
+            const verified = await hashFile(
+              path,
+              Math.min(this.#config.maxArtifactBytes, maxBytes - bytesHashed),
+            );
+            assertRunning();
             bytesHashed += verified.sizeBytes;
+            if (verified.digest !== name) throw new Error("digest mismatch");
+            const existing = this.#repository.stat(name);
+            if (existing === undefined) {
+              const artifact: ArtifactMetadata = {
+                digest: name,
+                algorithm: "sha256",
+                sizeBytes: verified.sizeBytes,
+                committedAtMs: this.#clock.nowMs(),
+                provenance: "recovered-orphan",
+              };
+              await planAction({
+                actionKind: "adopt-orphan",
+                sourceRelativePath: relative(this.#paths.root, path),
+                sourceIdentity: await filesystemIdentity(path),
+                expectedDigest: verified.digest,
+                expectedSizeBytes: verified.sizeBytes,
+                incident: null,
+                identity: { digest: verified.digest, sizeBytes: verified.sizeBytes },
+                payload: {
+                  artifact: artifact as unknown as JsonValue,
+                  next: { phase: "content", shard: state.shard, afterKey: name },
+                },
+                recordedAtMs: artifact.committedAtMs,
+              });
+              continue;
+            } else if (existing.sizeBytes !== verified.sizeBytes) throw new Error("size mismatch");
+            else report.validArtifacts += 1;
+          } catch (error) {
+            if (state.pendingActionKey !== null) throw error;
+            const verified = await hashFile(path);
+            assertRunning();
+            bytesHashed += verified.sizeBytes;
+            const claimedDigest = /^[0-9a-f]{64}$/u.test(name) ? name : null;
             await planAction({
               actionKind: "quarantine",
               sourceRelativePath: relative(this.#paths.root, path),
@@ -941,296 +1274,95 @@ export class DurableArtifactStore implements ArtifactStore {
               expectedSizeBytes: verified.sizeBytes,
               incident: {
                 kind: "invalid-orphan",
-                stagingId,
-                claimedDigest: null,
+                stagingId: null,
+                claimedDigest,
                 expectedSizeBytes: null,
                 actualSizeBytes: verified.sizeBytes,
                 detailHash: null,
-                facts: { name, stagingId, digest: verified.digest, sizeBytes: verified.sizeBytes },
-              },
-              identity: { name, stagingId, digest: verified.digest, sizeBytes: verified.sizeBytes },
-              payload: {
-                next: { phase: "staging", shard: 0, afterKey: name },
-              },
-              recordedAtMs: this.#clock.nowMs(),
-            });
-            continue;
-          } else if (this.#repository.getOutcome(attempt.attemptId) !== undefined) {
-            const verified = await hashFile(path);
-            bytesHashed += verified.sizeBytes;
-            const outcome = this.#repository.getOutcome(attempt.attemptId);
-            await planAction({
-              actionKind: "quarantine",
-              sourceRelativePath: relative(this.#paths.root, path),
-              sourceIdentity: await filesystemIdentity(path),
-              expectedDigest: verified.digest,
-              expectedSizeBytes: verified.sizeBytes,
-              incident: {
-                kind: "abandoned-stage",
-                stagingId,
-                claimedDigest: null,
-                expectedSizeBytes: null,
-                actualSizeBytes: verified.sizeBytes,
-                detailHash: outcome?.detailHash ?? null,
                 facts: {
-                  stagingId,
-                  attemptId: attempt.attemptId,
-                  outcome: outcome?.outcome ?? "unknown",
-                  digest: verified.digest,
+                  name,
+                  claimedDigest,
+                  actualDigest: verified.digest,
                   sizeBytes: verified.sizeBytes,
                 },
               },
-              identity: {
-                stagingId,
-                attemptId: attempt.attemptId,
-                outcome: outcome?.outcome ?? "unknown",
-                digest: verified.digest,
-              },
+              identity: { name, digest: verified.digest, sizeBytes: verified.sizeBytes },
               payload: {
-                next: { phase: "staging", shard: 0, afterKey: name },
+                next: { phase: "content", shard: state.shard, afterKey: name },
               },
               recordedAtMs: this.#clock.nowMs(),
             });
             continue;
-          } else if (this.#clock.nowMs() - attempt.recordedAtMs >= this.#config.stageExpiryMs) {
-            const verified = await hashFile(path);
-            bytesHashed += verified.sizeBytes;
-            const outcome: RetrievalAttemptOutcome = {
-              attemptId: attempt.attemptId,
-              outcome: "expired",
-              completedAtMs: this.#clock.nowMs(),
-              reasonCode: "stage-expired",
-              detailHash: null,
-            };
-            await planAction({
-              actionKind: "quarantine",
-              sourceRelativePath: relative(this.#paths.root, path),
-              sourceIdentity: await filesystemIdentity(path),
-              expectedDigest: verified.digest,
-              expectedSizeBytes: verified.sizeBytes,
-              incident: {
-                kind: "expired-stage",
-                stagingId,
-                claimedDigest: null,
-                expectedSizeBytes: null,
-                actualSizeBytes: verified.sizeBytes,
-                detailHash: null,
-                facts: { stagingId, digest: verified.digest, sizeBytes: verified.sizeBytes },
-              },
-              identity: { stagingId, attemptId: attempt.attemptId, digest: verified.digest },
-              payload: {
-                outcome: outcome as unknown as JsonValue,
-                next: { phase: "staging", shard: 0, afterKey: name },
-              },
-              recordedAtMs: outcome.completedAtMs,
-            });
-            continue;
           }
-        }
-        await advance(state.phase, 0, name);
-        processed += 1;
-        continue;
-      }
-      if (state.phase === "open-attempts") {
-        const attempts = this.#repository.readOpenAttemptsPage(state.afterKey, 1);
-        const attempt = attempts[0];
-        rowsVisited += attempts.length;
-        if (attempt === undefined) {
-          await advance("content", 0, "");
-        } else {
-          const stagePath = safeChild(this.#paths.staging, `${attempt.stagingId}.part`);
-          let present = true;
-          try {
-            await lstat(stagePath);
-          } catch {
-            present = false;
-          }
-          if (
-            !present &&
-            this.#clock.nowMs() - attempt.recordedAtMs >= this.#config.stageExpiryMs
-          ) {
-            const outcome: RetrievalAttemptOutcome = {
-              attemptId: attempt.attemptId,
-              outcome: "expired",
-              completedAtMs: this.#clock.nowMs(),
-              reasonCode: "stage-missing",
-              detailHash: null,
-            };
-            await planAction({
-              actionKind: "expire-attempt",
-              sourceRelativePath: relative(this.#paths.root, stagePath),
-              sourceIdentity: null,
-              expectedDigest: null,
-              expectedSizeBytes: null,
-              incident: null,
-              identity: { attemptId: attempt.attemptId, reasonCode: outcome.reasonCode },
-              payload: {
-                outcome: outcome as unknown as JsonValue,
-                next: { phase: "open-attempts", shard: 0, afterKey: attempt.attemptId },
-              },
-              recordedAtMs: outcome.completedAtMs,
-            });
-            const pendingPlan = this.#repository.readPendingReconciliationAction(state);
-            if (pendingPlan === undefined)
-              throw new Error("Expired-attempt plan was not persisted");
-            processed += 1;
-            await applyAction(pendingPlan, "open-attempts", 0, attempt.attemptId, {
-              resultingIdentity: null,
-              resultingDigest: null,
-              resultingSizeBytes: null,
-            });
-            report.expiredStages += 1;
-            continue;
-          }
-          await advance("open-attempts", 0, attempt.attemptId);
-        }
-        processed += 1;
-        continue;
-      }
-      if (state.phase === "content") {
-        const leaf = await this.#nextContentLeaf(state.shard);
-        directoryEntriesRead += leaf.entriesRead;
-        if (leaf.done) {
-          await advance("missing-content", 0, "");
+          await advance("content", state.shard, name);
           processed += 1;
           continue;
         }
-        if (leaf.shard !== state.shard) {
-          await advance("content", leaf.shard, "");
-          processed += 1;
-          continue;
+        const artifacts = this.#repository.readArtifactsPage(state.afterKey, 1);
+        const artifact = artifacts[0];
+        rowsVisited += artifacts.length;
+        if (artifact === undefined) {
+          const terminal = result(null);
+          assertRunning();
+          this.#repository.commitReconciliationReceipt(state, terminal, true, this.#lease.fence());
+          await this.#checkpoint("reconciliation-terminal-receipt-commit");
+          assertRunning();
+          return terminal;
         }
-        const name = leaf.names.find((candidate) => candidate > state.afterKey);
-        if (name === undefined) {
-          await advance("content", state.shard + 1, "");
-          processed += 1;
-          continue;
-        }
-        const path = safeChild(leaf.path, name);
+        assertRunning();
+        const path = await this.#contentPath(artifact.digest, false, false);
+        assertRunning();
         try {
-          assertArtifactDigest(name);
-          if (this.#repository.retentionTombstoned(name))
-            throw new ArtifactVaultError(
-              "artifact-integrity-failure",
-              "Tombstoned artifact content is still present",
-            );
-          const verified = await hashFile(
-            path,
-            Math.min(this.#config.maxArtifactBytes, maxBytes - bytesHashed),
-          );
-          bytesHashed += verified.sizeBytes;
-          if (verified.digest !== name) throw new Error("digest mismatch");
-          const existing = this.#repository.stat(name);
-          if (existing === undefined) {
-            const artifact: ArtifactMetadata = {
-              digest: name,
-              algorithm: "sha256",
-              sizeBytes: verified.sizeBytes,
-              committedAtMs: this.#clock.nowMs(),
-              provenance: "recovered-orphan",
-            };
-            await planAction({
-              actionKind: "adopt-orphan",
-              sourceRelativePath: relative(this.#paths.root, path),
-              sourceIdentity: await filesystemIdentity(path),
-              expectedDigest: verified.digest,
-              expectedSizeBytes: verified.sizeBytes,
-              incident: null,
-              identity: { digest: verified.digest, sizeBytes: verified.sizeBytes },
-              payload: {
-                artifact: artifact as unknown as JsonValue,
-                next: { phase: "content", shard: state.shard, afterKey: name },
-              },
-              recordedAtMs: artifact.committedAtMs,
-            });
+          await stat(path);
+          assertRunning();
+        } catch {
+          if (this.#repository.retentionTombstoned(artifact.digest)) {
+            await advance("missing-content", 0, artifact.digest);
+            processed += 1;
             continue;
-          } else if (existing.sizeBytes !== verified.sizeBytes) throw new Error("size mismatch");
-          else report.validArtifacts += 1;
-        } catch (error) {
-          if (state.pendingActionKey !== null) throw error;
-          const verified = await hashFile(path);
-          bytesHashed += verified.sizeBytes;
-          const claimedDigest = /^[0-9a-f]{64}$/u.test(name) ? name : null;
+          }
           await planAction({
-            actionKind: "quarantine",
+            actionKind: "record-missing-content",
             sourceRelativePath: relative(this.#paths.root, path),
-            sourceIdentity: await filesystemIdentity(path),
-            expectedDigest: verified.digest,
-            expectedSizeBytes: verified.sizeBytes,
+            sourceIdentity: null,
+            expectedDigest: artifact.digest,
+            expectedSizeBytes: artifact.sizeBytes,
             incident: {
-              kind: "invalid-orphan",
+              kind: "missing-content",
               stagingId: null,
-              claimedDigest,
-              expectedSizeBytes: null,
-              actualSizeBytes: verified.sizeBytes,
+              claimedDigest: artifact.digest,
+              expectedSizeBytes: artifact.sizeBytes,
+              actualSizeBytes: null,
               detailHash: null,
-              facts: {
-                name,
-                claimedDigest,
-                actualDigest: verified.digest,
-                sizeBytes: verified.sizeBytes,
-              },
+              facts: { digest: artifact.digest, expectedSizeBytes: artifact.sizeBytes },
             },
-            identity: { name, digest: verified.digest, sizeBytes: verified.sizeBytes },
+            identity: { digest: artifact.digest, expectedSizeBytes: artifact.sizeBytes },
             payload: {
-              next: { phase: "content", shard: state.shard, afterKey: name },
+              next: { phase: "missing-content", shard: 0, afterKey: artifact.digest },
             },
             recordedAtMs: this.#clock.nowMs(),
           });
           continue;
         }
-        await advance("content", state.shard, name);
+        await advance("missing-content", 0, artifact.digest);
         processed += 1;
-        continue;
       }
-      const artifacts = this.#repository.readArtifactsPage(state.afterKey, 1);
-      const artifact = artifacts[0];
-      rowsVisited += artifacts.length;
-      if (artifact === undefined) {
-        const terminal = result(null);
-        this.#repository.commitReconciliationReceipt(state, terminal, true, this.#lease.fence());
-        await this.#checkpoint("reconciliation-terminal-receipt-commit");
-        return terminal;
+      const partial = result(state.cursorToken);
+      assertRunning();
+      this.#repository.commitReconciliationReceipt(state, partial, false, this.#lease.fence());
+      await this.#checkpoint("reconciliation-call-receipt-commit");
+      assertRunning();
+      return partial;
+    } finally {
+      this.#reconciliationControllers.delete(reconciliation);
+      if (this.#reconciliationControllers.size === 0) {
+        for (const waiter of this.#reconciliationIdleWaiting.splice(
+          0,
+          this.#reconciliationIdleWaiting.length,
+        ))
+          waiter();
       }
-      const path = await this.#contentPath(artifact.digest, false, false);
-      try {
-        await stat(path);
-      } catch {
-        if (this.#repository.retentionTombstoned(artifact.digest)) {
-          await advance("missing-content", 0, artifact.digest);
-          processed += 1;
-          continue;
-        }
-        await planAction({
-          actionKind: "record-missing-content",
-          sourceRelativePath: relative(this.#paths.root, path),
-          sourceIdentity: null,
-          expectedDigest: artifact.digest,
-          expectedSizeBytes: artifact.sizeBytes,
-          incident: {
-            kind: "missing-content",
-            stagingId: null,
-            claimedDigest: artifact.digest,
-            expectedSizeBytes: artifact.sizeBytes,
-            actualSizeBytes: null,
-            detailHash: null,
-            facts: { digest: artifact.digest, expectedSizeBytes: artifact.sizeBytes },
-          },
-          identity: { digest: artifact.digest, expectedSizeBytes: artifact.sizeBytes },
-          payload: {
-            next: { phase: "missing-content", shard: 0, afterKey: artifact.digest },
-          },
-          recordedAtMs: this.#clock.nowMs(),
-        });
-        continue;
-      }
-      await advance("missing-content", 0, artifact.digest);
-      processed += 1;
     }
-    const partial = result(state.cursorToken);
-    this.#repository.commitReconciliationReceipt(state, partial, false, this.#lease.fence());
-    await this.#checkpoint("reconciliation-call-receipt-commit");
-    return partial;
   }
 
   async #nextContentLeaf(startShard: number): Promise<
@@ -1294,21 +1426,43 @@ export class DurableArtifactStore implements ArtifactStore {
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1)
       throw new RangeError("Retention settlement timeout is invalid");
     const waitForReaders = async (): Promise<void> => {
-      if (this.#activeReaders === 0) return;
+      if (this.#activeReaders === 0 && this.#activeReadConstructions === 0) return;
       await new Promise<void>((resolve) => this.#readerIdleWaiting.push(resolve));
+    };
+    const waitForReconciliations = async (): Promise<void> => {
+      if (this.#reconciliationControllers.size === 0) return;
+      await new Promise<void>((resolve) => this.#reconciliationIdleWaiting.push(resolve));
     };
     let timeout: NodeJS.Timeout | undefined;
     try {
       return await Promise.race([
-        Promise.all([this.#semaphore.waitForIdle(), waitForReaders()]).then(() => true),
+        Promise.all([
+          this.#semaphore.waitForIdle(),
+          waitForReaders(),
+          waitForReconciliations(),
+        ]).then(() => true),
         new Promise<boolean>((resolve) => {
           timeout = setTimeout(() => resolve(false), timeoutMs);
-          timeout.unref();
         }),
       ]);
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
     }
+  }
+
+  closeRetentionAdmission(): void {
+    this.#retentionAdmissionClosed = true;
+    for (const controller of this.#reconciliationControllers) controller.abort();
+  }
+
+  reopenRetentionAdmission(): void {
+    this.#retentionAdmissionClosed = false;
+  }
+
+  #notifyReaderIdle(): void {
+    if (this.#activeReaders !== 0 || this.#activeReadConstructions !== 0) return;
+    for (const waiter of this.#readerIdleWaiting.splice(0, this.#readerIdleWaiting.length))
+      waiter();
   }
 
   #committedBytes(): number {
@@ -1464,5 +1618,20 @@ export class DurableArtifactStore implements ArtifactStore {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
+  }
+}
+
+export function assertOwnedDurableArtifactStore(
+  value: DurableArtifactStore,
+  expectedRuntimeRoot?: string,
+): void {
+  const root = ownedDurableArtifactStores.get(value);
+  if (
+    root === undefined ||
+    isProxy(value) ||
+    Object.getPrototypeOf(value) !== DurableArtifactStore.prototype ||
+    (expectedRuntimeRoot !== undefined && root !== resolve(expectedRuntimeRoot))
+  ) {
+    throw new TypeError("owned-durable-artifact-store-required");
   }
 }

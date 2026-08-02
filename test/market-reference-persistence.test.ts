@@ -5,8 +5,8 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { DurableArtifactStore } from "../src/adapters/artifacts/durable-artifact-store.js";
-import { RetentionEnforcedArtifactStore } from "../src/adapters/market-acquisition/retention/artifact-access.js";
-import { DefaultArtifactRetentionController } from "../src/adapters/market-acquisition/retention/controller.js";
+import { createTestRetentionEnforcedArtifactStore } from "../src/adapters/market-acquisition/retention/artifact-access.js";
+import { createTestArtifactRetentionController } from "../src/adapters/market-acquisition/retention/controller.js";
 import { MemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
 import { ALPACA_PRIVATE_ARTIFACT_POLICY } from "../src/adapters/market-acquisition/private-artifact-policy.js";
 import { artifactRuntimePaths } from "../src/adapters/artifacts/runtime-root.js";
@@ -295,7 +295,7 @@ test("checked bytes survive durable ArtifactStore restart and observation page s
     }),
   );
   try {
-    const retention = new DefaultArtifactRetentionController({
+    const retention = createTestArtifactRetentionController({
       journal: new MemoryArtifactRetentionJournal(),
       artifacts: {
         settleActiveReadersAndWriters: () => store.settleForRetention(),
@@ -335,7 +335,7 @@ test("checked bytes survive durable ArtifactStore restart and observation page s
     const durable = await bounded(
       "restarted recorded fixture load",
       loadRecordedMarketFixture(
-        new RetentionEnforcedArtifactStore(store, retention),
+        createTestRetentionEnforcedArtifactStore(store, retention),
         authority.manifest,
       ),
     );

@@ -249,6 +249,16 @@ export class SqliteArtifactRepository {
     });
   }
 
+  retentionReconciliationUseDenied(trustedNowMs: number): boolean {
+    return (
+      this.#database
+        .prepare(`SELECT 1 AS denied FROM market_retention_provider_denials
+          UNION ALL SELECT 1 AS denied FROM market_retention_ownership
+          WHERE expires_at_ms <= ? LIMIT 1`)
+        .get(trustedNowMs) !== undefined
+    );
+  }
+
   claimWriter(ownerToken: string, nowMs: number, durationMs: number): number {
     return this.#database
       .transaction(() => {

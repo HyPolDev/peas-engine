@@ -9,7 +9,12 @@ import { test } from "node:test";
 
 import { DurableArtifactStore } from "../src/adapters/artifacts/durable-artifact-store.js";
 import type { AlpacaArtifactCommitSink } from "../src/adapters/market-acquisition/alpaca/contracts.js";
-import { RetentionOwnedAlpacaPageSink } from "../src/adapters/market-acquisition/alpaca/retained-sink.js";
+import {
+  RetentionOwnedAlpacaPageSink,
+  assertRetentionOwnedAlpacaPageSink,
+  createRetentionOwnedAlpacaPageSink,
+  createTestAlpacaArtifactCommitSink,
+} from "../src/adapters/market-acquisition/alpaca/retained-sink.js";
 import { artifactRuntimePaths } from "../src/adapters/artifacts/runtime-root.js";
 import { SqliteArtifactRepository } from "../src/adapters/artifacts/sqlite-artifact-repository.js";
 import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
@@ -34,6 +39,9 @@ import {
 } from "../src/adapters/market-acquisition/private-artifact-policy.js";
 import {
   DefaultArtifactRetentionController,
+  createArtifactRetentionController,
+  createTestArtifactRetentionController,
+  assertOwnedArtifactRetentionController,
   recomputeRetentionPlanHash,
 } from "../src/adapters/market-acquisition/retention/controller.js";
 import type {
@@ -46,7 +54,11 @@ import type {
 } from "../src/adapters/market-acquisition/retention/contracts.js";
 import { MemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
 import { SqliteArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/sqlite-journal.js";
-import { RetentionEnforcedArtifactStore } from "../src/adapters/market-acquisition/retention/artifact-access.js";
+import {
+  RetentionEnforcedArtifactStore,
+  assertRetentionEnforcedArtifactStore,
+  createTestRetentionEnforcedArtifactStore,
+} from "../src/adapters/market-acquisition/retention/artifact-access.js";
 import { VaultArtifactRetentionBoundary } from "../src/adapters/market-acquisition/retention/vault-boundary.js";
 import { isSafeAcquisitionError } from "../src/adapters/market-acquisition/redaction.js";
 import {
@@ -169,7 +181,7 @@ function controller(
   nowMs: () => number,
   faultBoundary?: (checkpoint: string) => void | Promise<void>,
 ): DefaultArtifactRetentionController {
-  return new DefaultArtifactRetentionController({
+  return createTestArtifactRetentionController({
     journal,
     artifacts,
     nowMs,
@@ -226,7 +238,7 @@ test("trusted-time use guards deny artifact and derived use exactly at expiry ac
     assert.throws(() => restarted.assertArtifactUseAllowed(digest), isSafeAcquisitionError);
     assert.throws(() => restarted.assertDerivedUseAllowed(derivedId), isSafeAcquisitionError);
     let reconcileCalls = 0;
-    const guarded = new RetentionEnforcedArtifactStore(
+    const guarded = createTestRetentionEnforcedArtifactStore(
       {
         async reconcile() {
           reconcileCalls += 1;
@@ -258,6 +270,11 @@ test("normalized derived lineage is durable and denied on stop across restart", 
     let worker = controller(journal, artifacts, () => captureMs);
     worker.registerOwnership(ownership({ derivedIds: [] }));
     worker.registerDerivedLineage([digest], [normalizedDerived]);
+    assert.deepEqual(
+      worker.registerOwnership(ownership({ derivedIds: [] })).derivedIds,
+      [],
+      `${kind} original ownership replay must ignore later hydrated lineage`,
+    );
     assert.doesNotThrow(() => worker.assertDerivedUseAllowed(normalizedDerived));
     database?.close();
     if (kind === "sqlite") {
@@ -266,6 +283,7 @@ test("normalized derived lineage is durable and denied on stop across restart", 
       worker = controller(journal, artifacts, () => stop().effectiveAtMs);
     }
     assert.equal(journal.ownershipForDerivedId(normalizedDerived).length, 1);
+    assert.deepEqual(worker.registerOwnership(ownership({ derivedIds: [] })).derivedIds, []);
     assert.doesNotThrow(() => worker.assertDerivedUseAllowed(normalizedDerived));
     await worker.enforceStop(stop());
     assert.throws(() => worker.assertDerivedUseAllowed(normalizedDerived), isSafeAcquisitionError);
@@ -307,7 +325,7 @@ test("recorded loader cannot bypass trusted-time artifact and derived-use guards
       retention = controller(journal, new SyntheticArtifactBoundary(), () => now);
     }
     const fixtureStore = recordedFixtureArtifactStore(checked.fixtureRoot, checked.seeds);
-    const guarded = new RetentionEnforcedArtifactStore(fixtureStore.unsafeStore, retention);
+    const guarded = createTestRetentionEnforcedArtifactStore(fixtureStore.unsafeStore, retention);
     const loaded = await loadRecordedMarketArtifacts(
       guarded,
       recordedMarketArtifactProjection(checked.manifest),
@@ -429,12 +447,13 @@ test("trusted artifact completion closes provider-stop races before, during, and
   beforeWorker.registerOwnership(ownership());
   await beforeWorker.enforceStop(stop());
   const beforeSink = new PreparedRetentionSink(candidateOwnership);
+  const beforeOwnedSink = createRetentionOwnedAlpacaPageSink(
+    createTestAlpacaArtifactCommitSink(beforeSink),
+    beforeWorker,
+  );
+  await beforeOwnedSink.write(Buffer.from("atomic synthetic commit"));
   await assert.rejects(
-    () =>
-      new RetentionOwnedAlpacaPageSink(
-        beforeSink,
-        beforeWorker,
-      ).completeVerifyAndRegisterOwnership(),
+    () => beforeOwnedSink.completeVerifyAndRegisterOwnership(),
     isSafeAcquisitionError,
   );
   assert.equal(beforeSink.commits, 0);
@@ -459,12 +478,18 @@ test("trusted artifact completion closes provider-stop races before, during, and
     },
     () => duringArtifacts.present.add(secondDigest),
   );
-  const committing = new RetentionOwnedAlpacaPageSink(
-    duringSink,
+  const duringOwnedSink = createRetentionOwnedAlpacaPageSink(
+    createTestAlpacaArtifactCommitSink(duringSink),
     duringWorker,
-  ).completeVerifyAndRegisterOwnership();
+  );
+  await duringOwnedSink.write(Buffer.from("atomic synthetic commit"));
+  const committing = duringOwnedSink.completeVerifyAndRegisterOwnership();
   await entered;
-  const stopping = duringWorker.enforceStop(stop());
+  const stopping = controller(
+    duringJournal,
+    duringArtifacts,
+    () => stop().effectiveAtMs,
+  ).enforceStop(stop());
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(duringArtifacts.erasures, 0);
   releaseCommit();
@@ -482,15 +507,66 @@ test("trusted artifact completion closes provider-stop races before, during, and
     () => undefined,
     () => afterArtifacts.present.add(secondDigest),
   );
-  assert.equal(
-    await new RetentionOwnedAlpacaPageSink(
-      afterSink,
-      afterWorker,
-    ).completeVerifyAndRegisterOwnership(),
-    "committed",
+  const afterOwnedSink = createRetentionOwnedAlpacaPageSink(
+    createTestAlpacaArtifactCommitSink(afterSink),
+    afterWorker,
   );
+  await afterOwnedSink.write(Buffer.from("atomic synthetic commit"));
+  assert.equal(await afterOwnedSink.completeVerifyAndRegisterOwnership(), "committed");
   await afterWorker.enforceStop(stop());
   assert.throws(() => afterWorker.assertArtifactUseAllowed(secondDigest), isSafeAcquisitionError);
+});
+
+test("SQLite controllers sharing one durable boundary serialize commit against stop", async () => {
+  const database = openSqliteDatabase(":memory:", migrations);
+  try {
+    const journalA = new SqliteArtifactRetentionJournal(database);
+    const journalB = new SqliteArtifactRetentionJournal(database);
+    const artifacts = new SyntheticArtifactBoundary();
+    const commitController = controller(journalA, artifacts, () => stop().effectiveAtMs);
+    const stopController = controller(journalB, artifacts, () => stop().effectiveAtMs);
+    const committedBytes = Buffer.from("atomic synthetic commit", "utf8");
+    const committedDigest = createHash("sha256").update(committedBytes).digest("hex");
+    let releaseCommit!: () => void;
+    let commitEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      commitEntered = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseCommit = resolve;
+    });
+    const sink = new PreparedRetentionSink(
+      ownership({
+        artifactObservationId: identifier("aob1_", "a"),
+        artifactDigest: committedDigest,
+        artifactSizeBytes: committedBytes.byteLength,
+        derivedIds: [],
+      }),
+      async () => {
+        commitEntered();
+        await release;
+      },
+      () => artifacts.present.add(committedDigest),
+    );
+    const owned = createRetentionOwnedAlpacaPageSink(
+      createTestAlpacaArtifactCommitSink(sink),
+      commitController,
+    );
+    await owned.write(committedBytes);
+    const committing = owned.completeVerifyAndRegisterOwnership();
+    await entered;
+    const stopping = stopController.enforceStop(stop());
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(artifacts.erasures, 0);
+    releaseCommit();
+    await assert.rejects(() => committing, isSafeAcquisitionError);
+    const receipt = await stopping;
+    assert.equal(receipt.outcome, "verified-erased");
+    assert.equal(artifacts.present.has(committedDigest), false);
+    assert.equal(journalB.digestUseDenied(committedDigest), true);
+  } finally {
+    database.close();
+  }
 });
 
 test("existing receipts revalidate absence and physical attempt counts use unique ordinals", async () => {
@@ -510,6 +586,30 @@ test("existing receipts revalidate absence and physical attempt counts use uniqu
   assert.equal((await worker.enforceStop(stop())).receiptId, receipt.receiptId);
 });
 
+test("retention ownership cannot name bytes or sizes different from the committed stream", async () => {
+  const journal = new MemoryArtifactRetentionJournal();
+  const artifacts = new SyntheticArtifactBoundary();
+  const worker = controller(journal, artifacts, () => captureMs);
+  const lower = new PreparedRetentionSink(
+    ownership({
+      artifactDigest: digest,
+      artifactSizeBytes: syntheticBytes.byteLength,
+      derivedIds: [],
+    }),
+  );
+  const sink = createRetentionOwnedAlpacaPageSink(
+    createTestAlpacaArtifactCommitSink(lower),
+    worker,
+  );
+  await sink.write(Buffer.from("different original synthetic bytes", "utf8"));
+  await assert.rejects(
+    () => sink.completeVerifyAndRegisterOwnership(),
+    /alpaca-artifact-ownership-byte-mismatch/u,
+  );
+  assert.equal(lower.commits, 0);
+  assert.equal(journal.ownershipForDigest(digest).length, 0);
+});
+
 test("owned read admission destroys a delayed post-denial stream before stop settles", async () => {
   const journal = new MemoryArtifactRetentionJournal();
   const artifacts = new SyntheticArtifactBoundary();
@@ -527,7 +627,7 @@ test("owned read admission destroys a delayed post-denial stream before stop set
       return delayedRead;
     },
   } as unknown as ArtifactStore;
-  const guarded = new RetentionEnforcedArtifactStore(raw, worker);
+  const guarded = createTestRetentionEnforcedArtifactStore(raw, worker);
   assert.throws(
     () => new RetentionEnforcedArtifactStore(raw, {} as never),
     /owned-artifact-retention-controller-required/u,
@@ -563,52 +663,101 @@ test("owned read admission destroys a delayed post-denial stream before stop set
   assert.equal(artifacts.present.has(digest), false);
 });
 
-test("reconciliation is tracked through stop and rejected before work after denial", async () => {
+test("owned retention brands reject structural objects, subclasses, and proxies", () => {
+  const journal = new MemoryArtifactRetentionJournal();
+  const artifacts = new SyntheticArtifactBoundary();
+  const trusted = controller(journal, artifacts, () => captureMs);
+  class ControllerSubclass extends DefaultArtifactRetentionController {}
+  const subclass = new ControllerSubclass({
+    journal,
+    artifacts,
+    nowMs: () => captureMs,
+  });
+  for (const hostile of [{} as never, subclass, new Proxy(trusted, {})]) {
+    assert.throws(
+      () => assertOwnedArtifactRetentionController(hostile),
+      /owned-artifact-retention-controller-required/u,
+    );
+  }
+
+  const raw = {} as ArtifactStore;
+  class GuardedStoreSubclass extends RetentionEnforcedArtifactStore {}
+  const guardedSubclass = new GuardedStoreSubclass(raw, trusted);
+  const guarded = createTestRetentionEnforcedArtifactStore(raw, trusted);
+  for (const hostile of [{} as never, guardedSubclass, new Proxy(guarded, {})]) {
+    assert.throws(
+      () => assertRetentionEnforcedArtifactStore(hostile),
+      /retention-enforced-store-required/u,
+    );
+  }
+
+  const lower = createTestAlpacaArtifactCommitSink({
+    async write() {},
+    async prepareVerifiedCommit() {
+      return { ownership: ownership(), async commit() {} };
+    },
+    async abort() {},
+    async destroy() {},
+    async settle() {},
+  });
+  const ownedSink = createRetentionOwnedAlpacaPageSink(lower, trusted);
+  class PageSinkSubclass extends RetentionOwnedAlpacaPageSink<void> {}
+  const sinkSubclass = new PageSinkSubclass(lower, trusted);
+  for (const hostile of [{} as never, sinkSubclass, new Proxy(ownedSink, {})]) {
+    assert.throws(
+      () => assertRetentionOwnedAlpacaPageSink(hostile),
+      /alpaca-retention-owned-sink-required/u,
+    );
+  }
+});
+
+test("reconciliation is cancelled before stop settlement and rejected before work after denial", async () => {
   const journal = new MemoryArtifactRetentionJournal();
   const artifacts = new SyntheticArtifactBoundary();
   const worker = controller(journal, artifacts, () => stop().effectiveAtMs);
   worker.registerOwnership(ownership());
   let resolveReconcile!: (value: ReconciliationReport) => void;
   let reconcileCalls = 0;
-  let mutations = 0;
+  const mutations = 0;
+  let cancellations = 0;
   const raw = {
     async reconcile() {
       reconcileCalls += 1;
       return new Promise<ReconciliationReport>((resolve) => {
-        resolveReconcile = (report) => {
-          mutations += 1;
-          resolve(report);
-        };
+        resolveReconcile = resolve;
       });
     },
   } as unknown as ArtifactStore;
-  const guarded = new RetentionEnforcedArtifactStore(raw, worker);
+  const guarded = createTestRetentionEnforcedArtifactStore(raw, worker, () => {
+    cancellations += 1;
+    resolveReconcile({
+      runId: "synthetic-reconciliation",
+      validArtifacts: 0,
+      adoptedOrphans: 0,
+      abandonedStages: 0,
+      expiredStages: 0,
+      quarantinedObjects: 0,
+      missingArtifacts: 0,
+      incidents: [],
+      continuationCursor: null,
+      rowsVisited: 0,
+      directoryEntriesRead: 0,
+      bytesHashed: 0,
+      elapsedMs: 0,
+    });
+  });
   const reconciling = guarded.reconcile();
+  const reconciliationRejected = assert.rejects(() => reconciling, isSafeAcquisitionError);
   await new Promise<void>((resolve) => setImmediate(resolve));
   const stopping = worker.enforceStop(stop());
   await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal(artifacts.erasures, 0);
-  resolveReconcile({
-    runId: "synthetic-reconciliation",
-    validArtifacts: 0,
-    adoptedOrphans: 0,
-    abandonedStages: 0,
-    expiredStages: 0,
-    quarantinedObjects: 0,
-    missingArtifacts: 0,
-    incidents: [],
-    continuationCursor: null,
-    rowsVisited: 1,
-    directoryEntriesRead: 1,
-    bytesHashed: 0,
-    elapsedMs: 1,
-  });
-  await assert.rejects(() => reconciling, isSafeAcquisitionError);
+  await reconciliationRejected;
   await stopping;
-  assert.equal(mutations, 1);
+  assert.equal(cancellations, 1);
+  assert.equal(mutations, 0);
   await assert.rejects(() => guarded.reconcile(), isSafeAcquisitionError);
   assert.equal(reconcileCalls, 1);
-  assert.equal(mutations, 1);
+  assert.equal(mutations, 0);
   assert.equal(artifacts.present.has(digest), false);
 });
 
@@ -798,9 +947,6 @@ test("shared digest is conservatively denied and erased for all references", asy
 
 test("vault retention boundary removes content, staging, snapshot, and quarantine copies", async (context) => {
   const root = await mkdtemp(join(tmpdir(), "peas-p1-10-retention-"));
-  context.after(async () => {
-    await rm(root, { recursive: true, force: true });
-  });
   const paths = artifactRuntimePaths(root);
   for (const directory of [
     paths.databaseDirectory,
@@ -819,11 +965,17 @@ test("vault retention boundary removes content, staging, snapshot, and quarantin
   await writeFile(join(paths.quarantine, "synthetic.quarantined"), syntheticBytes, {
     mode: 0o600,
   });
-  const store = {
-    async settleForRetention(): Promise<boolean> {
-      return true;
-    },
-  } as DurableArtifactStore;
+  const database = openSqliteDatabase(paths.databasePath, migrations);
+  const store = await DurableArtifactStore.open({
+    repository: new SqliteArtifactRepository(database),
+    clock: new ManualClock(captureMs),
+    config: vaultConfig(root),
+  });
+  context.after(async () => {
+    await store.close();
+    if (database.open) database.close();
+    await rm(root, { recursive: true, force: true });
+  });
   const boundary = await VaultArtifactRetentionBoundary.open({
     store,
     runtimeRoot: root,
@@ -838,6 +990,70 @@ test("vault retention boundary removes content, staging, snapshot, and quarantin
   assert.equal(await boundary.verifyDigestCopiesAbsent(digest), true);
   const second = await boundary.eraseDigestCopies(digest);
   assert.equal(second.alreadyAbsent, true);
+});
+
+test("separate live controllers over one durable store share the stop barrier", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "peas-p1-10-retention-shared-live-"));
+  const paths = artifactRuntimePaths(root);
+  await mkdir(paths.databaseDirectory, { recursive: true });
+  const database = openSqliteDatabase(paths.databasePath, migrations);
+  const store = await DurableArtifactStore.open({
+    repository: new SqliteArtifactRepository(database),
+    clock: new ManualClock(captureMs),
+    config: vaultConfig(root),
+  });
+  context.after(async () => {
+    await store.close();
+    if (database.open) database.close();
+    await rm(root, { recursive: true, force: true });
+  });
+  const stored = await store.store(artifactRequest("shared-live", Readable.from([syntheticBytes])));
+  const journal = new SqliteArtifactRetentionJournal(database);
+  const boundaryA = await VaultArtifactRetentionBoundary.open({ store, runtimeRoot: root });
+  const boundaryB = await VaultArtifactRetentionBoundary.open({ store, runtimeRoot: root });
+  const controllerA = createArtifactRetentionController({
+    journal,
+    artifacts: boundaryA,
+    nowMs: () => stop().effectiveAtMs,
+  });
+  const controllerB = createArtifactRetentionController({
+    journal,
+    artifacts: boundaryB,
+    nowMs: () => stop().effectiveAtMs,
+  });
+  let release!: () => void;
+  let entered!: () => void;
+  const paused = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const commitEntered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const committing = controllerA.commitArtifact(
+    ownership({
+      artifactDigest: stored.artifact.digest,
+      artifactSizeBytes: stored.artifact.sizeBytes,
+      artifactObservationId: identifier("aob1_", "b"),
+      derivedIds: [],
+    }),
+    async () => {
+      entered();
+      await paused;
+      return stored;
+    },
+  );
+  await commitEntered;
+  const stopping = controllerB.enforceStop(stop());
+  let settled = false;
+  void stopping.then(() => {
+    settled = true;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+  release();
+  await assert.rejects(() => committing, isSafeAcquisitionError);
+  assert.equal((await stopping).outcome, "verified-erased");
+  assert.equal(await boundaryB.verifyDigestCopiesAbsent(stored.artifact.digest), true);
 });
 
 function waitForCheckpoint(child: ChildProcess, expected: string): Promise<void> {
@@ -904,15 +1120,16 @@ test("process hard-kill at every retention boundary converges without resurrecti
 
       database = openSqliteDatabase(paths.databasePath, migrations);
       journal = new SqliteArtifactRetentionJournal(database);
+      const recoveredStore = await DurableArtifactStore.open({
+        repository: new SqliteArtifactRepository(database),
+        clock: new ManualClock(stop().effectiveAtMs + 30_001),
+        config: vaultConfig(root),
+      });
       const boundary = await VaultArtifactRetentionBoundary.open({
-        store: {
-          async settleForRetention(): Promise<boolean> {
-            return true;
-          },
-        } as DurableArtifactStore,
+        store: recoveredStore,
         runtimeRoot: root,
       });
-      const resumed = new DefaultArtifactRetentionController({
+      const resumed = createArtifactRetentionController({
         journal,
         artifacts: boundary,
         nowMs: () => stop().effectiveAtMs,
@@ -922,6 +1139,7 @@ test("process hard-kill at every retention boundary converges without resurrecti
       assert.equal(journal.hasTombstone(digest), true, checkpoint);
       assert.equal(await boundary.verifyDigestCopiesAbsent(digest), true, checkpoint);
       assert.deepEqual(await resumed.enforceStop(stop()), receipt, checkpoint);
+      await recoveredStore.close();
       database.close();
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -1015,7 +1233,7 @@ test("retention settlement cannot pass a queued pre-stop writer or admit its lat
     runtimeRoot: root,
     settlementTimeoutMs: 10_000,
   });
-  const worker = new DefaultArtifactRetentionController({
+  const worker = createArtifactRetentionController({
     journal,
     artifacts: boundary,
     nowMs: () => stop().effectiveAtMs,

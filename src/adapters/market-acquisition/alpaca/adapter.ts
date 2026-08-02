@@ -10,6 +10,7 @@ import { parseRetryAfterMs } from "../retry.js";
 import {
   authorizeCredentialLoad,
   assertCredentialIsolatedAlpacaTransport,
+  assertOwnedDurableCredentialAuthorizationBoundary,
   type DurableCredentialAuthorizationBoundary,
   withAlpacaAuthorization,
   type CredentialAuthorizationRequest,
@@ -28,6 +29,7 @@ import type {
 } from "./contracts.js";
 import { buildAlpacaTransportRequest } from "./request.js";
 import { assertRetentionOwnedAlpacaPageSink } from "./retained-sink.js";
+import { assertOwnedAlpacaDeadlineScheduler } from "./deadline.js";
 
 class DeadlineElapsed {}
 
@@ -364,6 +366,7 @@ export class AlpacaProductionAttemptBoundary {
   readonly #authorization: DurableCredentialAuthorizationBoundary;
 
   constructor(secrets: RuntimeSecretSource, authorization: DurableCredentialAuthorizationBoundary) {
+    assertOwnedDurableCredentialAuthorizationBoundary(authorization);
     this.#secrets = secrets;
     this.#authorization = authorization;
   }
@@ -372,6 +375,7 @@ export class AlpacaProductionAttemptBoundary {
     try {
       assertRetentionOwnedAlpacaPageSink(input.artifactSink);
       assertCredentialIsolatedAlpacaTransport(input.transport);
+      assertOwnedAlpacaDeadlineScheduler(input.deadlineScheduler);
     } catch {
       return safeFailure(
         new AttemptFailure("configuration-invalid", "request-preflight", {
@@ -414,9 +418,6 @@ export class AlpacaProductionAttemptBoundary {
     }
     let deadline: AlpacaDeadlineHandle;
     try {
-      if (typeof input.deadlineScheduler.arm !== "function") {
-        throw new TypeError("alpaca-deadline-scheduler-invalid");
-      }
       const scheduled = input.deadlineScheduler.arm(
         Math.min(MARKET_ACQUISITION_LIMITS.attemptDeadlineMs, remaining),
       );

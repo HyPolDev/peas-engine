@@ -86,7 +86,9 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
             )
             .all(value.ownershipId) as Array<{ derived_id: string }>
         ).map((row) => row.derived_id);
-        sameRecord("Derivation ownership", persistedDerived, [...value.derivedIds].sort());
+        if (value.derivedIds.some((derivedId) => !persistedDerived.includes(derivedId))) {
+          throw new Error("Derivation ownership conflicts with immutable retention evidence");
+        }
         const active = this.#database
           .prepare(`SELECT stop_event_id FROM market_retention_provider_denials
             WHERE provider_lane = ? AND provider_id = ?`)

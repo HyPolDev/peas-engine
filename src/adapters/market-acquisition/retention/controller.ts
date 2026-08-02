@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { isProxy } from "node:util/types";
 
 import { assertArtifactDigest } from "../../../artifacts/validation.js";
 import { canonicalHash } from "../../../core/hash.js";
@@ -34,10 +35,43 @@ import {
   deriveRetentionStopEventId,
   deriveRetentionTombstoneId,
 } from "./identity.js";
+import {
+  assertOwnedRetentionJournal,
+  assertOwnedSqliteRetentionJournal,
+} from "../owned-journal.js";
+import {
+  assertOwnedVaultArtifactRetentionBoundary,
+  ownedVaultRetentionCoordinatorRoot,
+} from "./vault-boundary.js";
 
 const ID = /^[a-z][a-z0-9]*_[0-9a-f]{64}$/u;
 const POLICY_ID = /^[a-z0-9][a-z0-9-]{0,127}$/u;
 const ownedRetentionControllers = new WeakSet<object>();
+const CONTROLLER_CONSTRUCTION_AUTHORITY = Object.freeze({});
+type RetentionCoordinator = {
+  admissionClosed: boolean;
+  pendingStops: number;
+  activeOperations: number;
+  operationIdleWaiting: Array<() => void>;
+  operationStopHandlers: Set<() => void>;
+  stopTail: Promise<void>;
+};
+const retentionCoordinators = new WeakMap<object, RetentionCoordinator>();
+
+function coordinatorFor(root: object): RetentionCoordinator {
+  const existing = retentionCoordinators.get(root);
+  if (existing !== undefined) return existing;
+  const value: RetentionCoordinator = {
+    admissionClosed: false,
+    pendingStops: 0,
+    activeOperations: 0,
+    operationIdleWaiting: [],
+    operationStopHandlers: new Set(),
+    stopTail: Promise.resolve(),
+  };
+  retentionCoordinators.set(root, value);
+  return value;
+}
 
 export type RetentionFaultBoundary = (checkpoint: string) => void | Promise<void>;
 
@@ -67,24 +101,24 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
   readonly #artifacts: RetentionArtifactBoundary;
   readonly #nowMs: () => number;
   readonly #faultBoundary: RetentionFaultBoundary;
-  #admissionClosed = false;
-  #pendingStops = 0;
-  #activeOperations = 0;
-  readonly #operationIdleWaiting: Array<() => void> = [];
-  readonly #operationStopHandlers = new Set<() => void>();
-  #stopTail: Promise<void> = Promise.resolve();
+  readonly #coordinator: RetentionCoordinator;
 
-  constructor(dependencies: {
-    journal: ArtifactRetentionJournal;
-    artifacts: RetentionArtifactBoundary;
-    nowMs: () => number;
-    faultBoundary?: RetentionFaultBoundary;
-  }) {
+  constructor(
+    dependencies: {
+      journal: ArtifactRetentionJournal;
+      artifacts: RetentionArtifactBoundary;
+      nowMs: () => number;
+      faultBoundary?: RetentionFaultBoundary;
+    },
+    authority?: object,
+    coordinatorRoot?: object,
+  ) {
     this.#journal = dependencies.journal;
     this.#artifacts = dependencies.artifacts;
     this.#nowMs = dependencies.nowMs;
     this.#faultBoundary = dependencies.faultBoundary ?? (() => undefined);
-    ownedRetentionControllers.add(this);
+    this.#coordinator = coordinatorFor(coordinatorRoot ?? (dependencies.artifacts as object));
+    if (authority === CONTROLLER_CONSTRUCTION_AUTHORITY) ownedRetentionControllers.add(this);
   }
 
   registerOwnership(input: Omit<RetentionOwnership, "ownershipId">): RetentionOwnership {
@@ -110,7 +144,7 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
     const digests = sortedSet(artifactDigests);
     const derived = sortedSet(derivedIds);
     const assertAllowed = (): void => {
-      if (this.#admissionClosed) {
+      if (this.#coordinator.admissionClosed) {
         throw safeAcquisitionError("retention-stop-required", "artifact-verify");
       }
       if (
@@ -124,7 +158,7 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
       for (const derivedId of derived) this.#assertDerivedUseAllowed(derivedId);
     };
     assertAllowed();
-    this.#activeOperations += 1;
+    this.#coordinator.activeOperations += 1;
     let released = false;
     let stopHandler: (() => void) | null = null;
     return Object.freeze({
@@ -133,20 +167,20 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
         if (released || typeof handler !== "function") {
           throw new TypeError("retention-operation-stop-handler-invalid");
         }
-        if (stopHandler !== null) this.#operationStopHandlers.delete(stopHandler);
+        if (stopHandler !== null) this.#coordinator.operationStopHandlers.delete(stopHandler);
         stopHandler = handler;
-        this.#operationStopHandlers.add(handler);
-        if (this.#admissionClosed) handler();
+        this.#coordinator.operationStopHandlers.add(handler);
+        if (this.#coordinator.admissionClosed) handler();
       },
       release: (): void => {
         if (released) return;
         released = true;
-        if (stopHandler !== null) this.#operationStopHandlers.delete(stopHandler);
-        this.#activeOperations -= 1;
-        if (this.#activeOperations === 0) {
-          for (const waiter of this.#operationIdleWaiting.splice(
+        if (stopHandler !== null) this.#coordinator.operationStopHandlers.delete(stopHandler);
+        this.#coordinator.activeOperations -= 1;
+        if (this.#coordinator.activeOperations === 0) {
+          for (const waiter of this.#coordinator.operationIdleWaiting.splice(
             0,
-            this.#operationIdleWaiting.length,
+            this.#coordinator.operationIdleWaiting.length,
           ))
             waiter();
         }
@@ -212,34 +246,6 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
   }
 
   async enforceStop(input: Omit<RetentionStopEvent, "stopEventId">): Promise<RetentionReceipt> {
-    this.#pendingStops += 1;
-    this.#admissionClosed = true;
-    for (const handler of [...this.#operationStopHandlers]) {
-      try {
-        handler();
-      } catch {
-        // Admission remains closed; settlement still waits for the operation lease.
-      }
-    }
-    const predecessor = this.#stopTail;
-    let releaseStop!: () => void;
-    this.#stopTail = new Promise<void>((resolve) => {
-      releaseStop = resolve;
-    });
-    await predecessor;
-    try {
-      if (this.#activeOperations > 0) {
-        await new Promise<void>((resolve) => this.#operationIdleWaiting.push(resolve));
-      }
-      return await this.#enforceStop(input);
-    } finally {
-      releaseStop();
-      this.#pendingStops -= 1;
-      if (this.#pendingStops === 0) this.#admissionClosed = false;
-    }
-  }
-
-  async #enforceStop(input: Omit<RetentionStopEvent, "stopEventId">): Promise<RetentionReceipt> {
     this.#validateStop(input);
     const stop: RetentionStopEvent = {
       ...input,
@@ -252,11 +258,58 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
         counter: "artifact-count",
         value: 0,
       });
-    // Stop and all use denials are one durable journal operation and precede any erasure work.
     this.#journal.recordStopAndDenials(
       stop,
       sortedSet(initialOwnership.flatMap((value) => value.derivedIds)),
     );
+    this.#coordinator.pendingStops += 1;
+    this.#coordinator.admissionClosed = true;
+    for (const handler of [...this.#coordinator.operationStopHandlers]) {
+      try {
+        handler();
+      } catch {
+        // Admission remains closed; settlement still waits for the operation lease.
+      }
+    }
+    const predecessor = this.#coordinator.stopTail;
+    let releaseStop!: () => void;
+    this.#coordinator.stopTail = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    await predecessor;
+    try {
+      if (this.#coordinator.activeOperations > 0) {
+        const remaining = input.deadlineMs - this.#trustedNow();
+        if (remaining < 1) this.#assertDeadline(input.deadlineMs);
+        let timeout: NodeJS.Timeout | undefined;
+        const idle = new Promise<void>((resolve) =>
+          this.#coordinator.operationIdleWaiting.push(resolve),
+        );
+        try {
+          const settled = await Promise.race([
+            idle.then(() => true),
+            new Promise<boolean>((resolve) => {
+              timeout = setTimeout(() => resolve(false), Math.min(remaining, 30_000));
+            }),
+          ]);
+          if (!settled)
+            throw safeAcquisitionError("retention-erasure-unprovable", "retention-erase");
+        } finally {
+          if (timeout !== undefined) clearTimeout(timeout);
+        }
+      }
+      return await this.#enforceStop(input, stop);
+    } finally {
+      releaseStop();
+      this.#coordinator.pendingStops -= 1;
+      if (this.#coordinator.pendingStops === 0) this.#coordinator.admissionClosed = false;
+    }
+  }
+
+  async #enforceStop(
+    input: Omit<RetentionStopEvent, "stopEventId">,
+    stop: RetentionStopEvent,
+  ): Promise<RetentionReceipt> {
     await this.#faultBoundary("retention-stop-denials-committed");
     const ownership = this.#journal.listOwnership(input.providerLane, input.providerId);
     const derivedIds = sortedSet(ownership.flatMap((value) => value.derivedIds));
@@ -389,7 +442,7 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
       canonicalJson(latestOwnership.map((value) => value.ownershipId) as unknown as JsonValue) !==
       canonicalJson(ownership.map((value) => value.ownershipId) as unknown as JsonValue)
     ) {
-      return this.#enforceStop(input);
+      return this.#enforceStop(input, stop);
     }
     await this.#faultBoundary("retention-erasure-verified");
 
@@ -429,7 +482,7 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
   }
 
   assertArtifactUseAllowed(digest: string): void {
-    if (this.#admissionClosed)
+    if (this.#coordinator.admissionClosed)
       throw safeAcquisitionError("retention-stop-required", "artifact-verify");
     this.#assertArtifactUseAllowed(digest);
   }
@@ -447,7 +500,7 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
   }
 
   assertDerivedUseAllowed(derivedId: string): void {
-    if (this.#admissionClosed)
+    if (this.#coordinator.admissionClosed)
       throw safeAcquisitionError("retention-stop-required", "normalization");
     this.#assertDerivedUseAllowed(derivedId);
   }
@@ -573,8 +626,60 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
   }
 }
 
+function constructOwnedArtifactRetentionController(
+  dependencies: {
+    journal: ArtifactRetentionJournal;
+    artifacts: RetentionArtifactBoundary;
+    nowMs: () => number;
+    faultBoundary?: RetentionFaultBoundary;
+  },
+  coordinatorRoot?: object,
+): DefaultArtifactRetentionController {
+  const controller = new DefaultArtifactRetentionController(
+    dependencies,
+    CONTROLLER_CONSTRUCTION_AUTHORITY,
+    coordinatorRoot,
+  );
+  Object.freeze(controller);
+  return controller;
+}
+
+/** Live composition accepts only the exact owned SQLite journal and exact owned vault boundary. */
+export function createArtifactRetentionController(dependencies: {
+  journal: ArtifactRetentionJournal;
+  artifacts: RetentionArtifactBoundary;
+  nowMs: () => number;
+  faultBoundary?: RetentionFaultBoundary;
+}): DefaultArtifactRetentionController {
+  assertOwnedSqliteRetentionJournal(dependencies.journal);
+  assertOwnedVaultArtifactRetentionBoundary(dependencies.artifacts);
+  return constructOwnedArtifactRetentionController(
+    dependencies,
+    ownedVaultRetentionCoordinatorRoot(dependencies.artifacts),
+  );
+}
+
+/** Explicit offline-test composition; the Node test runner is the only admitted runtime. */
+export function createTestArtifactRetentionController(dependencies: {
+  journal: ArtifactRetentionJournal;
+  artifacts: RetentionArtifactBoundary;
+  nowMs: () => number;
+  faultBoundary?: RetentionFaultBoundary;
+}): DefaultArtifactRetentionController {
+  if (process.env["NODE_TEST_CONTEXT"] === undefined) {
+    throw new TypeError("test-retention-composition-unavailable");
+  }
+  assertOwnedRetentionJournal(dependencies.journal);
+  return constructOwnedArtifactRetentionController(dependencies);
+}
+
 export function assertOwnedArtifactRetentionController(value: ArtifactRetentionController): void {
-  if (!ownedRetentionControllers.has(value)) {
+  if (
+    !ownedRetentionControllers.has(value) ||
+    isProxy(value) ||
+    Object.getPrototypeOf(value) !== DefaultArtifactRetentionController.prototype ||
+    !Object.isFrozen(value)
+  ) {
     throw new TypeError("owned-artifact-retention-controller-required");
   }
 }

@@ -10,6 +10,8 @@ import {
   DurableCredentialAuthorizationBoundary,
   authorizeCredentialLoad,
   createCredentialIsolatedAlpacaTransport,
+  createDurableCredentialAuthorizationBoundary,
+  createTestDurableCredentialAuthorizationBoundary,
   fmpLaneDisabled,
   withAlpacaAuthorization,
   type AlpacaDispatchCapability,
@@ -18,6 +20,8 @@ import {
 import { buildAlpacaTransportRequest } from "../src/adapters/market-acquisition/alpaca/request.js";
 import { MemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
 import { SqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
+import { MemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
+import { SqliteArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/sqlite-journal.js";
 import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
 import {
   ACCESSOR,
@@ -43,6 +47,9 @@ test("Alpaca credentials load only into an immutable dispatch capability", async
     },
   };
   let retained: AlpacaDispatchCapability | null = null;
+  let retainedHeaders:
+    | import("../src/adapters/market-acquisition/credentials.js").AlpacaAuthorizationHeaders
+    | null = null;
   let dispatches = 0;
   const requestLease = buildAlpacaTransportRequest(
     plan,
@@ -50,8 +57,12 @@ test("Alpaca credentials load only into an immutable dispatch capability", async
     new AbortController().signal,
   );
   const transport = createCredentialIsolatedAlpacaTransport({
-    async dispatch() {
+    async dispatch(_request, headers) {
       dispatches += 1;
+      assert.equal(headers["APCA-API-KEY-ID"], "synthetic-key-id");
+      assert.equal(headers["APCA-API-SECRET-KEY"], "synthetic-secret");
+      assert.equal(Object.isFrozen(headers), true);
+      retainedHeaders = headers;
       return {} as never;
     },
     async abort() {},
@@ -73,6 +84,14 @@ test("Alpaca credentials load only into an immutable dispatch capability", async
   assert.deepEqual(reads, [ALPACA_KEY_ID_ENV, ALPACA_SECRET_KEY_ENV]);
   assert.ok(retained !== null);
   assert.equal(dispatches, 1);
+  assert.ok(retainedHeaders !== null);
+  const retainedRecord =
+    retainedHeaders as import("../src/adapters/market-acquisition/credentials.js").AlpacaAuthorizationHeaders;
+  assert.throws(() => retainedRecord["APCA-API-KEY-ID"], /lease-expired/u);
+  assert.throws(() => retainedRecord["APCA-API-SECRET-KEY"], /lease-expired/u);
+  for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(retainedRecord))) {
+    assert.equal("value" in descriptor, false);
+  }
   await assert.rejects(
     () => transport.dispatch(requestLease.request, retained as AlpacaDispatchCapability),
     /dispatch-capability-invalid/u,
@@ -147,7 +166,7 @@ test("a structurally forged permit and incomplete proof cannot read credentials"
     /request-started/u,
   );
   const emptyJournal = new MemoryAcquisitionJournal(fixture.request.journalIdentity);
-  const missingPersistence = new DurableCredentialAuthorizationBoundary(
+  const missingPersistence = createTestDurableCredentialAuthorizationBoundary(
     emptyJournal,
     fixture.retentionJournal,
   );
@@ -215,12 +234,14 @@ test("a persisted attempt claim cannot be reminted after SQLite cold restart", a
   let database = openSqliteDatabase(filename, migrations);
   let journal = new SqliteAcquisitionJournal(database, fixture.request.journalIdentity);
   for (const entry of fixture.entries) await journal.append(entry);
-  const first = new DurableCredentialAuthorizationBoundary(journal, fixture.retentionJournal);
+  let retentionJournal = new SqliteArtifactRetentionJournal(database);
+  const first = createDurableCredentialAuthorizationBoundary(journal, retentionJournal);
   await first.establish(fixture.request);
   database.close();
   database = openSqliteDatabase(filename, migrations);
   journal = new SqliteAcquisitionJournal(database, fixture.request.journalIdentity);
-  const restarted = new DurableCredentialAuthorizationBoundary(journal, fixture.retentionJournal);
+  retentionJournal = new SqliteArtifactRetentionJournal(database);
+  const restarted = createDurableCredentialAuthorizationBoundary(journal, retentionJournal);
   await assert.rejects(
     () => restarted.establish(fixture.request),
     /request-started|already-claimed/u,
@@ -228,6 +249,50 @@ test("a persisted attempt claim cannot be reminted after SQLite cold restart", a
   const entries = await journal.load(fixture.request.marketAcquisitionJournalId);
   assert.equal(entries.filter((entry) => entry.checkpointKind === "attempt-started").length, 1);
   database.close();
+});
+
+test("credential authority rejects structural, subclassed, and proxied persistence roots", async () => {
+  const fixture = await credentialAuthorizationFixture(validatedRepairPlan());
+  class JournalSubclass extends MemoryAcquisitionJournal {}
+  class RetentionJournalSubclass extends MemoryArtifactRetentionJournal {}
+  const directlyConstructed = new DurableCredentialAuthorizationBoundary(
+    fixture.journal,
+    fixture.retentionJournal,
+  );
+  await assert.rejects(
+    () => directlyConstructed.establish(fixture.request),
+    /owned-durable-credential-authorization-boundary-required/u,
+  );
+  class BoundarySubclass extends DurableCredentialAuthorizationBoundary {}
+  await assert.rejects(
+    () =>
+      new BoundarySubclass(fixture.journal, fixture.retentionJournal).establish(fixture.request),
+    /owned-durable-credential-authorization-boundary-required/u,
+  );
+  await assert.rejects(
+    () => new Proxy(fixture.authorization, {}).establish(fixture.request),
+    /owned-durable-credential-authorization-boundary-required/u,
+  );
+  for (const journal of [
+    {} as never,
+    new JournalSubclass(fixture.request.journalIdentity),
+    new Proxy(fixture.journal, {}),
+  ]) {
+    assert.throws(
+      () => new DurableCredentialAuthorizationBoundary(journal, fixture.retentionJournal),
+      /owned-acquisition-journal-required/u,
+    );
+  }
+  for (const retention of [
+    {} as never,
+    new RetentionJournalSubclass(),
+    new Proxy(fixture.retentionJournal, {}),
+  ]) {
+    assert.throws(
+      () => new DurableCredentialAuthorizationBoundary(fixture.journal, retention),
+      /owned-retention-journal-required/u,
+    );
+  }
 });
 
 test("the low-level attempt executor is not a caller-invocable module export", async () => {

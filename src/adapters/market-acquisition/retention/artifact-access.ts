@@ -1,4 +1,5 @@
 import { Readable } from "node:stream";
+import { isProxy } from "node:util/types";
 
 import type {
   ArtifactPage,
@@ -15,6 +16,10 @@ import type {
 } from "../../../artifacts/artifact-store.js";
 import type { ArtifactRetentionController, RetentionOperationLease } from "./contracts.js";
 import { assertOwnedArtifactRetentionController } from "./controller.js";
+import {
+  type DurableArtifactStore,
+  assertOwnedDurableArtifactStore,
+} from "../../artifacts/durable-artifact-store.js";
 
 export type RetentionUseLease = Readonly<{ kind: "retention-enforced-use-lease" }>;
 
@@ -25,6 +30,7 @@ type LeaseBinding = Readonly<{
 
 const retentionStores = new WeakSet<object>();
 const retentionLeases = new WeakMap<object, LeaseBinding>();
+const RETENTION_STORE_CONSTRUCTION_AUTHORITY = Object.freeze({});
 
 class RetentionGuardedReadable extends Readable {
   readonly #source: Readable;
@@ -125,12 +131,19 @@ async function destroyAndSettle(stream: Readable): Promise<void> {
 export class RetentionEnforcedArtifactStore implements ArtifactStore {
   readonly #store: ArtifactStore;
   readonly #controller: ArtifactRetentionController;
+  readonly #stopOwnedOperations: (() => void) | null;
 
-  constructor(store: ArtifactStore, controller: ArtifactRetentionController) {
+  constructor(
+    store: ArtifactStore,
+    controller: ArtifactRetentionController,
+    authority?: object,
+    stopOwnedOperations?: () => void,
+  ) {
     assertOwnedArtifactRetentionController(controller);
     this.#store = store;
     this.#controller = controller;
-    retentionStores.add(this);
+    this.#stopOwnedOperations = stopOwnedOperations ?? null;
+    if (authority === RETENTION_STORE_CONSTRUCTION_AUTHORITY) retentionStores.add(this);
   }
 
   createUseLease(digests: readonly string[]): RetentionUseLease {
@@ -159,6 +172,7 @@ export class RetentionEnforcedArtifactStore implements ArtifactStore {
 
   async read(digest: string): Promise<VerifiedArtifactRead> {
     const operation = this.#controller.beginUse([digest]);
+    operation.onStop(() => this.#stopOwnedOperations?.());
     let result: VerifiedArtifactRead | undefined;
     try {
       result = await this.#store.read(digest);
@@ -211,6 +225,7 @@ export class RetentionEnforcedArtifactStore implements ArtifactStore {
 
   async reconcile(budget?: Partial<ReconciliationBudget>): Promise<ReconciliationReport> {
     const operation = this.#controller.beginUse();
+    operation.onStop(() => this.#stopOwnedOperations?.());
     try {
       const result = await this.#store.reconcile(budget);
       operation.assertAllowed();
@@ -221,8 +236,50 @@ export class RetentionEnforcedArtifactStore implements ArtifactStore {
   }
 }
 
+export function createRetentionEnforcedArtifactStore(
+  store: DurableArtifactStore,
+  controller: ArtifactRetentionController,
+): RetentionEnforcedArtifactStore {
+  assertOwnedDurableArtifactStore(store);
+  assertOwnedArtifactRetentionController(controller);
+  const guarded = new RetentionEnforcedArtifactStore(
+    store,
+    controller,
+    RETENTION_STORE_CONSTRUCTION_AUTHORITY,
+    () => store.closeRetentionAdmission(),
+  );
+  Object.freeze(guarded);
+  return guarded;
+}
+
+export function createTestRetentionEnforcedArtifactStore(
+  store: ArtifactStore,
+  controller: ArtifactRetentionController,
+  stopOwnedOperations?: () => void,
+): RetentionEnforcedArtifactStore {
+  if (process.env["NODE_TEST_CONTEXT"] === undefined) {
+    throw new TypeError("test-retention-store-composition-unavailable");
+  }
+  assertOwnedArtifactRetentionController(controller);
+  const guarded = new RetentionEnforcedArtifactStore(
+    store,
+    controller,
+    RETENTION_STORE_CONSTRUCTION_AUTHORITY,
+    stopOwnedOperations,
+  );
+  Object.freeze(guarded);
+  return guarded;
+}
+
 export function assertRetentionEnforcedArtifactStore(store: RetentionEnforcedArtifactStore): void {
-  if (!retentionStores.has(store)) throw new TypeError("retention-enforced-store-required");
+  if (
+    !retentionStores.has(store) ||
+    isProxy(store) ||
+    Object.getPrototypeOf(store) !== RetentionEnforcedArtifactStore.prototype ||
+    !Object.isFrozen(store)
+  ) {
+    throw new TypeError("retention-enforced-store-required");
+  }
 }
 
 export function assertRetentionUseLease(

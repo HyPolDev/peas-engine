@@ -27,6 +27,24 @@ import {
 import type { ValidatedMarketAcquisitionConfiguration } from "../contracts.js";
 import { assertValidatedMarketAcquisitionConfiguration } from "../configuration.js";
 import { ALPACA_ROUTE_REGISTRY } from "../identity.js";
+import {
+  assertOwnedAcquisitionJournal,
+  assertOwnedSqliteAcquisitionJournal,
+} from "../owned-journal.js";
+import {
+  type AlpacaWireSemanticEvidenceStore,
+  assertOwnedAlpacaWireSemanticEvidenceStore,
+  assertOwnedSqliteAlpacaWireSemanticEvidenceStore,
+} from "./wire-semantic-evidence.js";
+export {
+  DurableAlpacaWireSemanticEvidenceBoundary,
+  createDurableAlpacaWireSemanticEvidenceBoundary,
+  createTestDurableAlpacaWireSemanticEvidenceBoundary,
+} from "./wire-semantic-evidence.js";
+import {
+  classifyFrozenSession,
+  type FrozenSessionCalendarEntryV1,
+} from "../../../providers/market-reference/operations.js";
 
 export type AlpacaWireEndpointKind = "quotes" | "trades" | "bars";
 type PlainRecord = Record<string, unknown>;
@@ -97,14 +115,12 @@ const wireAdmissionAuthorities = new WeakMap<
     context: AlpacaWireParseContext;
   }>
 >();
+const wireAdmissionBoundaries = new WeakSet<object>();
+const WIRE_ADMISSION_BOUNDARY_CONSTRUCTION_AUTHORITY = Object.freeze({});
 
 export type AlpacaWireAdmissionAuthority = Readonly<{
   kind: "p1-10-durable-wire-admission-authority";
 }>;
-
-export const ALPACA_WIRE_CALENDAR_VERSION = "peas-p1-10-original-synthetic-calendar-v1" as const;
-const ALPACA_WIRE_DURABLE_CLOCK_BASIS_ID = `clk1_${"e".repeat(64)}`;
-const ALPACA_WIRE_DURABLE_RECORDED_MS = 1_998_976_380_000;
 
 export type AlpacaWireParseContext = Readonly<{
   requestedSymbols: readonly string[];
@@ -120,6 +136,7 @@ export type AlpacaWireParseContext = Readonly<{
   durableLogicalAtMs: number;
   sessionKind: RecordedMarketRecordV1["sessionKind"];
   primaryCorpusMember: boolean;
+  calendarEntries?: readonly FrozenSessionCalendarEntryV1[];
   timeframe: "1Min";
   adjustment: "raw";
 }>;
@@ -127,9 +144,20 @@ export type AlpacaWireParseContext = Readonly<{
 /** Issues page semantics only from a validated plan and an exact durable artifact checkpoint. */
 export class DurableAlpacaWireAdmissionBoundary {
   readonly #journal: AcquisitionJournal;
+  readonly #evidence: AlpacaWireSemanticEvidenceStore;
 
-  constructor(journal: AcquisitionJournal) {
+  constructor(
+    journal: AcquisitionJournal,
+    evidence: AlpacaWireSemanticEvidenceStore,
+    authority?: object,
+  ) {
+    assertOwnedAcquisitionJournal(journal);
+    assertOwnedAlpacaWireSemanticEvidenceStore(evidence);
     this.#journal = journal;
+    this.#evidence = evidence;
+    if (authority === WIRE_ADMISSION_BOUNDARY_CONSTRUCTION_AUTHORITY) {
+      wireAdmissionBoundaries.add(this);
+    }
   }
 
   async issue(
@@ -139,6 +167,7 @@ export class DurableAlpacaWireAdmissionBoundary {
       marketAcquisitionJournalId: string;
     }>,
   ): Promise<AlpacaWireAdmissionAuthority> {
+    assertOwnedDurableAlpacaWireAdmissionBoundary(this);
     const { plan } = input;
     try {
       assertValidatedMarketAcquisitionConfiguration(plan);
@@ -178,6 +207,18 @@ export class DurableAlpacaWireAdmissionBoundary {
     if (artifactDigest === null || artifactSizeBytes === null || rawArtifactId === null) {
       throw new AlpacaWireContractError("page-semantic-authority-invalid");
     }
+    const semantic = this.#evidence.loadForJournalEntry(latest.journalEntryHash);
+    if (
+      semantic === undefined ||
+      semantic.marketAcquisitionJournalId !== input.marketAcquisitionJournalId ||
+      semantic.artifactObservationId !== latest.artifactObservationId ||
+      semantic.artifactObservationHash !== latest.artifactObservationHash ||
+      semantic.artifactDigest !== artifactDigest ||
+      semantic.artifactSizeBytes !== artifactSizeBytes ||
+      semantic.stageLedgerFactId !== latest.stageLedgerFactId
+    ) {
+      throw new AlpacaWireContractError("page-semantic-authority-invalid");
+    }
     const context: AlpacaWireParseContext = Object.freeze({
       requestedSymbols: Object.freeze(plan.instruments.map((value) => value.symbol)),
       instrumentIds: Object.freeze(
@@ -188,12 +229,13 @@ export class DurableAlpacaWireAdmissionBoundary {
       entitlementSnapshotId: plan.entitlementSnapshotId,
       marketAcquisitionId: latest.marketAcquisitionId,
       rawArtifactId,
-      calendarVersion: ALPACA_WIRE_CALENDAR_VERSION,
-      durableClockBasisId: ALPACA_WIRE_DURABLE_CLOCK_BASIS_ID,
-      durablyRecordedAtMs: ALPACA_WIRE_DURABLE_RECORDED_MS,
-      durableLogicalAtMs: ALPACA_WIRE_DURABLE_RECORDED_MS,
-      sessionKind: "regular-continuous",
-      primaryCorpusMember: true,
+      calendarVersion: semantic.calendarVersion,
+      durableClockBasisId: semantic.durableClockBasisId,
+      durablyRecordedAtMs: semantic.durablyRecordedAtMs,
+      durableLogicalAtMs: semantic.durableLogicalAtMs,
+      sessionKind: "unknown",
+      primaryCorpusMember: semantic.primaryCorpusMember,
+      calendarEntries: Object.freeze(structuredClone(semantic.calendarEntries)),
       timeframe: "1Min",
       adjustment: "raw",
     });
@@ -210,6 +252,53 @@ export class DurableAlpacaWireAdmissionBoundary {
       }),
     );
     return authority;
+  }
+}
+
+function constructAlpacaWireAdmissionBoundary(
+  journal: AcquisitionJournal,
+  evidence: AlpacaWireSemanticEvidenceStore,
+): DurableAlpacaWireAdmissionBoundary {
+  const boundary = new DurableAlpacaWireAdmissionBoundary(
+    journal,
+    evidence,
+    WIRE_ADMISSION_BOUNDARY_CONSTRUCTION_AUTHORITY,
+  );
+  Object.freeze(boundary);
+  return boundary;
+}
+
+export function createDurableAlpacaWireAdmissionBoundary(
+  journal: AcquisitionJournal,
+  evidence: AlpacaWireSemanticEvidenceStore,
+): DurableAlpacaWireAdmissionBoundary {
+  assertOwnedSqliteAcquisitionJournal(journal);
+  assertOwnedSqliteAlpacaWireSemanticEvidenceStore(evidence);
+  return constructAlpacaWireAdmissionBoundary(journal, evidence);
+}
+
+export function createTestDurableAlpacaWireAdmissionBoundary(
+  journal: AcquisitionJournal,
+  evidence: AlpacaWireSemanticEvidenceStore,
+): DurableAlpacaWireAdmissionBoundary {
+  if (process.env["NODE_TEST_CONTEXT"] === undefined) {
+    throw new TypeError("test-wire-admission-composition-unavailable");
+  }
+  assertOwnedAcquisitionJournal(journal);
+  assertOwnedAlpacaWireSemanticEvidenceStore(evidence);
+  return constructAlpacaWireAdmissionBoundary(journal, evidence);
+}
+
+export function assertOwnedDurableAlpacaWireAdmissionBoundary(
+  value: DurableAlpacaWireAdmissionBoundary,
+): void {
+  if (
+    !wireAdmissionBoundaries.has(value) ||
+    isProxy(value) ||
+    Object.getPrototypeOf(value) !== DurableAlpacaWireAdmissionBoundary.prototype ||
+    !Object.isFrozen(value)
+  ) {
+    throw new TypeError("owned-durable-wire-admission-boundary-required");
   }
 }
 
@@ -804,10 +893,42 @@ function fallbackFamily(
   } as unknown as JsonValue);
 }
 
+function barSession(
+  context: AlpacaWireParseContext,
+  barStartNs: bigint,
+): Readonly<{
+  sessionKind: RecordedMarketRecordV1["sessionKind"];
+  calendarVersion: string;
+}> {
+  if (context.calendarEntries === undefined) {
+    return { sessionKind: context.sessionKind, calendarVersion: context.calendarVersion };
+  }
+  const matching = context.calendarEntries.filter((entry) => {
+    if (entry.holiday || entry.extendedOpenNs === null || entry.extendedCloseNs === null) {
+      return false;
+    }
+    return barStartNs >= BigInt(entry.extendedOpenNs) && barStartNs < BigInt(entry.extendedCloseNs);
+  });
+  if (matching.length !== 1) {
+    return { sessionKind: "unknown", calendarVersion: context.calendarVersion };
+  }
+  const acceptedEntry = matching[0];
+  if (acceptedEntry === undefined) {
+    return { sessionKind: "unknown", calendarVersion: context.calendarVersion };
+  }
+  const classification = classifyFrozenSession(acceptedEntry, barStartNs.toString());
+  return {
+    sessionKind: classification.sessionKind,
+    calendarVersion: classification.calendarVersion,
+  };
+}
+
 function translateBar(
   item: Extract<ValidatedItem, { kind: "bar" }>,
   context: AlpacaWireParseContext,
 ): RecordedMarketRecordV1 {
+  const session = barSession(context, item.barStartNs);
+  if (session.sessionKind === "unknown") reject("page-semantic-evidence-invalid");
   const instrumentId = context.instrumentIds[item.symbol] ?? reject("schema-invalid");
   const source = Object.freeze({
     providerId: ALPACA_WIRE_IDS.providerId,
@@ -850,12 +971,12 @@ function translateBar(
     revisionKind: "original",
     supersedesRevisionId: null,
     effectiveEventTime: null,
-    sessionKind: context.sessionKind,
+    sessionKind: session.sessionKind,
     currency: "USD",
     payload,
     normalizerVersion: "market-normalizer-v1",
     conditionPolicyVersion: "p1-10-alpaca-no-quote-trade-emission-v1",
-    calendarVersion: context.calendarVersion,
+    calendarVersion: session.calendarVersion,
     parserContractVersion: "p1-10-alpaca-historical-wire-v1",
     durablyRecordedAtMs: context.durablyRecordedAtMs,
     durableLogicalAtMs: context.durableLogicalAtMs,
@@ -899,11 +1020,11 @@ export function admitAlpacaHistoricalPage(
   for (const symbol of groupNames) {
     const items = (groupDescriptors[symbol] as PropertyDescriptor & { value: unknown }).value;
     assertDenseArray(items);
-    recordCount += items.length;
-    if (recordCount > LIMITS.arrayItems) reject("recordsPerArtifactOrPage");
     const descriptors = Object.getOwnPropertyDescriptors(items);
     let priorNs: bigint | null = null;
     for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
+      recordCount += 1;
+      if (recordCount > LIMITS.arrayItems) reject("recordsPerArtifactOrPage");
       const item = validateItem(
         kind,
         symbol,
@@ -980,7 +1101,8 @@ export function admitAlpacaHistoricalPage(
       const digests = new Set(group.map((item) => item.digest));
       const contradiction =
         group[0]?.contradictory === true ||
-        context.sessionKind === "unknown" ||
+        (group[0] !== undefined &&
+          barSession(context, group[0].barStartNs).sessionKind === "unknown") ||
         context.calendarVersion.length === 0;
       if (digests.size > 1 || contradiction) {
         const reason =
@@ -1047,36 +1169,38 @@ export function parseAndAdmitAlpacaHistoricalPage(
   authority: AlpacaWireAdmissionAuthority,
 ): AlpacaWirePageAdmission {
   const snapshot = Buffer.from(bytes);
-  const binding = wireAdmissionAuthorities.get(authority);
-  const artifactDigest = createHash("sha256").update(snapshot).digest("hex");
-  if (
-    binding === undefined ||
-    binding.endpointKind !== kind ||
-    binding.artifactDigest !== artifactDigest ||
-    binding.artifactSizeBytes !== snapshot.byteLength
-  ) {
+  try {
+    const binding = wireAdmissionAuthorities.get(authority);
+    const artifactDigest = createHash("sha256").update(snapshot).digest("hex");
+    if (
+      binding === undefined ||
+      binding.endpointKind !== kind ||
+      binding.artifactDigest !== artifactDigest ||
+      binding.artifactSizeBytes !== snapshot.byteLength
+    ) {
+      return reject("page-semantic-authority-invalid");
+    }
+    wireAdmissionAuthorities.delete(authority);
+    const admission = admitAlpacaHistoricalPage(
+      kind,
+      decodeAlpacaHistoricalJson(snapshot),
+      binding.context,
+    );
+    authenticatedAdmissions.set(
+      admission,
+      Object.freeze({
+        artifactDigest,
+        artifactSizeBytes: snapshot.byteLength,
+        admissionHash: canonicalHash(
+          "peas/alpaca-authenticated-page-admission/v1",
+          admission as unknown as JsonValue,
+        ),
+      }),
+    );
+    return admission;
+  } finally {
     snapshot.fill(0);
-    return reject("page-semantic-authority-invalid");
   }
-  wireAdmissionAuthorities.delete(authority);
-  const admission = admitAlpacaHistoricalPage(
-    kind,
-    decodeAlpacaHistoricalJson(snapshot),
-    binding.context,
-  );
-  authenticatedAdmissions.set(
-    admission,
-    Object.freeze({
-      artifactDigest,
-      artifactSizeBytes: snapshot.byteLength,
-      admissionHash: canonicalHash(
-        "peas/alpaca-authenticated-page-admission/v1",
-        admission as unknown as JsonValue,
-      ),
-    }),
-  );
-  snapshot.fill(0);
-  return admission;
 }
 
 /** Read-only artifact identity for constructing the durable page checkpoint. */

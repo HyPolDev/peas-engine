@@ -10,8 +10,11 @@ import type {
   SafeHttpResponseMetadata,
   VerifiedArtifactRead,
 } from "../src/artifacts/artifact-store.js";
-import { RetentionEnforcedArtifactStore } from "../src/adapters/market-acquisition/retention/artifact-access.js";
-import { DefaultArtifactRetentionController } from "../src/adapters/market-acquisition/retention/controller.js";
+import {
+  type RetentionEnforcedArtifactStore,
+  createTestRetentionEnforcedArtifactStore,
+} from "../src/adapters/market-acquisition/retention/artifact-access.js";
+import { createTestArtifactRetentionController } from "../src/adapters/market-acquisition/retention/controller.js";
 import { MemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
 import { ALPACA_PRIVATE_ARTIFACT_POLICY } from "../src/adapters/market-acquisition/private-artifact-policy.js";
 import { deriveObservationId } from "../src/artifacts/identity.js";
@@ -173,7 +176,7 @@ export function recordedFixtureArtifactStore(
       throw new Error("fixture store does not reconcile");
     },
   };
-  const retention = new DefaultArtifactRetentionController({
+  const retention = createTestArtifactRetentionController({
     journal: new MemoryArtifactRetentionJournal(),
     artifacts: {
       async settleActiveReadersAndWriters() {
@@ -212,7 +215,7 @@ export function recordedFixtureArtifactStore(
     });
   }
   return {
-    store: new RetentionEnforcedArtifactStore(store, retention),
+    store: createTestRetentionEnforcedArtifactStore(store, retention),
     unsafeStore: store,
     counters: {
       observationCalls,

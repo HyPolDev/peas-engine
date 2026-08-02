@@ -25,7 +25,7 @@
         "calendarVersion": "peas-p1-10-original-synthetic-calendar-v1",
         "durablyRecordedAtMs": 1998976380000,
         "durableLogicalAtMs": 1998976380000,
-        "durableClockBasisId": "clk1_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "durableClockBasisId": "clk1_e3ea22e8594dd5b4e45ab04fb0e6b6d5dc420c01ca1304e5352dfeed4c9c82c7",
         "primaryCorpusMember": true
       },
       "providerStableRecordFamilyPreimage": {
@@ -96,7 +96,7 @@
         "parserContractVersion": "p1-10-alpaca-historical-wire-v1",
         "durablyRecordedAtMs": 1998976380000,
         "durableLogicalAtMs": 1998976380000,
-        "durableClockBasisId": "clk1_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "durableClockBasisId": "clk1_e3ea22e8594dd5b4e45ab04fb0e6b6d5dc420c01ca1304e5352dfeed4c9c82c7",
         "primaryCorpusMember": true
       }
     }

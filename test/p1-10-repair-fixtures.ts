@@ -11,7 +11,7 @@ import {
   type ValidatedMarketAcquisitionConfiguration,
 } from "../src/adapters/market-acquisition/contracts.js";
 import {
-  DurableCredentialAuthorizationBoundary,
+  createTestDurableCredentialAuthorizationBoundary,
   type CredentialAuthorizationRequest,
 } from "../src/adapters/market-acquisition/credentials.js";
 import {
@@ -36,8 +36,11 @@ import {
   type AlpacaWirePageAdmission,
 } from "../src/adapters/market-acquisition/alpaca/wire.js";
 import { MemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
-import { DefaultArtifactRetentionController } from "../src/adapters/market-acquisition/retention/controller.js";
-import { RetentionEnforcedArtifactStore } from "../src/adapters/market-acquisition/retention/artifact-access.js";
+import { createTestArtifactRetentionController } from "../src/adapters/market-acquisition/retention/controller.js";
+import {
+  type RetentionEnforcedArtifactStore,
+  createTestRetentionEnforcedArtifactStore,
+} from "../src/adapters/market-acquisition/retention/artifact-access.js";
 import { ALPACA_PRIVATE_ARTIFACT_POLICY } from "../src/adapters/market-acquisition/private-artifact-policy.js";
 import type {
   ArtifactRetentionController,
@@ -87,7 +90,7 @@ export function retentionGuardedArtifactStore(
 ): RetentionEnforcedArtifactStore {
   const authorityId = (prefix: string, member: string): string =>
     `${prefix}_${canonicalHash("peas/p1-10-repair-retention-authority/v1", { member })}`;
-  const controller = new DefaultArtifactRetentionController({
+  const controller = createTestArtifactRetentionController({
     journal: new MemoryArtifactRetentionJournal(),
     artifacts: {
       async settleActiveReadersAndWriters() {
@@ -125,7 +128,7 @@ export function retentionGuardedArtifactStore(
       expiresAtMs: ALPACA_PRIVATE_ARTIFACT_POLICY.maximumRetentionMs,
     });
   }
-  return new RetentionEnforcedArtifactStore(store, controller);
+  return createTestRetentionEnforcedArtifactStore(store, controller);
 }
 
 function timestamp(epochNs: bigint): string {
@@ -348,7 +351,7 @@ export async function credentialAuthorizationFixture(
     request,
     journal,
     retentionJournal,
-    authorization: new DurableCredentialAuthorizationBoundary(journal, retentionJournal),
+    authorization: createTestDurableCredentialAuthorizationBoundary(journal, retentionJournal),
     entries: Object.freeze([declared, requestStarted]),
   });
 }

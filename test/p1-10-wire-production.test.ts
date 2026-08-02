@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { Readable } from "node:stream";
 import test from "node:test";
 
 import { canonicalHash } from "../src/core/hash.js";
 import { canonicalJson, type JsonValue } from "../src/core/json.js";
 import { normalizeRecordedMarketRecords } from "../src/providers/market-reference/normalization.js";
+import { deriveAcquisitionObservationId } from "../src/providers/observation-ledger.js";
 import {
   AlpacaWireContractError,
-  DurableAlpacaWireAdmissionBoundary,
+  createTestDurableAlpacaWireAdmissionBoundary,
+  createTestDurableAlpacaWireSemanticEvidenceBoundary,
   admitAlpacaHistoricalPage,
   decodeAlpacaHistoricalJson,
   parseAlpacaHistoricalJson,
@@ -18,6 +21,12 @@ import {
   type AlpacaWireEndpointKind,
   type AlpacaWireParseContext,
 } from "../src/adapters/market-acquisition/alpaca/wire.js";
+import { MemoryAlpacaWireSemanticEvidenceStore } from "../src/adapters/market-acquisition/alpaca/wire-semantic-evidence.js";
+import {
+  MarketAcquisitionLedger,
+  attachLedgerEvidence,
+} from "../src/adapters/market-acquisition/artifact-integration.js";
+import type { ArtifactStore } from "../src/artifacts/artifact-store.js";
 import { validateMarketAcquisitionConfiguration } from "../src/adapters/market-acquisition/configuration.js";
 import {
   ACCEPTED_PR_2E_CANDIDATE_SHA,
@@ -41,7 +50,7 @@ import {
   type JournalCheckpointBody,
   type JournalEntry,
 } from "../src/adapters/market-acquisition/journal.js";
-import { completeChainProof } from "./p1-10-repair-fixtures.js";
+import { completeChainProof, retentionGuardedArtifactStore } from "./p1-10-repair-fixtures.js";
 
 type PlainRecord = Record<string, unknown>;
 type ValidCase = Readonly<{
@@ -86,6 +95,13 @@ const instrumentIds = Object.freeze(
 );
 const startNs = BigInt(parseAlpacaWireTimestamp("2033-05-06T00:00:00Z").timestamp.epochNs);
 const endNs = BigInt(parseAlpacaWireTimestamp("2033-05-07T00:00:00Z").timestamp.epochNs);
+const wireClockBasisId = `clk1_${canonicalHash("peas/clock-basis/v1", {
+  wallClock: "system-utc",
+  synchronization: "verified-bound",
+  maximumErrorMs: 0,
+  monotonicClock: "process-monotonic-us",
+  monotonicSessionId: "p1-10-wire-authority-session",
+})}`;
 const context: AlpacaWireParseContext = Object.freeze({
   requestedSymbols: symbols,
   instrumentIds,
@@ -95,7 +111,7 @@ const context: AlpacaWireParseContext = Object.freeze({
   marketAcquisitionId: `maq1_${"d".repeat(64)}`,
   rawArtifactId: `mar1_${"c".repeat(64)}`,
   calendarVersion: "peas-p1-10-original-synthetic-calendar-v1",
-  durableClockBasisId: `clk1_${"e".repeat(64)}`,
+  durableClockBasisId: wireClockBasisId,
   durablyRecordedAtMs: 1_998_976_380_000,
   durableLogicalAtMs: 1_998_976_380_000,
   sessionKind: "regular-continuous",
@@ -113,13 +129,6 @@ function parsed(caseId: string): PlainRecord {
 function wirePlan(kind: AlpacaWireEndpointKind): ValidatedMarketAcquisitionConfiguration {
   const route = ALPACA_ROUTE_REGISTRY[kind];
   const wallNs = endNs + 900_000_000_000n;
-  const clockBasisId = `clk1_${canonicalHash("peas/clock-basis/v1", {
-    wallClock: "system-utc",
-    synchronization: "verified-bound",
-    maximumErrorMs: 0,
-    monotonicClock: "process-monotonic-us",
-    monotonicSessionId: "p1-10-wire-authority-session",
-  })}`;
   const timestamp = (value: bigint): string => {
     const milliseconds = value / 1_000_000n;
     const fraction = (value % 1_000_000_000n).toString().padStart(9, "0");
@@ -149,7 +158,7 @@ function wirePlan(kind: AlpacaWireEndpointKind): ValidatedMarketAcquisitionConfi
     queryFields: kind === "bars" ? { ...common, timeframe: "1Min", adjustment: "raw" } : common,
     trustedClockEvidence: {
       available: true,
-      basisId: clockBasisId,
+      basisId: wireClockBasisId,
       wallClock: "system-utc",
       synchronization: "verified-bound",
       maximumErrorNs: 0n,
@@ -159,7 +168,7 @@ function wirePlan(kind: AlpacaWireEndpointKind): ValidatedMarketAcquisitionConfi
       priorSample: {
         sampleId: "wire-prior",
         previousSampleId: null,
-        basisId: clockBasisId,
+        basisId: wireClockBasisId,
         wallClock: "system-utc",
         synchronization: "verified-bound",
         wallNs: wallNs - 1n,
@@ -170,7 +179,7 @@ function wirePlan(kind: AlpacaWireEndpointKind): ValidatedMarketAcquisitionConfi
       currentSample: {
         sampleId: "wire-current",
         previousSampleId: "wire-prior",
-        basisId: clockBasisId,
+        basisId: wireClockBasisId,
         wallClock: "system-utc",
         synchronization: "verified-bound",
         wallNs,
@@ -216,10 +225,17 @@ async function authenticatedAdmission(
   const journalId = deriveMarketAcquisitionJournalId(expectedIdentity);
   const hash = (member: string): string =>
     canonicalHash("peas/p1-10-wire-authority-fixture/v1", { endpointKind, member });
+  const retrievalAttemptId = `rat1_${hash("retrieval-attempt")}`;
+  const acquisitionObservationId = deriveAcquisitionObservationId({
+    provider: "alpaca",
+    retrievalAttemptId,
+    sanitizedRequestIdentityHash: plan.requestIdentityHash,
+    routeLabel: plan.route.safeRouteLabel,
+  });
   const body = (overrides: Partial<JournalCheckpointBody> = {}): JournalCheckpointBody => ({
     schemaVersion: 1,
     runSessionNonce: "p1-10-wire-authority-run",
-    acquisitionObservationId: `aob1_${hash("acquisition-observation")}`,
+    acquisitionObservationId,
     marketAcquisitionId: parseContext.marketAcquisitionId,
     admittedMarketAcquisitionIds: [],
     requestIdentityHash: plan.requestIdentityHash,
@@ -242,7 +258,7 @@ async function authenticatedAdmission(
     currentContinuationBindingHash: null,
     nextContinuationBindingHash: null,
     attemptId: `mat1_${hash("attempt")}`,
-    retrievalAttemptId: `rat1_${hash("retrieval-attempt")}`,
+    retrievalAttemptId,
     attemptOrdinal: 0,
     artifactObservationId: null,
     artifactDigest: null,
@@ -271,10 +287,6 @@ async function authenticatedAdmission(
   const append = (kind: Parameters<typeof createJournalEntry>[2], value: JournalCheckpointBody) => {
     entries.push(createJournalEntry(entries.at(-1) ?? null, journalId, kind, value));
   };
-  append("acquisition-declared", body());
-  append("request-started", body());
-  append("attempt-started", body({ cumulativeAttempts: 1, quotaWindowEvidence: [0] }));
-  append("request-succeeded", body({ cumulativeAttempts: 1, quotaWindowEvidence: [0] }));
   const artifact = {
     artifactObservationId: hash("artifact-observation"),
     artifactDigest: createHash("sha256").update(bytes).digest("hex"),
@@ -285,11 +297,177 @@ async function authenticatedAdmission(
     cumulativeAttempts: 1,
     quotaWindowEvidence: [0],
   } as const;
-  append("artifact-committed", body(artifact));
-  append("artifact-verified", body(artifact));
+  const ledger = new MarketAcquisitionLedger("p1-10-wire-authority-ledger-v1", {
+    wallClock: "system-utc",
+    synchronization: "verified-bound",
+    maximumErrorMs: 0,
+    monotonicClock: "process-monotonic-us",
+    monotonicSessionId: "p1-10-wire-authority-session",
+  });
+  const stamp = (wallTimeMs: number, monotonicTimeUs: number) => ({
+    clockBasisId: ledger.clockBasis.clockBasisId,
+    wallTimeMs,
+    monotonicTimeUs,
+  });
+  const declared = ledger.declareAcquisition(
+    {
+      kind: "acquisition.declared",
+      acquisitionObservationId,
+      provider: "alpaca",
+      retrievalAttemptId,
+      sanitizedRequestIdentityHash: plan.requestIdentityHash,
+      routeLabel: plan.route.safeRouteLabel,
+    },
+    stamp(context.durablyRecordedAtMs - 4, 1),
+  );
+  const started = ledger.requestStarted(
+    declared,
+    { kind: "request.started", acquisitionObservationId },
+    stamp(context.durablyRecordedAtMs - 3, 2),
+  );
+  const succeeded = ledger.requestSucceeded(
+    started,
+    {
+      kind: "request.succeeded",
+      acquisitionObservationId,
+      safeResponseMetadataHash: hash("safe-response-metadata"),
+    },
+    stamp(context.durablyRecordedAtMs - 2, 3),
+  );
+  const committed = ledger.artifactCommitted(
+    declared,
+    succeeded,
+    {
+      kind: "artifact.committed",
+      acquisitionObservationId,
+      vaultObservationId: artifact.artifactObservationId,
+      vaultObservationHash: artifact.artifactObservationHash,
+      artifactDigest: artifact.artifactDigest,
+      sizeBytes: artifact.artifactSizeBytes,
+      acquisitionMode: "live",
+      retrievedAtMs: context.durablyRecordedAtMs,
+    },
+    stamp(context.durablyRecordedAtMs, 4),
+  );
+  const verified = ledger.artifactVerified(
+    committed,
+    {
+      kind: "artifact.verified",
+      acquisitionObservationId,
+      vaultObservationId: artifact.artifactObservationId,
+      artifactDigest: artifact.artifactDigest,
+      metadataSizeBytes: artifact.artifactSizeBytes,
+      consumedSizeBytes: artifact.artifactSizeBytes,
+    },
+    stamp(context.durableLogicalAtMs, 5),
+  );
+  const withStage = (
+    value: JournalCheckpointBody,
+    stage: Parameters<typeof attachLedgerEvidence>[1],
+  ): JournalCheckpointBody => attachLedgerEvidence(value, stage, ledger.clockDeclaration);
+  append("acquisition-declared", withStage(body(), declared));
+  append("request-started", withStage(body(), started));
+  append(
+    "attempt-started",
+    withStage(body({ cumulativeAttempts: 1, quotaWindowEvidence: [0] }), started),
+  );
+  append(
+    "request-succeeded",
+    withStage(body({ cumulativeAttempts: 1, quotaWindowEvidence: [0] }), succeeded),
+  );
+  append("artifact-committed", withStage(body(artifact), committed));
+  append("artifact-verified", withStage(body(artifact), verified));
   const journal = new MemoryAcquisitionJournal(expectedIdentity);
   for (const entry of entries) await journal.append(entry);
-  const authority = await new DurableAlpacaWireAdmissionBoundary(journal).issue({
+  const latest = entries.at(-1);
+  assert.ok(latest);
+  const evidence = new MemoryAlpacaWireSemanticEvidenceStore();
+  const request = {
+    method: "GET" as const,
+    origin: plan.route.origin,
+    pathHash: hash("path"),
+    routeLabel: plan.route.safeRouteLabel,
+    identityHash: plan.requestIdentityHash,
+  };
+  const metadata = {
+    digest: artifact.artifactDigest,
+    algorithm: "sha256" as const,
+    sizeBytes: artifact.artifactSizeBytes,
+    committedAtMs: context.durablyRecordedAtMs,
+    provenance: "retrieval" as const,
+  };
+  const rawStore = {
+    async stat(candidate: string) {
+      return candidate === artifact.artifactDigest ? metadata : undefined;
+    },
+    async read(candidate: string) {
+      if (candidate !== artifact.artifactDigest) throw new Error("unexpected-wire-digest");
+      return {
+        artifact: metadata,
+        stream: Readable.from([bytes]),
+      };
+    },
+    async getAttempt(candidate: string) {
+      return candidate === retrievalAttemptId
+        ? {
+            attemptId: retrievalAttemptId,
+            provider: "alpaca",
+            recordId: "original-synthetic-wire-record",
+            revisionId: "original-synthetic-wire-revision",
+            startedAtMs: context.durablyRecordedAtMs - 3,
+            request,
+            stagingId: "original-synthetic-wire-stage",
+            recordedAtMs: context.durablyRecordedAtMs - 3,
+          }
+        : undefined;
+    },
+    async getObservation(candidate: string) {
+      return candidate === artifact.artifactObservationId
+        ? {
+            observationId: artifact.artifactObservationId,
+            attemptId: retrievalAttemptId,
+            artifactDigest: artifact.artifactDigest,
+            provider: "alpaca",
+            recordId: "original-synthetic-wire-record",
+            revisionId: "original-synthetic-wire-revision",
+            retrievedAtMs: context.durablyRecordedAtMs,
+            request,
+            response: {
+              statusCode: 200,
+              etag: null,
+              lastModified: null,
+              mediaType: "application/json",
+              contentEncoding: null,
+              declaredContentLength: artifact.artifactSizeBytes,
+              transportDecoded: true,
+            },
+            observationHash: artifact.artifactObservationHash,
+          }
+        : undefined;
+    },
+  } as unknown as ArtifactStore;
+  const guarded = retentionGuardedArtifactStore(rawStore, [artifact]);
+  const calendarEntries = Object.freeze([
+    Object.freeze({
+      sessionDate: "2033-01-01",
+      timeZone: "America/New_York" as const,
+      utcOffsetMinutes: -300 as const,
+      calendarVersion: context.calendarVersion,
+      holiday: false,
+      extendedOpenNs: (context.queryStartNs - 1n).toString(),
+      regularOpenNs: context.queryStartNs.toString(),
+      regularCloseNs: (context.queryEndNs + 1n).toString(),
+      extendedCloseNs: (context.queryEndNs + 2n).toString(),
+    }),
+  ]);
+  await createTestDurableAlpacaWireSemanticEvidenceBoundary(journal, evidence, guarded).persist({
+    expectedIdentity,
+    marketAcquisitionJournalId: journalId,
+    ledger,
+    calendarEntries,
+    primaryCorpusMember: context.primaryCorpusMember,
+  });
+  const authority = await createTestDurableAlpacaWireAdmissionBoundary(journal, evidence).issue({
     plan: authorityPlan ?? plan,
     expectedIdentity,
     marketAcquisitionJournalId: journalId,
@@ -651,6 +829,23 @@ test("production parser reject and quarantine branches remain executable and ine
   assert.equal(resolveAlpacaHistoricalChain("quotes", [quote], proof).records.length, 0);
   expectWireCode("schema-invalid", () => resolveAlpacaHistoricalChain("bars", [quote], proof));
   assert.equal((await authenticatedAdmission("bars", barSource.wire, context)).records.length, 2);
+  const preIssuanceForgery = await authenticatedAdmission("bars", barSource.wire, {
+    ...context,
+    calendarVersion: "forged-before-issuance",
+    durableClockBasisId: `clk1_${"f".repeat(64)}`,
+    durablyRecordedAtMs: 1,
+    durableLogicalAtMs: 2,
+    sessionKind: "unknown",
+    primaryCorpusMember: false,
+  });
+  assert.equal(preIssuanceForgery.records.length, 2);
+  for (const record of preIssuanceForgery.records) {
+    assert.equal(record.calendarVersion, context.calendarVersion);
+    assert.equal(record.durableClockBasisId, context.durableClockBasisId);
+    assert.equal(record.durablyRecordedAtMs, context.durablyRecordedAtMs);
+    assert.equal(record.durableLogicalAtMs, context.durableLogicalAtMs);
+    assert.equal(record.primaryCorpusMember, true);
+  }
   expectWireCode("page-semantic-authority-invalid", () =>
     parseAndAdmitAlpacaHistoricalPage("bars", Buffer.from(JSON.stringify(barSource.wire), "utf8"), {
       ...context,
@@ -741,6 +936,7 @@ test("canonical trade u wins before every later semantic value without getter or
         assert.equal(result.terminal, true);
         assert.equal(result.privateNextToken, null);
         assert.equal(result.terminalReason, "correction-unsupported");
+        assert.equal(result.wireItemCount, itemIndex + 1);
         assert.deepEqual(result.records, []);
         assert.deepEqual(result.barObservations, []);
         assert.deepEqual(result.quarantines, [
@@ -759,4 +955,33 @@ test("canonical trade u wins before every later semantic value without getter or
   }
   assert.equal(vectors, 27);
   assert.equal(outcomes.size, 1);
+});
+
+test("wire parse snapshots are zeroed even when authority validation throws", () => {
+  const bytes = Buffer.from('{"bars":{},"next_page_token":null}', "utf8");
+  const fillDescriptor = Object.getOwnPropertyDescriptor(Buffer.prototype, "fill");
+  assert.ok(fillDescriptor?.value);
+  let zeroed = false;
+  Object.defineProperty(Buffer.prototype, "fill", {
+    ...fillDescriptor,
+    value(this: Buffer, ...args: unknown[]) {
+      if (args[0] === 0 && this.equals(bytes)) zeroed = true;
+      return Reflect.apply(fillDescriptor.value as (...members: unknown[]) => Buffer, this, args);
+    },
+  });
+  try {
+    expectWireCode("page-semantic-authority-invalid", () =>
+      parseAndAdmitAlpacaHistoricalPage(
+        "bars",
+        bytes,
+        Object.freeze({
+          kind: "p1-10-durable-wire-admission-authority",
+        }),
+      ),
+    );
+  } finally {
+    Object.defineProperty(Buffer.prototype, "fill", fillDescriptor);
+  }
+  assert.equal(zeroed, true);
+  assert.equal(bytes.toString("utf8"), '{"bars":{},"next_page_token":null}');
 });

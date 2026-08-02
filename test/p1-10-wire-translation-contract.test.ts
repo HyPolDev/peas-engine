@@ -204,7 +204,7 @@ const BASE_CONTEXT: ParseContext = Object.freeze({
   marketAcquisitionId: `maq1_${"d".repeat(64)}`,
   rawArtifactId: `mar1_${"c".repeat(64)}`,
   calendarVersion: "peas-p1-10-original-synthetic-calendar-v1",
-  durableClockBasisId: `clk1_${"e".repeat(64)}`,
+  durableClockBasisId: "clk1_e3ea22e8594dd5b4e45ab04fb0e6b6d5dc420c01ca1304e5352dfeed4c9c82c7",
   durablyRecordedAtMs: 1_998_976_380_000,
   durableLogicalAtMs: 1_998_976_380_000,
   sessionKind: "regular-continuous",

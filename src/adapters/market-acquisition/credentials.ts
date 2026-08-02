@@ -25,6 +25,12 @@ import type {
   AlpacaTransportRequest,
   AlpacaTransportResponse,
 } from "./alpaca/contracts.js";
+import {
+  assertOwnedAcquisitionJournal,
+  assertOwnedRetentionJournal,
+  assertOwnedSqliteAcquisitionJournal,
+  assertOwnedSqliteRetentionJournal,
+} from "./owned-journal.js";
 
 export const ALPACA_KEY_ID_ENV = "PEAS_ALPACA_API_KEY_ID";
 export const ALPACA_SECRET_KEY_ENV = "PEAS_ALPACA_API_SECRET_KEY";
@@ -75,12 +81,48 @@ type PermitBinding = Readonly<{
   retrievalAttemptId: string;
 }>;
 
-type DispatchBinding = PermitBinding & Readonly<{ headers: AlpacaAuthorizationHeaders }>;
+type AuthorizationLeaseState = {
+  keyId: string | undefined;
+  secretKey: string | undefined;
+  active: boolean;
+};
+
+type DispatchBinding = PermitBinding & Readonly<{ authorization: AuthorizationLeaseState }>;
 
 const issuedPermits = new WeakMap<object, PermitBinding>();
 const issuedDispatchCapabilities = new WeakMap<object, DispatchBinding>();
 const establishedEvidence = new WeakMap<object, PermitBinding>();
 const credentialIsolatedTransports = new WeakSet<object>();
+const credentialAuthorizationBoundaries = new WeakSet<object>();
+const CREDENTIAL_BOUNDARY_CONSTRUCTION_AUTHORITY = Object.freeze({});
+
+function revokeAuthorization(state: AuthorizationLeaseState): void {
+  state.active = false;
+  state.keyId = undefined;
+  state.secretKey = undefined;
+}
+
+function activeAuthorizationValue(value: string | undefined, active: boolean): string {
+  if (!active || value === undefined) throw new TypeError("alpaca-authorization-lease-expired");
+  return value;
+}
+
+function leasedAuthorizationHeaders(state: AuthorizationLeaseState): AlpacaAuthorizationHeaders {
+  const headers = Object.create(null) as Record<string, unknown>;
+  Object.defineProperties(headers, {
+    "APCA-API-KEY-ID": {
+      enumerable: true,
+      configurable: false,
+      get: () => activeAuthorizationValue(state.keyId, state.active),
+    },
+    "APCA-API-SECRET-KEY": {
+      enumerable: true,
+      configurable: false,
+      get: () => activeAuthorizationValue(state.secretKey, state.active),
+    },
+  });
+  return Object.freeze(headers) as AlpacaAuthorizationHeaders;
+}
 
 function validatePlan(plan: ValidatedMarketAcquisitionConfiguration): void {
   assertValidatedMarketAcquisitionConfiguration(plan);
@@ -133,12 +175,22 @@ export class DurableCredentialAuthorizationBoundary {
   readonly #journal: AcquisitionJournal;
   readonly #retentionJournal: ArtifactRetentionJournal;
 
-  constructor(journal: AcquisitionJournal, retentionJournal: ArtifactRetentionJournal) {
+  constructor(
+    journal: AcquisitionJournal,
+    retentionJournal: ArtifactRetentionJournal,
+    authority?: object,
+  ) {
+    assertOwnedAcquisitionJournal(journal);
+    assertOwnedRetentionJournal(retentionJournal);
     this.#journal = journal;
     this.#retentionJournal = retentionJournal;
+    if (authority === CREDENTIAL_BOUNDARY_CONSTRUCTION_AUTHORITY) {
+      credentialAuthorizationBoundaries.add(this);
+    }
   }
 
   async establish(input: CredentialAuthorizationRequest): Promise<CredentialAuthorizationEvidence> {
+    assertOwnedDurableCredentialAuthorizationBoundary(this);
     validatePlan(input.plan);
     if (
       input.marketAcquisitionJournalId !== deriveMarketAcquisitionJournalId(input.journalIdentity)
@@ -195,6 +247,53 @@ export class DurableCredentialAuthorizationBoundary {
   }
 }
 
+function constructCredentialAuthorizationBoundary(
+  journal: AcquisitionJournal,
+  retentionJournal: ArtifactRetentionJournal,
+): DurableCredentialAuthorizationBoundary {
+  const boundary = new DurableCredentialAuthorizationBoundary(
+    journal,
+    retentionJournal,
+    CREDENTIAL_BOUNDARY_CONSTRUCTION_AUTHORITY,
+  );
+  Object.freeze(boundary);
+  return boundary;
+}
+
+export function createDurableCredentialAuthorizationBoundary(
+  journal: AcquisitionJournal,
+  retentionJournal: ArtifactRetentionJournal,
+): DurableCredentialAuthorizationBoundary {
+  assertOwnedSqliteAcquisitionJournal(journal);
+  assertOwnedSqliteRetentionJournal(retentionJournal);
+  return constructCredentialAuthorizationBoundary(journal, retentionJournal);
+}
+
+export function createTestDurableCredentialAuthorizationBoundary(
+  journal: AcquisitionJournal,
+  retentionJournal: ArtifactRetentionJournal,
+): DurableCredentialAuthorizationBoundary {
+  if (process.env["NODE_TEST_CONTEXT"] === undefined) {
+    throw new TypeError("test-credential-authorization-composition-unavailable");
+  }
+  assertOwnedAcquisitionJournal(journal);
+  assertOwnedRetentionJournal(retentionJournal);
+  return constructCredentialAuthorizationBoundary(journal, retentionJournal);
+}
+
+export function assertOwnedDurableCredentialAuthorizationBoundary(
+  value: DurableCredentialAuthorizationBoundary,
+): void {
+  if (
+    !credentialAuthorizationBoundaries.has(value) ||
+    isProxy(value) ||
+    Object.getPrototypeOf(value) !== DurableCredentialAuthorizationBoundary.prototype ||
+    !Object.isFrozen(value)
+  ) {
+    throw new TypeError("owned-durable-credential-authorization-boundary-required");
+  }
+}
+
 export function authorizeCredentialLoad(
   evidence: CredentialAuthorizationEvidence,
 ): CredentialPreflightPermit {
@@ -229,6 +328,7 @@ export async function withAlpacaAuthorization<T>(
   let keyId: unknown;
   let secretKey: unknown;
   let capability: AlpacaDispatchCapability | undefined;
+  let authorization: AuthorizationLeaseState | undefined;
   try {
     keyId = source.read(ALPACA_KEY_ID_ENV);
     secretKey = source.read(ALPACA_SECRET_KEY_ENV);
@@ -239,17 +339,15 @@ export async function withAlpacaAuthorization<T>(
       secretKey.length === 0
     )
       return credentialUnavailable();
-    const headers = Object.freeze({
-      "APCA-API-KEY-ID": keyId,
-      "APCA-API-SECRET-KEY": secretKey,
-    });
+    authorization = { keyId, secretKey, active: true };
     capability = Object.freeze({ kind: "p1-10-alpaca-dispatch-capability" as const });
-    issuedDispatchCapabilities.set(capability, Object.freeze({ ...binding, headers }));
+    issuedDispatchCapabilities.set(capability, Object.freeze({ ...binding, authorization }));
     return { ok: true, value: await operation(capability) };
   } catch {
     return credentialUnavailable();
   } finally {
     if (capability !== undefined) issuedDispatchCapabilities.delete(capability);
+    if (authorization !== undefined) revokeAuthorization(authorization);
     keyId = undefined;
     secretKey = undefined;
   }
@@ -258,7 +356,7 @@ export async function withAlpacaAuthorization<T>(
 function resolveAlpacaDispatchCapability(
   capability: AlpacaDispatchCapability,
   request: AlpacaTransportRequest,
-): AlpacaAuthorizationHeaders {
+): Readonly<{ headers: AlpacaAuthorizationHeaders; state: AuthorizationLeaseState }> {
   const binding = issuedDispatchCapabilities.get(capability);
   if (
     binding === undefined ||
@@ -269,19 +367,24 @@ function resolveAlpacaDispatchCapability(
     throw new TypeError("alpaca-dispatch-capability-invalid");
   }
   issuedDispatchCapabilities.delete(capability);
-  return binding.headers;
+  return Object.freeze({
+    headers: leasedAuthorizationHeaders(binding.authorization),
+    state: binding.authorization,
+  });
 }
 
 export type AlpacaCredentialIsolatedTransportDriver = Readonly<{
-  dispatch(request: AlpacaTransportRequest): Promise<AlpacaTransportResponse>;
+  dispatch(
+    request: AlpacaTransportRequest,
+    authorizationHeaders: AlpacaAuthorizationHeaders,
+  ): Promise<AlpacaTransportResponse>;
   abort(): Promise<void>;
   settle(): Promise<void>;
 }>;
 
 /**
- * Owns authorization consumption. The lower driver sees only the frozen non-secret request; the
- * exact frozen header record is validated and retained only inside this module for the capability
- * callback lifetime.
+ * Owns authorization consumption. The lower driver receives an exact frozen accessor record only
+ * for the physical dispatch scope; every PEAS-owned plaintext reference is revoked on settlement.
  */
 export function createCredentialIsolatedAlpacaTransport(
   driver: AlpacaCredentialIsolatedTransportDriver,
@@ -301,7 +404,8 @@ export function createCredentialIsolatedAlpacaTransport(
       request: AlpacaTransportRequest,
       authorization: AlpacaDispatchCapability,
     ): Promise<AlpacaTransportResponse> {
-      const headers = resolveAlpacaDispatchCapability(authorization, request);
+      const lease = resolveAlpacaDispatchCapability(authorization, request);
+      const { headers } = lease;
       if (
         !Object.isFrozen(headers) ||
         Object.keys(headers).length !== 2 ||
@@ -310,7 +414,11 @@ export function createCredentialIsolatedAlpacaTransport(
       ) {
         throw new TypeError("alpaca-authorization-record-invalid");
       }
-      return dispatch(request);
+      try {
+        return await dispatch(request, headers);
+      } finally {
+        revokeAuthorization(lease.state);
+      }
     },
     abort,
     settle,
@@ -338,3 +446,4 @@ export function processEnvironmentSecretSource(
     },
   };
 }
+import { isProxy } from "node:util/types";
