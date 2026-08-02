@@ -6,7 +6,6 @@ import { test } from "node:test";
 
 import {
   DurableAlpacaWireAdmissionBoundary,
-  createDurableAlpacaWireAdmissionBoundary,
   createTestDurableAlpacaWireAdmissionBoundary,
 } from "../src/adapters/market-acquisition/alpaca/wire.js";
 import {
@@ -131,7 +130,7 @@ test("wire semantic evidence is exact, immutable, and restart-identical in memor
     /wire-semantic-evidence-conflict/u,
   );
   assert.doesNotThrow(() =>
-    createDurableAlpacaWireAdmissionBoundary(
+    createTestDurableAlpacaWireAdmissionBoundary(
       createSqliteAcquisitionJournal(database, identity()),
       restarted,
     ),

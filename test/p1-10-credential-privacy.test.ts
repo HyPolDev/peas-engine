@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import Database from "better-sqlite3";
 import type { ClientRequest } from "node:http";
 import { createServer, request as dispatchLocalRequest } from "node:https";
+import { canonicalJson, type JsonValue } from "../src/core/json.js";
 
 import {
   ALPACA_KEY_ID_ENV,
@@ -19,7 +20,7 @@ import {
   createTestNativeCredentialIsolatedAlpacaTransport,
   assertTestNativeAlpacaTransportReleased,
   createTestCredentialIsolatedAlpacaTransport,
-  createDurableCredentialAuthorizationBoundary,
+  openSqliteDurableCredentialAuthorizationBoundary,
   createTestDurableCredentialAuthorizationBoundary,
   fmpLaneDisabled,
   withAlpacaAuthorization,
@@ -27,20 +28,13 @@ import {
   type RuntimeSecretSource,
 } from "../src/adapters/market-acquisition/credentials.js";
 import { buildAlpacaTransportRequest } from "../src/adapters/market-acquisition/alpaca/request.js";
-import {
-  appendTestAcquisitionWorkflowEvidence,
-  createDurableAcquisitionWorkflowProducer,
-  DurableAcquisitionWorkflowProducer,
-} from "../src/adapters/market-acquisition/journal.js";
+import { appendTestAcquisitionWorkflowEvidence } from "../src/adapters/market-acquisition/journal.js";
 import {
   MemoryAcquisitionJournal,
   createMemoryAcquisitionJournal,
 } from "../src/adapters/market-acquisition/memory-journal.js";
 import { createSqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
-import {
-  MemoryArtifactRetentionJournal,
-  createMemoryArtifactRetentionJournal,
-} from "../src/adapters/market-acquisition/retention/memory-journal.js";
+import { MemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
 import { createSqliteArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/sqlite-journal.js";
 import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
 import { createSqliteAlpacaWireSemanticEvidenceStore } from "../src/adapters/market-acquisition/alpaca/wire-semantic-evidence.js";
@@ -628,24 +622,94 @@ test("a persisted attempt claim cannot be reminted after SQLite cold restart", a
   t.after(() => rm(directory, { recursive: true, force: true }));
   const filename = join(directory, "claim.sqlite");
   const migrations = loadMigrations(join(process.cwd(), "migrations"));
-  let database = openSqliteDatabase(filename, migrations);
-  let journal = createSqliteAcquisitionJournal(database, fixture.request.journalIdentity);
-  await appendTestAcquisitionWorkflowEvidence(journal, fixture.ledgerEntries, fixture.entries);
-  let retentionJournal = createSqliteArtifactRetentionJournal(database);
-  const first = createDurableCredentialAuthorizationBoundary(journal, retentionJournal);
+  const first = openSqliteDurableCredentialAuthorizationBoundary(
+    filename,
+    migrations,
+    fixture.request.plan,
+  );
   await first.establish(fixture.request);
-  database.close();
-  database = openSqliteDatabase(filename, migrations);
-  journal = createSqliteAcquisitionJournal(database, fixture.request.journalIdentity);
-  retentionJournal = createSqliteArtifactRetentionJournal(database);
-  const restarted = createDurableCredentialAuthorizationBoundary(journal, retentionJournal);
+  first.close();
+  const restarted = openSqliteDurableCredentialAuthorizationBoundary(
+    filename,
+    migrations,
+    fixture.request.plan,
+  );
   await assert.rejects(
     () => restarted.establish(fixture.request),
     /request-started|already-claimed/u,
   );
-  const entries = await journal.load(fixture.request.marketAcquisitionJournalId);
-  assert.equal(entries.filter((entry) => entry.checkpointKind === "attempt-started").length, 1);
+  restarted.close();
+  const database = openSqliteDatabase(filename, migrations);
+  const claims = database
+    .prepare("SELECT COUNT(*) AS count FROM market_acquisition_owned_attempt_claims")
+    .get() as { count: bigint };
+  assert.equal(claims.count, 1n);
   database.close();
+});
+
+test("an alternate raw-handle chain cannot satisfy the opaque production credential root", async (t) => {
+  const fixture = await credentialAuthorizationFixture(validatedRepairPlan());
+  const directory = await mkdtemp(join(tmpdir(), "peas-p1-10-raw-forgery-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filename = join(directory, "forged.sqlite");
+  const migrations = loadMigrations(join(process.cwd(), "migrations"));
+  const database = openSqliteDatabase(filename, migrations);
+  createSqliteAcquisitionJournal(database, fixture.request.journalIdentity);
+  database.exec(`
+    DROP TRIGGER market_acquisition_workflow_journal_entries_owned_insert;
+    DROP TRIGGER market_acquisition_workflow_journal_proofs_owned_insert;
+    DROP TRIGGER market_acquisition_workflow_ledger_entries_owned_insert;
+    DROP TRIGGER market_acquisition_workflow_ledger_proofs_owned_insert;
+  `);
+  const insertLedger = database.prepare(`INSERT INTO market_acquisition_ledger_entries
+    (market_acquisition_journal_id, execution_id, ledger_sequence, entry_id, entry_json, entry_hash)
+    VALUES (?, ?, ?, ?, ?, ?)`);
+  const insertLedgerProof = database.prepare(`INSERT INTO market_acquisition_workflow_ledger_proofs
+    (market_acquisition_journal_id, entry_id) VALUES (?, ?)`);
+  for (const [index, entry] of fixture.ledgerEntries.entries()) {
+    insertLedger.run(
+      fixture.request.marketAcquisitionJournalId,
+      entry.executionId,
+      BigInt(index),
+      entry.entryId,
+      canonicalJson(entry as unknown as JsonValue),
+      entry.entryHash,
+    );
+    insertLedgerProof.run(fixture.request.marketAcquisitionJournalId, entry.entryId);
+  }
+  const insertJournal = database.prepare(`INSERT INTO market_acquisition_journal_entries
+    (market_acquisition_journal_id, journal_sequence, prior_journal_entry_hash,
+     journal_entry_hash, checkpoint_kind, entry_json) VALUES (?, ?, ?, ?, ?, ?)`);
+  const insertJournalProof =
+    database.prepare(`INSERT INTO market_acquisition_workflow_journal_proofs
+    (market_acquisition_journal_id, journal_entry_hash) VALUES (?, ?)`);
+  for (const entry of fixture.entries) {
+    insertJournal.run(
+      fixture.request.marketAcquisitionJournalId,
+      BigInt(entry.journalSequence),
+      entry.priorJournalEntryHash,
+      entry.journalEntryHash,
+      entry.checkpointKind,
+      canonicalJson(entry as unknown as JsonValue),
+    );
+    insertJournalProof.run(fixture.request.marketAcquisitionJournalId, entry.journalEntryHash);
+  }
+  database.close();
+  const authorization = openSqliteDurableCredentialAuthorizationBoundary(
+    filename,
+    migrations,
+    fixture.request.plan,
+  );
+  await assert.rejects(
+    () =>
+      authorization.establish({
+        ...fixture.request,
+        acquisitionObservationId: "f".repeat(64),
+      }),
+    /credential-request-started-workflow-invalid/u,
+  );
+  await authorization.establish(fixture.request);
+  authorization.close();
 });
 
 test("public journals cannot author coherent credential prerequisite facts", async (t) => {
@@ -661,44 +725,12 @@ test("public journals cannot author coherent credential prerequisite facts", asy
       /owned-acquisition-workflow-producer-required/u,
     );
   }
-  const memoryAuthorization = createTestDurableCredentialAuthorizationBoundary(
-    memory,
-    createMemoryArtifactRetentionJournal(),
-  );
-  await memoryAuthorization.recordRequestStarted(
-    fixture.request,
-    fixture.ledgerEntries,
-    fixture.entries,
-  );
+  await appendTestAcquisitionWorkflowEvidence(memory, fixture.ledgerEntries, fixture.entries);
   assert.equal(
     await memory.isWorkflowProducedJournalEntry(
       (fixture.entries.at(-1) as NonNullable<(typeof fixture.entries)[number]>).journalEntryHash,
     ),
     true,
-  );
-  const directProducer = new DurableAcquisitionWorkflowProducer(memory);
-  await assert.rejects(
-    () => directProducer.persist(fixture.ledgerEntries, []),
-    /owned-acquisition-workflow-producer-required/u,
-  );
-  class ProducerSubclass extends DurableAcquisitionWorkflowProducer {}
-  const subclass = new ProducerSubclass(memory);
-  await assert.rejects(
-    () => subclass.persist(fixture.ledgerEntries, []),
-    /owned-acquisition-workflow-producer-required/u,
-  );
-  const ownedProducer = createDurableAcquisitionWorkflowProducer(memory);
-  await assert.rejects(
-    () => new Proxy(ownedProducer, {}).persist(fixture.ledgerEntries, []),
-    /owned-acquisition-workflow-producer-required/u,
-  );
-  assert.throws(
-    () =>
-      createDurableAcquisitionWorkflowProducer({
-        append: async () => undefined,
-        appendLedgerEntries: async () => undefined,
-      } as never),
-    /owned-acquisition-journal-required/u,
   );
 
   const directory = await mkdtemp(join(tmpdir(), "peas-credential-forged-chain-"));
@@ -772,32 +804,22 @@ test("public journals cannot author coherent credential prerequisite facts", asy
         .run(fixture.request.marketAcquisitionJournalId, fixture.ledgerEntries.at(-1)?.entryId),
     /workflow proof write denied/u,
   );
-  const sqliteAuthorization = createDurableCredentialAuthorizationBoundary(
-    journal,
-    createSqliteArtifactRetentionJournal(database),
-  );
-  await sqliteAuthorization.recordRequestStarted(
-    fixture.request,
-    fixture.ledgerEntries,
-    fixture.entries,
-  );
   database.close();
+  const sqliteAuthorization = openSqliteDurableCredentialAuthorizationBoundary(
+    filename,
+    migrations,
+    fixture.request.plan,
+  );
+  await sqliteAuthorization.establish(fixture.request);
+  sqliteAuthorization.close();
   database = openSqliteDatabase(filename, migrations);
   journal = createSqliteAcquisitionJournal(database, fixture.request.journalIdentity);
-  assert.deepEqual(await journal.load(fixture.request.marketAcquisitionJournalId), fixture.entries);
-  assert.deepEqual(await journal.loadLedgerEntries(), fixture.ledgerEntries);
-  assert.equal(
-    await journal.isWorkflowProducedJournalEntry(
-      (fixture.entries.at(-1) as NonNullable<(typeof fixture.entries)[number]>).journalEntryHash,
-    ),
-    true,
-  );
-  assert.equal(
-    await journal.isWorkflowProducedLedgerEntry(
-      (fixture.ledgerEntries.at(-1) as NonNullable<(typeof fixture.ledgerEntries)[number]>).entryId,
-    ),
-    true,
-  );
+  assert.deepEqual(await journal.load(fixture.request.marketAcquisitionJournalId), []);
+  assert.deepEqual(await journal.loadLedgerEntries(), []);
+  const ownedRows = database
+    .prepare(`SELECT COUNT(*) AS count FROM market_acquisition_owned_request_started`)
+    .get() as { count: bigint };
+  assert.equal(ownedRows.count, 1n);
   assert.throws(
     () =>
       database
@@ -868,6 +890,15 @@ test("the low-level attempt executor is not a caller-invocable module export", a
   assert.equal("executeAlpacaAttempt" in module, false);
   const credentials = await import("../src/adapters/market-acquisition/credentials.js");
   assert.equal("establishCredentialAuthorizationEvidence" in credentials, false);
+  assert.equal("createDurableCredentialAuthorizationBoundary" in credentials, false);
+  const journal = await import("../src/adapters/market-acquisition/journal.js");
+  assert.equal("createDurableAcquisitionWorkflowProducer" in journal, false);
+  const wire = await import("../src/adapters/market-acquisition/alpaca/wire.js");
+  assert.equal("createDurableAlpacaWireAdmissionBoundary" in wire, false);
+  const semantics = await import(
+    "../src/adapters/market-acquisition/alpaca/wire-semantic-evidence.js"
+  );
+  assert.equal("createDurableAlpacaWireSemanticEvidenceBoundary" in semantics, false);
 });
 
 test("FMP reservation is disabled and exposes no credential-reader capability", () => {

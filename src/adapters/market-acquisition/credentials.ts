@@ -12,16 +12,17 @@ import {
 import { assertValidatedMarketAcquisitionConfiguration } from "./configuration.js";
 import {
   type AcquisitionJournal,
-  type DurableAcquisitionWorkflowProducer,
-  type JournalEntry,
+  GENESIS_HASH,
+  NO_TOKEN_HASH,
+  type JournalCheckpointBody,
   type JournalIdentityInput,
-  createDurableAcquisitionWorkflowProducer,
   createJournalEntry,
+  deriveLogicalPageIdentityHash,
   deriveMarketAcquisitionJournalId,
   journalEntryBody,
   validateJournalEntries,
 } from "./journal.js";
-import type { ObservationLedgerEntryV1 } from "../../providers/observation-ledger.js";
+import { deriveAcquisitionObservationId } from "../../providers/observation-ledger.js";
 import { safeAcquisitionError, type SafeAcquisitionError } from "./redaction.js";
 import type { ArtifactRetentionJournal } from "./retention/contracts.js";
 import type {
@@ -30,17 +31,16 @@ import type {
   AlpacaTransportRequest,
   AlpacaTransportResponse,
 } from "./alpaca/contracts.js";
-import {
-  assertOwnedAcquisitionJournal,
-  assertOwnedRetentionJournal,
-  assertOwnedSqliteAcquisitionJournal,
-  assertOwnedSqliteRetentionJournal,
-} from "./owned-journal.js";
-import { validateJournalLedgerBindings } from "./artifact-integration.js";
+import { assertOwnedAcquisitionJournal, assertOwnedRetentionJournal } from "./owned-journal.js";
+import { MarketAcquisitionLedger, validateJournalLedgerBindings } from "./artifact-integration.js";
 import { P1_10_TEST_AUTHORITY } from "../../internal-test-authority.js";
 import { request as dispatchHttpsRequest } from "node:https";
 import type { ClientRequest, IncomingMessage } from "node:http";
 import { assertOwnedAlpacaTransportRequest } from "./alpaca/request.js";
+import { canonicalHash } from "../../core/hash.js";
+import { canonicalJson, type JsonValue } from "../../core/json.js";
+import { openSqliteDatabase, type Migration, type SqliteDatabase } from "../sqlite/database.js";
+import { createSqliteArtifactRetentionJournal } from "./retention/sqlite-journal.js";
 
 export const ALPACA_KEY_ID_ENV = "PEAS_ALPACA_API_KEY_ID";
 export const ALPACA_SECRET_KEY_ENV = "PEAS_ALPACA_API_SECRET_KEY";
@@ -109,6 +109,7 @@ const issuedDispatchCapabilities = new WeakMap<object, DispatchBinding>();
 const establishedEvidence = new WeakMap<object, PermitBinding>();
 const credentialIsolatedTransports = new WeakSet<object>();
 const credentialAuthorizationBoundaries = new WeakSet<object>();
+const productionCredentialDatabases = new WeakMap<object, SqliteDatabase>();
 const CREDENTIAL_BOUNDARY_CONSTRUCTION_AUTHORITY = Object.freeze({});
 
 function revokeAuthorization(state: AuthorizationLeaseState): void {
@@ -187,65 +188,24 @@ function validatePlan(plan: ValidatedMarketAcquisitionConfiguration): void {
  * arrays; the boundary reloads and validates the committed request-started checkpoint itself.
  */
 export class DurableCredentialAuthorizationBoundary {
-  readonly #journal: AcquisitionJournal;
+  readonly #journal: AcquisitionJournal | undefined;
   readonly #retentionJournal: ArtifactRetentionJournal;
-  readonly #workflowProducer: DurableAcquisitionWorkflowProducer;
+  readonly #productionStore: ProductionCredentialStore | undefined;
 
   constructor(
-    journal: AcquisitionJournal,
+    journal: AcquisitionJournal | undefined,
     retentionJournal: ArtifactRetentionJournal,
+    productionStore?: ProductionCredentialStore,
     authority?: object,
   ) {
-    assertOwnedAcquisitionJournal(journal);
+    if (journal !== undefined) assertOwnedAcquisitionJournal(journal);
     assertOwnedRetentionJournal(retentionJournal);
     this.#journal = journal;
     this.#retentionJournal = retentionJournal;
-    this.#workflowProducer = createDurableAcquisitionWorkflowProducer(journal);
+    this.#productionStore = productionStore;
     if (authority === CREDENTIAL_BOUNDARY_CONSTRUCTION_AUTHORITY) {
       credentialAuthorizationBoundaries.add(this);
     }
-  }
-
-  async recordRequestStarted(
-    input: CredentialAuthorizationRequest,
-    ledgerEntries: readonly ObservationLedgerEntryV1[],
-    journalEntries: readonly JournalEntry[],
-  ): Promise<void> {
-    assertOwnedDurableCredentialAuthorizationBoundary(this);
-    validatePlan(input.plan);
-    if (
-      input.marketAcquisitionJournalId !== deriveMarketAcquisitionJournalId(input.journalIdentity)
-    ) {
-      throw new TypeError("credential-journal-identity-invalid");
-    }
-    validateJournalEntries(journalEntries, input.journalIdentity);
-    validateJournalLedgerBindings(journalEntries, ledgerEntries);
-    const latest = journalEntries.at(-1);
-    const stage = ledgerEntries.find((entry) => entry.entryId === latest?.stageLedgerFactId);
-    const declaration = ledgerEntries.find(
-      (entry) =>
-        stage?.parentEntryIds.includes(entry.entryId) === true &&
-        entry.facts.kind === "acquisition.declared",
-    );
-    if (
-      journalEntries.length !== 2 ||
-      latest?.checkpointKind !== "request-started" ||
-      latest.requestIdentityHash !== input.plan.requestIdentityHash ||
-      latest.acquisitionConfigurationHash !== input.plan.acquisitionConfigurationHash ||
-      latest.acquisitionObservationId !== input.acquisitionObservationId ||
-      latest.retrievalAttemptId !== input.retrievalAttemptId ||
-      stage?.facts.kind !== "request.started" ||
-      stage.facts.acquisitionObservationId !== input.acquisitionObservationId ||
-      declaration?.facts.kind !== "acquisition.declared" ||
-      declaration.facts.acquisitionObservationId !== input.acquisitionObservationId ||
-      declaration.facts.retrievalAttemptId !== input.retrievalAttemptId ||
-      declaration.facts.sanitizedRequestIdentityHash !== input.plan.requestIdentityHash ||
-      declaration.facts.provider !== "alpaca" ||
-      declaration.facts.routeLabel !== input.plan.route.safeRouteLabel
-    ) {
-      throw new TypeError("credential-request-started-workflow-invalid");
-    }
-    await this.#workflowProducer.persist(ledgerEntries, journalEntries);
   }
 
   async establish(input: CredentialAuthorizationRequest): Promise<CredentialAuthorizationEvidence> {
@@ -259,6 +219,24 @@ export class DurableCredentialAuthorizationBoundary {
     if (this.#retentionJournal.providerUseDenied("alpaca", input.journalIdentity.providerId)) {
       throw new TypeError("credential-retention-denied");
     }
+    if (this.#productionStore !== undefined) {
+      const expected = deriveRequestStartedWorkflow(input);
+      this.#productionStore.ensure(expected);
+      if (!this.#productionStore.claim(expected.workflowId)) {
+        throw new TypeError("credential-request-started-already-claimed");
+      }
+      const binding = Object.freeze({
+        plan: input.plan,
+        acquisitionObservationId: input.acquisitionObservationId,
+        retrievalAttemptId: input.retrievalAttemptId,
+      });
+      const evidence = Object.freeze({
+        kind: "p1-10-durable-credential-evidence" as const,
+      });
+      establishedEvidence.set(evidence, binding);
+      return evidence;
+    }
+    if (this.#journal === undefined) throw new TypeError("credential-journal-unavailable");
     const journal = await this.#journal.load(input.marketAcquisitionJournalId);
     validateJournalEntries(journal, input.journalIdentity);
     const ledger = await this.#journal.loadLedgerEntries();
@@ -328,6 +306,14 @@ export class DurableCredentialAuthorizationBoundary {
     );
     return evidence;
   }
+
+  close(): void {
+    assertOwnedDurableCredentialAuthorizationBoundary(this);
+    const database = productionCredentialDatabases.get(this);
+    if (database === undefined) throw new TypeError("production-credential-root-required");
+    productionCredentialDatabases.delete(this);
+    database.close();
+  }
 }
 
 function constructCredentialAuthorizationBoundary(
@@ -337,19 +323,257 @@ function constructCredentialAuthorizationBoundary(
   const boundary = new DurableCredentialAuthorizationBoundary(
     journal,
     retentionJournal,
+    undefined,
     CREDENTIAL_BOUNDARY_CONSTRUCTION_AUTHORITY,
   );
   Object.freeze(boundary);
   return boundary;
 }
 
-export function createDurableCredentialAuthorizationBoundary(
-  journal: AcquisitionJournal,
-  retentionJournal: ArtifactRetentionJournal,
+function exactJournalIdentity(plan: ValidatedMarketAcquisitionConfiguration): JournalIdentityInput {
+  return Object.freeze({
+    schemaVersion: 1,
+    requestIdentityHash: plan.requestIdentityHash,
+    providerId: plan.route.providerId,
+    datasetId: plan.route.datasetId,
+    feedId: plan.route.feedId,
+    endpointChannelId: plan.route.endpointChannelId,
+  });
+}
+
+function deriveRequestStartedWorkflow(input: CredentialAuthorizationRequest) {
+  validatePlan(input.plan);
+  const identity = exactJournalIdentity(input.plan);
+  const journalId = deriveMarketAcquisitionJournalId(identity);
+  if (
+    input.marketAcquisitionJournalId !== journalId ||
+    JSON.stringify(input.journalIdentity) !== JSON.stringify(identity) ||
+    input.acquisitionObservationId !==
+      deriveAcquisitionObservationId({
+        provider: "alpaca",
+        retrievalAttemptId: input.retrievalAttemptId,
+        sanitizedRequestIdentityHash: input.plan.requestIdentityHash,
+        routeLabel: input.plan.route.safeRouteLabel,
+      })
+  ) {
+    throw new TypeError("credential-request-started-workflow-invalid");
+  }
+  const clock = input.plan.trustedClockEvidence;
+  const ledger = new MarketAcquisitionLedger(
+    `market-acquisition:${journalId}:${input.retrievalAttemptId}`,
+    {
+      clockBasisId: clock.basisId,
+      wallClock: clock.wallClock,
+      synchronization: clock.synchronization,
+      maximumErrorMs: Number((clock.maximumErrorNs + 999_999n) / 1_000_000n),
+      monotonicClock: clock.monotonicClock,
+      monotonicSessionId: clock.monotonicSessionId,
+    },
+  );
+  const stamp = (sample: typeof clock.currentSample) => ({
+    clockBasisId: clock.basisId,
+    wallTimeMs: Number(sample.wallNs / 1_000_000n),
+    monotonicTimeUs: Number(sample.monotonicUs),
+  });
+  const declaration = ledger.declareAcquisition(
+    {
+      kind: "acquisition.declared",
+      acquisitionObservationId: input.acquisitionObservationId,
+      provider: "alpaca",
+      retrievalAttemptId: input.retrievalAttemptId,
+      sanitizedRequestIdentityHash: input.plan.requestIdentityHash,
+      routeLabel: input.plan.route.safeRouteLabel,
+    },
+    stamp(clock.priorSample),
+  );
+  const started = ledger.requestStarted(
+    declaration,
+    { kind: "request.started", acquisitionObservationId: input.acquisitionObservationId },
+    stamp(clock.currentSample),
+  );
+  const memberHash = canonicalHash("peas/market-acquisition-owned-workflow/v1", {
+    journalId,
+    acquisitionObservationId: input.acquisitionObservationId,
+    retrievalAttemptId: input.retrievalAttemptId,
+  });
+  const logicalPageIdentityHash = deriveLogicalPageIdentityHash({
+    requestIdentityHash: input.plan.requestIdentityHash,
+    pageOrdinal: 0,
+    currentTokenHash: NO_TOKEN_HASH,
+  });
+  const body = (stageLedgerFactId: string, causalParentFactIds: readonly string[]) =>
+    Object.freeze({
+      schemaVersion: 1 as const,
+      runSessionNonce: `owned-${memberHash}`,
+      acquisitionObservationId: input.acquisitionObservationId,
+      marketAcquisitionId: `maq1_${memberHash}`,
+      admittedMarketAcquisitionIds: Object.freeze([]),
+      requestIdentityHash: input.plan.requestIdentityHash,
+      acquisitionConfigurationHash: input.plan.acquisitionConfigurationHash,
+      providerId: identity.providerId,
+      datasetId: identity.datasetId,
+      feedId: identity.feedId,
+      endpointChannelId: identity.endpointChannelId,
+      authorizationMode: AUTHORIZATION_MODE,
+      logicalPageIdentityHash,
+      pageOrdinal: 0,
+      currentTokenHash: NO_TOKEN_HASH,
+      currentResumableTokenMaterial: null,
+      nextTokenHash: null,
+      nextResumableTokenMaterial: null,
+      currentContinuationBindingHash: null,
+      nextContinuationBindingHash: null,
+      attemptId: `mat1_${memberHash}`,
+      retrievalAttemptId: input.retrievalAttemptId,
+      attemptOrdinal: 0,
+      artifactObservationId: null,
+      artifactDigest: null,
+      artifactSizeBytes: null,
+      artifactObservationHash: null,
+      artifactContentId: null,
+      rawArtifactId: null,
+      stageLedgerFactId,
+      causalParentFactIds: Object.freeze([...causalParentFactIds]),
+      pageRecordCount: null,
+      pageNormalizedFactCount: null,
+      pageChainHash: GENESIS_HASH,
+      cumulativeSuccessfulPages: 0,
+      cumulativeVerifiedBytes: 0,
+      cumulativeRecords: 0,
+      cumulativeNormalizedFacts: 0,
+      cumulativeAttempts: 0,
+      acquisitionDeadlineBasis: "offline-monotonic-basis-v1",
+      quotaWindowEvidence: Object.freeze([]),
+      terminalState: null,
+      terminalReasonCode: null,
+      incomplete: true,
+    }) satisfies JournalCheckpointBody;
+  const causal = (entry: typeof declaration) =>
+    entry.parentEntryIds.filter((id) => id !== ledger.clockDeclaration.entryId);
+  const declared = createJournalEntry(
+    null,
+    journalId,
+    "acquisition-declared",
+    body(declaration.entryId, causal(declaration)),
+  );
+  const requestStarted = createJournalEntry(
+    declared,
+    journalId,
+    "request-started",
+    body(started.entryId, causal(started)),
+  );
+  const journalEntries = Object.freeze([declared, requestStarted]);
+  const workflowId = canonicalHash("peas/market-acquisition-owned-request-started/v1", {
+    journalId,
+    requestIdentityHash: input.plan.requestIdentityHash,
+    retrievalAttemptId: input.retrievalAttemptId,
+    acquisitionObservationId: input.acquisitionObservationId,
+    journalEntries,
+    ledgerEntries: ledger.entries,
+  } as unknown as JsonValue);
+  return Object.freeze({
+    identity,
+    journalId,
+    workflowId,
+    ledgerEntries: ledger.entries,
+    journalEntries,
+  });
+}
+
+type DerivedRequestStartedWorkflow = ReturnType<typeof deriveRequestStartedWorkflow>;
+type ProductionCredentialStore = Readonly<{
+  ensure(value: DerivedRequestStartedWorkflow): void;
+  claim(workflowId: string): boolean;
+}>;
+
+function productionCredentialStore(database: SqliteDatabase): ProductionCredentialStore {
+  return Object.freeze({
+    ensure(value) {
+      const journalJson = canonicalJson(value.journalEntries as unknown as JsonValue);
+      const ledgerJson = canonicalJson(value.ledgerEntries as unknown as JsonValue);
+      database
+        .transaction(() => {
+          database
+            .prepare(`INSERT OR IGNORE INTO market_acquisition_owned_request_started (
+              workflow_id, request_identity_hash, retrieval_attempt_id, acquisition_observation_id,
+              journal_json, ledger_json, workflow_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+            .run(
+              value.workflowId,
+              value.identity.requestIdentityHash,
+              value.journalEntries[1]?.retrievalAttemptId,
+              value.journalEntries[1]?.acquisitionObservationId,
+              journalJson,
+              ledgerJson,
+              value.workflowId,
+            );
+          const row = database
+            .prepare(`SELECT request_identity_hash, retrieval_attempt_id,
+              acquisition_observation_id, journal_json, ledger_json, workflow_hash
+              FROM market_acquisition_owned_request_started WHERE workflow_id = ?`)
+            .get(value.workflowId) as
+            | {
+                request_identity_hash: string;
+                retrieval_attempt_id: string;
+                acquisition_observation_id: string;
+                journal_json: string;
+                ledger_json: string;
+                workflow_hash: string;
+              }
+            | undefined;
+          if (
+            row === undefined ||
+            row.request_identity_hash !== value.identity.requestIdentityHash ||
+            row.retrieval_attempt_id !== value.journalEntries[1]?.retrievalAttemptId ||
+            row.acquisition_observation_id !== value.journalEntries[1]?.acquisitionObservationId ||
+            row.journal_json !== journalJson ||
+            row.ledger_json !== ledgerJson ||
+            row.workflow_hash !== value.workflowId
+          ) {
+            throw new TypeError("credential-request-started-workflow-invalid");
+          }
+        })
+        .immediate();
+    },
+    claim(workflowId) {
+      return (
+        database
+          .prepare(`INSERT OR IGNORE INTO market_acquisition_owned_attempt_claims (workflow_id)
+            VALUES (?)`)
+          .run(workflowId).changes === 1
+      );
+    },
+  });
+}
+
+/**
+ * Live credential root. It owns the SQLite handle and derives request-started evidence internally;
+ * callers never receive a journal, producer, database, or workflow-write authority.
+ */
+export function openSqliteDurableCredentialAuthorizationBoundary(
+  filename: string,
+  migrations: readonly Migration[],
+  plan: ValidatedMarketAcquisitionConfiguration,
 ): DurableCredentialAuthorizationBoundary {
-  assertOwnedSqliteAcquisitionJournal(journal);
-  assertOwnedSqliteRetentionJournal(retentionJournal);
-  return constructCredentialAuthorizationBoundary(journal, retentionJournal);
+  validatePlan(plan);
+  const database = openSqliteDatabase(filename, migrations);
+  try {
+    const retention = createSqliteArtifactRetentionJournal(database);
+    const store = productionCredentialStore(database);
+    const boundary = new DurableCredentialAuthorizationBoundary(
+      undefined,
+      retention,
+      store,
+      CREDENTIAL_BOUNDARY_CONSTRUCTION_AUTHORITY,
+    );
+    credentialAuthorizationBoundaries.add(boundary);
+    Object.freeze(boundary);
+    productionCredentialDatabases.set(boundary, database);
+    return boundary;
+  } catch (error) {
+    database.close();
+    throw error;
+  }
 }
 
 export function createTestDurableCredentialAuthorizationBoundary(

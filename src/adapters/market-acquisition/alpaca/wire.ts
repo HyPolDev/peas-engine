@@ -29,19 +29,18 @@ import type { ValidatedMarketAcquisitionConfiguration } from "../contracts.js";
 import { assertValidatedMarketAcquisitionConfiguration } from "../configuration.js";
 import { ALPACA_ROUTE_REGISTRY } from "../identity.js";
 import { validateJournalLedgerBindings } from "../artifact-integration.js";
-import {
-  assertOwnedAcquisitionJournal,
-  assertOwnedSqliteAcquisitionJournal,
-} from "../owned-journal.js";
+import { assertOwnedAcquisitionJournal } from "../owned-journal.js";
 import {
   type AlpacaWireSemanticEvidenceStore,
   assertOwnedAlpacaWireSemanticEvidenceStore,
   assertAcceptedAlpacaWireSemanticEvidence,
-  assertOwnedSqliteAlpacaWireSemanticEvidenceStore,
+  createSqliteAlpacaWireSemanticEvidenceStore,
 } from "./wire-semantic-evidence.js";
+import { openSqliteDatabase, type Migration, type SqliteDatabase } from "../../sqlite/database.js";
+import { createSqliteAcquisitionJournal } from "../sqlite-journal.js";
 export {
   DurableAlpacaWireSemanticEvidenceBoundary,
-  createDurableAlpacaWireSemanticEvidenceBoundary,
+  openSqliteDurableAlpacaWireSemanticEvidenceBoundary,
   createTestDurableAlpacaWireSemanticEvidenceBoundary,
 } from "./wire-semantic-evidence.js";
 import {
@@ -119,6 +118,7 @@ const wireAdmissionAuthorities = new WeakMap<
   }>
 >();
 const wireAdmissionBoundaries = new WeakSet<object>();
+const productionWireAdmissionDatabases = new WeakMap<object, SqliteDatabase>();
 const WIRE_ADMISSION_BOUNDARY_CONSTRUCTION_AUTHORITY = Object.freeze({});
 
 export type AlpacaWireAdmissionAuthority = Readonly<{
@@ -297,6 +297,14 @@ export class DurableAlpacaWireAdmissionBoundary {
     );
     return authority;
   }
+
+  close(): void {
+    assertOwnedDurableAlpacaWireAdmissionBoundary(this);
+    const database = productionWireAdmissionDatabases.get(this);
+    if (database === undefined) throw new TypeError("production-wire-admission-root-required");
+    productionWireAdmissionDatabases.delete(this);
+    database.close();
+  }
 }
 
 function constructAlpacaWireAdmissionBoundary(
@@ -312,13 +320,22 @@ function constructAlpacaWireAdmissionBoundary(
   return boundary;
 }
 
-export function createDurableAlpacaWireAdmissionBoundary(
-  journal: AcquisitionJournal,
-  evidence: AlpacaWireSemanticEvidenceStore,
+export function openSqliteDurableAlpacaWireAdmissionBoundary(
+  filename: string,
+  migrations: readonly Migration[],
+  expectedIdentity: JournalIdentityInput,
 ): DurableAlpacaWireAdmissionBoundary {
-  assertOwnedSqliteAcquisitionJournal(journal);
-  assertOwnedSqliteAlpacaWireSemanticEvidenceStore(evidence);
-  return constructAlpacaWireAdmissionBoundary(journal, evidence);
+  const database = openSqliteDatabase(filename, migrations);
+  try {
+    const journal = createSqliteAcquisitionJournal(database, expectedIdentity);
+    const evidence = createSqliteAlpacaWireSemanticEvidenceStore(database);
+    const boundary = constructAlpacaWireAdmissionBoundary(journal, evidence);
+    productionWireAdmissionDatabases.set(boundary, database);
+    return boundary;
+  } catch (error) {
+    database.close();
+    throw error;
+  }
 }
 
 export function createTestDurableAlpacaWireAdmissionBoundary(

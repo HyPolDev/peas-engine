@@ -7,7 +7,6 @@ import { isProxy } from "node:util/types";
 
 import { P1_10_TEST_AUTHORITY } from "../../internal-test-authority.js";
 import { AUTHORIZATION_MODE, MARKET_ACQUISITION_LIMITS } from "./contracts.js";
-import { assertOwnedAcquisitionJournal } from "./owned-journal.js";
 
 export const JOURNAL_SCHEMA_VERSION = 1 as const;
 export const NO_TOKEN_HASH = "no-token";
@@ -803,7 +802,7 @@ export function assertAcquisitionWorkflowProducerAuthority(value: object | undef
 }
 
 /** Sole production writer for durable acquisition journal and ledger facts. */
-export class DurableAcquisitionWorkflowProducer {
+class DurableAcquisitionWorkflowProducer {
   readonly #journal: AcquisitionJournal;
 
   constructor(journal: AcquisitionJournal, constructionAuthority?: object) {
@@ -837,16 +836,6 @@ export class DurableAcquisitionWorkflowProducer {
       await this.#journal.append(entry, ACQUISITION_WORKFLOW_PRODUCER_AUTHORITY);
     }
   }
-}
-
-export function createDurableAcquisitionWorkflowProducer(
-  journal: AcquisitionJournal,
-): DurableAcquisitionWorkflowProducer {
-  assertOwnedAcquisitionJournal(journal);
-  return new DurableAcquisitionWorkflowProducer(
-    journal,
-    ACQUISITION_WORKFLOW_PRODUCER_CONSTRUCTION_AUTHORITY,
-  );
 }
 
 /** Test-only fixture ingress for facts otherwise written only by the owned workflow producer. */

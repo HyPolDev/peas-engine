@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 
@@ -10,7 +12,7 @@ import { normalizeRecordedMarketRecords } from "../src/providers/market-referenc
 import { deriveAcquisitionObservationId } from "../src/providers/observation-ledger.js";
 import {
   AlpacaWireContractError,
-  createDurableAlpacaWireAdmissionBoundary,
+  openSqliteDurableAlpacaWireAdmissionBoundary,
   createTestDurableAlpacaWireAdmissionBoundary,
   createTestDurableAlpacaWireSemanticEvidenceBoundary,
   admitAlpacaHistoricalPage,
@@ -26,7 +28,7 @@ import {
   MemoryAlpacaWireSemanticEvidenceStore,
   createTestAlpacaWireSemanticAuthority,
   createSqliteAlpacaWireSemanticEvidenceStore,
-  createDurableAlpacaWireSemanticEvidenceBoundary,
+  openSqliteDurableAlpacaWireSemanticEvidenceBoundary,
 } from "../src/adapters/market-acquisition/alpaca/wire-semantic-evidence.js";
 import {
   ALPACA_PRIMARY_CORPUS_AUTHORITY_ID,
@@ -50,6 +52,10 @@ import {
 } from "../src/adapters/market-acquisition/identity.js";
 import { createMemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
 import { createSqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
+import { createMemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
+import { createSqliteArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/sqlite-journal.js";
+import { deriveRetentionOwnershipId } from "../src/adapters/market-acquisition/retention/identity.js";
+import { ALPACA_PRIVATE_ARTIFACT_POLICY } from "../src/adapters/market-acquisition/private-artifact-policy.js";
 import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
 import {
   GENESIS_HASH,
@@ -497,10 +503,13 @@ async function authenticatedAdmission(
   );
   append("artifact-committed", withStage(body(artifact), committed));
   append("artifact-verified", withStage(body(artifact), verified));
-  const database =
-    persistence === "sqlite"
-      ? openSqliteDatabase(":memory:", loadMigrations(`${process.cwd()}/migrations`))
-      : null;
+  const sqliteDirectory =
+    persistence === "sqlite" ? mkdtempSync(join(tmpdir(), "peas-wire-owned-root-")) : null;
+  const sqliteFilename = sqliteDirectory === null ? null : join(sqliteDirectory, "wire.sqlite");
+  let database =
+    sqliteFilename === null
+      ? null
+      : openSqliteDatabase(sqliteFilename, loadMigrations(`${process.cwd()}/migrations`));
   const journal =
     database === null
       ? createMemoryAcquisitionJournal(expectedIdentity)
@@ -512,6 +521,33 @@ async function authenticatedAdmission(
     database === null
       ? new MemoryAlpacaWireSemanticEvidenceStore()
       : createSqliteAlpacaWireSemanticEvidenceStore(database);
+  const retention =
+    database === null
+      ? createMemoryArtifactRetentionJournal()
+      : createSqliteArtifactRetentionJournal(database);
+  const ownershipInput = Object.freeze({
+    policyId: ALPACA_PRIVATE_ARTIFACT_POLICY.policyId,
+    providerLane: "alpaca" as const,
+    providerId: plan.route.providerId,
+    datasetId: plan.route.datasetId,
+    feedId: plan.route.feedId,
+    endpointChannelId: plan.route.endpointChannelId,
+    artifactObservationId: artifact.artifactObservationId,
+    artifactDigest: artifact.artifactDigest,
+    artifactSizeBytes: artifact.artifactSizeBytes,
+    derivedIds: Object.freeze([]),
+    trustedCaptureMs: context.durablyRecordedAtMs,
+    expiresAtMs: context.durablyRecordedAtMs + ALPACA_PRIVATE_ARTIFACT_POLICY.maximumRetentionMs,
+  });
+  assert.equal(
+    retention.registerOwnershipAndApplyActiveStop(
+      Object.freeze({
+        ...ownershipInput,
+        ownershipId: deriveRetentionOwnershipId(ownershipInput),
+      }),
+    ),
+    true,
+  );
   const request = {
     method: "GET" as const,
     origin: plan.route.origin,
@@ -597,10 +633,40 @@ async function authenticatedAdmission(
     },
   } as unknown as ArtifactStore;
   const guarded = retentionGuardedArtifactStore(rawStore, [artifact, semanticAuthorityArtifact]);
+  if (database !== null) {
+    database.close();
+    database = null;
+  }
   const semanticBoundary =
-    database === null
-      ? createTestDurableAlpacaWireSemanticEvidenceBoundary(journal, evidence, guarded)
-      : createDurableAlpacaWireSemanticEvidenceBoundary(journal, evidence, guarded);
+    sqliteFilename === null
+      ? createTestDurableAlpacaWireSemanticEvidenceBoundary(journal, evidence, guarded, retention)
+      : openSqliteDurableAlpacaWireSemanticEvidenceBoundary(
+          sqliteFilename,
+          loadMigrations(`${process.cwd()}/migrations`),
+          expectedIdentity,
+          guarded,
+        );
+  if (sqliteFilename === null) {
+    const unownedCorpusBoundary = createTestDurableAlpacaWireSemanticEvidenceBoundary(
+      journal,
+      evidence,
+      guarded,
+      createMemoryArtifactRetentionJournal(),
+    );
+    await assert.rejects(
+      () =>
+        unownedCorpusBoundary.issueAuthority(plan, {
+          artifactObservationId: artifact.artifactObservationId,
+          artifactObservationHash: artifact.artifactObservationHash,
+          artifactDigest: artifact.artifactDigest,
+          artifactSizeBytes: artifact.artifactSizeBytes,
+          retrievalAttemptId,
+          requestIdentityHash: plan.requestIdentityHash,
+          provider: "alpaca",
+        }),
+      /corpus-admission-invalid/u,
+    );
+  }
   const issuedSemanticAuthority = await semanticBoundary.issueAuthority(plan, {
     artifactObservationId: artifact.artifactObservationId,
     artifactObservationHash: artifact.artifactObservationHash,
@@ -610,7 +676,8 @@ async function authenticatedAdmission(
     requestIdentityHash: plan.requestIdentityHash,
     provider: "alpaca",
   });
-  if (database !== null) {
+  if (sqliteFilename !== null) {
+    database = openSqliteDatabase(sqliteFilename, loadMigrations(`${process.cwd()}/migrations`));
     const corpusAdmission = database
       .prepare(`SELECT primary_corpus_member, corpus_admission_hash
         FROM market_acquisition_alpaca_corpus_admissions
@@ -623,6 +690,8 @@ async function authenticatedAdmission(
       corpusAdmission?.corpus_admission_hash,
       issuedSemanticAuthority.corpusAdmissionHash,
     );
+    database.close();
+    database = null;
   }
   if (semanticSubstitution === undefined) {
     assert.equal(
@@ -643,6 +712,19 @@ async function authenticatedAdmission(
       }),
     /corpus-admission-invalid/u,
   );
+  await assert.rejects(
+    () =>
+      semanticBoundary.issueAuthority(plan, {
+        artifactObservationId: semanticAuthorityArtifact.artifactObservationId,
+        artifactObservationHash: semanticAuthorityArtifact.artifactObservationHash,
+        artifactDigest: semanticAuthorityArtifact.artifactDigest,
+        artifactSizeBytes: semanticAuthorityArtifact.artifactSizeBytes,
+        retrievalAttemptId,
+        requestIdentityHash: plan.requestIdentityHash,
+        provider: "alpaca",
+      }),
+    /corpus-admission-invalid/u,
+  );
   await semanticBoundary.persist({
     expectedIdentity,
     marketAcquisitionJournalId: journalId,
@@ -658,10 +740,15 @@ async function authenticatedAdmission(
       stageLedgerFactId: authorityVerified.entryId,
     },
   });
+  if (sqliteFilename !== null) semanticBoundary.close();
   const admissionBoundary =
-    database === null
+    sqliteFilename === null
       ? createTestDurableAlpacaWireAdmissionBoundary(journal, evidence)
-      : createDurableAlpacaWireAdmissionBoundary(journal, evidence);
+      : openSqliteDurableAlpacaWireAdmissionBoundary(
+          sqliteFilename,
+          loadMigrations(`${process.cwd()}/migrations`),
+          expectedIdentity,
+        );
   const authority = await admissionBoundary.issue({
     plan: authorityPlan ?? plan,
     expectedIdentity,
@@ -670,7 +757,8 @@ async function authenticatedAdmission(
   try {
     return parseAndAdmitAlpacaHistoricalPage(endpointKind, bytes, authority);
   } finally {
-    database?.close();
+    if (sqliteFilename !== null) admissionBoundary.close();
+    if (sqliteDirectory !== null) rmSync(sqliteDirectory, { recursive: true, force: true });
   }
 }
 

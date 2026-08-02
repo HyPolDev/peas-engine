@@ -17,15 +17,20 @@ import {
   deriveMarketAcquisitionJournalId,
   validateJournalEntries,
 } from "../journal.js";
+import { assertOwnedAcquisitionJournal, assertOwnedRetentionJournal } from "../owned-journal.js";
 import {
-  assertOwnedAcquisitionJournal,
-  assertOwnedSqliteAcquisitionJournal,
-} from "../owned-journal.js";
+  assertOwnedSqliteDatabase,
+  openSqliteDatabase,
+  type Migration,
+  type SqliteDatabase,
+} from "../../sqlite/database.js";
+import { createSqliteAcquisitionJournal } from "../sqlite-journal.js";
+import type { ArtifactRetentionJournal } from "../retention/contracts.js";
+import { createSqliteArtifactRetentionJournal } from "../retention/sqlite-journal.js";
 import {
   type RetentionEnforcedArtifactStore,
   assertRetentionEnforcedArtifactStore,
 } from "../retention/artifact-access.js";
-import { assertOwnedSqliteDatabase, type SqliteDatabase } from "../../sqlite/database.js";
 import type { ValidatedMarketAcquisitionConfiguration } from "../contracts.js";
 import { assertValidatedMarketAcquisitionConfiguration } from "../configuration.js";
 import {
@@ -103,6 +108,7 @@ type AlpacaPrimaryCorpusAdmissionV1 = Readonly<{
 const EVIDENCE_ID = /^wse1_[0-9a-f]{64}$/u;
 const HASH = /^[0-9a-f]{64}$/u;
 const semanticEvidenceBoundaries = new WeakSet<object>();
+const productionSemanticEvidenceDatabases = new WeakMap<object, SqliteDatabase>();
 const ownedSemanticEvidenceStores = new WeakSet<object>();
 const SEMANTIC_EVIDENCE_BOUNDARY_CONSTRUCTION_AUTHORITY = Object.freeze({});
 
@@ -606,19 +612,23 @@ export class DurableAlpacaWireSemanticEvidenceBoundary {
   readonly #journal: AcquisitionJournal;
   readonly #evidence: AlpacaWireSemanticEvidenceStore;
   readonly #artifacts: RetentionEnforcedArtifactStore;
+  readonly #retention: ArtifactRetentionJournal;
 
   constructor(
     journal: AcquisitionJournal,
     evidence: AlpacaWireSemanticEvidenceStore,
     artifacts: RetentionEnforcedArtifactStore,
+    retention: ArtifactRetentionJournal,
     authority?: object,
   ) {
     assertOwnedAcquisitionJournal(journal);
     assertOwnedAlpacaWireSemanticEvidenceStore(evidence);
     assertRetentionEnforcedArtifactStore(artifacts);
+    assertOwnedRetentionJournal(retention);
     this.#journal = journal;
     this.#evidence = evidence;
     this.#artifacts = artifacts;
+    this.#retention = retention;
     if (authority === SEMANTIC_EVIDENCE_BOUNDARY_CONSTRUCTION_AUTHORITY) {
       semanticEvidenceBoundaries.add(this);
     }
@@ -633,6 +643,53 @@ export class DurableAlpacaWireSemanticEvidenceBoundary {
     if (
       pageArtifact.provider !== "alpaca" ||
       pageArtifact.requestIdentityHash !== plan.requestIdentityHash
+    ) {
+      throw new TypeError("wire-semantic-corpus-admission-invalid");
+    }
+    const ownership = this.#retention
+      .ownershipForDigest(pageArtifact.artifactDigest)
+      .filter(
+        (value) =>
+          value.providerLane === "alpaca" &&
+          value.providerId === plan.route.providerId &&
+          value.datasetId === plan.route.datasetId &&
+          value.feedId === plan.route.feedId &&
+          value.endpointChannelId === plan.route.endpointChannelId &&
+          value.artifactObservationId === pageArtifact.artifactObservationId &&
+          value.artifactDigest === pageArtifact.artifactDigest &&
+          value.artifactSizeBytes === pageArtifact.artifactSizeBytes,
+      );
+    if (ownership.length !== 1) {
+      throw new TypeError("wire-semantic-corpus-admission-invalid");
+    }
+    const expectedIdentity = Object.freeze({
+      schemaVersion: 1 as const,
+      requestIdentityHash: plan.requestIdentityHash,
+      providerId: plan.route.providerId,
+      datasetId: plan.route.datasetId,
+      feedId: plan.route.feedId,
+      endpointChannelId: plan.route.endpointChannelId,
+    });
+    const journalId = deriveMarketAcquisitionJournalId(expectedIdentity);
+    const journal = await this.#journal.load(journalId);
+    validateJournalEntries(journal, expectedIdentity);
+    const ledger = await this.#journal.loadLedgerEntries();
+    validateJournalLedgerBindings(journal, ledger);
+    const latest = journal.at(-1);
+    const stage = ledger.find((entry) => entry.entryId === latest?.stageLedgerFactId);
+    if (
+      latest?.checkpointKind !== "artifact-verified" ||
+      latest.artifactObservationId !== pageArtifact.artifactObservationId ||
+      latest.artifactObservationHash !== pageArtifact.artifactObservationHash ||
+      latest.artifactDigest !== pageArtifact.artifactDigest ||
+      latest.artifactSizeBytes !== pageArtifact.artifactSizeBytes ||
+      latest.retrievalAttemptId !== pageArtifact.retrievalAttemptId ||
+      stage?.facts.kind !== "artifact.verified" ||
+      stage.facts.vaultObservationId !== pageArtifact.artifactObservationId ||
+      stage.facts.artifactDigest !== pageArtifact.artifactDigest ||
+      stage.facts.metadataSizeBytes !== pageArtifact.artifactSizeBytes ||
+      !(await this.#journal.isWorkflowProducedJournalEntry(latest.journalEntryHash)) ||
+      !(await this.#journal.isWorkflowProducedLedgerEntry(stage.entryId))
     ) {
       throw new TypeError("wire-semantic-corpus-admission-invalid");
     }
@@ -660,6 +717,14 @@ export class DurableAlpacaWireSemanticEvidenceBoundary {
       queryStartNs: plan.queryStartNs.toString(),
       queryEndNs: plan.queryEndNs.toString(),
     });
+  }
+
+  close(): void {
+    assertOwnedDurableAlpacaWireSemanticEvidenceBoundary(this);
+    const database = productionSemanticEvidenceDatabases.get(this);
+    if (database === undefined) throw new TypeError("production-wire-semantic-root-required");
+    productionSemanticEvidenceDatabases.delete(this);
+    database.close();
   }
 
   async persist(
@@ -847,32 +912,50 @@ function constructAlpacaWireSemanticEvidenceBoundary(
   journal: AcquisitionJournal,
   evidence: AlpacaWireSemanticEvidenceStore,
   artifacts: RetentionEnforcedArtifactStore,
+  retention: ArtifactRetentionJournal,
 ): DurableAlpacaWireSemanticEvidenceBoundary {
   const boundary = new DurableAlpacaWireSemanticEvidenceBoundary(
     journal,
     evidence,
     artifacts,
+    retention,
     SEMANTIC_EVIDENCE_BOUNDARY_CONSTRUCTION_AUTHORITY,
   );
   Object.freeze(boundary);
   return boundary;
 }
 
-export function createDurableAlpacaWireSemanticEvidenceBoundary(
-  journal: AcquisitionJournal,
-  evidence: AlpacaWireSemanticEvidenceStore,
+export function openSqliteDurableAlpacaWireSemanticEvidenceBoundary(
+  filename: string,
+  migrations: readonly Migration[],
+  expectedIdentity: JournalIdentityInput,
   artifacts: RetentionEnforcedArtifactStore,
 ): DurableAlpacaWireSemanticEvidenceBoundary {
-  assertOwnedSqliteAcquisitionJournal(journal);
-  assertOwnedSqliteAlpacaWireSemanticEvidenceStore(evidence);
   assertRetentionEnforcedArtifactStore(artifacts);
-  return constructAlpacaWireSemanticEvidenceBoundary(journal, evidence, artifacts);
+  const database = openSqliteDatabase(filename, migrations);
+  try {
+    const journal = createSqliteAcquisitionJournal(database, expectedIdentity);
+    const evidence = createSqliteAlpacaWireSemanticEvidenceStore(database);
+    const retention = createSqliteArtifactRetentionJournal(database);
+    const boundary = constructAlpacaWireSemanticEvidenceBoundary(
+      journal,
+      evidence,
+      artifacts,
+      retention,
+    );
+    productionSemanticEvidenceDatabases.set(boundary, database);
+    return boundary;
+  } catch (error) {
+    database.close();
+    throw error;
+  }
 }
 
 export function createTestDurableAlpacaWireSemanticEvidenceBoundary(
   journal: AcquisitionJournal,
   evidence: AlpacaWireSemanticEvidenceStore,
   artifacts: RetentionEnforcedArtifactStore,
+  retention: ArtifactRetentionJournal,
 ): DurableAlpacaWireSemanticEvidenceBoundary {
   if (P1_10_TEST_AUTHORITY === undefined) {
     throw new TypeError("test-wire-semantic-evidence-composition-unavailable");
@@ -880,7 +963,8 @@ export function createTestDurableAlpacaWireSemanticEvidenceBoundary(
   assertOwnedAcquisitionJournal(journal);
   assertOwnedAlpacaWireSemanticEvidenceStore(evidence);
   assertRetentionEnforcedArtifactStore(artifacts);
-  return constructAlpacaWireSemanticEvidenceBoundary(journal, evidence, artifacts);
+  assertOwnedRetentionJournal(retention);
+  return constructAlpacaWireSemanticEvidenceBoundary(journal, evidence, artifacts, retention);
 }
 
 export function assertOwnedDurableAlpacaWireSemanticEvidenceBoundary(
