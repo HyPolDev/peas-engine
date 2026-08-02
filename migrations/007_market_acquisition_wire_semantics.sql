@@ -49,10 +49,32 @@ CREATE TABLE market_acquisition_workflow_ledger_proofs (
   PRIMARY KEY (market_acquisition_journal_id, entry_id)
 ) STRICT;
 
+CREATE TABLE market_acquisition_alpaca_corpus_admissions (
+  corpus_admission_hash TEXT PRIMARY KEY,
+  request_identity_hash TEXT NOT NULL,
+  artifact_observation_id TEXT NOT NULL,
+  artifact_digest TEXT NOT NULL,
+  primary_corpus_member INTEGER NOT NULL CHECK (primary_corpus_member = 1),
+  UNIQUE (request_identity_hash, artifact_observation_id, artifact_digest)
+) STRICT;
+
+CREATE TRIGGER market_acquisition_alpaca_corpus_admissions_no_update
+BEFORE UPDATE ON market_acquisition_alpaca_corpus_admissions
+BEGIN SELECT RAISE(ABORT, 'alpaca corpus admission is immutable'); END;
+
+CREATE TRIGGER market_acquisition_alpaca_corpus_admissions_no_delete
+BEFORE DELETE ON market_acquisition_alpaca_corpus_admissions
+BEGIN SELECT RAISE(ABORT, 'alpaca corpus admission is immutable'); END;
+
 CREATE TRIGGER market_acquisition_workflow_journal_proofs_owned_insert
 BEFORE INSERT ON market_acquisition_workflow_journal_proofs
 WHEN peas_acquisition_workflow_proof_authorized(NEW.market_acquisition_journal_id) <> 1
 BEGIN SELECT RAISE(ABORT, 'acquisition workflow proof write denied'); END;
+
+CREATE TRIGGER market_acquisition_workflow_ledger_entries_owned_insert
+BEFORE INSERT ON market_acquisition_ledger_entries
+WHEN peas_acquisition_workflow_proof_authorized(NEW.market_acquisition_journal_id) <> 1
+BEGIN SELECT RAISE(ABORT, 'acquisition workflow ledger write denied'); END;
 
 CREATE TRIGGER market_acquisition_workflow_ledger_proofs_owned_insert
 BEFORE INSERT ON market_acquisition_workflow_ledger_proofs

@@ -12,12 +12,16 @@ import {
 import { assertValidatedMarketAcquisitionConfiguration } from "./configuration.js";
 import {
   type AcquisitionJournal,
+  type DurableAcquisitionWorkflowProducer,
+  type JournalEntry,
   type JournalIdentityInput,
+  createDurableAcquisitionWorkflowProducer,
   createJournalEntry,
   deriveMarketAcquisitionJournalId,
   journalEntryBody,
   validateJournalEntries,
 } from "./journal.js";
+import type { ObservationLedgerEntryV1 } from "../../providers/observation-ledger.js";
 import { safeAcquisitionError, type SafeAcquisitionError } from "./redaction.js";
 import type { ArtifactRetentionJournal } from "./retention/contracts.js";
 import type {
@@ -185,6 +189,7 @@ function validatePlan(plan: ValidatedMarketAcquisitionConfiguration): void {
 export class DurableCredentialAuthorizationBoundary {
   readonly #journal: AcquisitionJournal;
   readonly #retentionJournal: ArtifactRetentionJournal;
+  readonly #workflowProducer: DurableAcquisitionWorkflowProducer;
 
   constructor(
     journal: AcquisitionJournal,
@@ -195,9 +200,52 @@ export class DurableCredentialAuthorizationBoundary {
     assertOwnedRetentionJournal(retentionJournal);
     this.#journal = journal;
     this.#retentionJournal = retentionJournal;
+    this.#workflowProducer = createDurableAcquisitionWorkflowProducer(journal);
     if (authority === CREDENTIAL_BOUNDARY_CONSTRUCTION_AUTHORITY) {
       credentialAuthorizationBoundaries.add(this);
     }
+  }
+
+  async recordRequestStarted(
+    input: CredentialAuthorizationRequest,
+    ledgerEntries: readonly ObservationLedgerEntryV1[],
+    journalEntries: readonly JournalEntry[],
+  ): Promise<void> {
+    assertOwnedDurableCredentialAuthorizationBoundary(this);
+    validatePlan(input.plan);
+    if (
+      input.marketAcquisitionJournalId !== deriveMarketAcquisitionJournalId(input.journalIdentity)
+    ) {
+      throw new TypeError("credential-journal-identity-invalid");
+    }
+    validateJournalEntries(journalEntries, input.journalIdentity);
+    validateJournalLedgerBindings(journalEntries, ledgerEntries);
+    const latest = journalEntries.at(-1);
+    const stage = ledgerEntries.find((entry) => entry.entryId === latest?.stageLedgerFactId);
+    const declaration = ledgerEntries.find(
+      (entry) =>
+        stage?.parentEntryIds.includes(entry.entryId) === true &&
+        entry.facts.kind === "acquisition.declared",
+    );
+    if (
+      journalEntries.length !== 2 ||
+      latest?.checkpointKind !== "request-started" ||
+      latest.requestIdentityHash !== input.plan.requestIdentityHash ||
+      latest.acquisitionConfigurationHash !== input.plan.acquisitionConfigurationHash ||
+      latest.acquisitionObservationId !== input.acquisitionObservationId ||
+      latest.retrievalAttemptId !== input.retrievalAttemptId ||
+      stage?.facts.kind !== "request.started" ||
+      stage.facts.acquisitionObservationId !== input.acquisitionObservationId ||
+      declaration?.facts.kind !== "acquisition.declared" ||
+      declaration.facts.acquisitionObservationId !== input.acquisitionObservationId ||
+      declaration.facts.retrievalAttemptId !== input.retrievalAttemptId ||
+      declaration.facts.sanitizedRequestIdentityHash !== input.plan.requestIdentityHash ||
+      declaration.facts.provider !== "alpaca" ||
+      declaration.facts.routeLabel !== input.plan.route.safeRouteLabel
+    ) {
+      throw new TypeError("credential-request-started-workflow-invalid");
+    }
+    await this.#workflowProducer.persist(ledgerEntries, journalEntries);
   }
 
   async establish(input: CredentialAuthorizationRequest): Promise<CredentialAuthorizationEvidence> {

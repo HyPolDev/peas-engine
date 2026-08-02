@@ -9,6 +9,7 @@ import {
   validateObservationLedgerBundle,
   type ObservationLedgerEntryV1,
 } from "../../providers/observation-ledger.js";
+import Database from "better-sqlite3";
 import { assertOwnedSqliteDatabase, type SqliteDatabase } from "../sqlite/database.js";
 import {
   type AcquisitionJournal,
@@ -21,13 +22,37 @@ import {
 
 const ownedSqliteAcquisitionJournals = new WeakSet<object>();
 const workflowProofWriteScopes = new WeakMap<SqliteDatabase, Set<string>>();
+const WORKFLOW_PROOF_AUTHORIZATION_FUNCTION = "peas_acquisition_workflow_proof_authorized";
+const rawSqliteFunction = Database.prototype.function as unknown as (
+  this: SqliteDatabase,
+  name: string,
+  options: Readonly<{ deterministic: boolean }>,
+  implementation: (journalId: unknown) => number,
+) => SqliteDatabase;
+
+Object.defineProperty(Database.prototype, "function", {
+  configurable: false,
+  enumerable: false,
+  writable: false,
+  value(this: SqliteDatabase, name: string, ...args: readonly unknown[]): SqliteDatabase {
+    if (name === WORKFLOW_PROOF_AUTHORIZATION_FUNCTION) {
+      throw new TypeError("reserved-sqlite-function-registration-denied");
+    }
+    return Reflect.apply(
+      rawSqliteFunction as (...values: readonly unknown[]) => SqliteDatabase,
+      this,
+      [name, ...args],
+    );
+  },
+});
 
 function workflowProofScope(database: SqliteDatabase): Set<string> {
   const existing = workflowProofWriteScopes.get(database);
   if (existing !== undefined) return existing;
   const scope = new Set<string>();
-  database.function(
-    "peas_acquisition_workflow_proof_authorized",
+  rawSqliteFunction.call(
+    database,
+    WORKFLOW_PROOF_AUTHORIZATION_FUNCTION,
     { deterministic: false },
     (journalId: unknown) => (typeof journalId === "string" && scope.has(journalId) ? 1 : 0),
   );
@@ -113,6 +138,17 @@ export function installSqliteAcquisitionJournalSchema(database: SqliteDatabase):
     BEFORE INSERT ON market_acquisition_workflow_journal_proofs
     WHEN peas_acquisition_workflow_proof_authorized(NEW.market_acquisition_journal_id) <> 1
     BEGIN SELECT RAISE(ABORT, 'acquisition workflow proof write denied'); END;
+
+    CREATE TRIGGER IF NOT EXISTS market_acquisition_workflow_journal_entries_owned_insert
+    BEFORE INSERT ON market_acquisition_journal_entries
+    WHEN NEW.checkpoint_kind <> 'attempt-started'
+      AND peas_acquisition_workflow_proof_authorized(NEW.market_acquisition_journal_id) <> 1
+    BEGIN SELECT RAISE(ABORT, 'acquisition workflow journal write denied'); END;
+
+    CREATE TRIGGER IF NOT EXISTS market_acquisition_workflow_ledger_entries_owned_insert
+    BEFORE INSERT ON market_acquisition_ledger_entries
+    WHEN peas_acquisition_workflow_proof_authorized(NEW.market_acquisition_journal_id) <> 1
+    BEGIN SELECT RAISE(ABORT, 'acquisition workflow ledger write denied'); END;
 
     CREATE TRIGGER IF NOT EXISTS market_acquisition_workflow_ledger_proofs_owned_insert
     BEFORE INSERT ON market_acquisition_workflow_ledger_proofs

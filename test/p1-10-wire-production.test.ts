@@ -610,6 +610,20 @@ async function authenticatedAdmission(
     requestIdentityHash: plan.requestIdentityHash,
     provider: "alpaca",
   });
+  if (database !== null) {
+    const corpusAdmission = database
+      .prepare(`SELECT primary_corpus_member, corpus_admission_hash
+        FROM market_acquisition_alpaca_corpus_admissions
+        WHERE request_identity_hash = ? AND artifact_observation_id = ? AND artifact_digest = ?`)
+      .get(plan.requestIdentityHash, artifact.artifactObservationId, artifact.artifactDigest) as
+      | { primary_corpus_member: bigint; corpus_admission_hash: string }
+      | undefined;
+    assert.equal(corpusAdmission?.primary_corpus_member, 1n);
+    assert.equal(
+      corpusAdmission?.corpus_admission_hash,
+      issuedSemanticAuthority.corpusAdmissionHash,
+    );
+  }
   if (semanticSubstitution === undefined) {
     assert.equal(
       canonicalJson(issuedSemanticAuthority as unknown as JsonValue),
@@ -1086,6 +1100,14 @@ test("production parser reject and quarantine branches remain executable and ine
   const spring = acceptedAlpacaWireCalendarEntries(
     (BigInt(Date.parse("2033-03-10T12:00:00Z")) * 1_000_000n).toString(),
     (BigInt(Date.parse("2033-03-14T12:00:00Z")) * 1_000_000n).toString(),
+  );
+  assert.throws(
+    () =>
+      acceptedAlpacaWireCalendarEntries(
+        (BigInt(Date.parse("2006-03-20T12:00:00Z")) * 1_000_000n).toString(),
+        (BigInt(Date.parse("2006-03-20T12:15:00Z")) * 1_000_000n).toString(),
+      ),
+    /calendar-year-unsupported/u,
   );
   assert.deepEqual(
     spring.map((entry) => [entry.sessionDate, entry.utcOffsetMinutes]),

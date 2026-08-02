@@ -12,6 +12,8 @@ export const ALPACA_PRIMARY_CORPUS_AUTHORITY_ID =
 
 const SIX_HOURS_MS = 6 * 60 * 60 * 1_000;
 const MINUTE_MS = 60 * 1_000;
+const FIRST_SUPPORTED_CALENDAR_YEAR = 2007;
+const LAST_SUPPORTED_CALENDAR_YEAR = 9_999;
 const pad = (value: number): string => String(value).padStart(2, "0");
 
 function nthSundayUtcMs(year: number, month: number, ordinal: number, hour: number): number {
@@ -23,6 +25,9 @@ function nthSundayUtcMs(year: number, month: number, ordinal: number, hour: numb
 /** Immutable post-2007 America/New_York DST rule used by this frozen synthetic authority. */
 function utcOffsetAt(milliseconds: number): -300 | -240 {
   const year = new Date(milliseconds).getUTCFullYear();
+  if (year < FIRST_SUPPORTED_CALENDAR_YEAR || year > LAST_SUPPORTED_CALENDAR_YEAR) {
+    throw new TypeError("wire-semantic-calendar-year-unsupported");
+  }
   const daylightStart = nthSundayUtcMs(year, 2, 2, 7);
   const daylightEnd = nthSundayUtcMs(year, 10, 1, 6);
   return milliseconds >= daylightStart && milliseconds < daylightEnd ? -240 : -300;
@@ -53,6 +58,9 @@ function parseDate(value: string): Readonly<{ year: number; month: number; day: 
     verified.getUTCDate() !== day
   ) {
     throw new TypeError("wire-semantic-calendar-date-invalid");
+  }
+  if (year < FIRST_SUPPORTED_CALENDAR_YEAR || year > LAST_SUPPORTED_CALENDAR_YEAR) {
+    throw new TypeError("wire-semantic-calendar-year-unsupported");
   }
   return Object.freeze({ year, month, day });
 }

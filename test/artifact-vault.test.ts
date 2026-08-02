@@ -1219,6 +1219,56 @@ test("cancellation after source removal preserves the exact quarantine copy and 
   }
 });
 
+test("cancellation before source removal leaves both owned links for deterministic restart", async (context) => {
+  const fixture = processFixture(context, "quarantine-cancel-before-source-removal");
+  const database = openSqliteDatabase(fixture.databasePath, migrations);
+  let store!: DurableArtifactStore;
+  store = await DurableArtifactStore.open({
+    repository: new SqliteArtifactRepository(database),
+    clock: new ManualClock(1_800_000_000_000),
+    config: vaultConfig(fixture.root),
+    faultBoundary(checkpoint) {
+      if (checkpoint === "quarantine-sync") store.closeRetentionAdmission();
+    },
+  });
+  const source = join(fixture.root, "artifacts", "staging", "cancel-before-removal.part");
+  const original = Buffer.from("original synthetic pre-removal cancellation", "utf8");
+  writeFileSync(source, original);
+  await assert.rejects(() => store.reconcile(), /Reconciliation was stopped/u);
+  const quarantine = join(fixture.root, "artifacts", "quarantine");
+  const names = readdirSync(quarantine);
+  assert.equal(existsSync(source), true);
+  assert.equal(names.length, 1);
+  const target = join(quarantine, names[0] as string);
+  assert.deepEqual(readFileSync(source), original);
+  assert.deepEqual(readFileSync(target), original);
+  await store.close();
+  database.close();
+
+  const restartedDatabase = openSqliteDatabase(fixture.databasePath, migrations);
+  const restarted = await DurableArtifactStore.open({
+    repository: new SqliteArtifactRepository(restartedDatabase),
+    clock: new ManualClock(1_800_000_060_000),
+    config: vaultConfig(fixture.root),
+  });
+  try {
+    const durableCursor = (
+      restartedDatabase
+        .prepare("SELECT cursor_token FROM artifact_reconciliation_state WHERE singleton = 1")
+        .get() as { cursor_token: string }
+    ).cursor_token;
+    let report = await restarted.reconcile({ cursor: durableCursor });
+    while (report.continuationCursor !== null) {
+      report = await restarted.reconcile({ cursor: report.continuationCursor });
+    }
+    assert.equal(existsSync(source), false);
+    assert.deepEqual(readFileSync(target), original);
+  } finally {
+    await restarted.close();
+    restartedDatabase.close();
+  }
+});
+
 test("reconciliation hard-kill boundary matrix replays one deterministic action", {
   skip:
     process.env["PEAS_SKIP_HARD_KILL_MATRIX"] === "1"

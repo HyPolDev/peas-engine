@@ -92,6 +92,14 @@ export interface AlpacaWireSemanticEvidenceStore {
   loadForJournalEntry(journalEntryHash: string): AlpacaWireSemanticEvidenceV1 | undefined;
 }
 
+type AlpacaPrimaryCorpusAdmissionV1 = Readonly<{
+  requestIdentityHash: string;
+  artifactObservationId: string;
+  artifactDigest: string;
+  primaryCorpusMember: true;
+  corpusAdmissionHash: string;
+}>;
+
 const EVIDENCE_ID = /^wse1_[0-9a-f]{64}$/u;
 const HASH = /^[0-9a-f]{64}$/u;
 const semanticEvidenceBoundaries = new WeakSet<object>();
@@ -349,6 +357,7 @@ async function loadSemanticAuthorityBytes(
 export class MemoryAlpacaWireSemanticEvidenceStore implements AlpacaWireSemanticEvidenceStore {
   constructor() {
     memoryEvidence.set(this, new Map());
+    memoryCorpusAdmissions.set(this, new Map());
     if (P1_10_TEST_AUTHORITY !== undefined) {
       ownedSemanticEvidenceStores.add(this);
       Object.freeze(this);
@@ -405,6 +414,10 @@ const memoryEvidence = new WeakMap<
   MemoryAlpacaWireSemanticEvidenceStore,
   Map<string, AlpacaWireSemanticEvidenceV1>
 >();
+const memoryCorpusAdmissions = new WeakMap<
+  MemoryAlpacaWireSemanticEvidenceStore,
+  Map<string, AlpacaPrimaryCorpusAdmissionV1>
+>();
 const sqliteEvidenceDatabases = new WeakMap<
   SqliteAlpacaWireSemanticEvidenceStore,
   SqliteDatabase
@@ -451,6 +464,108 @@ function appendEvidence(
     if (existing === undefined) throw new Error("wire-semantic-evidence-insert-failed");
     sameEvidence(existing, value);
     return;
+  }
+  throw new TypeError("owned-wire-semantic-evidence-store-required");
+}
+
+function derivePrimaryCorpusAdmission(
+  requestIdentityHash: string,
+  artifactObservationId: string,
+  artifactDigest: string,
+): AlpacaPrimaryCorpusAdmissionV1 {
+  const body = Object.freeze({
+    requestIdentityHash,
+    artifactObservationId,
+    artifactDigest,
+    primaryCorpusMember: true as const,
+  });
+  return Object.freeze({
+    ...body,
+    corpusAdmissionHash: canonicalHash("peas/alpaca-wire-corpus-admission/v1", {
+      corpusAuthorityId: ALPACA_PRIMARY_CORPUS_AUTHORITY_ID,
+      requestIdentityHash,
+      pageArtifactObservationId: artifactObservationId,
+      pageArtifactDigest: artifactDigest,
+      primaryCorpusMember: true,
+    }),
+  });
+}
+
+function corpusAdmissionKey(value: AlpacaPrimaryCorpusAdmissionV1): string {
+  return `${value.requestIdentityHash}:${value.artifactObservationId}:${value.artifactDigest}`;
+}
+
+function appendCorpusAdmission(
+  store: AlpacaWireSemanticEvidenceStore,
+  value: AlpacaPrimaryCorpusAdmissionV1,
+): void {
+  const key = corpusAdmissionKey(value);
+  if (Object.getPrototypeOf(store) === MemoryAlpacaWireSemanticEvidenceStore.prototype) {
+    const values = memoryCorpusAdmissions.get(store as MemoryAlpacaWireSemanticEvidenceStore);
+    if (values === undefined) throw new TypeError("owned-wire-semantic-evidence-store-required");
+    const existing = values.get(key);
+    if (
+      existing !== undefined &&
+      canonicalJson(existing as unknown as JsonValue) !==
+        canonicalJson(value as unknown as JsonValue)
+    ) {
+      throw new TypeError("wire-semantic-corpus-admission-conflict");
+    }
+    values.set(key, structuredClone(value));
+    return;
+  }
+  if (Object.getPrototypeOf(store) === SqliteAlpacaWireSemanticEvidenceStore.prototype) {
+    const database = sqliteEvidenceDatabases.get(store as SqliteAlpacaWireSemanticEvidenceStore);
+    if (database === undefined) throw new TypeError("owned-wire-semantic-evidence-store-required");
+    database
+      .prepare(`INSERT OR IGNORE INTO market_acquisition_alpaca_corpus_admissions (
+        corpus_admission_hash, request_identity_hash, artifact_observation_id,
+        artifact_digest, primary_corpus_member
+      ) VALUES (?, ?, ?, ?, 1)`)
+      .run(
+        value.corpusAdmissionHash,
+        value.requestIdentityHash,
+        value.artifactObservationId,
+        value.artifactDigest,
+      );
+    const loaded = loadCorpusAdmission(store, value);
+    if (
+      loaded === undefined ||
+      canonicalJson(loaded as unknown as JsonValue) !== canonicalJson(value as unknown as JsonValue)
+    ) {
+      throw new TypeError("wire-semantic-corpus-admission-conflict");
+    }
+    return;
+  }
+  throw new TypeError("owned-wire-semantic-evidence-store-required");
+}
+
+function loadCorpusAdmission(
+  store: AlpacaWireSemanticEvidenceStore,
+  expected: AlpacaPrimaryCorpusAdmissionV1,
+): AlpacaPrimaryCorpusAdmissionV1 | undefined {
+  const key = corpusAdmissionKey(expected);
+  if (Object.getPrototypeOf(store) === MemoryAlpacaWireSemanticEvidenceStore.prototype) {
+    return memoryCorpusAdmissions.get(store as MemoryAlpacaWireSemanticEvidenceStore)?.get(key);
+  }
+  if (Object.getPrototypeOf(store) === SqliteAlpacaWireSemanticEvidenceStore.prototype) {
+    const database = sqliteEvidenceDatabases.get(store as SqliteAlpacaWireSemanticEvidenceStore);
+    if (database === undefined) throw new TypeError("owned-wire-semantic-evidence-store-required");
+    const row = database
+      .prepare(`SELECT corpus_admission_hash, primary_corpus_member
+        FROM market_acquisition_alpaca_corpus_admissions
+        WHERE request_identity_hash = ? AND artifact_observation_id = ? AND artifact_digest = ?`)
+      .get(expected.requestIdentityHash, expected.artifactObservationId, expected.artifactDigest) as
+      | { corpus_admission_hash: string; primary_corpus_member: bigint }
+      | undefined;
+    if (row === undefined) return undefined;
+    if (
+      row.primary_corpus_member !== 1n ||
+      row.corpus_admission_hash !== expected.corpusAdmissionHash
+    ) {
+      throw new TypeError("wire-semantic-corpus-admission-conflict");
+    }
+    return expected;
   }
   throw new TypeError("owned-wire-semantic-evidence-store-required");
 }
@@ -526,6 +641,15 @@ export class DurableAlpacaWireSemanticEvidenceBoundary {
       verified.observation.observationId !== pageArtifact.artifactObservationId ||
       verified.observation.artifactDigest !== pageArtifact.artifactDigest
     ) {
+      throw new TypeError("wire-semantic-corpus-admission-invalid");
+    }
+    const admission = derivePrimaryCorpusAdmission(
+      plan.requestIdentityHash,
+      pageArtifact.artifactObservationId,
+      pageArtifact.artifactDigest,
+    );
+    appendCorpusAdmission(this.#evidence, admission);
+    if (loadCorpusAdmission(this.#evidence, admission) === undefined) {
       throw new TypeError("wire-semantic-corpus-admission-invalid");
     }
     return createAlpacaWireSemanticAuthority({
@@ -661,6 +785,18 @@ export class DurableAlpacaWireSemanticEvidenceBoundary {
       semantic.queryEndNs !== input.plan.queryEndNs.toString()
     ) {
       throw new TypeError("page-semantic-authority-binding-invalid");
+    }
+    const corpusAdmission = derivePrimaryCorpusAdmission(
+      input.plan.requestIdentityHash,
+      latest.artifactObservationId,
+      latest.artifactDigest,
+    );
+    if (
+      loadCorpusAdmission(this.#evidence, corpusAdmission) === undefined ||
+      semantic.corpusAdmissionHash !== corpusAdmission.corpusAdmissionHash ||
+      semantic.primaryCorpusMember !== true
+    ) {
+      throw new TypeError("page-semantic-corpus-admission-invalid");
     }
     const acceptedCalendar = acceptedAlpacaWireCalendarEntries(
       semantic.queryStartNs,

@@ -1655,10 +1655,20 @@ export class DurableArtifactStore implements ArtifactStore {
       };
     } catch (error) {
       if (createdTarget) {
-        const survivingSource = await readIdentity(sourcePath);
-        if (survivingSource !== null && matchesPlan(survivingSource)) {
-          await rm(target, { force: true });
-          await syncDirectory(this.#paths.quarantine);
+        let rollbackAllowed = true;
+        try {
+          assertRunning();
+        } catch {
+          rollbackAllowed = false;
+        }
+        if (rollbackAllowed) {
+          const survivingSource = await readIdentity(sourcePath);
+          assertRunning();
+          if (survivingSource !== null && matchesPlan(survivingSource)) {
+            await rm(target, { force: true });
+            assertRunning();
+            await syncDirectory(this.#paths.quarantine);
+          }
         }
       }
       throw error;

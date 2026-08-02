@@ -7,6 +7,7 @@ import { isProxy } from "node:util/types";
 
 import { P1_10_TEST_AUTHORITY } from "../../internal-test-authority.js";
 import { AUTHORIZATION_MODE, MARKET_ACQUISITION_LIMITS } from "./contracts.js";
+import { assertOwnedAcquisitionJournal } from "./owned-journal.js";
 
 export const JOURNAL_SCHEMA_VERSION = 1 as const;
 export const NO_TOKEN_HASH = "no-token";
@@ -841,6 +842,7 @@ export class DurableAcquisitionWorkflowProducer {
 export function createDurableAcquisitionWorkflowProducer(
   journal: AcquisitionJournal,
 ): DurableAcquisitionWorkflowProducer {
+  assertOwnedAcquisitionJournal(journal);
   return new DurableAcquisitionWorkflowProducer(
     journal,
     ACQUISITION_WORKFLOW_PRODUCER_CONSTRUCTION_AUTHORITY,
@@ -856,7 +858,10 @@ export async function appendTestAcquisitionWorkflowEvidence(
   if (P1_10_TEST_AUTHORITY === undefined) {
     throw new TypeError("test-acquisition-workflow-ingress-unavailable");
   }
-  await createDurableAcquisitionWorkflowProducer(journal).persist(ledgerEntries, entries);
+  await new DurableAcquisitionWorkflowProducer(
+    journal,
+    ACQUISITION_WORKFLOW_PRODUCER_CONSTRUCTION_AUTHORITY,
+  ).persist(ledgerEntries, entries);
 }
 
 export async function appendTestAcquisitionJournalEntry(

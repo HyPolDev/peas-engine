@@ -37,7 +37,10 @@ import {
   createMemoryAcquisitionJournal,
 } from "../src/adapters/market-acquisition/memory-journal.js";
 import { createSqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
-import { MemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
+import {
+  MemoryArtifactRetentionJournal,
+  createMemoryArtifactRetentionJournal,
+} from "../src/adapters/market-acquisition/retention/memory-journal.js";
 import { createSqliteArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/sqlite-journal.js";
 import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
 import { createSqliteAlpacaWireSemanticEvidenceStore } from "../src/adapters/market-acquisition/alpaca/wire-semantic-evidence.js";
@@ -658,8 +661,15 @@ test("public journals cannot author coherent credential prerequisite facts", asy
       /owned-acquisition-workflow-producer-required/u,
     );
   }
-  const memoryProducer = createDurableAcquisitionWorkflowProducer(memory);
-  await memoryProducer.persist(fixture.ledgerEntries, fixture.entries);
+  const memoryAuthorization = createTestDurableCredentialAuthorizationBoundary(
+    memory,
+    createMemoryArtifactRetentionJournal(),
+  );
+  await memoryAuthorization.recordRequestStarted(
+    fixture.request,
+    fixture.ledgerEntries,
+    fixture.entries,
+  );
   assert.equal(
     await memory.isWorkflowProducedJournalEntry(
       (fixture.entries.at(-1) as NonNullable<(typeof fixture.entries)[number]>).journalEntryHash,
@@ -677,9 +687,18 @@ test("public journals cannot author coherent credential prerequisite facts", asy
     () => subclass.persist(fixture.ledgerEntries, []),
     /owned-acquisition-workflow-producer-required/u,
   );
+  const ownedProducer = createDurableAcquisitionWorkflowProducer(memory);
   await assert.rejects(
-    () => new Proxy(memoryProducer, {}).persist(fixture.ledgerEntries, []),
+    () => new Proxy(ownedProducer, {}).persist(fixture.ledgerEntries, []),
     /owned-acquisition-workflow-producer-required/u,
+  );
+  assert.throws(
+    () =>
+      createDurableAcquisitionWorkflowProducer({
+        append: async () => undefined,
+        appendLedgerEntries: async () => undefined,
+      } as never),
+    /owned-acquisition-journal-required/u,
   );
 
   const directory = await mkdtemp(join(tmpdir(), "peas-credential-forged-chain-"));
@@ -696,6 +715,33 @@ test("public journals cannot author coherent credential prerequisite facts", asy
     /no such function|workflow proof write denied/u,
   );
   let journal = createSqliteAcquisitionJournal(database, fixture.request.journalIdentity);
+  assert.throws(
+    () =>
+      database.function(
+        "peas_acquisition_workflow_proof_authorized",
+        { deterministic: false },
+        () => 1,
+      ),
+    /reserved-sqlite-function-registration-denied/u,
+  );
+  const forgedJournalEntry = fixture.entries[0] as NonNullable<(typeof fixture.entries)[number]>;
+  assert.throws(
+    () =>
+      database
+        .prepare(`INSERT INTO market_acquisition_journal_entries (
+          market_acquisition_journal_id, journal_sequence, prior_journal_entry_hash,
+          journal_entry_hash, checkpoint_kind, entry_json
+        ) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(
+          fixture.request.marketAcquisitionJournalId,
+          0n,
+          forgedJournalEntry.priorJournalEntryHash,
+          forgedJournalEntry.journalEntryHash,
+          forgedJournalEntry.checkpointKind,
+          JSON.stringify(forgedJournalEntry),
+        ),
+    /workflow journal write denied/u,
+  );
   await assert.rejects(
     () => journal.appendLedgerEntries(fixture.ledgerEntries),
     /owned-acquisition-workflow-producer-required/u,
@@ -726,7 +772,12 @@ test("public journals cannot author coherent credential prerequisite facts", asy
         .run(fixture.request.marketAcquisitionJournalId, fixture.ledgerEntries.at(-1)?.entryId),
     /workflow proof write denied/u,
   );
-  await createDurableAcquisitionWorkflowProducer(journal).persist(
+  const sqliteAuthorization = createDurableCredentialAuthorizationBoundary(
+    journal,
+    createSqliteArtifactRetentionJournal(database),
+  );
+  await sqliteAuthorization.recordRequestStarted(
+    fixture.request,
     fixture.ledgerEntries,
     fixture.entries,
   );
