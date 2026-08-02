@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   rmSync,
   symlinkSync,
@@ -1160,6 +1161,60 @@ test("store and lease hard-kill boundary matrix converges with exact evidence", 
     } finally {
       await recovered.close();
       database.close();
+    }
+  }
+});
+
+test("cancellation after source removal preserves the exact quarantine copy and restart recovery", async (context) => {
+  for (const boundary of [
+    "quarantine-source-removed",
+    "quarantine-source-directory-sync",
+    "quarantine-target-hash",
+  ]) {
+    const fixture = processFixture(context, `quarantine-cancel-${boundary}`);
+    const database = openSqliteDatabase(fixture.databasePath, migrations);
+    let store!: DurableArtifactStore;
+    store = await DurableArtifactStore.open({
+      repository: new SqliteArtifactRepository(database),
+      clock: new ManualClock(1_800_000_000_000),
+      config: vaultConfig(fixture.root),
+      faultBoundary(checkpoint) {
+        if (checkpoint === boundary) store.closeRetentionAdmission();
+      },
+    });
+    const source = join(fixture.root, "artifacts", "staging", `cancel-${boundary}.part`);
+    const original = Buffer.from(`original synthetic ${boundary}`, "utf8");
+    writeFileSync(source, original);
+    await assert.rejects(() => store.reconcile(), /Reconciliation was stopped/u);
+    assert.equal(existsSync(source), false, boundary);
+    const names = readdirSync(join(fixture.root, "artifacts", "quarantine"));
+    assert.equal(names.length, 1, boundary);
+    const target = join(fixture.root, "artifacts", "quarantine", names[0] as string);
+    assert.deepEqual(readFileSync(target), original, boundary);
+    await store.close();
+    database.close();
+
+    const restartedDatabase = openSqliteDatabase(fixture.databasePath, migrations);
+    const restarted = await DurableArtifactStore.open({
+      repository: new SqliteArtifactRepository(restartedDatabase),
+      clock: new ManualClock(1_800_000_060_000),
+      config: vaultConfig(fixture.root),
+    });
+    try {
+      const durableCursor = (
+        restartedDatabase
+          .prepare("SELECT cursor_token FROM artifact_reconciliation_state WHERE singleton = 1")
+          .get() as { cursor_token: string }
+      ).cursor_token;
+      let report = await restarted.reconcile({ cursor: durableCursor });
+      while (report.continuationCursor !== null) {
+        report = await restarted.reconcile({ cursor: report.continuationCursor });
+      }
+      assert.deepEqual(readFileSync(target), original, boundary);
+      assert.equal(report.continuationCursor, null, boundary);
+    } finally {
+      await restarted.close();
+      restartedDatabase.close();
     }
   }
 });

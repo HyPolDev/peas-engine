@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 
 import { canonicalJson, type JsonValue } from "../../core/json.js";
 import type { ObservationLedgerEntryV1 } from "../../providers/observation-ledger.js";
+import { isProxy } from "node:util/types";
+
 import { P1_10_TEST_AUTHORITY } from "../../internal-test-authority.js";
 import { AUTHORIZATION_MODE, MARKET_ACQUISITION_LIMITS } from "./contracts.js";
 
@@ -790,11 +792,59 @@ export interface AcquisitionJournal {
 }
 
 const ACQUISITION_WORKFLOW_PRODUCER_AUTHORITY = Object.freeze({});
+const ownedAcquisitionWorkflowProducers = new WeakSet<object>();
+const ACQUISITION_WORKFLOW_PRODUCER_CONSTRUCTION_AUTHORITY = Object.freeze({});
 
 export function assertAcquisitionWorkflowProducerAuthority(value: object | undefined): void {
   if (value !== ACQUISITION_WORKFLOW_PRODUCER_AUTHORITY) {
     throw new TypeError("owned-acquisition-workflow-producer-required");
   }
+}
+
+/** Sole production writer for durable acquisition journal and ledger facts. */
+export class DurableAcquisitionWorkflowProducer {
+  readonly #journal: AcquisitionJournal;
+
+  constructor(journal: AcquisitionJournal, constructionAuthority?: object) {
+    this.#journal = journal;
+    if (constructionAuthority === ACQUISITION_WORKFLOW_PRODUCER_CONSTRUCTION_AUTHORITY) {
+      ownedAcquisitionWorkflowProducers.add(this);
+    }
+    Object.freeze(this);
+  }
+
+  async persist(
+    ledgerEntries: readonly ObservationLedgerEntryV1[],
+    journalEntries: readonly JournalEntry[],
+  ): Promise<void> {
+    if (
+      !ownedAcquisitionWorkflowProducers.has(this) ||
+      isProxy(this) ||
+      Object.getPrototypeOf(this) !== DurableAcquisitionWorkflowProducer.prototype ||
+      !Object.isFrozen(this) ||
+      Reflect.ownKeys(this).length !== 0
+    ) {
+      throw new TypeError("owned-acquisition-workflow-producer-required");
+    }
+    if (ledgerEntries.length > 0) {
+      await this.#journal.appendLedgerEntries(
+        ledgerEntries,
+        ACQUISITION_WORKFLOW_PRODUCER_AUTHORITY,
+      );
+    }
+    for (const entry of journalEntries) {
+      await this.#journal.append(entry, ACQUISITION_WORKFLOW_PRODUCER_AUTHORITY);
+    }
+  }
+}
+
+export function createDurableAcquisitionWorkflowProducer(
+  journal: AcquisitionJournal,
+): DurableAcquisitionWorkflowProducer {
+  return new DurableAcquisitionWorkflowProducer(
+    journal,
+    ACQUISITION_WORKFLOW_PRODUCER_CONSTRUCTION_AUTHORITY,
+  );
 }
 
 /** Test-only fixture ingress for facts otherwise written only by the owned workflow producer. */
@@ -806,12 +856,7 @@ export async function appendTestAcquisitionWorkflowEvidence(
   if (P1_10_TEST_AUTHORITY === undefined) {
     throw new TypeError("test-acquisition-workflow-ingress-unavailable");
   }
-  if (ledgerEntries.length > 0) {
-    await journal.appendLedgerEntries(ledgerEntries, ACQUISITION_WORKFLOW_PRODUCER_AUTHORITY);
-  }
-  for (const entry of entries) {
-    await journal.append(entry, ACQUISITION_WORKFLOW_PRODUCER_AUTHORITY);
-  }
+  await createDurableAcquisitionWorkflowProducer(journal).persist(ledgerEntries, entries);
 }
 
 export async function appendTestAcquisitionJournalEntry(

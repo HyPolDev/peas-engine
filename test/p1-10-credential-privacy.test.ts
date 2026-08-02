@@ -27,7 +27,11 @@ import {
   type RuntimeSecretSource,
 } from "../src/adapters/market-acquisition/credentials.js";
 import { buildAlpacaTransportRequest } from "../src/adapters/market-acquisition/alpaca/request.js";
-import { appendTestAcquisitionWorkflowEvidence } from "../src/adapters/market-acquisition/journal.js";
+import {
+  appendTestAcquisitionWorkflowEvidence,
+  createDurableAcquisitionWorkflowProducer,
+  DurableAcquisitionWorkflowProducer,
+} from "../src/adapters/market-acquisition/journal.js";
 import {
   MemoryAcquisitionJournal,
   createMemoryAcquisitionJournal,
@@ -219,6 +223,7 @@ test("spoofed NODE_TEST_CONTEXT cannot mint any test root or credential transpor
     const w = await import(urls.wire);
     const s = await import(urls.semantics);
     if ("createCredentialIsolatedAlpacaTransport" in c) throw new Error("legacy-driver-export");
+    if ("createAlpacaWireSemanticAuthority" in s) throw new Error("public-corpus-authority-export");
     let copied = false;
     const driver = { dispatch(_request, headers) { copied = Boolean(headers?.["APCA-API-KEY-ID"]); }, abort() {}, settle() {} };
     const attempts = [
@@ -234,6 +239,7 @@ test("spoofed NODE_TEST_CONTEXT cannot mint any test root or credential transpor
       () => w.createTestDurableAlpacaWireAdmissionBoundary({}, {}),
       () => s.createTestDurableAlpacaWireSemanticEvidenceBoundary({}, {}, {}),
       () => s.appendTestAlpacaWireSemanticEvidence({}, {}),
+      () => s.createTestAlpacaWireSemanticAuthority({}),
       () => c.createProductionCredentialIsolatedAlpacaTransport(driver),
     ];
     for (const attempt of attempts) {
@@ -652,11 +658,43 @@ test("public journals cannot author coherent credential prerequisite facts", asy
       /owned-acquisition-workflow-producer-required/u,
     );
   }
+  const memoryProducer = createDurableAcquisitionWorkflowProducer(memory);
+  await memoryProducer.persist(fixture.ledgerEntries, fixture.entries);
+  assert.equal(
+    await memory.isWorkflowProducedJournalEntry(
+      (fixture.entries.at(-1) as NonNullable<(typeof fixture.entries)[number]>).journalEntryHash,
+    ),
+    true,
+  );
+  const directProducer = new DurableAcquisitionWorkflowProducer(memory);
+  await assert.rejects(
+    () => directProducer.persist(fixture.ledgerEntries, []),
+    /owned-acquisition-workflow-producer-required/u,
+  );
+  class ProducerSubclass extends DurableAcquisitionWorkflowProducer {}
+  const subclass = new ProducerSubclass(memory);
+  await assert.rejects(
+    () => subclass.persist(fixture.ledgerEntries, []),
+    /owned-acquisition-workflow-producer-required/u,
+  );
+  await assert.rejects(
+    () => new Proxy(memoryProducer, {}).persist(fixture.ledgerEntries, []),
+    /owned-acquisition-workflow-producer-required/u,
+  );
+
   const directory = await mkdtemp(join(tmpdir(), "peas-credential-forged-chain-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const filename = join(directory, "forged.sqlite");
   const migrations = loadMigrations(join(process.cwd(), "migrations"));
   let database = openSqliteDatabase(filename, migrations);
+  assert.throws(
+    () =>
+      database
+        .prepare(`INSERT INTO market_acquisition_workflow_journal_proofs
+          (market_acquisition_journal_id, journal_entry_hash) VALUES (?, ?)`)
+        .run(fixture.request.marketAcquisitionJournalId, "f".repeat(64)),
+    /no such function|workflow proof write denied/u,
+  );
   let journal = createSqliteAcquisitionJournal(database, fixture.request.journalIdentity);
   await assert.rejects(
     () => journal.appendLedgerEntries(fixture.ledgerEntries),
@@ -668,11 +706,55 @@ test("public journals cannot author coherent credential prerequisite facts", asy
       /owned-acquisition-workflow-producer-required/u,
     );
   }
+  assert.throws(
+    () =>
+      database
+        .prepare(`INSERT INTO market_acquisition_workflow_journal_proofs
+          (market_acquisition_journal_id, journal_entry_hash) VALUES (?, ?)`)
+        .run(
+          fixture.request.marketAcquisitionJournalId,
+          (fixture.entries.at(-1) as NonNullable<(typeof fixture.entries)[number]>)
+            .journalEntryHash,
+        ),
+    /workflow proof write denied/u,
+  );
+  assert.throws(
+    () =>
+      database
+        .prepare(`INSERT INTO market_acquisition_workflow_ledger_proofs
+          (market_acquisition_journal_id, entry_id) VALUES (?, ?)`)
+        .run(fixture.request.marketAcquisitionJournalId, fixture.ledgerEntries.at(-1)?.entryId),
+    /workflow proof write denied/u,
+  );
+  await createDurableAcquisitionWorkflowProducer(journal).persist(
+    fixture.ledgerEntries,
+    fixture.entries,
+  );
   database.close();
   database = openSqliteDatabase(filename, migrations);
   journal = createSqliteAcquisitionJournal(database, fixture.request.journalIdentity);
-  assert.deepEqual(await journal.load(fixture.request.marketAcquisitionJournalId), []);
-  assert.deepEqual(await journal.loadLedgerEntries(), []);
+  assert.deepEqual(await journal.load(fixture.request.marketAcquisitionJournalId), fixture.entries);
+  assert.deepEqual(await journal.loadLedgerEntries(), fixture.ledgerEntries);
+  assert.equal(
+    await journal.isWorkflowProducedJournalEntry(
+      (fixture.entries.at(-1) as NonNullable<(typeof fixture.entries)[number]>).journalEntryHash,
+    ),
+    true,
+  );
+  assert.equal(
+    await journal.isWorkflowProducedLedgerEntry(
+      (fixture.ledgerEntries.at(-1) as NonNullable<(typeof fixture.ledgerEntries)[number]>).entryId,
+    ),
+    true,
+  );
+  assert.throws(
+    () =>
+      database
+        .prepare(`INSERT INTO market_acquisition_workflow_ledger_proofs
+          (market_acquisition_journal_id, entry_id) VALUES (?, ?)`)
+        .run(fixture.request.marketAcquisitionJournalId, `ole1_${"f".repeat(64)}`),
+    /workflow proof write denied/u,
+  );
   database.close();
 });
 

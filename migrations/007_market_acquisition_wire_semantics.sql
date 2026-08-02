@@ -48,3 +48,29 @@ CREATE TABLE market_acquisition_workflow_ledger_proofs (
   entry_id TEXT NOT NULL,
   PRIMARY KEY (market_acquisition_journal_id, entry_id)
 ) STRICT;
+
+CREATE TRIGGER market_acquisition_workflow_journal_proofs_owned_insert
+BEFORE INSERT ON market_acquisition_workflow_journal_proofs
+WHEN peas_acquisition_workflow_proof_authorized(NEW.market_acquisition_journal_id) <> 1
+BEGIN SELECT RAISE(ABORT, 'acquisition workflow proof write denied'); END;
+
+CREATE TRIGGER market_acquisition_workflow_ledger_proofs_owned_insert
+BEFORE INSERT ON market_acquisition_workflow_ledger_proofs
+WHEN peas_acquisition_workflow_proof_authorized(NEW.market_acquisition_journal_id) <> 1
+BEGIN SELECT RAISE(ABORT, 'acquisition workflow proof write denied'); END;
+
+CREATE TRIGGER market_acquisition_workflow_journal_proofs_no_update
+BEFORE UPDATE ON market_acquisition_workflow_journal_proofs
+BEGIN SELECT RAISE(ABORT, 'acquisition workflow proof is immutable'); END;
+
+CREATE TRIGGER market_acquisition_workflow_journal_proofs_no_delete
+BEFORE DELETE ON market_acquisition_workflow_journal_proofs
+BEGIN SELECT RAISE(ABORT, 'acquisition workflow proof is immutable'); END;
+
+CREATE TRIGGER market_acquisition_workflow_ledger_proofs_no_update
+BEFORE UPDATE ON market_acquisition_workflow_ledger_proofs
+BEGIN SELECT RAISE(ABORT, 'acquisition workflow proof is immutable'); END;
+
+CREATE TRIGGER market_acquisition_workflow_ledger_proofs_no_delete
+BEFORE DELETE ON market_acquisition_workflow_ledger_proofs
+BEGIN SELECT RAISE(ABORT, 'acquisition workflow proof is immutable'); END;

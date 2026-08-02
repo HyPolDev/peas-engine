@@ -139,7 +139,7 @@ function assertCalendarEntry(value: FrozenSessionCalendarEntryV1): void {
   }
 }
 
-export function createAlpacaWireSemanticAuthority(
+function createAlpacaWireSemanticAuthority(
   draft: AlpacaWireSemanticAuthorityDraft,
 ): AlpacaWireSemanticAuthorityV1 {
   const calendarEntries = acceptedAlpacaWireCalendarEntries(draft.queryStartNs, draft.queryEndNs);
@@ -174,6 +174,16 @@ export function createAlpacaWireSemanticAuthority(
       body as unknown as JsonValue,
     )}`,
   });
+}
+
+/** Test-build-only fixture authority; live admission is issued by the owned durable boundary. */
+export function createTestAlpacaWireSemanticAuthority(
+  draft: AlpacaWireSemanticAuthorityDraft,
+): AlpacaWireSemanticAuthorityV1 {
+  if (P1_10_TEST_AUTHORITY === undefined) {
+    throw new TypeError("test-wire-semantic-authority-unavailable");
+  }
+  return createAlpacaWireSemanticAuthority(draft);
 }
 
 function validateSemanticAuthority(value: AlpacaWireSemanticAuthorityV1): void {
@@ -497,6 +507,35 @@ export class DurableAlpacaWireSemanticEvidenceBoundary {
     if (authority === SEMANTIC_EVIDENCE_BOUNDARY_CONSTRUCTION_AUTHORITY) {
       semanticEvidenceBoundaries.add(this);
     }
+  }
+
+  async issueAuthority(
+    plan: ValidatedMarketAcquisitionConfiguration,
+    pageArtifact: CommittedArtifactExpectation,
+  ): Promise<AlpacaWireSemanticAuthorityV1> {
+    assertOwnedDurableAlpacaWireSemanticEvidenceBoundary(this);
+    assertValidatedMarketAcquisitionConfiguration(plan);
+    if (
+      pageArtifact.provider !== "alpaca" ||
+      pageArtifact.requestIdentityHash !== plan.requestIdentityHash
+    ) {
+      throw new TypeError("wire-semantic-corpus-admission-invalid");
+    }
+    const verified = await verifyCommittedArtifact(this.#artifacts, pageArtifact);
+    if (
+      verified.observation.observationId !== pageArtifact.artifactObservationId ||
+      verified.observation.artifactDigest !== pageArtifact.artifactDigest
+    ) {
+      throw new TypeError("wire-semantic-corpus-admission-invalid");
+    }
+    return createAlpacaWireSemanticAuthority({
+      schemaVersion: 1,
+      requestIdentityHash: plan.requestIdentityHash,
+      pageArtifactObservationId: pageArtifact.artifactObservationId,
+      pageArtifactDigest: pageArtifact.artifactDigest,
+      queryStartNs: plan.queryStartNs.toString(),
+      queryEndNs: plan.queryEndNs.toString(),
+    });
   }
 
   async persist(

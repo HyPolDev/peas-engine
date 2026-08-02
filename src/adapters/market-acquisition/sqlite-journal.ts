@@ -20,6 +20,20 @@ import {
 } from "./journal.js";
 
 const ownedSqliteAcquisitionJournals = new WeakSet<object>();
+const workflowProofWriteScopes = new WeakMap<SqliteDatabase, Set<string>>();
+
+function workflowProofScope(database: SqliteDatabase): Set<string> {
+  const existing = workflowProofWriteScopes.get(database);
+  if (existing !== undefined) return existing;
+  const scope = new Set<string>();
+  database.function(
+    "peas_acquisition_workflow_proof_authorized",
+    { deterministic: false },
+    (journalId: unknown) => (typeof journalId === "string" && scope.has(journalId) ? 1 : 0),
+  );
+  workflowProofWriteScopes.set(database, scope);
+  return scope;
+}
 
 type JournalRow = Readonly<{
   journal_sequence: bigint;
@@ -40,6 +54,7 @@ const JOURNAL_ENTRY_LIMITS = Object.freeze({
  * ArtifactStore, or any vault row. All rows and the schema are append-only.
  */
 export function installSqliteAcquisitionJournalSchema(database: SqliteDatabase): void {
+  workflowProofScope(database);
   database.exec(`
     CREATE TABLE IF NOT EXISTS market_acquisition_journal_entries (
       market_acquisition_journal_id TEXT NOT NULL,
@@ -93,6 +108,32 @@ export function installSqliteAcquisitionJournalSchema(database: SqliteDatabase):
       entry_id TEXT NOT NULL,
       PRIMARY KEY (market_acquisition_journal_id, entry_id)
     ) STRICT;
+
+    CREATE TRIGGER IF NOT EXISTS market_acquisition_workflow_journal_proofs_owned_insert
+    BEFORE INSERT ON market_acquisition_workflow_journal_proofs
+    WHEN peas_acquisition_workflow_proof_authorized(NEW.market_acquisition_journal_id) <> 1
+    BEGIN SELECT RAISE(ABORT, 'acquisition workflow proof write denied'); END;
+
+    CREATE TRIGGER IF NOT EXISTS market_acquisition_workflow_ledger_proofs_owned_insert
+    BEFORE INSERT ON market_acquisition_workflow_ledger_proofs
+    WHEN peas_acquisition_workflow_proof_authorized(NEW.market_acquisition_journal_id) <> 1
+    BEGIN SELECT RAISE(ABORT, 'acquisition workflow proof write denied'); END;
+
+    CREATE TRIGGER IF NOT EXISTS market_acquisition_workflow_journal_proofs_no_update
+    BEFORE UPDATE ON market_acquisition_workflow_journal_proofs
+    BEGIN SELECT RAISE(ABORT, 'acquisition workflow proof is immutable'); END;
+
+    CREATE TRIGGER IF NOT EXISTS market_acquisition_workflow_journal_proofs_no_delete
+    BEFORE DELETE ON market_acquisition_workflow_journal_proofs
+    BEGIN SELECT RAISE(ABORT, 'acquisition workflow proof is immutable'); END;
+
+    CREATE TRIGGER IF NOT EXISTS market_acquisition_workflow_ledger_proofs_no_update
+    BEFORE UPDATE ON market_acquisition_workflow_ledger_proofs
+    BEGIN SELECT RAISE(ABORT, 'acquisition workflow proof is immutable'); END;
+
+    CREATE TRIGGER IF NOT EXISTS market_acquisition_workflow_ledger_proofs_no_delete
+    BEFORE DELETE ON market_acquisition_workflow_ledger_proofs
+    BEGIN SELECT RAISE(ABORT, 'acquisition workflow proof is immutable'); END;
   `);
 }
 
@@ -140,25 +181,29 @@ export class SqliteAcquisitionJournal implements AcquisitionJournal {
     assertAcquisitionWorkflowProducerAuthority(workflowAuthority);
     const entryJson = canonicalJson(entry as unknown as JsonValue);
     assertJsonWithinLimits(entry as unknown as JsonValue, JOURNAL_ENTRY_LIMITS);
-    this.#database
-      .transaction(() => {
-        const rows = this.#database
-          .prepare(
-            `SELECT journal_sequence, entry_json
+    const proofScope = workflowProofScope(this.#database);
+    if (proofScope.has(this.#journalId)) throw new TypeError("workflow-proof-write-reentrant");
+    proofScope.add(this.#journalId);
+    try {
+      this.#database
+        .transaction(() => {
+          const rows = this.#database
+            .prepare(
+              `SELECT journal_sequence, entry_json
              FROM market_acquisition_journal_entries
              WHERE market_acquisition_journal_id = ?
              ORDER BY journal_sequence`,
-          )
-          .all(this.#journalId) as JournalRow[];
-        const current = rows.map((row, index) => {
-          if (row.journal_sequence !== BigInt(index)) throw new TypeError("journal-sequence-gap");
-          return parseEntry(row.entry_json);
-        });
-        const prospective = [...current, parseEntry(entryJson)];
-        validateJournalEntries(prospective, this.#expectedIdentity);
-        this.#database
-          .prepare(
-            `INSERT INTO market_acquisition_journal_entries (
+            )
+            .all(this.#journalId) as JournalRow[];
+          const current = rows.map((row, index) => {
+            if (row.journal_sequence !== BigInt(index)) throw new TypeError("journal-sequence-gap");
+            return parseEntry(row.entry_json);
+          });
+          const prospective = [...current, parseEntry(entryJson)];
+          validateJournalEntries(prospective, this.#expectedIdentity);
+          this.#database
+            .prepare(
+              `INSERT INTO market_acquisition_journal_entries (
               market_acquisition_journal_id,
               journal_sequence,
               prior_journal_entry_hash,
@@ -166,21 +211,24 @@ export class SqliteAcquisitionJournal implements AcquisitionJournal {
               checkpoint_kind,
               entry_json
             ) VALUES (?, ?, ?, ?, ?, ?)`,
-          )
-          .run(
-            this.#journalId,
-            BigInt(entry.journalSequence),
-            entry.priorJournalEntryHash,
-            entry.journalEntryHash,
-            entry.checkpointKind,
-            entryJson,
-          );
-        this.#database
-          .prepare(`INSERT INTO market_acquisition_workflow_journal_proofs
+            )
+            .run(
+              this.#journalId,
+              BigInt(entry.journalSequence),
+              entry.priorJournalEntryHash,
+              entry.journalEntryHash,
+              entry.checkpointKind,
+              entryJson,
+            );
+          this.#database
+            .prepare(`INSERT INTO market_acquisition_workflow_journal_proofs
             (market_acquisition_journal_id, journal_entry_hash) VALUES (?, ?)`)
-          .run(this.#journalId, entry.journalEntryHash);
-      })
-      .immediate();
+            .run(this.#journalId, entry.journalEntryHash);
+        })
+        .immediate();
+    } finally {
+      proofScope.delete(this.#journalId);
+    }
   }
 
   async claimAttemptStarted(
@@ -243,46 +291,53 @@ export class SqliteAcquisitionJournal implements AcquisitionJournal {
   ): Promise<void> {
     assertAcquisitionWorkflowProducerAuthority(workflowAuthority);
     const validated = validateObservationLedgerBundle(entries);
+    const proofScope = workflowProofScope(this.#database);
+    if (proofScope.has(this.#journalId)) throw new TypeError("workflow-proof-write-reentrant");
+    proofScope.add(this.#journalId);
     const executionId = validated[0]?.executionId;
     if (executionId === undefined) throw new TypeError("ledger-empty");
-    this.#database
-      .transaction(() => {
-        const rows = this.#database
-          .prepare(`SELECT ledger_sequence, entry_json FROM market_acquisition_ledger_entries
+    try {
+      this.#database
+        .transaction(() => {
+          const rows = this.#database
+            .prepare(`SELECT ledger_sequence, entry_json FROM market_acquisition_ledger_entries
             WHERE market_acquisition_journal_id = ? AND execution_id = ? ORDER BY ledger_sequence`)
-          .all(this.#journalId, executionId) as Array<{
-          ledger_sequence: bigint;
-          entry_json: string;
-        }>;
-        if (rows.length > validated.length) throw new TypeError("ledger-prefix-conflict");
-        for (const [index, row] of rows.entries()) {
-          if (
-            row.ledger_sequence !== BigInt(index) ||
-            row.entry_json !== canonicalJson(validated[index] as unknown as JsonValue)
-          ) {
-            throw new TypeError("ledger-prefix-conflict");
+            .all(this.#journalId, executionId) as Array<{
+            ledger_sequence: bigint;
+            entry_json: string;
+          }>;
+          if (rows.length > validated.length) throw new TypeError("ledger-prefix-conflict");
+          for (const [index, row] of rows.entries()) {
+            if (
+              row.ledger_sequence !== BigInt(index) ||
+              row.entry_json !== canonicalJson(validated[index] as unknown as JsonValue)
+            ) {
+              throw new TypeError("ledger-prefix-conflict");
+            }
           }
-        }
-        const insert = this.#database.prepare(`INSERT INTO market_acquisition_ledger_entries
+          const insert = this.#database.prepare(`INSERT INTO market_acquisition_ledger_entries
           (market_acquisition_journal_id, execution_id, ledger_sequence, entry_id, entry_json, entry_hash)
           VALUES (?, ?, ?, ?, ?, ?)`);
-        for (let index = rows.length; index < validated.length; index += 1) {
-          const entry = validated[index] as ObservationLedgerEntryV1;
-          insert.run(
-            this.#journalId,
-            executionId,
-            BigInt(index),
-            entry.entryId,
-            canonicalJson(entry as unknown as JsonValue),
-            entry.entryHash,
-          );
-          this.#database
-            .prepare(`INSERT INTO market_acquisition_workflow_ledger_proofs
+          for (let index = rows.length; index < validated.length; index += 1) {
+            const entry = validated[index] as ObservationLedgerEntryV1;
+            insert.run(
+              this.#journalId,
+              executionId,
+              BigInt(index),
+              entry.entryId,
+              canonicalJson(entry as unknown as JsonValue),
+              entry.entryHash,
+            );
+            this.#database
+              .prepare(`INSERT INTO market_acquisition_workflow_ledger_proofs
               (market_acquisition_journal_id, entry_id) VALUES (?, ?)`)
-            .run(this.#journalId, entry.entryId);
-        }
-      })
-      .immediate();
+              .run(this.#journalId, entry.entryId);
+          }
+        })
+        .immediate();
+    } finally {
+      proofScope.delete(this.#journalId);
+    }
   }
 
   async loadLedgerEntries(): Promise<readonly ObservationLedgerEntryV1[]> {

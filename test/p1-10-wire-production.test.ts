@@ -24,7 +24,7 @@ import {
 } from "../src/adapters/market-acquisition/alpaca/wire.js";
 import {
   MemoryAlpacaWireSemanticEvidenceStore,
-  createAlpacaWireSemanticAuthority,
+  createTestAlpacaWireSemanticAuthority,
   createSqliteAlpacaWireSemanticEvidenceStore,
   createDurableAlpacaWireSemanticEvidenceBoundary,
 } from "../src/adapters/market-acquisition/alpaca/wire-semantic-evidence.js";
@@ -315,7 +315,7 @@ async function authenticatedAdmission(
     cumulativeAttempts: 1,
     quotaWindowEvidence: [0],
   } as const;
-  const semanticAuthority = createAlpacaWireSemanticAuthority({
+  const semanticAuthority = createTestAlpacaWireSemanticAuthority({
     schemaVersion: 1,
     requestIdentityHash: plan.requestIdentityHash,
     pageArtifactObservationId: artifact.artifactObservationId,
@@ -601,6 +601,34 @@ async function authenticatedAdmission(
     database === null
       ? createTestDurableAlpacaWireSemanticEvidenceBoundary(journal, evidence, guarded)
       : createDurableAlpacaWireSemanticEvidenceBoundary(journal, evidence, guarded);
+  const issuedSemanticAuthority = await semanticBoundary.issueAuthority(plan, {
+    artifactObservationId: artifact.artifactObservationId,
+    artifactObservationHash: artifact.artifactObservationHash,
+    artifactDigest: artifact.artifactDigest,
+    artifactSizeBytes: artifact.artifactSizeBytes,
+    retrievalAttemptId,
+    requestIdentityHash: plan.requestIdentityHash,
+    provider: "alpaca",
+  });
+  if (semanticSubstitution === undefined) {
+    assert.equal(
+      canonicalJson(issuedSemanticAuthority as unknown as JsonValue),
+      canonicalJson(semanticAuthority as unknown as JsonValue),
+    );
+  }
+  await assert.rejects(
+    () =>
+      semanticBoundary.issueAuthority(plan, {
+        artifactObservationId: artifact.artifactObservationId,
+        artifactObservationHash: artifact.artifactObservationHash,
+        artifactDigest: artifact.artifactDigest,
+        artifactSizeBytes: artifact.artifactSizeBytes,
+        retrievalAttemptId,
+        requestIdentityHash: canonicalHash("forged-request", {}),
+        provider: "alpaca",
+      }),
+    /corpus-admission-invalid/u,
+  );
   await semanticBoundary.persist({
     expectedIdentity,
     marketAcquisitionJournalId: journalId,
@@ -1055,14 +1083,39 @@ test("production parser reject and quarantine branches remain executable and ine
     ),
     ["2033-05-05", "2033-05-06"],
   );
-  assert.throws(
-    () =>
-      acceptedAlpacaWireCalendarEntries(
-        (BigInt(Date.parse("2033-03-13T23:30:00Z")) * 1_000_000n).toString(),
-        (BigInt(Date.parse("2033-03-14T08:30:00Z")) * 1_000_000n).toString(),
-      ),
-    /calendar-catalog-missing/u,
+  const spring = acceptedAlpacaWireCalendarEntries(
+    (BigInt(Date.parse("2033-03-10T12:00:00Z")) * 1_000_000n).toString(),
+    (BigInt(Date.parse("2033-03-14T12:00:00Z")) * 1_000_000n).toString(),
   );
+  assert.deepEqual(
+    spring.map((entry) => [entry.sessionDate, entry.utcOffsetMinutes]),
+    [
+      ["2033-03-10", -300],
+      ["2033-03-11", -300],
+      ["2033-03-12", -300],
+      ["2033-03-13", -240],
+      ["2033-03-14", -240],
+    ],
+  );
+  const autumn = acceptedAlpacaWireCalendarEntries(
+    (BigInt(Date.parse("2033-11-03T12:00:00Z")) * 1_000_000n).toString(),
+    (BigInt(Date.parse("2033-11-07T12:00:00Z")) * 1_000_000n).toString(),
+  );
+  assert.deepEqual(
+    autumn.map((entry) => [entry.sessionDate, entry.utcOffsetMinutes]),
+    [
+      ["2033-11-03", -240],
+      ["2033-11-04", -240],
+      ["2033-11-05", -240],
+      ["2033-11-06", -300],
+      ["2033-11-07", -300],
+    ],
+  );
+  for (const entry of [...spring, ...autumn].filter((candidate) => !candidate.holiday)) {
+    assert.ok(BigInt(entry.extendedOpenNs as string) < BigInt(entry.regularOpenNs as string));
+    assert.ok(BigInt(entry.regularOpenNs as string) < BigInt(entry.regularCloseNs as string));
+    assert.ok(BigInt(entry.regularCloseNs as string) < BigInt(entry.extendedCloseNs as string));
+  }
   assert.ok(BigInt(parseAlpacaWireTimestamp("1960-01-02T00:00:00Z").timestamp.epochNs) < 0n);
 });
 
