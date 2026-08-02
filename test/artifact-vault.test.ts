@@ -45,6 +45,7 @@ import type {
 import { ManualClock } from "../src/core/clock.js";
 import { canonicalHash } from "../src/core/hash.js";
 import type { JsonValue } from "../src/core/json.js";
+import { VaultWriterLease } from "../src/adapters/artifacts/writer-lease.js";
 
 const migrations = loadMigrations(join(process.cwd(), "migrations"));
 const artifactWorkerPath = join(process.cwd(), "test", "fixtures", "artifact-vault-worker.mjs");
@@ -666,6 +667,55 @@ test("expired takeover fences a still-live stale writer before install and SQLit
   );
   const committed = await winner.store(request("winner", Buffer.from("winner")));
   assert.equal(committed.observation.attemptId, persistedRetrievalAttemptId("winner"));
+});
+
+test("same-owner heartbeat and foreground renewal coalesce around slow lease I/O", async (context) => {
+  const root = mkdtempSync(join(tmpdir(), "peas-artifact-lease-coalesce-"));
+  const paths = artifactRuntimePaths(root);
+  mkdirSync(paths.databaseDirectory);
+  mkdirSync(paths.locks, { recursive: true });
+  const database = openSqliteDatabase(paths.databasePath, migrations);
+  const repository = new SqliteArtifactRepository(database);
+  const clock = new ManualClock(1_800_000_000_000);
+  let releaseRenewal!: () => void;
+  let reachedRenewal!: () => void;
+  const paused = new Promise<void>((resolve) => {
+    releaseRenewal = resolve;
+  });
+  const reached = new Promise<void>((resolve) => {
+    reachedRenewal = resolve;
+  });
+  let renewalEntries = 0;
+  const lease = await VaultWriterLease.acquire({
+    path: join(paths.locks, "writer.lock"),
+    behavior: "fail",
+    waitMs: 0,
+    durationMs: 30_000,
+    renewalMs: 1,
+    repository,
+    clock,
+    faultBoundary: async (checkpoint) => {
+      if (checkpoint !== "lease-sqlite-renewal") return;
+      renewalEntries += 1;
+      if (renewalEntries === 1) {
+        reachedRenewal();
+        await paused;
+      }
+    },
+  });
+  context.after(async () => {
+    await lease.release();
+    if (database.open) database.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+  await reached;
+  const foreground = lease.renewAndAssert();
+  await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  assert.equal(renewalEntries, 1);
+  releaseRenewal();
+  await foreground;
+  await lease.release();
+  assert.equal(existsSync(join(paths.locks, "writer.lock")), false);
 });
 
 test("transaction mutations evaluate lease expiry from a fresh clock reading", async (context) => {

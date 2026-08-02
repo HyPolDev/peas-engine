@@ -2,7 +2,7 @@ import { join } from "node:path";
 
 import { openSqliteDatabase, loadMigrations } from "../../dist/src/adapters/sqlite/database.js";
 import { createArtifactRetentionController } from "../../dist/src/adapters/market-acquisition/retention/controller.js";
-import { SqliteArtifactRetentionJournal } from "../../dist/src/adapters/market-acquisition/retention/sqlite-journal.js";
+import { createSqliteArtifactRetentionJournal } from "../../dist/src/adapters/market-acquisition/retention/sqlite-journal.js";
 import { VaultArtifactRetentionBoundary } from "../../dist/src/adapters/market-acquisition/retention/vault-boundary.js";
 import { DurableArtifactStore } from "../../dist/src/adapters/artifacts/durable-artifact-store.js";
 import { SqliteArtifactRepository } from "../../dist/src/adapters/artifacts/sqlite-artifact-repository.js";
@@ -20,7 +20,7 @@ const database = openSqliteDatabase(
   databasePath,
   loadMigrations(join(process.cwd(), "migrations")),
 );
-const journal = new SqliteArtifactRetentionJournal(database);
+const journal = createSqliteArtifactRetentionJournal(database);
 const store = await DurableArtifactStore.open({
   repository: new SqliteArtifactRepository(database),
   clock: new ManualClock(effectiveAtMs),

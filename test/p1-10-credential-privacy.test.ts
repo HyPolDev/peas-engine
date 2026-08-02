@@ -1,15 +1,19 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { test } from "node:test";
+import { pathToFileURL } from "node:url";
 
 import {
   ALPACA_KEY_ID_ENV,
   ALPACA_SECRET_KEY_ENV,
   DurableCredentialAuthorizationBoundary,
   authorizeCredentialLoad,
-  createCredentialIsolatedAlpacaTransport,
+  assertCredentialIsolatedAlpacaTransport,
+  createProductionCredentialIsolatedAlpacaTransport,
+  createTestCredentialIsolatedAlpacaTransport,
   createDurableCredentialAuthorizationBoundary,
   createTestDurableCredentialAuthorizationBoundary,
   fmpLaneDisabled,
@@ -18,10 +22,13 @@ import {
   type RuntimeSecretSource,
 } from "../src/adapters/market-acquisition/credentials.js";
 import { buildAlpacaTransportRequest } from "../src/adapters/market-acquisition/alpaca/request.js";
-import { MemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
-import { SqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
+import {
+  MemoryAcquisitionJournal,
+  createMemoryAcquisitionJournal,
+} from "../src/adapters/market-acquisition/memory-journal.js";
+import { createSqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
 import { MemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
-import { SqliteArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/sqlite-journal.js";
+import { createSqliteArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/sqlite-journal.js";
 import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
 import {
   ACCESSOR,
@@ -51,16 +58,20 @@ test("Alpaca credentials load only into an immutable dispatch capability", async
     | import("../src/adapters/market-acquisition/credentials.js").AlpacaAuthorizationHeaders
     | null = null;
   let dispatches = 0;
+  let copiedKeyId: string | null = null;
+  let copiedSecret: string | null = null;
   const requestLease = buildAlpacaTransportRequest(
     plan,
     { kind: "first-page", pageOrdinal: 0 },
     new AbortController().signal,
   );
-  const transport = createCredentialIsolatedAlpacaTransport({
+  const transport = createTestCredentialIsolatedAlpacaTransport({
     async dispatch(_request, headers) {
       dispatches += 1;
       assert.equal(headers["APCA-API-KEY-ID"], "synthetic-key-id");
       assert.equal(headers["APCA-API-SECRET-KEY"], "synthetic-secret");
+      copiedKeyId = headers["APCA-API-KEY-ID"];
+      copiedSecret = headers["APCA-API-SECRET-KEY"];
       assert.equal(Object.isFrozen(headers), true);
       retainedHeaders = headers;
       return {} as never;
@@ -92,6 +103,10 @@ test("Alpaca credentials load only into an immutable dispatch capability", async
   for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(retainedRecord))) {
     assert.equal("value" in descriptor, false);
   }
+  // Plain JS strings cannot be revoked once disclosed. This driver seam is test-condition-only;
+  // production composition never accepts a caller driver.
+  assert.equal(copiedKeyId, "synthetic-key-id");
+  assert.equal(copiedSecret, "synthetic-secret");
   await assert.rejects(
     () => transport.dispatch(requestLease.request, retained as AlpacaDispatchCapability),
     /dispatch-capability-invalid/u,
@@ -99,6 +114,81 @@ test("Alpaca credentials load only into an immutable dispatch capability", async
   await assert.rejects(() => withAlpacaAuthorization(permit, source, async () => "reused"));
   const credentials = await import("../src/adapters/market-acquisition/credentials.js");
   assert.equal("resolveAlpacaDispatchCapability" in credentials, false);
+});
+
+test("spoofed NODE_TEST_CONTEXT cannot mint any test root or credential transport", () => {
+  const moduleUrl = (path: string): string => pathToFileURL(resolve(path)).href;
+  const urls = {
+    credentials: moduleUrl("dist/src/adapters/market-acquisition/credentials.js"),
+    acquisition: moduleUrl("dist/src/adapters/market-acquisition/memory-journal.js"),
+    retentionJournal: moduleUrl("dist/src/adapters/market-acquisition/retention/memory-journal.js"),
+    retentionController: moduleUrl("dist/src/adapters/market-acquisition/retention/controller.js"),
+    artifactAccess: moduleUrl("dist/src/adapters/market-acquisition/retention/artifact-access.js"),
+    retainedSink: moduleUrl("dist/src/adapters/market-acquisition/alpaca/retained-sink.js"),
+    wire: moduleUrl("dist/src/adapters/market-acquisition/alpaca/wire.js"),
+    semantics: moduleUrl("dist/src/adapters/market-acquisition/alpaca/wire-semantic-evidence.js"),
+  };
+  const probe = `
+    const urls = JSON.parse(process.argv[1]);
+    process.env.NODE_TEST_CONTEXT = "peas-spoof";
+    const c = await import(urls.credentials);
+    const a = await import(urls.acquisition);
+    const rj = await import(urls.retentionJournal);
+    const rc = await import(urls.retentionController);
+    const aa = await import(urls.artifactAccess);
+    const rs = await import(urls.retainedSink);
+    const w = await import(urls.wire);
+    const s = await import(urls.semantics);
+    if ("createCredentialIsolatedAlpacaTransport" in c) throw new Error("legacy-driver-export");
+    let copied = false;
+    const driver = { dispatch(_request, headers) { copied = Boolean(headers?.["APCA-API-KEY-ID"]); }, abort() {}, settle() {} };
+    const attempts = [
+      () => c.createTestCredentialIsolatedAlpacaTransport(driver),
+      () => c.createTestDurableCredentialAuthorizationBoundary({}, {}),
+      () => a.createMemoryAcquisitionJournal({}),
+      () => rj.createMemoryArtifactRetentionJournal(),
+      () => rc.createTestArtifactRetentionController({}),
+      () => aa.createTestRetentionEnforcedArtifactStore({}, {}),
+      () => rs.createTestAlpacaArtifactCommitSink({}),
+      () => w.createTestDurableAlpacaWireAdmissionBoundary({}, {}),
+      () => s.createTestDurableAlpacaWireSemanticEvidenceBoundary({}, {}, {}),
+      () => s.appendTestAlpacaWireSemanticEvidence({}, {}),
+      () => c.createProductionCredentialIsolatedAlpacaTransport(driver),
+    ];
+    for (const attempt of attempts) {
+      let rejected = false;
+      try { attempt(); } catch { rejected = true; }
+      if (!rejected) throw new Error("spoofed-test-root-admitted");
+    }
+    if (copied) throw new Error("plaintext-copied");
+  `;
+  const result = spawnSync(
+    process.execPath,
+    ["--input-type=module", "--eval", probe, JSON.stringify(urls)],
+    {
+      cwd: process.cwd(),
+      env: { ...process.env, NODE_TEST_CONTEXT: "peas-spoof", NODE_OPTIONS: "" },
+      encoding: "utf8",
+      windowsHide: true,
+    },
+  );
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+});
+
+test("production credential transport is module-owned and accepts no caller driver", () => {
+  const transport = createProductionCredentialIsolatedAlpacaTransport();
+  assert.doesNotThrow(() => assertCredentialIsolatedAlpacaTransport(transport));
+  assert.throws(
+    () =>
+      (createProductionCredentialIsolatedAlpacaTransport as unknown as (driver: object) => unknown)(
+        {
+          dispatch() {
+            assert.fail("caller driver must never receive authorization");
+          },
+        },
+      ),
+    /takes-no-driver/u,
+  );
 });
 
 test("missing credentials return a closed error and never invoke transport", async () => {
@@ -165,7 +255,7 @@ test("a structurally forged permit and incomplete proof cannot read credentials"
       }),
     /request-started/u,
   );
-  const emptyJournal = new MemoryAcquisitionJournal(fixture.request.journalIdentity);
+  const emptyJournal = createMemoryAcquisitionJournal(fixture.request.journalIdentity);
   const missingPersistence = createTestDurableCredentialAuthorizationBoundary(
     emptyJournal,
     fixture.retentionJournal,
@@ -232,15 +322,16 @@ test("a persisted attempt claim cannot be reminted after SQLite cold restart", a
   const filename = join(directory, "claim.sqlite");
   const migrations = loadMigrations(join(process.cwd(), "migrations"));
   let database = openSqliteDatabase(filename, migrations);
-  let journal = new SqliteAcquisitionJournal(database, fixture.request.journalIdentity);
+  let journal = createSqliteAcquisitionJournal(database, fixture.request.journalIdentity);
+  await journal.appendLedgerEntries(fixture.ledgerEntries);
   for (const entry of fixture.entries) await journal.append(entry);
-  let retentionJournal = new SqliteArtifactRetentionJournal(database);
+  let retentionJournal = createSqliteArtifactRetentionJournal(database);
   const first = createDurableCredentialAuthorizationBoundary(journal, retentionJournal);
   await first.establish(fixture.request);
   database.close();
   database = openSqliteDatabase(filename, migrations);
-  journal = new SqliteAcquisitionJournal(database, fixture.request.journalIdentity);
-  retentionJournal = new SqliteArtifactRetentionJournal(database);
+  journal = createSqliteAcquisitionJournal(database, fixture.request.journalIdentity);
+  retentionJournal = createSqliteArtifactRetentionJournal(database);
   const restarted = createDurableCredentialAuthorizationBoundary(journal, retentionJournal);
   await assert.rejects(
     () => restarted.establish(fixture.request),
@@ -255,6 +346,14 @@ test("credential authority rejects structural, subclassed, and proxied persisten
   const fixture = await credentialAuthorizationFixture(validatedRepairPlan());
   class JournalSubclass extends MemoryAcquisitionJournal {}
   class RetentionJournalSubclass extends MemoryArtifactRetentionJournal {}
+  const prototypeOnly = Object.create(
+    MemoryAcquisitionJournal.prototype,
+  ) as MemoryAcquisitionJournal;
+  const methodShadow = new MemoryAcquisitionJournal(fixture.request.journalIdentity);
+  Object.defineProperty(methodShadow, "load", {
+    value: async () => fixture.entries,
+    enumerable: true,
+  });
   const directlyConstructed = new DurableCredentialAuthorizationBoundary(
     fixture.journal,
     fixture.retentionJournal,
@@ -275,6 +374,8 @@ test("credential authority rejects structural, subclassed, and proxied persisten
   );
   for (const journal of [
     {} as never,
+    prototypeOnly,
+    methodShadow,
     new JournalSubclass(fixture.request.journalIdentity),
     new Proxy(fixture.journal, {}),
   ]) {

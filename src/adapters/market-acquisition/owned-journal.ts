@@ -1,52 +1,36 @@
-import { isProxy } from "node:util/types";
-
 import type { AcquisitionJournal } from "./journal.js";
-import { MemoryAcquisitionJournal } from "./memory-journal.js";
-import { SqliteAcquisitionJournal } from "./sqlite-journal.js";
+import { isOwnedMemoryAcquisitionJournal } from "./memory-journal.js";
+import { isOwnedSqliteAcquisitionJournal } from "./sqlite-journal.js";
 import type { ArtifactRetentionJournal } from "./retention/contracts.js";
-import { MemoryArtifactRetentionJournal } from "./retention/memory-journal.js";
-import { SqliteArtifactRetentionJournal } from "./retention/sqlite-journal.js";
-
-function exactInstance(value: object, prototypes: readonly object[]): boolean {
-  return !isProxy(value) && prototypes.includes(Object.getPrototypeOf(value));
-}
+import { isOwnedMemoryArtifactRetentionJournal } from "./retention/memory-journal.js";
+import { isOwnedSqliteArtifactRetentionJournal } from "./retention/sqlite-journal.js";
 
 export function assertOwnedAcquisitionJournal(value: AcquisitionJournal): void {
   if (
-    !exactInstance(value as object, [
-      MemoryAcquisitionJournal.prototype,
-      SqliteAcquisitionJournal.prototype,
-    ])
+    !isOwnedMemoryAcquisitionJournal(value as object) &&
+    !isOwnedSqliteAcquisitionJournal(value as object)
   ) {
     throw new TypeError("owned-acquisition-journal-required");
   }
 }
 
 export function assertOwnedSqliteAcquisitionJournal(value: AcquisitionJournal): void {
-  if (
-    isProxy(value as object) ||
-    Object.getPrototypeOf(value) !== SqliteAcquisitionJournal.prototype
-  ) {
+  if (!isOwnedSqliteAcquisitionJournal(value as object)) {
     throw new TypeError("owned-sqlite-acquisition-journal-required");
   }
 }
 
 export function assertOwnedRetentionJournal(value: ArtifactRetentionJournal): void {
   if (
-    !exactInstance(value as object, [
-      MemoryArtifactRetentionJournal.prototype,
-      SqliteArtifactRetentionJournal.prototype,
-    ])
+    !isOwnedMemoryArtifactRetentionJournal(value as object) &&
+    !isOwnedSqliteArtifactRetentionJournal(value as object)
   ) {
     throw new TypeError("owned-retention-journal-required");
   }
 }
 
 export function assertOwnedSqliteRetentionJournal(value: ArtifactRetentionJournal): void {
-  if (
-    isProxy(value as object) ||
-    Object.getPrototypeOf(value) !== SqliteArtifactRetentionJournal.prototype
-  ) {
+  if (!isOwnedSqliteArtifactRetentionJournal(value as object)) {
     throw new TypeError("owned-sqlite-retention-journal-required");
   }
 }

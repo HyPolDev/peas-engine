@@ -18,6 +18,8 @@ import type {
   RetentionTombstone,
 } from "./contracts.js";
 
+const ownedSqliteRetentionJournals = new WeakSet<object>();
+
 type JsonRow = Readonly<{ json: string; hash: string }>;
 
 function parseRecord<T>(row: JsonRow, domain: string): T {
@@ -535,4 +537,22 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
     ).map((row) => row.derived_id);
     return { ...value, derivedIds };
   }
+}
+
+export function createSqliteArtifactRetentionJournal(
+  database: SqliteDatabase,
+): SqliteArtifactRetentionJournal {
+  const journal = new SqliteArtifactRetentionJournal(database);
+  ownedSqliteRetentionJournals.add(journal);
+  Object.freeze(journal);
+  return journal;
+}
+
+export function isOwnedSqliteArtifactRetentionJournal(value: object): boolean {
+  return (
+    ownedSqliteRetentionJournals.has(value) &&
+    Object.getPrototypeOf(value) === SqliteArtifactRetentionJournal.prototype &&
+    Object.isFrozen(value) &&
+    Reflect.ownKeys(value).length === 0
+  );
 }

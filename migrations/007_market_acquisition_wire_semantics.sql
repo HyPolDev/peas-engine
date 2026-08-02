@@ -17,3 +17,22 @@ BEGIN SELECT RAISE(ABORT, 'wire semantic evidence is immutable'); END;
 CREATE TRIGGER market_acquisition_wire_semantics_no_delete
 BEFORE DELETE ON market_acquisition_wire_semantic_evidence
 BEGIN SELECT RAISE(ABORT, 'wire semantic evidence is immutable'); END;
+
+CREATE TABLE market_acquisition_ledger_entries (
+  market_acquisition_journal_id TEXT NOT NULL,
+  execution_id TEXT NOT NULL,
+  ledger_sequence INTEGER NOT NULL CHECK (ledger_sequence >= 0),
+  entry_id TEXT NOT NULL,
+  entry_json TEXT NOT NULL,
+  entry_hash TEXT NOT NULL,
+  PRIMARY KEY (market_acquisition_journal_id, ledger_sequence),
+  UNIQUE (market_acquisition_journal_id, entry_id)
+) STRICT;
+
+CREATE TRIGGER market_acquisition_ledger_entries_no_update
+BEFORE UPDATE ON market_acquisition_ledger_entries
+BEGIN SELECT RAISE(ABORT, 'market acquisition ledger is immutable'); END;
+
+CREATE TRIGGER market_acquisition_ledger_entries_no_delete
+BEFORE DELETE ON market_acquisition_ledger_entries
+BEGIN SELECT RAISE(ABORT, 'market acquisition ledger is immutable'); END;

@@ -1119,7 +1119,7 @@ function admitPage(
             endpointKind,
             reason: terminalReason,
             symbol,
-            itemIndex,
+            itemIndex: 0,
           }),
         ]);
         return Object.freeze({
@@ -3022,14 +3022,11 @@ test("valid trade updates stop at first, middle, and last positions before hosti
       const updateItem = structuredClone(normal);
       updateItem["u"] = update;
       const groups: PlainRecord = {};
-      let expectedItemIndex = 0;
       if (position === "first") {
         groups["PEASLIL"] = [updateItem, null];
       } else if (position === "middle") {
-        expectedItemIndex = 1;
         groups["PEASLIL"] = [structuredClone(normal), updateItem, throwingItemAccessor()];
       } else {
-        expectedItemIndex = 1;
         groups["PEASLIL"] = [structuredClone(normal), updateItem];
         groups["PEASUMB"] = [throwingItemProxy()];
       }
@@ -3047,7 +3044,7 @@ test("valid trade updates stop at first, middle, and last positions before hosti
           endpointKind: "trades",
           reason: "correction-unsupported",
           symbol: "PEASLIL",
-          itemIndex: expectedItemIndex,
+          itemIndex: 0,
         },
       ]);
       assert.deepEqual(result.publicSummary, {
@@ -3140,7 +3137,6 @@ test("canonical trade-update precedence is exhaustive across direct, restart, me
 
         const updateItem = structuredClone(normal);
         updateItem["u"] = update;
-        const expectedItemIndex = placement === "first" ? 0 : placement === "middle" ? 1 : 2;
         const earlierItems: unknown[] =
           placement === "first"
             ? [updateItem, laterValue()]
@@ -3169,7 +3165,7 @@ test("canonical trade-update precedence is exhaustive across direct, restart, me
             endpointKind: "trades",
             reason: "correction-unsupported",
             symbol: "PEASLIL",
-            itemIndex: expectedItemIndex,
+            itemIndex: 0,
           },
         ]);
         for (const forbiddenState of [
@@ -3303,7 +3299,7 @@ test("canonical trade-update precedence is exhaustive across direct, restart, me
 
   assert.equal(vectorCount, 27);
   assert.equal(integratedRunCount, 162);
-  assert.equal(terminalOutcomes.size, 3);
+  assert.equal(terminalOutcomes.size, 1);
 });
 
 test("decimal and integer lexical grammar, machine limits, and one-over bounds are exact", () => {

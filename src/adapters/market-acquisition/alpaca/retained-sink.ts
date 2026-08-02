@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { isProxy } from "node:util/types";
+import { P1_10_TEST_AUTHORITY } from "#p1-10-test-authority";
 
 import type {
   StoreArtifactRequest,
@@ -111,7 +112,7 @@ export function createDurableAlpacaArtifactCommitSink(
 export function createTestAlpacaArtifactCommitSink<T>(
   sink: AlpacaArtifactCommitSink<T>,
 ): AlpacaArtifactCommitSink<T> {
-  if (process.env["NODE_TEST_CONTEXT"] === undefined) {
+  if (P1_10_TEST_AUTHORITY === undefined) {
     throw new TypeError("test-alpaca-artifact-sink-unavailable");
   }
   const facade: AlpacaArtifactCommitSink<T> = Object.freeze({

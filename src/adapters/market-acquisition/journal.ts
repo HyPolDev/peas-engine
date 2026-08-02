@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 
 import { canonicalJson, type JsonValue } from "../../core/json.js";
+import type { ObservationLedgerEntryV1 } from "../../providers/observation-ledger.js";
 import { AUTHORIZATION_MODE, MARKET_ACQUISITION_LIMITS } from "./contracts.js";
 
 export const JOURNAL_SCHEMA_VERSION = 1 as const;
@@ -778,6 +779,8 @@ export interface AcquisitionJournal {
   append(entry: JournalEntry): Promise<void>;
   /** Atomically consumes one exact request-started checkpoint with its attempt-started claim. */
   claimAttemptStarted(expectedRequestStartedHash: string, entry: JournalEntry): Promise<boolean>;
+  appendLedgerEntries(entries: readonly ObservationLedgerEntryV1[]): Promise<void>;
+  loadLedgerEntries(): Promise<readonly ObservationLedgerEntryV1[]>;
 }
 
 export function journalEntryBody(entry: JournalEntry): JournalCheckpointBody {

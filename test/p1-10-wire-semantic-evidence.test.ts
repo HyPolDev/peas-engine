@@ -11,13 +11,16 @@ import {
 } from "../src/adapters/market-acquisition/alpaca/wire.js";
 import {
   MemoryAlpacaWireSemanticEvidenceStore,
-  SqliteAlpacaWireSemanticEvidenceStore,
   appendTestAlpacaWireSemanticEvidence,
+  createSqliteAlpacaWireSemanticEvidenceStore,
   deriveAlpacaWireSemanticEvidenceId,
   type AlpacaWireSemanticEvidenceDraft,
 } from "../src/adapters/market-acquisition/alpaca/wire-semantic-evidence.js";
-import { MemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
-import { SqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
+import {
+  MemoryAcquisitionJournal,
+  createMemoryAcquisitionJournal,
+} from "../src/adapters/market-acquisition/memory-journal.js";
+import { createSqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
 import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
 
 const migrations = loadMigrations(join(process.cwd(), "migrations"));
@@ -45,6 +48,14 @@ function evidenceDraft(): AlpacaWireSemanticEvidenceDraft {
     artifactSizeBytes: 37,
     stageLedgerFactId: `ole1_${hash("b")}`,
     clockDeclarationFactId: `ole1_${hash("c")}`,
+    semanticAuthorityId: `wsa1_${hash("0")}`,
+    semanticAuthorityStageLedgerFactId: `ole1_${hash("1")}`,
+    semanticAuthorityObservationId: hash("2"),
+    semanticAuthorityObservationHash: hash("3"),
+    semanticAuthorityDigest: hash("4"),
+    semanticAuthoritySizeBytes: 128,
+    calendarDigest: hash("5"),
+    corpusAdmissionHash: hash("6"),
     calendarEntries: Object.freeze([
       Object.freeze({
         sessionDate: "2033-05-06",
@@ -87,14 +98,41 @@ test("wire semantic evidence is exact, immutable, and restart-identical in memor
   t.after(() => rm(directory, { recursive: true, force: true }));
   const filename = join(directory, "wire.sqlite");
   let database = openSqliteDatabase(filename, migrations);
-  appendTestAlpacaWireSemanticEvidence(new SqliteAlpacaWireSemanticEvidenceStore(database), value);
+  appendTestAlpacaWireSemanticEvidence(
+    createSqliteAlpacaWireSemanticEvidenceStore(database),
+    value,
+  );
   database.close();
   database = openSqliteDatabase(filename, migrations);
-  const restarted = new SqliteAlpacaWireSemanticEvidenceStore(database);
+  const restarted = createSqliteAlpacaWireSemanticEvidenceStore(database);
   assert.deepEqual(restarted.loadForJournalEntry(value.journalEntryHash), value);
+  const substitutedDraft = Object.freeze({
+    ...draft,
+    calendarVersion: "peas-original-synthetic-alternate-calendar-v1",
+    calendarEntries: Object.freeze(
+      draft.calendarEntries.map((entry) =>
+        Object.freeze({
+          ...entry,
+          calendarVersion: "peas-original-synthetic-alternate-calendar-v1",
+        }),
+      ),
+    ),
+    primaryCorpusMember: false,
+  });
+  assert.throws(
+    () =>
+      appendTestAlpacaWireSemanticEvidence(
+        restarted,
+        Object.freeze({
+          ...substitutedDraft,
+          evidenceId: deriveAlpacaWireSemanticEvidenceId(substitutedDraft),
+        }),
+      ),
+    /wire-semantic-evidence-conflict/u,
+  );
   assert.doesNotThrow(() =>
     createDurableAlpacaWireAdmissionBoundary(
-      new SqliteAcquisitionJournal(database, identity()),
+      createSqliteAcquisitionJournal(database, identity()),
       restarted,
     ),
   );
@@ -110,7 +148,7 @@ test("wire semantic evidence is exact, immutable, and restart-identical in memor
 });
 
 test("wire authority rejects structural, subclassed, proxied, and direct roots", async () => {
-  const journal = new MemoryAcquisitionJournal(identity());
+  const journal = createMemoryAcquisitionJournal(identity());
   const evidence = new MemoryAlpacaWireSemanticEvidenceStore();
   class JournalSubclass extends MemoryAcquisitionJournal {}
   class EvidenceSubclass extends MemoryAlpacaWireSemanticEvidenceStore {}

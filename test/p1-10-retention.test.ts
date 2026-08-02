@@ -52,11 +52,18 @@ import type {
   RetentionReceipt,
   RetentionStopEvent,
 } from "../src/adapters/market-acquisition/retention/contracts.js";
-import { MemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
-import { SqliteArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/sqlite-journal.js";
+import {
+  MemoryArtifactRetentionJournal,
+  createMemoryArtifactRetentionJournal,
+} from "../src/adapters/market-acquisition/retention/memory-journal.js";
+import {
+  SqliteArtifactRetentionJournal,
+  createSqliteArtifactRetentionJournal,
+} from "../src/adapters/market-acquisition/retention/sqlite-journal.js";
 import {
   RetentionEnforcedArtifactStore,
   assertRetentionEnforcedArtifactStore,
+  createRetentionEnforcedArtifactStore,
   createTestRetentionEnforcedArtifactStore,
 } from "../src/adapters/market-acquisition/retention/artifact-access.js";
 import { VaultArtifactRetentionBoundary } from "../src/adapters/market-acquisition/retention/vault-boundary.js";
@@ -667,9 +674,34 @@ test("owned retention brands reject structural objects, subclasses, and proxies"
   const journal = new MemoryArtifactRetentionJournal();
   const artifacts = new SyntheticArtifactBoundary();
   const trusted = controller(journal, artifacts, () => captureMs);
+  const prototypeOnly = Object.create(
+    MemoryArtifactRetentionJournal.prototype,
+  ) as MemoryArtifactRetentionJournal;
+  const methodShadow = new MemoryArtifactRetentionJournal();
+  Object.defineProperty(methodShadow, "recordStopAndDenials", {
+    value: () => undefined,
+    enumerable: true,
+  });
+  class JournalSubclass extends MemoryArtifactRetentionJournal {}
+  for (const hostileJournal of [
+    prototypeOnly,
+    methodShadow,
+    new JournalSubclass(),
+    new Proxy(createMemoryArtifactRetentionJournal(), {}),
+  ]) {
+    assert.throws(
+      () =>
+        createArtifactRetentionController({
+          journal: hostileJournal,
+          artifacts: {} as never,
+          nowMs: () => captureMs,
+        }),
+      /owned-sqlite-retention-journal-required/u,
+    );
+  }
   class ControllerSubclass extends DefaultArtifactRetentionController {}
   const subclass = new ControllerSubclass({
-    journal,
+    journal: createMemoryArtifactRetentionJournal(),
     artifacts,
     nowMs: () => captureMs,
   });
@@ -759,6 +791,95 @@ test("reconciliation is cancelled before stop settlement and rejected before wor
   assert.equal(reconcileCalls, 1);
   assert.equal(mutations, 0);
   assert.equal(artifacts.present.has(digest), false);
+});
+
+test("production reconciliation gates link, sync, removal, and repository mutation before stop", {
+  timeout: 60_000,
+}, async () => {
+  for (const checkpoint of [
+    "quarantine-link",
+    "quarantine-sync",
+    "quarantine-source-removal",
+    "reconciliation-action-application-commit",
+  ]) {
+    const root = await mkdtemp(join(tmpdir(), "peas-p1-10-reconcile-stop-"));
+    const paths = artifactRuntimePaths(root);
+    let database: ReturnType<typeof openSqliteDatabase> | undefined;
+    let store: DurableArtifactStore | undefined;
+    try {
+      await mkdir(paths.databaseDirectory, { recursive: true });
+      database = openSqliteDatabase(paths.databasePath, migrations);
+      let release!: () => void;
+      let reached!: () => void;
+      const paused = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const atCheckpoint = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      let armed = false;
+      let captured = false;
+      store = await DurableArtifactStore.open({
+        repository: new SqliteArtifactRepository(database),
+        clock: new ManualClock(captureMs),
+        config: vaultConfig(root),
+        faultBoundary: async (name) => {
+          if (!armed || captured || name !== checkpoint) return;
+          captured = true;
+          reached();
+          await paused;
+        },
+      });
+      const unownedStageBytes = Buffer.from(
+        "unowned original synthetic reconciliation bytes",
+        "utf8",
+      );
+      const claimedDigest = createHash("sha256").update(unownedStageBytes).digest("hex");
+      await mkdir(dirname(digestContentPath(root, claimedDigest)), { recursive: true });
+      await writeFile(join(paths.staging, "unowned-synthetic.part"), unownedStageBytes);
+      const journal = createSqliteArtifactRetentionJournal(database);
+      const boundary = await VaultArtifactRetentionBoundary.open({ store, runtimeRoot: root });
+      const worker = createArtifactRetentionController({
+        journal,
+        artifacts: boundary,
+        nowMs: () => stop().effectiveAtMs,
+      });
+      worker.registerOwnership(
+        ownership({
+          artifactDigest: claimedDigest,
+          artifactSizeBytes: unownedStageBytes.byteLength,
+          derivedIds: [],
+        }),
+      );
+      const guarded = createRetentionEnforcedArtifactStore(store, worker);
+      armed = true;
+      const reconciling = guarded.reconcile();
+      await atCheckpoint;
+      const stopping = worker.enforceStop(stop());
+      let stopSettled = false;
+      const stoppingOutcome = stopping.then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      );
+      void stoppingOutcome.then(() => {
+        stopSettled = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(stopSettled, false, checkpoint);
+      release();
+      await assert.rejects(() => reconciling, /Reconciliation was stopped/u);
+      const outcome = await stoppingOutcome;
+      if ("error" in outcome) throw new Error(`${checkpoint}:${JSON.stringify(outcome.error)}`);
+      const receipt: RetentionReceipt = outcome.value;
+      assert.equal(receipt.outcome, "verified-erased", checkpoint);
+      assert.equal(await boundary.verifyDigestCopiesAbsent(claimedDigest), true, checkpoint);
+      assert.equal(journal.digestUseDenied(claimedDigest), true, checkpoint);
+    } finally {
+      if (store !== undefined) await store.close();
+      if (database?.open === true) database.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  }
 });
 
 test("stop installs denial before erasure and follows the accepted durable sequence", async () => {
@@ -1008,7 +1129,7 @@ test("separate live controllers over one durable store share the stop barrier", 
     await rm(root, { recursive: true, force: true });
   });
   const stored = await store.store(artifactRequest("shared-live", Readable.from([syntheticBytes])));
-  const journal = new SqliteArtifactRetentionJournal(database);
+  const journal = createSqliteArtifactRetentionJournal(database);
   const boundaryA = await VaultArtifactRetentionBoundary.open({ store, runtimeRoot: root });
   const boundaryB = await VaultArtifactRetentionBoundary.open({ store, runtimeRoot: root });
   const controllerA = createArtifactRetentionController({
@@ -1102,7 +1223,7 @@ test("process hard-kill at every retention boundary converges without resurrecti
       ])
         await mkdir(directory, { recursive: true });
       let database = openSqliteDatabase(paths.databasePath, migrations);
-      let journal = new SqliteArtifactRetentionJournal(database);
+      let journal = createSqliteArtifactRetentionJournal(database);
       const seedArtifacts = new SyntheticArtifactBoundary();
       const seed = controller(journal, seedArtifacts, () => stop().effectiveAtMs);
       seed.registerOwnership(ownership());
@@ -1119,7 +1240,7 @@ test("process hard-kill at every retention boundary converges without resurrecti
       await new Promise<void>((resolve) => child.once("exit", () => resolve()));
 
       database = openSqliteDatabase(paths.databasePath, migrations);
-      journal = new SqliteArtifactRetentionJournal(database);
+      journal = createSqliteArtifactRetentionJournal(database);
       const recoveredStore = await DurableArtifactStore.open({
         repository: new SqliteArtifactRepository(database),
         clock: new ManualClock(stop().effectiveAtMs + 30_001),
@@ -1227,7 +1348,7 @@ test("retention settlement cannot pass a queued pre-stop writer or admit its lat
   });
 
   const seeded = await store.store(artifactRequest("seeded", Readable.from([syntheticBytes])));
-  const journal = new SqliteArtifactRetentionJournal(database);
+  const journal = createSqliteArtifactRetentionJournal(database);
   const boundary = await VaultArtifactRetentionBoundary.open({
     store,
     runtimeRoot: root,

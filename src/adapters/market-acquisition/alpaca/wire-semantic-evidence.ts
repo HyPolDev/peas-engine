@@ -1,10 +1,13 @@
 import { isProxy } from "node:util/types";
+import { P1_10_TEST_AUTHORITY } from "#p1-10-test-authority";
+import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 
 import { canonicalHash } from "../../../core/hash.js";
 import { canonicalJson, type JsonValue } from "../../../core/json.js";
 import type { FrozenSessionCalendarEntryV1 } from "../../../providers/market-reference/operations.js";
 import {
-  MarketAcquisitionLedger,
+  type CommittedArtifactExpectation,
   validateJournalLedgerBindings,
   verifyCommittedArtifact,
 } from "../artifact-integration.js";
@@ -23,6 +26,28 @@ import {
   assertRetentionEnforcedArtifactStore,
 } from "../retention/artifact-access.js";
 import type { SqliteDatabase } from "../../sqlite/database.js";
+import type { ValidatedMarketAcquisitionConfiguration } from "../contracts.js";
+import { assertValidatedMarketAcquisitionConfiguration } from "../configuration.js";
+
+export type AlpacaWireSemanticAuthorityV1 = Readonly<{
+  schemaVersion: 1;
+  authorityId: string;
+  requestIdentityHash: string;
+  pageArtifactObservationId: string;
+  pageArtifactDigest: string;
+  queryStartNs: string;
+  queryEndNs: string;
+  calendarVersion: string;
+  calendarDigest: string;
+  calendarEntries: readonly FrozenSessionCalendarEntryV1[];
+  primaryCorpusMember: boolean;
+  corpusAdmissionHash: string;
+}>;
+
+export type AlpacaWireSemanticAuthorityDraft = Omit<
+  AlpacaWireSemanticAuthorityV1,
+  "authorityId" | "calendarDigest" | "corpusAdmissionHash"
+>;
 
 export type AlpacaWireSemanticEvidenceV1 = Readonly<{
   schemaVersion: 1;
@@ -35,6 +60,14 @@ export type AlpacaWireSemanticEvidenceV1 = Readonly<{
   artifactSizeBytes: number;
   stageLedgerFactId: string;
   clockDeclarationFactId: string;
+  semanticAuthorityId: string;
+  semanticAuthorityStageLedgerFactId: string;
+  semanticAuthorityObservationId: string;
+  semanticAuthorityObservationHash: string;
+  semanticAuthorityDigest: string;
+  semanticAuthoritySizeBytes: number;
+  calendarDigest: string;
+  corpusAdmissionHash: string;
   calendarEntries: readonly FrozenSessionCalendarEntryV1[];
   calendarVersion: string;
   durableClockBasisId: string;
@@ -52,6 +85,7 @@ export interface AlpacaWireSemanticEvidenceStore {
 const EVIDENCE_ID = /^wse1_[0-9a-f]{64}$/u;
 const HASH = /^[0-9a-f]{64}$/u;
 const semanticEvidenceBoundaries = new WeakSet<object>();
+const ownedSemanticEvidenceStores = new WeakSet<object>();
 const SEMANTIC_EVIDENCE_BOUNDARY_CONSTRUCTION_AUTHORITY = Object.freeze({});
 
 function assertSafeTime(value: number, label: string): void {
@@ -95,6 +129,54 @@ function assertCalendarEntry(value: FrozenSessionCalendarEntryV1): void {
   }
 }
 
+export function createAlpacaWireSemanticAuthority(
+  draft: AlpacaWireSemanticAuthorityDraft,
+): AlpacaWireSemanticAuthorityV1 {
+  const calendarDigest = canonicalHash(
+    "peas/alpaca-wire-calendar-authority/v1",
+    draft.calendarEntries as unknown as JsonValue,
+  );
+  const corpusAdmissionHash = canonicalHash("peas/alpaca-wire-corpus-admission/v1", {
+    requestIdentityHash: draft.requestIdentityHash,
+    pageArtifactObservationId: draft.pageArtifactObservationId,
+    pageArtifactDigest: draft.pageArtifactDigest,
+    primaryCorpusMember: draft.primaryCorpusMember,
+  });
+  const body = Object.freeze({ ...draft, calendarDigest, corpusAdmissionHash });
+  return Object.freeze({
+    ...body,
+    authorityId: `wsa1_${canonicalHash(
+      "peas/alpaca-wire-semantic-authority/v1",
+      body as unknown as JsonValue,
+    )}`,
+  });
+}
+
+function validateSemanticAuthority(value: AlpacaWireSemanticAuthorityV1): void {
+  const { authorityId, calendarDigest, corpusAdmissionHash, ...draft } = value;
+  const expected = createAlpacaWireSemanticAuthority(draft);
+  if (
+    value.schemaVersion !== 1 ||
+    !/^wsa1_[0-9a-f]{64}$/u.test(authorityId) ||
+    expected.authorityId !== authorityId ||
+    expected.calendarDigest !== calendarDigest ||
+    expected.corpusAdmissionHash !== corpusAdmissionHash ||
+    !HASH.test(value.requestIdentityHash) ||
+    !HASH.test(value.pageArtifactObservationId) ||
+    !HASH.test(value.pageArtifactDigest) ||
+    !/^-?\d+$/u.test(value.queryStartNs) ||
+    !/^-?\d+$/u.test(value.queryEndNs) ||
+    BigInt(value.queryStartNs) > BigInt(value.queryEndNs) ||
+    value.calendarEntries.length === 0 ||
+    value.calendarEntries.some((entry) => {
+      assertCalendarEntry(entry);
+      return entry.calendarVersion !== value.calendarVersion;
+    })
+  ) {
+    throw new TypeError("wire-semantic-authority-invalid");
+  }
+}
+
 export function deriveAlpacaWireSemanticEvidenceId(draft: AlpacaWireSemanticEvidenceDraft): string {
   return `wse1_${canonicalHash(
     "peas/alpaca-wire-semantic-evidence/v1",
@@ -115,6 +197,15 @@ export function validateAlpacaWireSemanticEvidence(value: AlpacaWireSemanticEvid
     value.artifactSizeBytes < 0 ||
     !/^ole1_[0-9a-f]{64}$/u.test(value.stageLedgerFactId) ||
     !/^ole1_[0-9a-f]{64}$/u.test(value.clockDeclarationFactId) ||
+    !/^wsa1_[0-9a-f]{64}$/u.test(value.semanticAuthorityId) ||
+    !/^ole1_[0-9a-f]{64}$/u.test(value.semanticAuthorityStageLedgerFactId) ||
+    !HASH.test(value.semanticAuthorityObservationId) ||
+    !HASH.test(value.semanticAuthorityObservationHash) ||
+    !HASH.test(value.semanticAuthorityDigest) ||
+    !Number.isSafeInteger(value.semanticAuthoritySizeBytes) ||
+    value.semanticAuthoritySizeBytes < 1 ||
+    !HASH.test(value.calendarDigest) ||
+    !HASH.test(value.corpusAdmissionHash) ||
     !/^clk1_[0-9a-f]{64}$/u.test(value.durableClockBasisId) ||
     typeof value.calendarVersion !== "string" ||
     value.calendarVersion.length === 0 ||
@@ -148,9 +239,51 @@ function sameEvidence(existing: AlpacaWireSemanticEvidenceV1, value: AlpacaWireS
   }
 }
 
+async function loadSemanticAuthorityBytes(
+  store: RetentionEnforcedArtifactStore,
+  expected: CommittedArtifactExpectation,
+): Promise<AlpacaWireSemanticAuthorityV1> {
+  await verifyCommittedArtifact(store, expected);
+  const read = await store.read(expected.artifactDigest);
+  const chunks: Buffer[] = [];
+  const digest = createHash("sha256");
+  let size = 0;
+  try {
+    for await (const chunk of read.stream) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+      size += bytes.byteLength;
+      if (size > expected.artifactSizeBytes || size > 256 * 1024)
+        throw new RangeError("wire-semantic-authority-size-invalid");
+      digest.update(bytes);
+      chunks.push(Buffer.from(bytes));
+    }
+    if (size !== expected.artifactSizeBytes)
+      throw new TypeError("wire-semantic-authority-size-invalid");
+    if (digest.digest("hex") !== expected.artifactDigest) {
+      throw new TypeError("wire-semantic-authority-digest-invalid");
+    }
+    const value = JSON.parse(
+      Buffer.concat(chunks).toString("utf8"),
+    ) as AlpacaWireSemanticAuthorityV1;
+    validateSemanticAuthority(value);
+    return value;
+  } finally {
+    for (const chunk of chunks) chunk.fill(0);
+  }
+}
+
+function utcDateForNs(value: string): string {
+  const milliseconds = BigInt(value) / 1_000_000n;
+  return new Date(Number(milliseconds)).toISOString().slice(0, 10);
+}
+
 export class MemoryAlpacaWireSemanticEvidenceStore implements AlpacaWireSemanticEvidenceStore {
   constructor() {
     memoryEvidence.set(this, new Map());
+    if (P1_10_TEST_AUTHORITY !== undefined) {
+      ownedSemanticEvidenceStores.add(this);
+      Object.freeze(this);
+    }
   }
 
   loadForJournalEntry(journalEntryHash: string): AlpacaWireSemanticEvidenceV1 | undefined {
@@ -187,6 +320,15 @@ export class SqliteAlpacaWireSemanticEvidenceStore implements AlpacaWireSemantic
     validateAlpacaWireSemanticEvidence(value);
     return value;
   }
+}
+
+export function createSqliteAlpacaWireSemanticEvidenceStore(
+  database: SqliteDatabase,
+): SqliteAlpacaWireSemanticEvidenceStore {
+  const store = new SqliteAlpacaWireSemanticEvidenceStore(database);
+  ownedSemanticEvidenceStores.add(store);
+  Object.freeze(store);
+  return store;
 }
 
 const memoryEvidence = new WeakMap<
@@ -247,7 +389,10 @@ export function assertOwnedAlpacaWireSemanticEvidenceStore(
   value: AlpacaWireSemanticEvidenceStore,
 ): void {
   if (
+    !ownedSemanticEvidenceStores.has(value as object) ||
     isProxy(value as object) ||
+    !Object.isFrozen(value) ||
+    Reflect.ownKeys(value as object).length !== 0 ||
     ![
       MemoryAlpacaWireSemanticEvidenceStore.prototype,
       SqliteAlpacaWireSemanticEvidenceStore.prototype,
@@ -261,7 +406,10 @@ export function assertOwnedSqliteAlpacaWireSemanticEvidenceStore(
   value: AlpacaWireSemanticEvidenceStore,
 ): void {
   if (
+    !ownedSemanticEvidenceStores.has(value as object) ||
     isProxy(value as object) ||
+    !Object.isFrozen(value) ||
+    Reflect.ownKeys(value as object).length !== 0 ||
     Object.getPrototypeOf(value) !== SqliteAlpacaWireSemanticEvidenceStore.prototype
   ) {
     throw new TypeError("owned-sqlite-wire-semantic-evidence-store-required");
@@ -295,22 +443,21 @@ export class DurableAlpacaWireSemanticEvidenceBoundary {
     input: Readonly<{
       expectedIdentity: JournalIdentityInput;
       marketAcquisitionJournalId: string;
-      ledger: MarketAcquisitionLedger;
-      calendarEntries: readonly FrozenSessionCalendarEntryV1[];
-      primaryCorpusMember: boolean;
+      plan: ValidatedMarketAcquisitionConfiguration;
+      semanticAuthority: CommittedArtifactExpectation & Readonly<{ stageLedgerFactId: string }>;
     }>,
   ): Promise<void> {
     assertOwnedDurableAlpacaWireSemanticEvidenceBoundary(this);
+    assertValidatedMarketAcquisitionConfiguration(input.plan);
     if (
-      isProxy(input.ledger) ||
-      Object.getPrototypeOf(input.ledger) !== MarketAcquisitionLedger.prototype ||
       input.marketAcquisitionJournalId !== deriveMarketAcquisitionJournalId(input.expectedIdentity)
     ) {
       throw new TypeError("page-semantic-evidence-invalid");
     }
     const journal = await this.#journal.load(input.marketAcquisitionJournalId);
     validateJournalEntries(journal, input.expectedIdentity);
-    validateJournalLedgerBindings(journal, input.ledger.entries);
+    const ledger = await this.#journal.loadLedgerEntries();
+    validateJournalLedgerBindings(journal, ledger);
     const latest = journal.at(-1);
     if (
       latest?.checkpointKind !== "artifact-verified" ||
@@ -322,7 +469,7 @@ export class DurableAlpacaWireSemanticEvidenceBoundary {
     ) {
       throw new TypeError("page-semantic-evidence-invalid");
     }
-    const byId = new Map(input.ledger.entries.map((entry) => [entry.entryId, entry]));
+    const byId = new Map(ledger.map((entry) => [entry.entryId, entry]));
     const stage = byId.get(latest.stageLedgerFactId);
     if (
       stage?.facts.kind !== "artifact.verified" ||
@@ -361,6 +508,48 @@ export class DurableAlpacaWireSemanticEvidenceBoundary {
     if (verified.observation.retrievedAtMs !== committed.facts.retrievedAtMs) {
       throw new TypeError("page-semantic-evidence-invalid");
     }
+    const authorityStage = byId.get(input.semanticAuthority.stageLedgerFactId);
+    const authorityCommit = authorityStage?.parentEntryIds
+      .map((id) => byId.get(id))
+      .find((entry) => entry?.facts.kind === "artifact.committed");
+    const authorityDeclaration = authorityCommit?.parentEntryIds
+      .map((id) => byId.get(id))
+      .find((entry) => entry?.facts.kind === "acquisition.declared");
+    if (
+      authorityStage?.facts.kind !== "artifact.verified" ||
+      authorityCommit?.facts.kind !== "artifact.committed" ||
+      authorityDeclaration?.facts.kind !== "acquisition.declared" ||
+      authorityStage.facts.vaultObservationId !== input.semanticAuthority.artifactObservationId ||
+      authorityStage.facts.artifactDigest !== input.semanticAuthority.artifactDigest ||
+      authorityStage.facts.metadataSizeBytes !== input.semanticAuthority.artifactSizeBytes ||
+      authorityCommit.facts.vaultObservationHash !==
+        input.semanticAuthority.artifactObservationHash ||
+      authorityDeclaration.facts.provider !== "alpaca" ||
+      authorityDeclaration.facts.retrievalAttemptId !==
+        input.semanticAuthority.retrievalAttemptId ||
+      authorityDeclaration.facts.sanitizedRequestIdentityHash !== input.plan.requestIdentityHash ||
+      authorityDeclaration.facts.routeLabel !==
+        `${input.plan.route.safeRouteLabel}:wire-semantic-authority`
+    ) {
+      throw new TypeError("page-semantic-authority-ledger-invalid");
+    }
+    const semantic = await loadSemanticAuthorityBytes(this.#artifacts, input.semanticAuthority);
+    if (
+      semantic.requestIdentityHash !== input.plan.requestIdentityHash ||
+      semantic.pageArtifactObservationId !== latest.artifactObservationId ||
+      semantic.pageArtifactDigest !== latest.artifactDigest ||
+      semantic.queryStartNs !== input.plan.queryStartNs.toString() ||
+      semantic.queryEndNs !== input.plan.queryEndNs.toString()
+    ) {
+      throw new TypeError("page-semantic-authority-binding-invalid");
+    }
+    const coveredDates = new Set(semantic.calendarEntries.map((entry) => entry.sessionDate));
+    if (
+      !coveredDates.has(utcDateForNs(semantic.queryStartNs)) ||
+      !coveredDates.has(utcDateForNs(semantic.queryEndNs))
+    ) {
+      throw new TypeError("page-semantic-calendar-coverage-invalid");
+    }
     const draft = Object.freeze({
       schemaVersion: 1 as const,
       journalEntryHash: latest.journalEntryHash,
@@ -371,12 +560,20 @@ export class DurableAlpacaWireSemanticEvidenceBoundary {
       artifactSizeBytes: latest.artifactSizeBytes,
       stageLedgerFactId: stage.entryId,
       clockDeclarationFactId: clockDeclaration.entryId,
-      calendarEntries: Object.freeze(structuredClone(input.calendarEntries)),
-      calendarVersion: input.calendarEntries[0]?.calendarVersion ?? "",
+      semanticAuthorityId: semantic.authorityId,
+      semanticAuthorityStageLedgerFactId: authorityStage.entryId,
+      semanticAuthorityObservationId: input.semanticAuthority.artifactObservationId,
+      semanticAuthorityObservationHash: input.semanticAuthority.artifactObservationHash,
+      semanticAuthorityDigest: input.semanticAuthority.artifactDigest,
+      semanticAuthoritySizeBytes: input.semanticAuthority.artifactSizeBytes,
+      calendarDigest: semantic.calendarDigest,
+      corpusAdmissionHash: semantic.corpusAdmissionHash,
+      calendarEntries: Object.freeze(structuredClone(semantic.calendarEntries)),
+      calendarVersion: semantic.calendarVersion,
       durableClockBasisId: stage.clock.clockBasisId,
       durablyRecordedAtMs: committed.facts.retrievedAtMs,
       durableLogicalAtMs: stage.clock.wallTimeMs,
-      primaryCorpusMember: input.primaryCorpusMember,
+      primaryCorpusMember: semantic.primaryCorpusMember,
     });
     appendEvidence(
       this.#evidence,
@@ -419,7 +616,7 @@ export function createTestDurableAlpacaWireSemanticEvidenceBoundary(
   evidence: AlpacaWireSemanticEvidenceStore,
   artifacts: RetentionEnforcedArtifactStore,
 ): DurableAlpacaWireSemanticEvidenceBoundary {
-  if (process.env["NODE_TEST_CONTEXT"] === undefined) {
+  if (P1_10_TEST_AUTHORITY === undefined) {
     throw new TypeError("test-wire-semantic-evidence-composition-unavailable");
   }
   assertOwnedAcquisitionJournal(journal);
@@ -446,7 +643,7 @@ export function appendTestAlpacaWireSemanticEvidence(
   store: AlpacaWireSemanticEvidenceStore,
   value: AlpacaWireSemanticEvidenceV1,
 ): void {
-  if (process.env["NODE_TEST_CONTEXT"] === undefined) {
+  if (P1_10_TEST_AUTHORITY === undefined) {
     throw new TypeError("test-wire-semantic-evidence-ingress-unavailable");
   }
   assertOwnedAlpacaWireSemanticEvidenceStore(store);

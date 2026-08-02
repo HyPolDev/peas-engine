@@ -23,6 +23,8 @@ export class VaultWriterLease {
   readonly #faultBoundary: (checkpoint: string) => void | Promise<void>;
   readonly #heartbeat: NodeJS.Timeout;
   #held = true;
+  #closing = false;
+  #renewal: Promise<void> | null = null;
 
   private constructor(options: {
     path: string;
@@ -137,8 +139,20 @@ export class VaultWriterLease {
   }
 
   async renewAndAssert(): Promise<void> {
-    if (!this.#held)
+    if (!this.#held || this.#closing)
       throw new ArtifactVaultError("writer-lease-unavailable", "Vault writer lease was lost");
+    const active = this.#renewal;
+    if (active !== null) return await active;
+    const renewal = this.#performRenewal();
+    this.#renewal = renewal;
+    try {
+      await renewal;
+    } finally {
+      if (this.#renewal === renewal) this.#renewal = null;
+    }
+  }
+
+  async #performRenewal(): Promise<void> {
     const nowMs = this.#clock.nowMs();
     try {
       this.#repository.renewWriter(this.#ownerToken, this.#generation, nowMs, this.#durationMs);
@@ -182,15 +196,24 @@ export class VaultWriterLease {
   }
 
   async release(): Promise<void> {
+    if (!this.#held || this.#closing) return;
+    this.#closing = true;
+    clearInterval(this.#heartbeat);
+    try {
+      await this.#renewal;
+    } catch {
+      // The in-flight renewal already marked the lease lost.
+    }
     if (!this.#held) return;
     this.#held = false;
-    clearInterval(this.#heartbeat);
     try {
       const record = JSON.parse(await readFile(this.#path, "utf8")) as LeaseRecord;
       if (record.ownerToken === this.#ownerToken && record.generation === this.#generation)
         await rm(this.#path, { force: true });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    } finally {
+      this.#closing = false;
     }
   }
 }

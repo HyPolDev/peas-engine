@@ -21,7 +21,10 @@ import {
   type AlpacaWireEndpointKind,
   type AlpacaWireParseContext,
 } from "../src/adapters/market-acquisition/alpaca/wire.js";
-import { MemoryAlpacaWireSemanticEvidenceStore } from "../src/adapters/market-acquisition/alpaca/wire-semantic-evidence.js";
+import {
+  MemoryAlpacaWireSemanticEvidenceStore,
+  createAlpacaWireSemanticAuthority,
+} from "../src/adapters/market-acquisition/alpaca/wire-semantic-evidence.js";
 import {
   MarketAcquisitionLedger,
   attachLedgerEvidence,
@@ -38,7 +41,7 @@ import {
   ZERO_SPEND_POLICY_ID,
   ZERO_SPEND_POLICY_PREIMAGE,
 } from "../src/adapters/market-acquisition/identity.js";
-import { MemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
+import { createMemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
 import {
   GENESIS_HASH,
   NO_TOKEN_HASH,
@@ -211,6 +214,10 @@ async function authenticatedAdmission(
   wire: PlainRecord,
   parseContext: AlpacaWireParseContext,
   authorityPlan?: ValidatedMarketAcquisitionConfiguration,
+  semanticSubstitution?: Readonly<{
+    calendarVersion?: string;
+    primaryCorpusMember?: boolean;
+  }>,
 ) {
   const bytes = Buffer.from(JSON.stringify(wire), "utf8");
   const plan = wirePlan(endpointKind);
@@ -297,6 +304,68 @@ async function authenticatedAdmission(
     cumulativeAttempts: 1,
     quotaWindowEvidence: [0],
   } as const;
+  const calendarEntries = Object.freeze(
+    [plan.queryStartNs, plan.queryEndNs]
+      .map((value) => new Date(Number(value / 1_000_000n)).toISOString().slice(0, 10))
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .map((sessionDate, index) =>
+        Object.freeze({
+          sessionDate,
+          timeZone: "America/New_York" as const,
+          utcOffsetMinutes: -300 as const,
+          calendarVersion: context.calendarVersion,
+          holiday: index > 0,
+          extendedOpenNs: index === 0 ? (plan.queryStartNs - 1n).toString() : null,
+          regularOpenNs: index === 0 ? plan.queryStartNs.toString() : null,
+          regularCloseNs: index === 0 ? (plan.queryEndNs + 1n).toString() : null,
+          extendedCloseNs: index === 0 ? (plan.queryEndNs + 2n).toString() : null,
+        }),
+      ),
+  );
+  const semanticAuthority = createAlpacaWireSemanticAuthority({
+    schemaVersion: 1,
+    requestIdentityHash: plan.requestIdentityHash,
+    pageArtifactObservationId: artifact.artifactObservationId,
+    pageArtifactDigest: artifact.artifactDigest,
+    queryStartNs: plan.queryStartNs.toString(),
+    queryEndNs: plan.queryEndNs.toString(),
+    calendarVersion: context.calendarVersion,
+    calendarEntries,
+    primaryCorpusMember: context.primaryCorpusMember,
+  });
+  const semanticAuthorityBytes = Buffer.from(
+    canonicalJson(semanticAuthority as unknown as JsonValue),
+  );
+  const {
+    authorityId: _authorityId,
+    calendarDigest: _calendarDigest,
+    corpusAdmissionHash: _corpusAdmissionHash,
+    ...semanticAuthorityDraft
+  } = semanticAuthority;
+  const servedSemanticAuthority =
+    semanticSubstitution === undefined
+      ? semanticAuthority
+      : createAlpacaWireSemanticAuthority({
+          ...semanticAuthorityDraft,
+          calendarVersion:
+            semanticSubstitution.calendarVersion ?? semanticAuthority.calendarVersion,
+          calendarEntries: semanticAuthority.calendarEntries.map((entry) => ({
+            ...entry,
+            calendarVersion:
+              semanticSubstitution.calendarVersion ?? semanticAuthority.calendarVersion,
+          })),
+          primaryCorpusMember:
+            semanticSubstitution.primaryCorpusMember ?? semanticAuthority.primaryCorpusMember,
+        });
+  const servedSemanticAuthorityBytes = Buffer.from(
+    canonicalJson(servedSemanticAuthority as unknown as JsonValue),
+  );
+  const semanticAuthorityArtifact = {
+    artifactObservationId: hash("semantic-authority-observation"),
+    artifactObservationHash: hash("semantic-authority-observation-hash"),
+    artifactDigest: createHash("sha256").update(semanticAuthorityBytes).digest("hex"),
+    artifactSizeBytes: semanticAuthorityBytes.byteLength,
+  } as const;
   const ledger = new MarketAcquisitionLedger("p1-10-wire-authority-ledger-v1", {
     wallClock: "system-utc",
     synchronization: "verified-bound",
@@ -361,6 +430,50 @@ async function authenticatedAdmission(
     },
     stamp(context.durableLogicalAtMs, 5),
   );
+  const authorityAcquisitionObservationId = deriveAcquisitionObservationId({
+    provider: "alpaca",
+    retrievalAttemptId,
+    sanitizedRequestIdentityHash: plan.requestIdentityHash,
+    routeLabel: `${plan.route.safeRouteLabel}:wire-semantic-authority`,
+  });
+  const authorityDeclared = ledger.declareAcquisition(
+    {
+      kind: "acquisition.declared",
+      acquisitionObservationId: authorityAcquisitionObservationId,
+      provider: "alpaca",
+      retrievalAttemptId,
+      sanitizedRequestIdentityHash: plan.requestIdentityHash,
+      routeLabel: `${plan.route.safeRouteLabel}:wire-semantic-authority`,
+    },
+    stamp(context.durableLogicalAtMs + 1, 6),
+  );
+  const authorityCommitted = ledger.artifactCommitted(
+    authorityDeclared,
+    null,
+    {
+      kind: "artifact.committed",
+      acquisitionObservationId: authorityAcquisitionObservationId,
+      vaultObservationId: semanticAuthorityArtifact.artifactObservationId,
+      vaultObservationHash: semanticAuthorityArtifact.artifactObservationHash,
+      artifactDigest: semanticAuthorityArtifact.artifactDigest,
+      sizeBytes: semanticAuthorityArtifact.artifactSizeBytes,
+      acquisitionMode: "recorded",
+      retrievedAtMs: context.durablyRecordedAtMs,
+    },
+    stamp(context.durableLogicalAtMs + 2, 7),
+  );
+  const authorityVerified = ledger.artifactVerified(
+    authorityCommitted,
+    {
+      kind: "artifact.verified",
+      acquisitionObservationId: authorityAcquisitionObservationId,
+      vaultObservationId: semanticAuthorityArtifact.artifactObservationId,
+      artifactDigest: semanticAuthorityArtifact.artifactDigest,
+      metadataSizeBytes: semanticAuthorityArtifact.artifactSizeBytes,
+      consumedSizeBytes: semanticAuthorityArtifact.artifactSizeBytes,
+    },
+    stamp(context.durableLogicalAtMs + 3, 8),
+  );
   const withStage = (
     value: JournalCheckpointBody,
     stage: Parameters<typeof attachLedgerEvidence>[1],
@@ -377,7 +490,8 @@ async function authenticatedAdmission(
   );
   append("artifact-committed", withStage(body(artifact), committed));
   append("artifact-verified", withStage(body(artifact), verified));
-  const journal = new MemoryAcquisitionJournal(expectedIdentity);
+  const journal = createMemoryAcquisitionJournal(expectedIdentity);
+  await journal.appendLedgerEntries(ledger.entries);
   for (const entry of entries) await journal.append(entry);
   const latest = entries.at(-1);
   assert.ok(latest);
@@ -396,16 +510,30 @@ async function authenticatedAdmission(
     committedAtMs: context.durablyRecordedAtMs,
     provenance: "retrieval" as const,
   };
+  const authorityMetadata = {
+    digest: semanticAuthorityArtifact.artifactDigest,
+    algorithm: "sha256" as const,
+    sizeBytes: semanticAuthorityArtifact.artifactSizeBytes,
+    committedAtMs: context.durablyRecordedAtMs,
+    provenance: "retrieval" as const,
+  };
   const rawStore = {
     async stat(candidate: string) {
-      return candidate === artifact.artifactDigest ? metadata : undefined;
+      return candidate === artifact.artifactDigest
+        ? metadata
+        : candidate === semanticAuthorityArtifact.artifactDigest
+          ? authorityMetadata
+          : undefined;
     },
     async read(candidate: string) {
-      if (candidate !== artifact.artifactDigest) throw new Error("unexpected-wire-digest");
-      return {
-        artifact: metadata,
-        stream: Readable.from([bytes]),
-      };
+      if (candidate === artifact.artifactDigest)
+        return { artifact: metadata, stream: Readable.from([bytes]) };
+      if (candidate === semanticAuthorityArtifact.artifactDigest)
+        return {
+          artifact: authorityMetadata,
+          stream: Readable.from([servedSemanticAuthorityBytes]),
+        };
+      throw new Error("unexpected-wire-digest");
     },
     async getAttempt(candidate: string) {
       return candidate === retrievalAttemptId
@@ -422,11 +550,17 @@ async function authenticatedAdmission(
         : undefined;
     },
     async getObservation(candidate: string) {
-      return candidate === artifact.artifactObservationId
+      const selected =
+        candidate === artifact.artifactObservationId
+          ? artifact
+          : candidate === semanticAuthorityArtifact.artifactObservationId
+            ? semanticAuthorityArtifact
+            : null;
+      return selected !== null
         ? {
-            observationId: artifact.artifactObservationId,
+            observationId: selected.artifactObservationId,
             attemptId: retrievalAttemptId,
-            artifactDigest: artifact.artifactDigest,
+            artifactDigest: selected.artifactDigest,
             provider: "alpaca",
             recordId: "original-synthetic-wire-record",
             revisionId: "original-synthetic-wire-revision",
@@ -438,34 +572,29 @@ async function authenticatedAdmission(
               lastModified: null,
               mediaType: "application/json",
               contentEncoding: null,
-              declaredContentLength: artifact.artifactSizeBytes,
+              declaredContentLength: selected.artifactSizeBytes,
               transportDecoded: true,
             },
-            observationHash: artifact.artifactObservationHash,
+            observationHash: selected.artifactObservationHash,
           }
         : undefined;
     },
   } as unknown as ArtifactStore;
-  const guarded = retentionGuardedArtifactStore(rawStore, [artifact]);
-  const calendarEntries = Object.freeze([
-    Object.freeze({
-      sessionDate: "2033-01-01",
-      timeZone: "America/New_York" as const,
-      utcOffsetMinutes: -300 as const,
-      calendarVersion: context.calendarVersion,
-      holiday: false,
-      extendedOpenNs: (context.queryStartNs - 1n).toString(),
-      regularOpenNs: context.queryStartNs.toString(),
-      regularCloseNs: (context.queryEndNs + 1n).toString(),
-      extendedCloseNs: (context.queryEndNs + 2n).toString(),
-    }),
-  ]);
+  const guarded = retentionGuardedArtifactStore(rawStore, [artifact, semanticAuthorityArtifact]);
   await createTestDurableAlpacaWireSemanticEvidenceBoundary(journal, evidence, guarded).persist({
     expectedIdentity,
     marketAcquisitionJournalId: journalId,
-    ledger,
-    calendarEntries,
-    primaryCorpusMember: context.primaryCorpusMember,
+    plan,
+    semanticAuthority: {
+      artifactObservationId: semanticAuthorityArtifact.artifactObservationId,
+      artifactObservationHash: semanticAuthorityArtifact.artifactObservationHash,
+      artifactDigest: semanticAuthorityArtifact.artifactDigest,
+      artifactSizeBytes: semanticAuthorityArtifact.artifactSizeBytes,
+      retrievalAttemptId,
+      requestIdentityHash: plan.requestIdentityHash,
+      provider: "alpaca",
+      stageLedgerFactId: authorityVerified.entryId,
+    },
   });
   const authority = await createTestDurableAlpacaWireAdmissionBoundary(journal, evidence).issue({
     plan: authorityPlan ?? plan,
@@ -864,6 +993,20 @@ test("production parser reject and quarantine branches remain executable and ine
     (error: unknown) =>
       error instanceof AlpacaWireContractError && error.code === "page-semantic-authority-invalid",
   );
+  await assert.rejects(
+    () =>
+      authenticatedAdmission("bars", barSource.wire, context, undefined, {
+        calendarVersion: "peas-p1-10-syntactically-valid-alternate-calendar-v1",
+      }),
+    /artifact-consumed-size-bound|wire-semantic-authority-digest-invalid/u,
+  );
+  await assert.rejects(
+    () =>
+      authenticatedAdmission("bars", barSource.wire, context, undefined, {
+        primaryCorpusMember: false,
+      }),
+    /artifact-consumed-size-bound|wire-semantic-authority-digest-invalid/u,
+  );
   assert.ok(BigInt(parseAlpacaWireTimestamp("1960-01-02T00:00:00Z").timestamp.epochNs) < 0n);
 });
 
@@ -914,7 +1057,6 @@ test("canonical trade u wins before every later semantic value without getter or
         };
         const updateItem = structuredClone(normal);
         updateItem["u"] = update;
-        const itemIndex = placement === "first" ? 0 : placement === "middle" ? 1 : 2;
         const earlier =
           placement === "first"
             ? [updateItem, later()]
@@ -936,7 +1078,7 @@ test("canonical trade u wins before every later semantic value without getter or
         assert.equal(result.terminal, true);
         assert.equal(result.privateNextToken, null);
         assert.equal(result.terminalReason, "correction-unsupported");
-        assert.equal(result.wireItemCount, itemIndex + 1);
+        assert.equal(result.wireItemCount, 0);
         assert.deepEqual(result.records, []);
         assert.deepEqual(result.barObservations, []);
         assert.deepEqual(result.quarantines, [
@@ -944,7 +1086,7 @@ test("canonical trade u wins before every later semantic value without getter or
             endpointKind: "trades",
             reason: "correction-unsupported",
             symbol: "PEASLIL",
-            itemIndex,
+            itemIndex: 0,
           },
         ]);
         assert.equal(getterCalls, 0);

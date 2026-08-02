@@ -22,6 +22,7 @@ import { safeAcquisitionError, type SafeAcquisitionError } from "./redaction.js"
 import type { ArtifactRetentionJournal } from "./retention/contracts.js";
 import type {
   AlpacaTransport,
+  AlpacaBodyRead,
   AlpacaTransportRequest,
   AlpacaTransportResponse,
 } from "./alpaca/contracts.js";
@@ -31,6 +32,10 @@ import {
   assertOwnedSqliteAcquisitionJournal,
   assertOwnedSqliteRetentionJournal,
 } from "./owned-journal.js";
+import { validateJournalLedgerBindings } from "./artifact-integration.js";
+import { P1_10_TEST_AUTHORITY } from "#p1-10-test-authority";
+import { request as dispatchHttpsRequest } from "node:https";
+import type { ClientRequest, IncomingMessage } from "node:http";
 
 export const ALPACA_KEY_ID_ENV = "PEAS_ALPACA_API_KEY_ID";
 export const ALPACA_SECRET_KEY_ENV = "PEAS_ALPACA_API_SECRET_KEY";
@@ -202,7 +207,15 @@ export class DurableCredentialAuthorizationBoundary {
     }
     const journal = await this.#journal.load(input.marketAcquisitionJournalId);
     validateJournalEntries(journal, input.journalIdentity);
+    const ledger = await this.#journal.loadLedgerEntries();
+    validateJournalLedgerBindings(journal, ledger);
     const latest = journal.at(-1);
+    const durableStage = ledger.find((entry) => entry.entryId === latest?.stageLedgerFactId);
+    const durableDeclaration = ledger.find(
+      (entry) =>
+        durableStage?.parentEntryIds.includes(entry.entryId) === true &&
+        entry.facts.kind === "acquisition.declared",
+    );
     if (
       latest?.checkpointKind !== "request-started" ||
       latest.requestIdentityHash !== input.plan.requestIdentityHash ||
@@ -210,7 +223,15 @@ export class DurableCredentialAuthorizationBoundary {
       latest.acquisitionObservationId !== input.acquisitionObservationId ||
       latest.retrievalAttemptId !== input.retrievalAttemptId ||
       latest.stageLedgerFactId === null ||
-      latest.causalParentFactIds.length !== 1
+      latest.causalParentFactIds.length !== 1 ||
+      durableStage?.facts.kind !== "request.started" ||
+      durableStage.facts.acquisitionObservationId !== input.acquisitionObservationId ||
+      durableDeclaration?.facts.kind !== "acquisition.declared" ||
+      durableDeclaration.facts.acquisitionObservationId !== input.acquisitionObservationId ||
+      durableDeclaration.facts.retrievalAttemptId !== input.retrievalAttemptId ||
+      durableDeclaration.facts.sanitizedRequestIdentityHash !== input.plan.requestIdentityHash ||
+      durableDeclaration.facts.provider !== "alpaca" ||
+      durableDeclaration.facts.routeLabel !== input.plan.route.safeRouteLabel
     ) {
       throw new TypeError("credential-request-started-evidence-invalid");
     }
@@ -273,7 +294,7 @@ export function createTestDurableCredentialAuthorizationBoundary(
   journal: AcquisitionJournal,
   retentionJournal: ArtifactRetentionJournal,
 ): DurableCredentialAuthorizationBoundary {
-  if (process.env["NODE_TEST_CONTEXT"] === undefined) {
+  if (P1_10_TEST_AUTHORITY === undefined) {
     throw new TypeError("test-credential-authorization-composition-unavailable");
   }
   assertOwnedAcquisitionJournal(journal);
@@ -373,7 +394,7 @@ function resolveAlpacaDispatchCapability(
   });
 }
 
-export type AlpacaCredentialIsolatedTransportDriver = Readonly<{
+type AlpacaCredentialIsolatedTransportDriver = Readonly<{
   dispatch(
     request: AlpacaTransportRequest,
     authorizationHeaders: AlpacaAuthorizationHeaders,
@@ -386,9 +407,12 @@ export type AlpacaCredentialIsolatedTransportDriver = Readonly<{
  * Owns authorization consumption. The lower driver receives an exact frozen accessor record only
  * for the physical dispatch scope; every PEAS-owned plaintext reference is revoked on settlement.
  */
-export function createCredentialIsolatedAlpacaTransport(
+export function createTestCredentialIsolatedAlpacaTransport(
   driver: AlpacaCredentialIsolatedTransportDriver,
 ): AlpacaTransport {
+  if (P1_10_TEST_AUTHORITY === undefined) {
+    throw new TypeError("test-alpaca-transport-composition-unavailable");
+  }
   if (
     typeof driver.dispatch !== "function" ||
     typeof driver.abort !== "function" ||
@@ -427,8 +451,141 @@ export function createCredentialIsolatedAlpacaTransport(
   return transport;
 }
 
+class NativeAlpacaResponseBody {
+  readonly #response: IncomingMessage;
+
+  constructor(response: IncomingMessage) {
+    this.#response = response;
+  }
+
+  async read(): Promise<AlpacaBodyRead> {
+    const available = this.#response.read() as Buffer | null;
+    if (available !== null) {
+      return Object.freeze({ done: false as const, bytes: new Uint8Array(available) });
+    }
+    if (this.#response.readableEnded) return Object.freeze({ done: true as const });
+    return await new Promise<AlpacaBodyRead>((resolve, reject) => {
+      const cleanup = (): void => {
+        this.#response.off("readable", onReadable);
+        this.#response.off("end", onEnd);
+        this.#response.off("error", onError);
+      };
+      const onReadable = (): void => {
+        cleanup();
+        const bytes = this.#response.read() as Buffer | null;
+        resolve(
+          bytes === null
+            ? Object.freeze({ done: true as const })
+            : Object.freeze({ done: false as const, bytes: new Uint8Array(bytes) }),
+        );
+      };
+      const onEnd = (): void => {
+        cleanup();
+        resolve(Object.freeze({ done: true as const }));
+      };
+      const onError = (error: Error): void => {
+        cleanup();
+        reject(error);
+      };
+      this.#response.once("readable", onReadable);
+      this.#response.once("end", onEnd);
+      this.#response.once("error", onError);
+    });
+  }
+
+  async abort(): Promise<void> {
+    this.#response.destroy();
+  }
+  async destroy(): Promise<void> {
+    this.#response.destroy();
+  }
+  async settle(): Promise<void> {
+    if (this.#response.destroyed || this.#response.readableEnded) return;
+    await new Promise<void>((resolve) => this.#response.once("close", resolve));
+  }
+}
+
+/**
+ * Sole live transport composition. No caller-supplied callback or structural driver crosses the
+ * credential boundary: plaintext values are applied only to the platform HTTP implementation.
+ */
+export function createProductionCredentialIsolatedAlpacaTransport(
+  ...callerArguments: never[]
+): AlpacaTransport {
+  if (callerArguments.length !== 0)
+    throw new TypeError("alpaca-production-transport-takes-no-driver");
+  let activeRequest: ClientRequest | undefined;
+  let activeDispatch: Promise<unknown> | undefined;
+  const transport: AlpacaTransport = Object.freeze({
+    async dispatch(
+      request: AlpacaTransportRequest,
+      capability: AlpacaDispatchCapability,
+    ): Promise<AlpacaTransportResponse> {
+      const lease = resolveAlpacaDispatchCapability(capability, request);
+      let authorizationHeaders: Readonly<Record<string, string>> | undefined;
+      try {
+        authorizationHeaders = Object.freeze({
+          "APCA-API-KEY-ID": activeAuthorizationValue(lease.state.keyId, lease.state.active),
+          "APCA-API-SECRET-KEY": activeAuthorizationValue(
+            lease.state.secretKey,
+            lease.state.active,
+          ),
+        });
+        const url = new URL(request.path, request.origin);
+        for (const [name, value] of request.query) url.searchParams.append(name, value);
+        const dispatched = new Promise<IncomingMessage>((resolve, reject) => {
+          const physical = dispatchHttpsRequest(url, {
+            method: "GET",
+            headers: authorizationHeaders,
+            signal: request.signal,
+          });
+          activeRequest = physical;
+          physical.once("response", resolve);
+          physical.once("error", reject);
+          physical.end();
+        });
+        activeDispatch = dispatched;
+        const response = await dispatched;
+        const declaredHeader = response.headers["content-length"];
+        const declaredLength = Array.isArray(declaredHeader) ? null : (declaredHeader ?? null);
+        const contentLength =
+          declaredLength !== null && /^(?:0|[1-9][0-9]*)$/.test(declaredLength)
+            ? Number(declaredLength)
+            : null;
+        return Object.freeze({
+          status: response.statusCode ?? 0,
+          contentLength,
+          retryAfter: Array.isArray(response.headers["retry-after"])
+            ? null
+            : (response.headers["retry-after"] ?? null),
+          quotaClassification: "missing" as const,
+          body: new NativeAlpacaResponseBody(response),
+          siblingResources: Object.freeze([]),
+        });
+      } finally {
+        authorizationHeaders = undefined;
+        revokeAuthorization(lease.state);
+        activeRequest = undefined;
+        activeDispatch = undefined;
+      }
+    },
+    async abort(): Promise<void> {
+      activeRequest?.destroy();
+    },
+    async settle(): Promise<void> {
+      try {
+        await activeDispatch;
+      } catch {
+        // The attempt boundary classifies dispatch failure.
+      }
+    },
+  });
+  credentialIsolatedTransports.add(transport);
+  return transport;
+}
+
 export function assertCredentialIsolatedAlpacaTransport(value: AlpacaTransport): void {
-  if (!credentialIsolatedTransports.has(value)) {
+  if (!credentialIsolatedTransports.has(value) || isProxy(value) || !Object.isFrozen(value)) {
     throw new TypeError("credential-isolated-alpaca-transport-required");
   }
 }

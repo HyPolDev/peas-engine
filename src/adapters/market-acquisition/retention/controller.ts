@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { isProxy } from "node:util/types";
+import { P1_10_TEST_AUTHORITY } from "#p1-10-test-authority";
 
 import { assertArtifactDigest } from "../../../artifacts/validation.js";
 import { canonicalHash } from "../../../core/hash.js";
@@ -43,6 +44,8 @@ import {
   assertOwnedVaultArtifactRetentionBoundary,
   ownedVaultRetentionCoordinatorRoot,
 } from "./vault-boundary.js";
+import { MemoryArtifactRetentionJournal } from "./memory-journal.js";
+import { SqliteArtifactRetentionJournal } from "./sqlite-journal.js";
 
 const ID = /^[a-z][a-z0-9]*_[0-9a-f]{64}$/u;
 const POLICY_ID = /^[a-z0-9][a-z0-9-]{0,127}$/u;
@@ -113,6 +116,9 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
     authority?: object,
     coordinatorRoot?: object,
   ) {
+    if (authority !== CONTROLLER_CONSTRUCTION_AUTHORITY) {
+      assertOwnedRetentionJournal(dependencies.journal);
+    }
     this.#journal = dependencies.journal;
     this.#artifacts = dependencies.artifacts;
     this.#nowMs = dependencies.nowMs;
@@ -258,10 +264,6 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
         counter: "artifact-count",
         value: 0,
       });
-    this.#journal.recordStopAndDenials(
-      stop,
-      sortedSet(initialOwnership.flatMap((value) => value.derivedIds)),
-    );
     this.#coordinator.pendingStops += 1;
     this.#coordinator.admissionClosed = true;
     for (const handler of [...this.#coordinator.operationStopHandlers]) {
@@ -298,6 +300,10 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
           if (timeout !== undefined) clearTimeout(timeout);
         }
       }
+      this.#journal.recordStopAndDenials(
+        stop,
+        sortedSet(initialOwnership.flatMap((value) => value.derivedIds)),
+      );
       return await this.#enforceStop(input, stop);
     } finally {
       releaseStop();
@@ -666,10 +672,18 @@ export function createTestArtifactRetentionController(dependencies: {
   nowMs: () => number;
   faultBoundary?: RetentionFaultBoundary;
 }): DefaultArtifactRetentionController {
-  if (process.env["NODE_TEST_CONTEXT"] === undefined) {
+  if (P1_10_TEST_AUTHORITY === undefined) {
     throw new TypeError("test-retention-composition-unavailable");
   }
-  assertOwnedRetentionJournal(dependencies.journal);
+  const journalPrototype = Object.getPrototypeOf(dependencies.journal as object);
+  if (
+    isProxy(dependencies.journal as object) ||
+    ![MemoryArtifactRetentionJournal.prototype, SqliteArtifactRetentionJournal.prototype].includes(
+      journalPrototype,
+    )
+  ) {
+    throw new TypeError("owned-retention-journal-required");
+  }
   return constructOwnedArtifactRetentionController(dependencies);
 }
 

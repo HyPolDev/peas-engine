@@ -5,6 +5,10 @@ import {
   type JsonLimits,
   type JsonValue,
 } from "../../core/json.js";
+import {
+  validateObservationLedgerBundle,
+  type ObservationLedgerEntryV1,
+} from "../../providers/observation-ledger.js";
 import type { SqliteDatabase } from "../sqlite/database.js";
 import {
   type AcquisitionJournal,
@@ -13,6 +17,8 @@ import {
   deriveMarketAcquisitionJournalId,
   validateJournalEntries,
 } from "./journal.js";
+
+const ownedSqliteAcquisitionJournals = new WeakSet<object>();
 
 type JournalRow = Readonly<{
   journal_sequence: bigint;
@@ -55,6 +61,25 @@ export function installSqliteAcquisitionJournalSchema(database: SqliteDatabase):
     BEGIN
       SELECT RAISE(ABORT, 'market acquisition journal is immutable');
     END;
+
+    CREATE TABLE IF NOT EXISTS market_acquisition_ledger_entries (
+      market_acquisition_journal_id TEXT NOT NULL,
+      execution_id TEXT NOT NULL,
+      ledger_sequence INTEGER NOT NULL CHECK (ledger_sequence >= 0),
+      entry_id TEXT NOT NULL,
+      entry_json TEXT NOT NULL,
+      entry_hash TEXT NOT NULL,
+      PRIMARY KEY (market_acquisition_journal_id, ledger_sequence),
+      UNIQUE (market_acquisition_journal_id, entry_id)
+    ) STRICT;
+
+    CREATE TRIGGER IF NOT EXISTS market_acquisition_ledger_entries_no_update
+    BEFORE UPDATE ON market_acquisition_ledger_entries
+    BEGIN SELECT RAISE(ABORT, 'market acquisition ledger is immutable'); END;
+
+    CREATE TRIGGER IF NOT EXISTS market_acquisition_ledger_entries_no_delete
+    BEFORE DELETE ON market_acquisition_ledger_entries
+    BEGIN SELECT RAISE(ABORT, 'market acquisition ledger is immutable'); END;
   `);
 }
 
@@ -193,4 +218,78 @@ export class SqliteAcquisitionJournal implements AcquisitionJournal {
       })
       .immediate();
   }
+
+  async appendLedgerEntries(entries: readonly ObservationLedgerEntryV1[]): Promise<void> {
+    const validated = validateObservationLedgerBundle(entries);
+    const executionId = validated[0]?.executionId;
+    if (executionId === undefined) throw new TypeError("ledger-empty");
+    this.#database
+      .transaction(() => {
+        const rows = this.#database
+          .prepare(`SELECT ledger_sequence, entry_json FROM market_acquisition_ledger_entries
+            WHERE market_acquisition_journal_id = ? AND execution_id = ? ORDER BY ledger_sequence`)
+          .all(this.#journalId, executionId) as Array<{
+          ledger_sequence: bigint;
+          entry_json: string;
+        }>;
+        if (rows.length > validated.length) throw new TypeError("ledger-prefix-conflict");
+        for (const [index, row] of rows.entries()) {
+          if (
+            row.ledger_sequence !== BigInt(index) ||
+            row.entry_json !== canonicalJson(validated[index] as unknown as JsonValue)
+          ) {
+            throw new TypeError("ledger-prefix-conflict");
+          }
+        }
+        const insert = this.#database.prepare(`INSERT INTO market_acquisition_ledger_entries
+          (market_acquisition_journal_id, execution_id, ledger_sequence, entry_id, entry_json, entry_hash)
+          VALUES (?, ?, ?, ?, ?, ?)`);
+        for (let index = rows.length; index < validated.length; index += 1) {
+          const entry = validated[index] as ObservationLedgerEntryV1;
+          insert.run(
+            this.#journalId,
+            executionId,
+            BigInt(index),
+            entry.entryId,
+            canonicalJson(entry as unknown as JsonValue),
+            entry.entryHash,
+          );
+        }
+      })
+      .immediate();
+  }
+
+  async loadLedgerEntries(): Promise<readonly ObservationLedgerEntryV1[]> {
+    const rows = this.#database
+      .prepare(
+        `SELECT entry_json FROM market_acquisition_ledger_entries
+         WHERE market_acquisition_journal_id = ? ORDER BY ledger_sequence`,
+      )
+      .all(this.#journalId) as Array<{ entry_json: string }>;
+    if (rows.length === 0) return Object.freeze([]);
+    return Object.freeze(
+      validateObservationLedgerBundle(
+        rows.map((row) => JSON.parse(row.entry_json) as ObservationLedgerEntryV1),
+      ),
+    );
+  }
+}
+
+export function createSqliteAcquisitionJournal(
+  database: SqliteDatabase,
+  expectedIdentity: JournalIdentityInput,
+): SqliteAcquisitionJournal {
+  const journal = new SqliteAcquisitionJournal(database, expectedIdentity);
+  ownedSqliteAcquisitionJournals.add(journal);
+  Object.freeze(journal);
+  return journal;
+}
+
+export function isOwnedSqliteAcquisitionJournal(value: object): boolean {
+  return (
+    ownedSqliteAcquisitionJournals.has(value) &&
+    Object.getPrototypeOf(value) === SqliteAcquisitionJournal.prototype &&
+    Object.isFrozen(value) &&
+    Reflect.ownKeys(value).length === 0
+  );
 }

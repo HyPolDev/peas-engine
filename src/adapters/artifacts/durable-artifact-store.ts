@@ -159,6 +159,8 @@ export class DurableArtifactStore implements ArtifactStore {
   #retentionAdmissionClosed = false;
   readonly #reconciliationControllers = new Set<AbortController>();
   readonly #reconciliationIdleWaiting: Array<() => void> = [];
+  #activeRetentionMutations = 0;
+  readonly #retentionMutationIdleWaiting: Array<() => void> = [];
 
   private constructor(
     repository: SqliteArtifactRepository,
@@ -702,6 +704,7 @@ export class DurableArtifactStore implements ArtifactStore {
     }
     const reconciliation = new AbortController();
     this.#reconciliationControllers.add(reconciliation);
+    this.#activeRetentionMutations += 1;
     const assertRunning = (): void => {
       if (
         reconciliation.signal.aborted ||
@@ -812,6 +815,8 @@ export class DurableArtifactStore implements ArtifactStore {
         assertRunning();
         await this.#lease.renewAndAssert();
         assertRunning();
+        await this.#checkpoint("reconciliation-action-application-commit");
+        assertRunning();
         state = this.#repository.applyReconciliationAction(
           state,
           plan.actionKey,
@@ -827,7 +832,6 @@ export class DurableArtifactStore implements ArtifactStore {
           application,
           this.#lease.fence(),
         );
-        await this.#checkpoint("reconciliation-action-application-commit");
         assertRunning();
         persistedRowsVisited = rowsVisited;
         persistedItems = processed;
@@ -874,7 +878,7 @@ export class DurableArtifactStore implements ArtifactStore {
               throw new Error("Pending quarantine source is missing");
             const source = safeChild(this.#paths.root, pending.sourceRelativePath);
             assertRunning();
-            const replayed = await this.#replayQuarantine(pending, source);
+            const replayed = await this.#replayQuarantine(pending, source, assertRunning);
             assertRunning();
             application = {
               resultingIdentity: replayed.identity,
@@ -888,7 +892,11 @@ export class DurableArtifactStore implements ArtifactStore {
             const source = safeChild(this.#paths.root, pending.sourceRelativePath);
             await this.#lease.renewAndAssert();
             assertRunning();
+            await this.#checkpoint("snapshot-removal");
+            assertRunning();
             await rm(source, { force: true });
+            assertRunning();
+            await this.#checkpoint("snapshot-removal");
             assertRunning();
             await syncDirectory(dirname(source));
             assertRunning();
@@ -1362,6 +1370,14 @@ export class DurableArtifactStore implements ArtifactStore {
         ))
           waiter();
       }
+      this.#activeRetentionMutations -= 1;
+      if (this.#activeRetentionMutations === 0) {
+        for (const waiter of this.#retentionMutationIdleWaiting.splice(
+          0,
+          this.#retentionMutationIdleWaiting.length,
+        ))
+          waiter();
+      }
     }
   }
 
@@ -1433,6 +1449,10 @@ export class DurableArtifactStore implements ArtifactStore {
       if (this.#reconciliationControllers.size === 0) return;
       await new Promise<void>((resolve) => this.#reconciliationIdleWaiting.push(resolve));
     };
+    const waitForMutations = async (): Promise<void> => {
+      if (this.#activeRetentionMutations === 0) return;
+      await new Promise<void>((resolve) => this.#retentionMutationIdleWaiting.push(resolve));
+    };
     let timeout: NodeJS.Timeout | undefined;
     try {
       return await Promise.race([
@@ -1440,6 +1460,7 @@ export class DurableArtifactStore implements ArtifactStore {
           this.#semaphore.waitForIdle(),
           waitForReaders(),
           waitForReconciliations(),
+          waitForMutations(),
         ]).then(() => true),
         new Promise<boolean>((resolve) => {
           timeout = setTimeout(() => resolve(false), timeoutMs);
@@ -1525,6 +1546,7 @@ export class DurableArtifactStore implements ArtifactStore {
   async #replayQuarantine(
     plan: ReconciliationActionPlan,
     sourcePath: string,
+    assertRunning: () => void,
   ): Promise<Readonly<{ identity: JsonValue; digest: string; sizeBytes: number }>> {
     if (plan.quarantineName === null || plan.sourceIdentity === null)
       throw new Error("Quarantine plan is incomplete");
@@ -1571,41 +1593,68 @@ export class DurableArtifactStore implements ArtifactStore {
         "artifact-integrity-failure",
         "Planned quarantine source and destination are both missing",
       );
-    if (targetIdentity === null) {
-      await this.#lease.renewAndAssert();
-      await link(sourcePath, target);
-      await this.#checkpoint("quarantine-link");
-      targetIdentity = await filesystemIdentity(target);
-    }
-    const targetHandle = await open(target, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+    let createdTarget = false;
     try {
-      await targetHandle.sync();
-    } finally {
-      await targetHandle.close();
+      if (targetIdentity === null) {
+        assertRunning();
+        await this.#lease.renewAndAssert();
+        assertRunning();
+        await this.#checkpoint("quarantine-link");
+        assertRunning();
+        await link(sourcePath, target);
+        createdTarget = true;
+        assertRunning();
+        targetIdentity = await filesystemIdentity(target);
+      }
+      assertRunning();
+      const targetHandle = await open(target, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+      try {
+        assertRunning();
+        await this.#checkpoint("quarantine-sync");
+        assertRunning();
+        await targetHandle.sync();
+        assertRunning();
+      } finally {
+        await targetHandle.close();
+      }
+      assertRunning();
+      await this.#checkpoint("quarantine-sync");
+      assertRunning();
+      await syncDirectory(this.#paths.quarantine);
+      assertRunning();
+      if (sourceIdentity !== null) {
+        assertRunning();
+        await this.#lease.renewAndAssert();
+        assertRunning();
+        await this.#checkpoint("quarantine-source-removal");
+        assertRunning();
+        await rm(sourcePath);
+        assertRunning();
+        await syncDirectory(dirname(sourcePath));
+        assertRunning();
+        sourceIdentity = null;
+      }
+      const verified = await hashFile(target);
+      if (
+        (plan.expectedDigest !== null && verified.digest !== plan.expectedDigest) ||
+        (plan.expectedSizeBytes !== null && verified.sizeBytes !== plan.expectedSizeBytes)
+      )
+        throw new ArtifactVaultError(
+          "artifact-integrity-failure",
+          "Quarantine target bytes differ from the durable plan",
+        );
+      return {
+        identity: await filesystemIdentity(target),
+        digest: verified.digest,
+        sizeBytes: verified.sizeBytes,
+      };
+    } catch (error) {
+      if (createdTarget) {
+        await rm(target, { force: true });
+        await syncDirectory(this.#paths.quarantine);
+      }
+      throw error;
     }
-    await syncDirectory(this.#paths.quarantine);
-    await this.#checkpoint("quarantine-sync");
-    if (sourceIdentity !== null) {
-      await this.#lease.renewAndAssert();
-      await rm(sourcePath);
-      await syncDirectory(dirname(sourcePath));
-      await this.#checkpoint("quarantine-source-removal");
-      sourceIdentity = null;
-    }
-    const verified = await hashFile(target);
-    if (
-      (plan.expectedDigest !== null && verified.digest !== plan.expectedDigest) ||
-      (plan.expectedSizeBytes !== null && verified.sizeBytes !== plan.expectedSizeBytes)
-    )
-      throw new ArtifactVaultError(
-        "artifact-integrity-failure",
-        "Quarantine target bytes differ from the durable plan",
-      );
-    return {
-      identity: await filesystemIdentity(target),
-      digest: verified.digest,
-      sizeBytes: verified.sizeBytes,
-    };
   }
 
   async #quarantine(path: string, token: string): Promise<void> {

@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { isProxy } from "node:util/types";
+import { P1_10_TEST_AUTHORITY } from "#p1-10-test-authority";
 
 import { canonicalHash } from "../../../core/hash.js";
 import { canonicalJson, type JsonValue } from "../../../core/json.js";
@@ -27,6 +28,7 @@ import {
 import type { ValidatedMarketAcquisitionConfiguration } from "../contracts.js";
 import { assertValidatedMarketAcquisitionConfiguration } from "../configuration.js";
 import { ALPACA_ROUTE_REGISTRY } from "../identity.js";
+import { validateJournalLedgerBindings } from "../artifact-integration.js";
 import {
   assertOwnedAcquisitionJournal,
   assertOwnedSqliteAcquisitionJournal,
@@ -183,6 +185,8 @@ export class DurableAlpacaWireAdmissionBoundary {
     }
     const journal = await this.#journal.load(input.marketAcquisitionJournalId);
     validateJournalEntries(journal, input.expectedIdentity);
+    const ledger = await this.#journal.loadLedgerEntries();
+    validateJournalLedgerBindings(journal, ledger);
     const latest = journal.at(-1);
     if (latest === undefined) {
       throw new AlpacaWireContractError("page-semantic-authority-invalid");
@@ -216,6 +220,29 @@ export class DurableAlpacaWireAdmissionBoundary {
       semantic.artifactDigest !== artifactDigest ||
       semantic.artifactSizeBytes !== artifactSizeBytes ||
       semantic.stageLedgerFactId !== latest.stageLedgerFactId
+    ) {
+      throw new AlpacaWireContractError("page-semantic-authority-invalid");
+    }
+    const ledgerById = new Map(ledger.map((entry) => [entry.entryId, entry]));
+    const pageStage = ledgerById.get(semantic.stageLedgerFactId);
+    const authorityStage = ledgerById.get(semantic.semanticAuthorityStageLedgerFactId);
+    const authorityCommit = authorityStage?.parentEntryIds
+      .map((entryId) => ledgerById.get(entryId))
+      .find((entry) => entry?.facts.kind === "artifact.committed");
+    const clockDeclaration = ledgerById.get(semantic.clockDeclarationFactId);
+    if (
+      pageStage?.facts.kind !== "artifact.verified" ||
+      pageStage.facts.vaultObservationId !== semantic.artifactObservationId ||
+      pageStage.facts.artifactDigest !== semantic.artifactDigest ||
+      pageStage.facts.metadataSizeBytes !== semantic.artifactSizeBytes ||
+      authorityStage?.facts.kind !== "artifact.verified" ||
+      authorityStage.facts.vaultObservationId !== semantic.semanticAuthorityObservationId ||
+      authorityStage.facts.artifactDigest !== semantic.semanticAuthorityDigest ||
+      authorityStage.facts.metadataSizeBytes !== semantic.semanticAuthoritySizeBytes ||
+      authorityCommit?.facts.kind !== "artifact.committed" ||
+      authorityCommit.facts.vaultObservationHash !== semantic.semanticAuthorityObservationHash ||
+      clockDeclaration?.facts.kind !== "clock-basis.declared" ||
+      clockDeclaration.facts.clockBasis.clockBasisId !== semantic.durableClockBasisId
     ) {
       throw new AlpacaWireContractError("page-semantic-authority-invalid");
     }
@@ -281,7 +308,7 @@ export function createTestDurableAlpacaWireAdmissionBoundary(
   journal: AcquisitionJournal,
   evidence: AlpacaWireSemanticEvidenceStore,
 ): DurableAlpacaWireAdmissionBoundary {
-  if (process.env["NODE_TEST_CONTEXT"] === undefined) {
+  if (P1_10_TEST_AUTHORITY === undefined) {
     throw new TypeError("test-wire-admission-composition-unavailable");
   }
   assertOwnedAcquisitionJournal(journal);
@@ -1038,13 +1065,13 @@ export function admitAlpacaHistoricalPage(
       if (item.kind === "trade" && item.update !== null) {
         const terminalReason = "correction-unsupported" as const;
         const quarantines = Object.freeze([
-          Object.freeze({ endpointKind: kind, reason: terminalReason, symbol, itemIndex }),
+          Object.freeze({ endpointKind: kind, reason: terminalReason, symbol, itemIndex: 0 }),
         ]);
         return Object.freeze({
           endpointKind: kind,
           marketAcquisitionId: context.marketAcquisitionId,
           rawArtifactId: context.rawArtifactId,
-          wireItemCount: recordCount,
+          wireItemCount: 0,
           terminal: true,
           privateNextToken: null,
           records: Object.freeze([]),

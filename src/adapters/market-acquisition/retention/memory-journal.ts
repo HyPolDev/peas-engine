@@ -1,3 +1,4 @@
+import { P1_10_TEST_AUTHORITY } from "#p1-10-test-authority";
 import { canonicalJson } from "../../../core/json.js";
 import type {
   ArtifactRetentionJournal,
@@ -10,6 +11,8 @@ import type {
   RetentionStopEvent,
   RetentionTombstone,
 } from "./contracts.js";
+
+const ownedMemoryRetentionJournals = new WeakSet<object>();
 
 function replayEqual(label: string, existing: unknown, next: unknown): void {
   if (canonicalJson(existing as never) !== canonicalJson(next as never))
@@ -162,4 +165,23 @@ export class MemoryArtifactRetentionJournal implements ArtifactRetentionJournal 
     const value = this.#checkpoints.get(planId);
     return value === undefined ? undefined : structuredClone(value);
   }
+}
+
+export function createMemoryArtifactRetentionJournal(): MemoryArtifactRetentionJournal {
+  if (P1_10_TEST_AUTHORITY === undefined) {
+    throw new TypeError("test-memory-retention-journal-unavailable");
+  }
+  const journal = new MemoryArtifactRetentionJournal();
+  ownedMemoryRetentionJournals.add(journal);
+  Object.freeze(journal);
+  return journal;
+}
+
+export function isOwnedMemoryArtifactRetentionJournal(value: object): boolean {
+  return (
+    ownedMemoryRetentionJournals.has(value) &&
+    Object.getPrototypeOf(value) === MemoryArtifactRetentionJournal.prototype &&
+    Object.isFrozen(value) &&
+    Reflect.ownKeys(value).length === 0
+  );
 }

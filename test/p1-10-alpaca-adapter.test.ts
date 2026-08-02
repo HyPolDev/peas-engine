@@ -37,7 +37,7 @@ import {
 } from "../src/adapters/market-acquisition/contracts.js";
 import { validateMarketAcquisitionConfiguration } from "../src/adapters/market-acquisition/configuration.js";
 import type { AlpacaAuthorizationHeaders } from "../src/adapters/market-acquisition/credentials.js";
-import { createCredentialIsolatedAlpacaTransport } from "../src/adapters/market-acquisition/credentials.js";
+import { createTestCredentialIsolatedAlpacaTransport } from "../src/adapters/market-acquisition/credentials.js";
 import {
   ALPACA_ROUTE_REGISTRY,
   ZERO_SPEND_POLICY_ID,
@@ -156,7 +156,7 @@ async function executeAlpacaAttempt<T>(
     plan: input.plan,
     credentialAuthorization: credentialFixture.request,
     page: input.page,
-    transport: createCredentialIsolatedAlpacaTransport({
+    transport: createTestCredentialIsolatedAlpacaTransport({
       dispatch: (request) => input.transport.dispatch(request, {} as never),
       abort: () => input.transport.abort(),
       settle: () => input.transport.settle(),
@@ -1107,7 +1107,7 @@ test("all non-secret request, scheduler, and transport rejection precedes creden
     const counters = counts();
     let credentialReads = 0;
     const rawTransport = new TransportDouble(counters, response(new BodyDouble(counters, [])));
-    const isolatedTransport = createCredentialIsolatedAlpacaTransport({
+    const isolatedTransport = createTestCredentialIsolatedAlpacaTransport({
       dispatch: (request) => rawTransport.dispatch(request),
       abort: () => rawTransport.abort(),
       settle: () => rawTransport.settle(),
@@ -1153,7 +1153,7 @@ test("a hostile retained transport request contains no plaintext credential surf
   const counters = counts();
   let retained: AlpacaTransportRequest | null = null;
   const rawTransport = new TransportDouble(counters, response(new BodyDouble(counters, [])));
-  const transport = createCredentialIsolatedAlpacaTransport({
+  const transport = createTestCredentialIsolatedAlpacaTransport({
     async dispatch(request) {
       retained = request;
       return rawTransport.dispatch(request);

@@ -30,12 +30,12 @@ import {
   journalEntryBody,
   type JournalCheckpointBody,
 } from "../src/adapters/market-acquisition/journal.js";
-import { MemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
+import { createMemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
 import {
   authenticatedAlpacaAdmissionArtifact,
   type AlpacaWirePageAdmission,
 } from "../src/adapters/market-acquisition/alpaca/wire.js";
-import { MemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
+import { createMemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
 import { createTestArtifactRetentionController } from "../src/adapters/market-acquisition/retention/controller.js";
 import {
   type RetentionEnforcedArtifactStore,
@@ -91,7 +91,7 @@ export function retentionGuardedArtifactStore(
   const authorityId = (prefix: string, member: string): string =>
     `${prefix}_${canonicalHash("peas/p1-10-repair-retention-authority/v1", { member })}`;
   const controller = createTestArtifactRetentionController({
-    journal: new MemoryArtifactRetentionJournal(),
+    journal: createMemoryArtifactRetentionJournal(),
     artifacts: {
       async settleActiveReadersAndWriters() {
         return true;
@@ -336,10 +336,11 @@ export async function credentialAuthorizationFixture(
       started.parentEntryIds.filter((id) => id !== ledger.clockDeclaration.entryId),
     ),
   );
-  const journal = new MemoryAcquisitionJournal(journalIdentity);
+  const journal = createMemoryAcquisitionJournal(journalIdentity);
+  await journal.appendLedgerEntries(ledger.entries);
   await journal.append(declared);
   await journal.append(requestStarted);
-  const retentionJournal = new MemoryArtifactRetentionJournal();
+  const retentionJournal = createMemoryArtifactRetentionJournal();
   const request: CredentialAuthorizationRequest = Object.freeze({
     plan,
     acquisitionObservationId,
@@ -353,6 +354,7 @@ export async function credentialAuthorizationFixture(
     retentionJournal,
     authorization: createTestDurableCredentialAuthorizationBoundary(journal, retentionJournal),
     entries: Object.freeze([declared, requestStarted]),
+    ledgerEntries: ledger.entries,
   });
 }
 

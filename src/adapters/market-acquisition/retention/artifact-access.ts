@@ -1,5 +1,6 @@
 import { Readable } from "node:stream";
 import { isProxy } from "node:util/types";
+import { P1_10_TEST_AUTHORITY } from "#p1-10-test-authority";
 
 import type {
   ArtifactPage,
@@ -257,7 +258,7 @@ export function createTestRetentionEnforcedArtifactStore(
   controller: ArtifactRetentionController,
   stopOwnedOperations?: () => void,
 ): RetentionEnforcedArtifactStore {
-  if (process.env["NODE_TEST_CONTEXT"] === undefined) {
+  if (P1_10_TEST_AUTHORITY === undefined) {
     throw new TypeError("test-retention-store-composition-unavailable");
   }
   assertOwnedArtifactRetentionController(controller);
