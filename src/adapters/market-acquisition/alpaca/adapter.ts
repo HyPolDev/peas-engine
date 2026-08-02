@@ -230,9 +230,7 @@ async function executeAlpacaAttempt<T>(
   };
   try {
     try {
-      response = await run(
-        input.transport.dispatch(input.requestLease.request, input.dispatchCapability),
-      );
+      response = await run(input.transport.dispatch(input.dispatchCapability));
     } catch (error) {
       if (error instanceof DeadlineElapsed) {
         return failure("attempt-timeout", "dispatch", { kind: "pre-response-transport" });
@@ -456,15 +454,19 @@ export class AlpacaProductionAttemptBoundary {
         timerSettled,
       );
     }
-    const authorized = await withAlpacaAuthorization(permit, this.#secrets, (dispatchCapability) =>
-      executeAlpacaAttempt({
-        dispatchCapability,
-        transport: input.transport,
-        artifactSink: input.artifactSink,
-        requestLease,
-        abortController,
-        deadline,
-      }),
+    const authorized = await withAlpacaAuthorization(
+      permit,
+      this.#secrets,
+      requestLease.request,
+      (dispatchCapability) =>
+        executeAlpacaAttempt({
+          dispatchCapability,
+          transport: input.transport,
+          artifactSink: input.artifactSink,
+          requestLease,
+          abortController,
+          deadline,
+        }),
     );
     if (authorized.ok) return authorized.value;
     requestLease.release();

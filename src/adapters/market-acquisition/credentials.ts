@@ -33,9 +33,10 @@ import {
   assertOwnedSqliteRetentionJournal,
 } from "./owned-journal.js";
 import { validateJournalLedgerBindings } from "./artifact-integration.js";
-import { P1_10_TEST_AUTHORITY } from "#p1-10-test-authority";
+import { P1_10_TEST_AUTHORITY } from "../../internal-test-authority.js";
 import { request as dispatchHttpsRequest } from "node:https";
 import type { ClientRequest, IncomingMessage } from "node:http";
+import { assertOwnedAlpacaTransportRequest } from "./alpaca/request.js";
 
 export const ALPACA_KEY_ID_ENV = "PEAS_ALPACA_API_KEY_ID";
 export const ALPACA_SECRET_KEY_ENV = "PEAS_ALPACA_API_SECRET_KEY";
@@ -92,7 +93,12 @@ type AuthorizationLeaseState = {
   active: boolean;
 };
 
-type DispatchBinding = PermitBinding & Readonly<{ authorization: AuthorizationLeaseState }>;
+type DispatchBinding = PermitBinding &
+  Readonly<{
+    authorization: AuthorizationLeaseState;
+    request: AlpacaTransportRequest;
+    url: URL;
+  }>;
 
 const issuedPermits = new WeakMap<object, PermitBinding>();
 const issuedDispatchCapabilities = new WeakMap<object, DispatchBinding>();
@@ -216,7 +222,15 @@ export class DurableCredentialAuthorizationBoundary {
         durableStage?.parentEntryIds.includes(entry.entryId) === true &&
         entry.facts.kind === "acquisition.declared",
     );
+    const workflowProvenanceValid =
+      latest !== undefined &&
+      durableStage !== undefined &&
+      durableDeclaration !== undefined &&
+      (await this.#journal.isWorkflowProducedJournalEntry(latest.journalEntryHash)) &&
+      (await this.#journal.isWorkflowProducedLedgerEntry(durableStage.entryId)) &&
+      (await this.#journal.isWorkflowProducedLedgerEntry(durableDeclaration.entryId));
     if (
+      !workflowProvenanceValid ||
       latest?.checkpointKind !== "request-started" ||
       latest.requestIdentityHash !== input.plan.requestIdentityHash ||
       latest.acquisitionConfigurationHash !== input.plan.acquisitionConfigurationHash ||
@@ -339,6 +353,7 @@ function credentialUnavailable<T>(): CredentialAttemptResult<T> {
 export async function withAlpacaAuthorization<T>(
   permit: CredentialPreflightPermit,
   source: RuntimeSecretSource,
+  request: AlpacaTransportRequest,
   operation: (capability: AlpacaDispatchCapability) => Promise<T>,
 ): Promise<CredentialAttemptResult<T>> {
   const binding = issuedPermits.get(permit);
@@ -346,6 +361,33 @@ export async function withAlpacaAuthorization<T>(
     throw new TypeError("credential-boundary-requires-durable-preconditions");
   }
   issuedPermits.delete(permit);
+  try {
+    assertOwnedAlpacaTransportRequest(request);
+    if (
+      request.method !== "GET" ||
+      request.redirect !== "error" ||
+      request.origin !== binding.plan.route.origin ||
+      request.path !== binding.plan.route.path ||
+      request.endpointChannelId !== binding.plan.route.endpointChannelId ||
+      request.requestIdentityHash !== binding.plan.requestIdentityHash
+    ) {
+      throw new TypeError("alpaca-dispatch-destination-invalid");
+    }
+  } catch {
+    throw new TypeError("alpaca-dispatch-destination-invalid");
+  }
+  const url = new URL(request.path, request.origin);
+  for (const [name, value] of request.query) url.searchParams.append(name, value);
+  if (
+    url.protocol !== "https:" ||
+    url.hostname !== "data.alpaca.markets" ||
+    url.port !== "" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.hash !== ""
+  ) {
+    throw new TypeError("alpaca-dispatch-destination-invalid");
+  }
   let keyId: unknown;
   let secretKey: unknown;
   let capability: AlpacaDispatchCapability | undefined;
@@ -362,7 +404,10 @@ export async function withAlpacaAuthorization<T>(
       return credentialUnavailable();
     authorization = { keyId, secretKey, active: true };
     capability = Object.freeze({ kind: "p1-10-alpaca-dispatch-capability" as const });
-    issuedDispatchCapabilities.set(capability, Object.freeze({ ...binding, authorization }));
+    issuedDispatchCapabilities.set(
+      capability,
+      Object.freeze({ ...binding, authorization, request, url }),
+    );
     return { ok: true, value: await operation(capability) };
   } catch {
     return credentialUnavailable();
@@ -374,23 +419,22 @@ export async function withAlpacaAuthorization<T>(
   }
 }
 
-function resolveAlpacaDispatchCapability(
-  capability: AlpacaDispatchCapability,
-  request: AlpacaTransportRequest,
-): Readonly<{ headers: AlpacaAuthorizationHeaders; state: AuthorizationLeaseState }> {
+function resolveAlpacaDispatchCapability(capability: AlpacaDispatchCapability): Readonly<{
+  headers: AlpacaAuthorizationHeaders;
+  state: AuthorizationLeaseState;
+  request: AlpacaTransportRequest;
+  url: URL;
+}> {
   const binding = issuedDispatchCapabilities.get(capability);
-  if (
-    binding === undefined ||
-    binding.plan.requestIdentityHash !== request.requestIdentityHash ||
-    binding.plan.route.path !== request.path ||
-    binding.plan.route.endpointChannelId !== request.endpointChannelId
-  ) {
+  if (binding === undefined) {
     throw new TypeError("alpaca-dispatch-capability-invalid");
   }
   issuedDispatchCapabilities.delete(capability);
   return Object.freeze({
     headers: leasedAuthorizationHeaders(binding.authorization),
     state: binding.authorization,
+    request: binding.request,
+    url: binding.url,
   });
 }
 
@@ -424,11 +468,8 @@ export function createTestCredentialIsolatedAlpacaTransport(
   const abort = driver.abort.bind(driver);
   const settle = driver.settle.bind(driver);
   const transport: AlpacaTransport = Object.freeze({
-    async dispatch(
-      request: AlpacaTransportRequest,
-      authorization: AlpacaDispatchCapability,
-    ): Promise<AlpacaTransportResponse> {
-      const lease = resolveAlpacaDispatchCapability(authorization, request);
+    async dispatch(authorization: AlpacaDispatchCapability): Promise<AlpacaTransportResponse> {
+      const lease = resolveAlpacaDispatchCapability(authorization);
       const { headers } = lease;
       if (
         !Object.isFrozen(headers) ||
@@ -439,7 +480,7 @@ export function createTestCredentialIsolatedAlpacaTransport(
         throw new TypeError("alpaca-authorization-record-invalid");
       }
       try {
-        return await dispatch(request, headers);
+        return await dispatch(lease.request, headers);
       } finally {
         revokeAuthorization(lease.state);
       }
@@ -452,27 +493,41 @@ export function createTestCredentialIsolatedAlpacaTransport(
 }
 
 class NativeAlpacaResponseBody {
-  readonly #response: IncomingMessage;
+  #response: IncomingMessage | null;
+  readonly #released: () => void;
 
-  constructor(response: IncomingMessage) {
+  constructor(response: IncomingMessage, released: () => void) {
     this.#response = response;
+    this.#released = released;
+  }
+
+  #detach(response: IncomingMessage): void {
+    if (this.#response === response) {
+      this.#response = null;
+      this.#released();
+    }
   }
 
   async read(): Promise<AlpacaBodyRead> {
-    const available = this.#response.read() as Buffer | null;
+    const response = this.#response;
+    if (response === null) return Object.freeze({ done: true as const });
+    const available = response.read() as Buffer | null;
     if (available !== null) {
       return Object.freeze({ done: false as const, bytes: new Uint8Array(available) });
     }
-    if (this.#response.readableEnded) return Object.freeze({ done: true as const });
+    if (response.readableEnded) {
+      this.#detach(response);
+      return Object.freeze({ done: true as const });
+    }
     return await new Promise<AlpacaBodyRead>((resolve, reject) => {
       const cleanup = (): void => {
-        this.#response.off("readable", onReadable);
-        this.#response.off("end", onEnd);
-        this.#response.off("error", onError);
+        response.off("readable", onReadable);
+        response.off("end", onEnd);
+        response.off("error", onError);
       };
       const onReadable = (): void => {
         cleanup();
-        const bytes = this.#response.read() as Buffer | null;
+        const bytes = response.read() as Buffer | null;
         resolve(
           bytes === null
             ? Object.freeze({ done: true as const })
@@ -481,28 +536,136 @@ class NativeAlpacaResponseBody {
       };
       const onEnd = (): void => {
         cleanup();
+        this.#detach(response);
         resolve(Object.freeze({ done: true as const }));
       };
       const onError = (error: Error): void => {
         cleanup();
+        this.#detach(response);
         reject(error);
       };
-      this.#response.once("readable", onReadable);
-      this.#response.once("end", onEnd);
-      this.#response.once("error", onError);
+      response.once("readable", onReadable);
+      response.once("end", onEnd);
+      response.once("error", onError);
     });
   }
 
   async abort(): Promise<void> {
-    this.#response.destroy();
+    const response = this.#response;
+    if (response !== null) this.#detach(response);
+    response?.destroy();
   }
   async destroy(): Promise<void> {
-    this.#response.destroy();
+    const response = this.#response;
+    if (response !== null) this.#detach(response);
+    response?.destroy();
   }
   async settle(): Promise<void> {
-    if (this.#response.destroyed || this.#response.readableEnded) return;
-    await new Promise<void>((resolve) => this.#response.once("close", resolve));
+    const response = this.#response;
+    if (response === null) return;
+    try {
+      if (!response.destroyed && !response.readableEnded) {
+        await new Promise<void>((resolve) => response.once("close", resolve));
+      }
+    } finally {
+      this.#detach(response);
+    }
   }
+}
+
+type NativeRequestFunction = (
+  url: URL,
+  options: Readonly<{
+    method: "GET";
+    headers: Readonly<Record<string, string>>;
+    signal: AbortSignal;
+  }>,
+) => ClientRequest;
+
+type NativeTransportState = {
+  activeRequest: ClientRequest | undefined;
+  activeDispatch: Promise<unknown> | undefined;
+  activeBodies: number;
+};
+
+const nativeTransportStates = new WeakMap<object, NativeTransportState>();
+
+function constructNativeCredentialIsolatedAlpacaTransport(
+  requestFunction: NativeRequestFunction,
+): AlpacaTransport {
+  const state: NativeTransportState = {
+    activeRequest: undefined,
+    activeDispatch: undefined,
+    activeBodies: 0,
+  };
+  const transport: AlpacaTransport = Object.freeze({
+    async dispatch(capability: AlpacaDispatchCapability): Promise<AlpacaTransportResponse> {
+      const lease = resolveAlpacaDispatchCapability(capability);
+      let authorizationHeaders: Readonly<Record<string, string>> | undefined;
+      try {
+        authorizationHeaders = Object.freeze({
+          "APCA-API-KEY-ID": activeAuthorizationValue(lease.state.keyId, lease.state.active),
+          "APCA-API-SECRET-KEY": activeAuthorizationValue(
+            lease.state.secretKey,
+            lease.state.active,
+          ),
+        });
+        const dispatched = new Promise<IncomingMessage>((resolve, reject) => {
+          const physical = requestFunction(lease.url, {
+            method: "GET",
+            headers: authorizationHeaders as Readonly<Record<string, string>>,
+            signal: lease.request.signal,
+          });
+          state.activeRequest = physical;
+          physical.once("response", resolve);
+          physical.once("error", reject);
+          physical.end();
+        });
+        state.activeDispatch = dispatched;
+        const response = await dispatched;
+        const declaredHeader = response.headers["content-length"];
+        const declaredLength = Array.isArray(declaredHeader) ? null : (declaredHeader ?? null);
+        const contentLength =
+          declaredLength !== null && /^(?:0|[1-9][0-9]*)$/.test(declaredLength)
+            ? Number(declaredLength)
+            : null;
+        state.activeBodies += 1;
+        return Object.freeze({
+          status: response.statusCode ?? 0,
+          contentLength,
+          retryAfter: Array.isArray(response.headers["retry-after"])
+            ? null
+            : (response.headers["retry-after"] ?? null),
+          quotaClassification: "missing" as const,
+          body: new NativeAlpacaResponseBody(response, () => {
+            state.activeBodies -= 1;
+          }),
+          siblingResources: Object.freeze([]),
+        });
+      } finally {
+        authorizationHeaders = undefined;
+        revokeAuthorization(lease.state);
+        state.activeRequest = undefined;
+        state.activeDispatch = undefined;
+      }
+    },
+    async abort(): Promise<void> {
+      state.activeRequest?.destroy();
+      state.activeRequest = undefined;
+    },
+    async settle(): Promise<void> {
+      const active = state.activeDispatch;
+      state.activeDispatch = undefined;
+      try {
+        await active;
+      } catch {
+        // The attempt boundary classifies dispatch failure.
+      }
+    },
+  });
+  nativeTransportStates.set(transport, state);
+  credentialIsolatedTransports.add(transport);
+  return transport;
 }
 
 /**
@@ -514,74 +677,33 @@ export function createProductionCredentialIsolatedAlpacaTransport(
 ): AlpacaTransport {
   if (callerArguments.length !== 0)
     throw new TypeError("alpaca-production-transport-takes-no-driver");
-  let activeRequest: ClientRequest | undefined;
-  let activeDispatch: Promise<unknown> | undefined;
-  const transport: AlpacaTransport = Object.freeze({
-    async dispatch(
-      request: AlpacaTransportRequest,
-      capability: AlpacaDispatchCapability,
-    ): Promise<AlpacaTransportResponse> {
-      const lease = resolveAlpacaDispatchCapability(capability, request);
-      let authorizationHeaders: Readonly<Record<string, string>> | undefined;
-      try {
-        authorizationHeaders = Object.freeze({
-          "APCA-API-KEY-ID": activeAuthorizationValue(lease.state.keyId, lease.state.active),
-          "APCA-API-SECRET-KEY": activeAuthorizationValue(
-            lease.state.secretKey,
-            lease.state.active,
-          ),
-        });
-        const url = new URL(request.path, request.origin);
-        for (const [name, value] of request.query) url.searchParams.append(name, value);
-        const dispatched = new Promise<IncomingMessage>((resolve, reject) => {
-          const physical = dispatchHttpsRequest(url, {
-            method: "GET",
-            headers: authorizationHeaders,
-            signal: request.signal,
-          });
-          activeRequest = physical;
-          physical.once("response", resolve);
-          physical.once("error", reject);
-          physical.end();
-        });
-        activeDispatch = dispatched;
-        const response = await dispatched;
-        const declaredHeader = response.headers["content-length"];
-        const declaredLength = Array.isArray(declaredHeader) ? null : (declaredHeader ?? null);
-        const contentLength =
-          declaredLength !== null && /^(?:0|[1-9][0-9]*)$/.test(declaredLength)
-            ? Number(declaredLength)
-            : null;
-        return Object.freeze({
-          status: response.statusCode ?? 0,
-          contentLength,
-          retryAfter: Array.isArray(response.headers["retry-after"])
-            ? null
-            : (response.headers["retry-after"] ?? null),
-          quotaClassification: "missing" as const,
-          body: new NativeAlpacaResponseBody(response),
-          siblingResources: Object.freeze([]),
-        });
-      } finally {
-        authorizationHeaders = undefined;
-        revokeAuthorization(lease.state);
-        activeRequest = undefined;
-        activeDispatch = undefined;
-      }
-    },
-    async abort(): Promise<void> {
-      activeRequest?.destroy();
-    },
-    async settle(): Promise<void> {
-      try {
-        await activeDispatch;
-      } catch {
-        // The attempt boundary classifies dispatch failure.
-      }
-    },
-  });
-  credentialIsolatedTransports.add(transport);
-  return transport;
+  return constructNativeCredentialIsolatedAlpacaTransport(
+    dispatchHttpsRequest as unknown as NativeRequestFunction,
+  );
+}
+
+export function createTestNativeCredentialIsolatedAlpacaTransport(
+  requestFunction: NativeRequestFunction,
+): AlpacaTransport {
+  if (P1_10_TEST_AUTHORITY === undefined) {
+    throw new TypeError("test-native-alpaca-transport-unavailable");
+  }
+  return constructNativeCredentialIsolatedAlpacaTransport(requestFunction);
+}
+
+export function assertTestNativeAlpacaTransportReleased(transport: AlpacaTransport): void {
+  if (P1_10_TEST_AUTHORITY === undefined) {
+    throw new TypeError("test-native-alpaca-inspection-unavailable");
+  }
+  const state = nativeTransportStates.get(transport as object);
+  if (
+    state === undefined ||
+    state.activeRequest !== undefined ||
+    state.activeDispatch !== undefined ||
+    state.activeBodies !== 0
+  ) {
+    throw new TypeError("native-alpaca-transport-owned-reference-retained");
+  }
 }
 
 export function assertCredentialIsolatedAlpacaTransport(value: AlpacaTransport): void {

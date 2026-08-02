@@ -7,7 +7,7 @@ import test from "node:test";
 import { DurableArtifactStore } from "../src/adapters/artifacts/durable-artifact-store.js";
 import { createTestRetentionEnforcedArtifactStore } from "../src/adapters/market-acquisition/retention/artifact-access.js";
 import { createTestArtifactRetentionController } from "../src/adapters/market-acquisition/retention/controller.js";
-import { MemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
+import { createMemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
 import { ALPACA_PRIVATE_ARTIFACT_POLICY } from "../src/adapters/market-acquisition/private-artifact-policy.js";
 import { artifactRuntimePaths } from "../src/adapters/artifacts/runtime-root.js";
 import { SqliteArtifactRepository } from "../src/adapters/artifacts/sqlite-artifact-repository.js";
@@ -296,7 +296,7 @@ test("checked bytes survive durable ArtifactStore restart and observation page s
   );
   try {
     const retention = createTestArtifactRetentionController({
-      journal: new MemoryArtifactRetentionJournal(),
+      journal: createMemoryArtifactRetentionJournal(),
       artifacts: {
         settleActiveReadersAndWriters: () => store.settleForRetention(),
         async eraseDigestCopies(artifactDigest) {

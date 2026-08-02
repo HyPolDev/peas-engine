@@ -15,7 +15,6 @@ const testFiles = readdirSync(join(process.cwd(), "dist", "test"))
 const result = spawnSync(
   process.execPath,
   [
-    "--conditions=p1-10-test",
     "--test",
     "--test-concurrency=1",
     "--experimental-test-coverage",

@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { isProxy } from "node:util/types";
-import { P1_10_TEST_AUTHORITY } from "#p1-10-test-authority";
+import { P1_10_TEST_AUTHORITY } from "../../../internal-test-authority.js";
 
 import { canonicalHash } from "../../../core/hash.js";
 import { canonicalJson, type JsonValue } from "../../../core/json.js";
@@ -36,6 +36,7 @@ import {
 import {
   type AlpacaWireSemanticEvidenceStore,
   assertOwnedAlpacaWireSemanticEvidenceStore,
+  assertAcceptedAlpacaWireSemanticEvidence,
   assertOwnedSqliteAlpacaWireSemanticEvidenceStore,
 } from "./wire-semantic-evidence.js";
 export {
@@ -224,13 +225,29 @@ export class DurableAlpacaWireAdmissionBoundary {
       throw new AlpacaWireContractError("page-semantic-authority-invalid");
     }
     const ledgerById = new Map(ledger.map((entry) => [entry.entryId, entry]));
+    assertAcceptedAlpacaWireSemanticEvidence(
+      semantic,
+      plan.requestIdentityHash,
+      plan.queryStartNs.toString(),
+      plan.queryEndNs.toString(),
+    );
     const pageStage = ledgerById.get(semantic.stageLedgerFactId);
     const authorityStage = ledgerById.get(semantic.semanticAuthorityStageLedgerFactId);
     const authorityCommit = authorityStage?.parentEntryIds
       .map((entryId) => ledgerById.get(entryId))
       .find((entry) => entry?.facts.kind === "artifact.committed");
     const clockDeclaration = ledgerById.get(semantic.clockDeclarationFactId);
+    const workflowProvenance = await Promise.all([
+      this.#journal.isWorkflowProducedJournalEntry(latest.journalEntryHash),
+      this.#journal.isWorkflowProducedLedgerEntry(semantic.stageLedgerFactId),
+      this.#journal.isWorkflowProducedLedgerEntry(semantic.semanticAuthorityStageLedgerFactId),
+      authorityCommit === undefined
+        ? Promise.resolve(false)
+        : this.#journal.isWorkflowProducedLedgerEntry(authorityCommit.entryId),
+      this.#journal.isWorkflowProducedLedgerEntry(semantic.clockDeclarationFactId),
+    ]);
     if (
+      workflowProvenance.some((produced) => !produced) ||
       pageStage?.facts.kind !== "artifact.verified" ||
       pageStage.facts.vaultObservationId !== semantic.artifactObservationId ||
       pageStage.facts.artifactDigest !== semantic.artifactDigest ||

@@ -36,3 +36,15 @@ BEGIN SELECT RAISE(ABORT, 'market acquisition ledger is immutable'); END;
 CREATE TRIGGER market_acquisition_ledger_entries_no_delete
 BEFORE DELETE ON market_acquisition_ledger_entries
 BEGIN SELECT RAISE(ABORT, 'market acquisition ledger is immutable'); END;
+
+CREATE TABLE market_acquisition_workflow_journal_proofs (
+  market_acquisition_journal_id TEXT NOT NULL,
+  journal_entry_hash TEXT NOT NULL,
+  PRIMARY KEY (market_acquisition_journal_id, journal_entry_hash)
+) STRICT;
+
+CREATE TABLE market_acquisition_workflow_ledger_proofs (
+  market_acquisition_journal_id TEXT NOT NULL,
+  entry_id TEXT NOT NULL,
+  PRIMARY KEY (market_acquisition_journal_id, entry_id)
+) STRICT;

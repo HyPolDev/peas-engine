@@ -10,6 +10,7 @@ import { normalizeRecordedMarketRecords } from "../src/providers/market-referenc
 import { deriveAcquisitionObservationId } from "../src/providers/observation-ledger.js";
 import {
   AlpacaWireContractError,
+  createDurableAlpacaWireAdmissionBoundary,
   createTestDurableAlpacaWireAdmissionBoundary,
   createTestDurableAlpacaWireSemanticEvidenceBoundary,
   admitAlpacaHistoricalPage,
@@ -24,7 +25,13 @@ import {
 import {
   MemoryAlpacaWireSemanticEvidenceStore,
   createAlpacaWireSemanticAuthority,
+  createSqliteAlpacaWireSemanticEvidenceStore,
+  createDurableAlpacaWireSemanticEvidenceBoundary,
 } from "../src/adapters/market-acquisition/alpaca/wire-semantic-evidence.js";
+import {
+  ALPACA_PRIMARY_CORPUS_AUTHORITY_ID,
+  acceptedAlpacaWireCalendarEntries,
+} from "../src/adapters/market-acquisition/alpaca/wire-semantic-catalog.js";
 import {
   MarketAcquisitionLedger,
   attachLedgerEvidence,
@@ -42,6 +49,8 @@ import {
   ZERO_SPEND_POLICY_PREIMAGE,
 } from "../src/adapters/market-acquisition/identity.js";
 import { createMemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
+import { createSqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
+import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
 import {
   GENESIS_HASH,
   NO_TOKEN_HASH,
@@ -49,6 +58,7 @@ import {
   deriveLogicalPageIdentityHash,
   deriveMarketAcquisitionJournalId,
   journalEntryBody,
+  appendTestAcquisitionWorkflowEvidence,
   TERMINAL_TOKEN_HASH,
   type JournalCheckpointBody,
   type JournalEntry,
@@ -218,6 +228,7 @@ async function authenticatedAdmission(
     calendarVersion?: string;
     primaryCorpusMember?: boolean;
   }>,
+  persistence: "memory" | "sqlite" = "memory",
 ) {
   const bytes = Buffer.from(JSON.stringify(wire), "utf8");
   const plan = wirePlan(endpointKind);
@@ -304,24 +315,6 @@ async function authenticatedAdmission(
     cumulativeAttempts: 1,
     quotaWindowEvidence: [0],
   } as const;
-  const calendarEntries = Object.freeze(
-    [plan.queryStartNs, plan.queryEndNs]
-      .map((value) => new Date(Number(value / 1_000_000n)).toISOString().slice(0, 10))
-      .filter((value, index, values) => values.indexOf(value) === index)
-      .map((sessionDate, index) =>
-        Object.freeze({
-          sessionDate,
-          timeZone: "America/New_York" as const,
-          utcOffsetMinutes: -300 as const,
-          calendarVersion: context.calendarVersion,
-          holiday: index > 0,
-          extendedOpenNs: index === 0 ? (plan.queryStartNs - 1n).toString() : null,
-          regularOpenNs: index === 0 ? plan.queryStartNs.toString() : null,
-          regularCloseNs: index === 0 ? (plan.queryEndNs + 1n).toString() : null,
-          extendedCloseNs: index === 0 ? (plan.queryEndNs + 2n).toString() : null,
-        }),
-      ),
-  );
   const semanticAuthority = createAlpacaWireSemanticAuthority({
     schemaVersion: 1,
     requestIdentityHash: plan.requestIdentityHash,
@@ -329,42 +322,56 @@ async function authenticatedAdmission(
     pageArtifactDigest: artifact.artifactDigest,
     queryStartNs: plan.queryStartNs.toString(),
     queryEndNs: plan.queryEndNs.toString(),
-    calendarVersion: context.calendarVersion,
-    calendarEntries,
-    primaryCorpusMember: context.primaryCorpusMember,
   });
-  const semanticAuthorityBytes = Buffer.from(
-    canonicalJson(semanticAuthority as unknown as JsonValue),
-  );
-  const {
-    authorityId: _authorityId,
-    calendarDigest: _calendarDigest,
-    corpusAdmissionHash: _corpusAdmissionHash,
-    ...semanticAuthorityDraft
-  } = semanticAuthority;
-  const servedSemanticAuthority =
-    semanticSubstitution === undefined
-      ? semanticAuthority
-      : createAlpacaWireSemanticAuthority({
-          ...semanticAuthorityDraft,
-          calendarVersion:
-            semanticSubstitution.calendarVersion ?? semanticAuthority.calendarVersion,
-          calendarEntries: semanticAuthority.calendarEntries.map((entry) => ({
-            ...entry,
-            calendarVersion:
-              semanticSubstitution.calendarVersion ?? semanticAuthority.calendarVersion,
-          })),
-          primaryCorpusMember:
-            semanticSubstitution.primaryCorpusMember ?? semanticAuthority.primaryCorpusMember,
-        });
+  const servedSemanticAuthority = (() => {
+    if (semanticSubstitution === undefined) return semanticAuthority;
+    const calendarVersion =
+      semanticSubstitution.calendarVersion ?? semanticAuthority.calendarVersion;
+    const calendarEntries = semanticAuthority.calendarEntries.map((entry) =>
+      Object.freeze({ ...entry, calendarVersion }),
+    );
+    const primaryCorpusMember =
+      semanticSubstitution.primaryCorpusMember ?? semanticAuthority.primaryCorpusMember;
+    const calendarDigest = canonicalHash("peas/alpaca-wire-calendar-authority/v1", {
+      catalogVersion: calendarVersion,
+      calendarEntries,
+    });
+    const corpusAdmissionHash = canonicalHash("peas/alpaca-wire-corpus-admission/v1", {
+      corpusAuthorityId: ALPACA_PRIMARY_CORPUS_AUTHORITY_ID,
+      requestIdentityHash: semanticAuthority.requestIdentityHash,
+      pageArtifactObservationId: semanticAuthority.pageArtifactObservationId,
+      pageArtifactDigest: semanticAuthority.pageArtifactDigest,
+      primaryCorpusMember,
+    });
+    const body = Object.freeze({
+      schemaVersion: 1 as const,
+      requestIdentityHash: semanticAuthority.requestIdentityHash,
+      pageArtifactObservationId: semanticAuthority.pageArtifactObservationId,
+      pageArtifactDigest: semanticAuthority.pageArtifactDigest,
+      queryStartNs: semanticAuthority.queryStartNs,
+      queryEndNs: semanticAuthority.queryEndNs,
+      calendarVersion,
+      calendarDigest,
+      calendarEntries: Object.freeze(calendarEntries),
+      primaryCorpusMember,
+      corpusAdmissionHash,
+    });
+    return Object.freeze({
+      ...body,
+      authorityId: `wsa1_${canonicalHash(
+        "peas/alpaca-wire-semantic-authority/v1",
+        body as unknown as JsonValue,
+      )}`,
+    });
+  })();
   const servedSemanticAuthorityBytes = Buffer.from(
     canonicalJson(servedSemanticAuthority as unknown as JsonValue),
   );
   const semanticAuthorityArtifact = {
     artifactObservationId: hash("semantic-authority-observation"),
     artifactObservationHash: hash("semantic-authority-observation-hash"),
-    artifactDigest: createHash("sha256").update(semanticAuthorityBytes).digest("hex"),
-    artifactSizeBytes: semanticAuthorityBytes.byteLength,
+    artifactDigest: createHash("sha256").update(servedSemanticAuthorityBytes).digest("hex"),
+    artifactSizeBytes: servedSemanticAuthorityBytes.byteLength,
   } as const;
   const ledger = new MarketAcquisitionLedger("p1-10-wire-authority-ledger-v1", {
     wallClock: "system-utc",
@@ -490,12 +497,21 @@ async function authenticatedAdmission(
   );
   append("artifact-committed", withStage(body(artifact), committed));
   append("artifact-verified", withStage(body(artifact), verified));
-  const journal = createMemoryAcquisitionJournal(expectedIdentity);
-  await journal.appendLedgerEntries(ledger.entries);
-  for (const entry of entries) await journal.append(entry);
+  const database =
+    persistence === "sqlite"
+      ? openSqliteDatabase(":memory:", loadMigrations(`${process.cwd()}/migrations`))
+      : null;
+  const journal =
+    database === null
+      ? createMemoryAcquisitionJournal(expectedIdentity)
+      : createSqliteAcquisitionJournal(database, expectedIdentity);
+  await appendTestAcquisitionWorkflowEvidence(journal, ledger.entries, entries);
   const latest = entries.at(-1);
   assert.ok(latest);
-  const evidence = new MemoryAlpacaWireSemanticEvidenceStore();
+  const evidence =
+    database === null
+      ? new MemoryAlpacaWireSemanticEvidenceStore()
+      : createSqliteAlpacaWireSemanticEvidenceStore(database);
   const request = {
     method: "GET" as const,
     origin: plan.route.origin,
@@ -581,7 +597,11 @@ async function authenticatedAdmission(
     },
   } as unknown as ArtifactStore;
   const guarded = retentionGuardedArtifactStore(rawStore, [artifact, semanticAuthorityArtifact]);
-  await createTestDurableAlpacaWireSemanticEvidenceBoundary(journal, evidence, guarded).persist({
+  const semanticBoundary =
+    database === null
+      ? createTestDurableAlpacaWireSemanticEvidenceBoundary(journal, evidence, guarded)
+      : createDurableAlpacaWireSemanticEvidenceBoundary(journal, evidence, guarded);
+  await semanticBoundary.persist({
     expectedIdentity,
     marketAcquisitionJournalId: journalId,
     plan,
@@ -596,12 +616,20 @@ async function authenticatedAdmission(
       stageLedgerFactId: authorityVerified.entryId,
     },
   });
-  const authority = await createTestDurableAlpacaWireAdmissionBoundary(journal, evidence).issue({
+  const admissionBoundary =
+    database === null
+      ? createTestDurableAlpacaWireAdmissionBoundary(journal, evidence)
+      : createDurableAlpacaWireAdmissionBoundary(journal, evidence);
+  const authority = await admissionBoundary.issue({
     plan: authorityPlan ?? plan,
     expectedIdentity,
     marketAcquisitionJournalId: journalId,
   });
-  return parseAndAdmitAlpacaHistoricalPage(endpointKind, bytes, authority);
+  try {
+    return parseAndAdmitAlpacaHistoricalPage(endpointKind, bytes, authority);
+  } finally {
+    database?.close();
+  }
 }
 
 function firstItem(page: PlainRecord, endpointKind: AlpacaWireEndpointKind): PlainRecord {
@@ -993,19 +1021,47 @@ test("production parser reject and quarantine branches remain executable and ine
     (error: unknown) =>
       error instanceof AlpacaWireContractError && error.code === "page-semantic-authority-invalid",
   );
-  await assert.rejects(
-    () =>
-      authenticatedAdmission("bars", barSource.wire, context, undefined, {
-        calendarVersion: "peas-p1-10-syntactically-valid-alternate-calendar-v1",
-      }),
-    /artifact-consumed-size-bound|wire-semantic-authority-digest-invalid/u,
+  for (const persistence of ["memory", "sqlite"] as const) {
+    await assert.rejects(
+      () =>
+        authenticatedAdmission(
+          "bars",
+          barSource.wire,
+          context,
+          undefined,
+          {
+            calendarVersion: "peas-p1-10-syntactically-valid-alternate-calendar-v1",
+          },
+          persistence,
+        ),
+      /wire-semantic-authority-invalid|wire-semantic-calendar-catalog/u,
+    );
+    await assert.rejects(
+      () =>
+        authenticatedAdmission(
+          "bars",
+          barSource.wire,
+          context,
+          undefined,
+          { primaryCorpusMember: false },
+          persistence,
+        ),
+      /wire-semantic-authority-invalid|wire-semantic-calendar-catalog/u,
+    );
+  }
+  assert.deepEqual(
+    acceptedAlpacaWireCalendarEntries(startNs.toString(), endNs.toString()).map(
+      (entry) => entry.sessionDate,
+    ),
+    ["2033-05-05", "2033-05-06"],
   );
-  await assert.rejects(
+  assert.throws(
     () =>
-      authenticatedAdmission("bars", barSource.wire, context, undefined, {
-        primaryCorpusMember: false,
-      }),
-    /artifact-consumed-size-bound|wire-semantic-authority-digest-invalid/u,
+      acceptedAlpacaWireCalendarEntries(
+        (BigInt(Date.parse("2033-03-13T23:30:00Z")) * 1_000_000n).toString(),
+        (BigInt(Date.parse("2033-03-14T08:30:00Z")) * 1_000_000n).toString(),
+      ),
+    /calendar-catalog-missing/u,
   );
   assert.ok(BigInt(parseAlpacaWireTimestamp("1960-01-02T00:00:00Z").timestamp.epochNs) < 0n);
 });

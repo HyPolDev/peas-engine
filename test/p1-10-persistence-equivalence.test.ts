@@ -25,6 +25,7 @@ import {
   deriveLogicalPageIdentityHash,
   deriveMarketAcquisitionJournalId,
   journalEntryBody,
+  appendTestAcquisitionJournalEntry,
 } from "../src/adapters/market-acquisition/journal.js";
 import { MemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
 import { canonicalJournalProjection } from "../src/adapters/market-acquisition/replay.js";
@@ -315,8 +316,8 @@ test("memory and SQLite journals make byte-identical append and rejection decisi
   const sqlite = new SqliteAcquisitionJournal(database, identity);
   const { rows, ledger } = history();
   for (const row of rows) {
-    await memory.append(row);
-    await sqlite.append(row);
+    await appendTestAcquisitionJournalEntry(memory, row);
+    await appendTestAcquisitionJournalEntry(sqlite, row);
     const memoryRows = await memory.load(journalId);
     const sqliteRows = await sqlite.load(journalId);
     assert.equal(
@@ -327,8 +328,14 @@ test("memory and SQLite journals make byte-identical append and rejection decisi
     assert.doesNotThrow(() => validateJournalLedgerBindings(sqliteRows, ledger));
   }
   const forged = { ...(rows.at(-1) as JournalEntry), journalEntryHash: hash("forged") };
-  await assert.rejects(() => memory.append(forged), /journal-hash-chain-invalid/u);
-  await assert.rejects(() => sqlite.append(forged), /journal-hash-chain-invalid/u);
+  await assert.rejects(
+    () => appendTestAcquisitionJournalEntry(memory, forged),
+    /journal-hash-chain-invalid/u,
+  );
+  await assert.rejects(
+    () => appendTestAcquisitionJournalEntry(sqlite, forged),
+    /journal-hash-chain-invalid/u,
+  );
   assert.equal((await memory.load(journalId)).length, rows.length);
   assert.equal((await sqlite.load(journalId)).length, rows.length);
   database.close();
@@ -343,7 +350,9 @@ test("SQLite close/reopen preserves every exact durable prefix", async (t) => {
     let database = openSqliteDatabase(filename, []);
     let journal = new SqliteAcquisitionJournal(database, identity);
     const existing = await journal.load(journalId);
-    for (const row of rows.slice(existing.length, prefix)) await journal.append(row);
+    for (const row of rows.slice(existing.length, prefix)) {
+      await appendTestAcquisitionJournalEntry(journal, row);
+    }
     const beforeRows = await journal.load(journalId);
     const before = canonicalJournalProjection(beforeRows, identity);
     assert.doesNotThrow(() => validateJournalLedgerBindings(beforeRows, ledger));
@@ -381,10 +390,16 @@ test("restart journals reject partial and conflicting checkpoint artifact identi
     },
   ]) {
     const journal = new MemoryAcquisitionJournal(identity);
-    for (const row of rows.slice(0, testCase.prefix)) await journal.append(row);
+    for (const row of rows.slice(0, testCase.prefix)) {
+      await appendTestAcquisitionJournalEntry(journal, row);
+    }
     const prior = (await journal.load(journalId)).at(-1) ?? null;
     await assert.rejects(
-      () => journal.append(createJournalEntry(prior, journalId, testCase.kind, testCase.mutation)),
+      () =>
+        appendTestAcquisitionJournalEntry(
+          journal,
+          createJournalEntry(prior, journalId, testCase.kind, testCase.mutation),
+        ),
       /artifact-tuple/u,
     );
   }
@@ -403,7 +418,9 @@ test("restart decisions never re-request committed or verified pages", async () 
   ];
   for (let prefix = 1; prefix <= rows.length; prefix += 1) {
     const journal = new MemoryAcquisitionJournal(identity);
-    for (const row of rows.slice(0, prefix)) await journal.append(row);
+    for (const row of rows.slice(0, prefix)) {
+      await appendTestAcquisitionJournalEntry(journal, row);
+    }
     const decision = await decideAcquisitionRestart({
       journal,
       journalId,
@@ -421,7 +438,7 @@ test("restart decisions never re-request committed or verified pages", async () 
     if (prefix === 2 || prefix >= 5) assert.equal(decision.transportAllowed, false);
   }
   const journal = new MemoryAcquisitionJournal(identity);
-  for (const row of rows) await journal.append(row);
+  for (const row of rows) await appendTestAcquisitionJournalEntry(journal, row);
   await assert.rejects(
     () =>
       decideAcquisitionRestart({

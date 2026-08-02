@@ -25,6 +25,20 @@ import type {
 } from "./contracts.js";
 
 const HASH = /^[0-9a-f]{64}$/u;
+const ownedRequests = new WeakMap<
+  object,
+  Readonly<{
+    method: "GET";
+    origin: string;
+    path: string;
+    redirect: "error";
+    endpointChannelId: string;
+    requestIdentityHash: string;
+    pageOrdinal: number;
+    query: readonly (readonly [string, string])[];
+    signal: AbortSignal;
+  }>
+>();
 function invalid(): never {
   throw new TypeError("alpaca-request-authority-invalid");
 }
@@ -196,6 +210,22 @@ export function buildAlpacaTransportRequest(
     query: queryLease.pairs,
     signal,
   });
+  ownedRequests.set(
+    request,
+    Object.freeze({
+      method: request.method,
+      origin: request.origin,
+      path: request.path,
+      redirect: request.redirect,
+      endpointChannelId: request.endpointChannelId,
+      requestIdentityHash: request.requestIdentityHash,
+      pageOrdinal: request.pageOrdinal,
+      query: Object.freeze(
+        request.query.map(([name, value]) => Object.freeze([name, value] as const)),
+      ),
+      signal: request.signal,
+    }),
+  );
   let released = false;
   return Object.freeze({
     request,
@@ -205,6 +235,30 @@ export function buildAlpacaTransportRequest(
       queryLease.release();
     },
   });
+}
+
+export function assertOwnedAlpacaTransportRequest(value: AlpacaTransportRequest): void {
+  const snapshot = ownedRequests.get(value);
+  if (
+    snapshot === undefined ||
+    utilityTypes.isProxy(value) ||
+    !Object.isFrozen(value) ||
+    value.method !== snapshot.method ||
+    value.origin !== snapshot.origin ||
+    value.path !== snapshot.path ||
+    value.redirect !== snapshot.redirect ||
+    value.endpointChannelId !== snapshot.endpointChannelId ||
+    value.requestIdentityHash !== snapshot.requestIdentityHash ||
+    value.pageOrdinal !== snapshot.pageOrdinal ||
+    value.signal !== snapshot.signal ||
+    value.query.length !== snapshot.query.length ||
+    value.query.some(
+      ([name, member], index) =>
+        name !== snapshot.query[index]?.[0] || member !== snapshot.query[index]?.[1],
+    )
+  ) {
+    invalid();
+  }
 }
 
 export const ALPACA_REQUEST_ROUTE_POLICY = ROUTE_POLICY_VERSION;

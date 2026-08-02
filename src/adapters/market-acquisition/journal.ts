@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 
 import { canonicalJson, type JsonValue } from "../../core/json.js";
 import type { ObservationLedgerEntryV1 } from "../../providers/observation-ledger.js";
+import { P1_10_TEST_AUTHORITY } from "../../internal-test-authority.js";
 import { AUTHORIZATION_MODE, MARKET_ACQUISITION_LIMITS } from "./contracts.js";
 
 export const JOURNAL_SCHEMA_VERSION = 1 as const;
@@ -776,11 +777,48 @@ export function validateJournalEntries(
 
 export interface AcquisitionJournal {
   load(marketAcquisitionJournalId: string): Promise<readonly JournalEntry[]>;
-  append(entry: JournalEntry): Promise<void>;
+  append(entry: JournalEntry, workflowAuthority?: object): Promise<void>;
   /** Atomically consumes one exact request-started checkpoint with its attempt-started claim. */
   claimAttemptStarted(expectedRequestStartedHash: string, entry: JournalEntry): Promise<boolean>;
-  appendLedgerEntries(entries: readonly ObservationLedgerEntryV1[]): Promise<void>;
+  appendLedgerEntries(
+    entries: readonly ObservationLedgerEntryV1[],
+    workflowAuthority?: object,
+  ): Promise<void>;
   loadLedgerEntries(): Promise<readonly ObservationLedgerEntryV1[]>;
+  isWorkflowProducedJournalEntry(journalEntryHash: string): Promise<boolean>;
+  isWorkflowProducedLedgerEntry(entryId: string): Promise<boolean>;
+}
+
+const ACQUISITION_WORKFLOW_PRODUCER_AUTHORITY = Object.freeze({});
+
+export function assertAcquisitionWorkflowProducerAuthority(value: object | undefined): void {
+  if (value !== ACQUISITION_WORKFLOW_PRODUCER_AUTHORITY) {
+    throw new TypeError("owned-acquisition-workflow-producer-required");
+  }
+}
+
+/** Test-only fixture ingress for facts otherwise written only by the owned workflow producer. */
+export async function appendTestAcquisitionWorkflowEvidence(
+  journal: AcquisitionJournal,
+  ledgerEntries: readonly ObservationLedgerEntryV1[],
+  entries: readonly JournalEntry[],
+): Promise<void> {
+  if (P1_10_TEST_AUTHORITY === undefined) {
+    throw new TypeError("test-acquisition-workflow-ingress-unavailable");
+  }
+  if (ledgerEntries.length > 0) {
+    await journal.appendLedgerEntries(ledgerEntries, ACQUISITION_WORKFLOW_PRODUCER_AUTHORITY);
+  }
+  for (const entry of entries) {
+    await journal.append(entry, ACQUISITION_WORKFLOW_PRODUCER_AUTHORITY);
+  }
+}
+
+export async function appendTestAcquisitionJournalEntry(
+  journal: AcquisitionJournal,
+  entry: JournalEntry,
+): Promise<void> {
+  await appendTestAcquisitionWorkflowEvidence(journal, [], [entry]);
 }
 
 export function journalEntryBody(entry: JournalEntry): JournalCheckpointBody {

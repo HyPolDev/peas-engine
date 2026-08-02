@@ -1629,12 +1629,17 @@ export class DurableArtifactStore implements ArtifactStore {
         await this.#checkpoint("quarantine-source-removal");
         assertRunning();
         await rm(sourcePath);
+        await this.#checkpoint("quarantine-source-removed");
         assertRunning();
         await syncDirectory(dirname(sourcePath));
+        await this.#checkpoint("quarantine-source-directory-sync");
         assertRunning();
         sourceIdentity = null;
       }
+      await this.#checkpoint("quarantine-target-hash");
+      assertRunning();
       const verified = await hashFile(target);
+      assertRunning();
       if (
         (plan.expectedDigest !== null && verified.digest !== plan.expectedDigest) ||
         (plan.expectedSizeBytes !== null && verified.sizeBytes !== plan.expectedSizeBytes)
@@ -1650,8 +1655,11 @@ export class DurableArtifactStore implements ArtifactStore {
       };
     } catch (error) {
       if (createdTarget) {
-        await rm(target, { force: true });
-        await syncDirectory(this.#paths.quarantine);
+        const survivingSource = await readIdentity(sourcePath);
+        if (survivingSource !== null && matchesPlan(survivingSource)) {
+          await rm(target, { force: true });
+          await syncDirectory(this.#paths.quarantine);
+        }
       }
       throw error;
     }

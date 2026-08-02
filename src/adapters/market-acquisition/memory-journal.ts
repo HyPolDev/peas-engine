@@ -1,4 +1,4 @@
-import { P1_10_TEST_AUTHORITY } from "#p1-10-test-authority";
+import { P1_10_TEST_AUTHORITY } from "../../internal-test-authority.js";
 import { canonicalJson, type JsonValue } from "../../core/json.js";
 import {
   validateObservationLedgerBundle,
@@ -9,6 +9,7 @@ import {
   type JournalEntry,
   type JournalIdentityInput,
   deriveMarketAcquisitionJournalId,
+  assertAcquisitionWorkflowProducerAuthority,
   validateJournalEntries,
 } from "./journal.js";
 
@@ -27,6 +28,8 @@ export class MemoryAcquisitionJournal implements AcquisitionJournal {
   readonly #journalId: string;
   readonly #entries: JournalEntry[] = [];
   readonly #ledgerEntries: ObservationLedgerEntryV1[] = [];
+  readonly #producedJournalEntries = new Set<string>();
+  readonly #producedLedgerEntries = new Set<string>();
 
   constructor(expectedIdentity: JournalIdentityInput) {
     this.#expectedIdentity = Object.freeze({ ...expectedIdentity });
@@ -43,13 +46,15 @@ export class MemoryAcquisitionJournal implements AcquisitionJournal {
     return Object.freeze(this.#entries.map(cloneEntry));
   }
 
-  async append(entry: JournalEntry): Promise<void> {
+  async append(entry: JournalEntry, workflowAuthority?: object): Promise<void> {
+    assertAcquisitionWorkflowProducerAuthority(workflowAuthority);
     if (entry.marketAcquisitionJournalId !== this.#journalId) {
       throw new TypeError("journal-identity-mismatch");
     }
     const prospective = [...this.#entries, cloneEntry(entry)];
     validateJournalEntries(prospective, this.#expectedIdentity);
     this.#entries.push(prospective.at(-1) as JournalEntry);
+    this.#producedJournalEntries.add(entry.journalEntryHash);
   }
 
   async claimAttemptStarted(
@@ -70,7 +75,11 @@ export class MemoryAcquisitionJournal implements AcquisitionJournal {
     return true;
   }
 
-  async appendLedgerEntries(entries: readonly ObservationLedgerEntryV1[]): Promise<void> {
+  async appendLedgerEntries(
+    entries: readonly ObservationLedgerEntryV1[],
+    workflowAuthority?: object,
+  ): Promise<void> {
+    assertAcquisitionWorkflowProducerAuthority(workflowAuthority);
     const prospective = validateObservationLedgerBundle(entries);
     if (this.#ledgerEntries.length > prospective.length)
       throw new TypeError("ledger-prefix-conflict");
@@ -86,7 +95,16 @@ export class MemoryAcquisitionJournal implements AcquisitionJournal {
       this.#ledgerEntries.push(
         JSON.parse(canonicalJson(entry as unknown as JsonValue)) as ObservationLedgerEntryV1,
       );
+      this.#producedLedgerEntries.add(entry.entryId);
     }
+  }
+
+  async isWorkflowProducedJournalEntry(journalEntryHash: string): Promise<boolean> {
+    return this.#producedJournalEntries.has(journalEntryHash);
+  }
+
+  async isWorkflowProducedLedgerEntry(entryId: string): Promise<boolean> {
+    return this.#producedLedgerEntries.has(entryId);
   }
 
   async loadLedgerEntries(): Promise<readonly ObservationLedgerEntryV1[]> {

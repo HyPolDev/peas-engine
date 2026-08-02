@@ -9,12 +9,13 @@ import {
   validateObservationLedgerBundle,
   type ObservationLedgerEntryV1,
 } from "../../providers/observation-ledger.js";
-import type { SqliteDatabase } from "../sqlite/database.js";
+import { assertOwnedSqliteDatabase, type SqliteDatabase } from "../sqlite/database.js";
 import {
   type AcquisitionJournal,
   type JournalEntry,
   type JournalIdentityInput,
   deriveMarketAcquisitionJournalId,
+  assertAcquisitionWorkflowProducerAuthority,
   validateJournalEntries,
 } from "./journal.js";
 
@@ -80,6 +81,18 @@ export function installSqliteAcquisitionJournalSchema(database: SqliteDatabase):
     CREATE TRIGGER IF NOT EXISTS market_acquisition_ledger_entries_no_delete
     BEFORE DELETE ON market_acquisition_ledger_entries
     BEGIN SELECT RAISE(ABORT, 'market acquisition ledger is immutable'); END;
+
+    CREATE TABLE IF NOT EXISTS market_acquisition_workflow_journal_proofs (
+      market_acquisition_journal_id TEXT NOT NULL,
+      journal_entry_hash TEXT NOT NULL,
+      PRIMARY KEY (market_acquisition_journal_id, journal_entry_hash)
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS market_acquisition_workflow_ledger_proofs (
+      market_acquisition_journal_id TEXT NOT NULL,
+      entry_id TEXT NOT NULL,
+      PRIMARY KEY (market_acquisition_journal_id, entry_id)
+    ) STRICT;
   `);
 }
 
@@ -123,7 +136,8 @@ export class SqliteAcquisitionJournal implements AcquisitionJournal {
     return Object.freeze(entries);
   }
 
-  async append(entry: JournalEntry): Promise<void> {
+  async append(entry: JournalEntry, workflowAuthority?: object): Promise<void> {
+    assertAcquisitionWorkflowProducerAuthority(workflowAuthority);
     const entryJson = canonicalJson(entry as unknown as JsonValue);
     assertJsonWithinLimits(entry as unknown as JsonValue, JOURNAL_ENTRY_LIMITS);
     this.#database
@@ -161,6 +175,10 @@ export class SqliteAcquisitionJournal implements AcquisitionJournal {
             entry.checkpointKind,
             entryJson,
           );
+        this.#database
+          .prepare(`INSERT INTO market_acquisition_workflow_journal_proofs
+            (market_acquisition_journal_id, journal_entry_hash) VALUES (?, ?)`)
+          .run(this.#journalId, entry.journalEntryHash);
       })
       .immediate();
   }
@@ -219,7 +237,11 @@ export class SqliteAcquisitionJournal implements AcquisitionJournal {
       .immediate();
   }
 
-  async appendLedgerEntries(entries: readonly ObservationLedgerEntryV1[]): Promise<void> {
+  async appendLedgerEntries(
+    entries: readonly ObservationLedgerEntryV1[],
+    workflowAuthority?: object,
+  ): Promise<void> {
+    assertAcquisitionWorkflowProducerAuthority(workflowAuthority);
     const validated = validateObservationLedgerBundle(entries);
     const executionId = validated[0]?.executionId;
     if (executionId === undefined) throw new TypeError("ledger-empty");
@@ -254,6 +276,10 @@ export class SqliteAcquisitionJournal implements AcquisitionJournal {
             canonicalJson(entry as unknown as JsonValue),
             entry.entryHash,
           );
+          this.#database
+            .prepare(`INSERT INTO market_acquisition_workflow_ledger_proofs
+              (market_acquisition_journal_id, entry_id) VALUES (?, ?)`)
+            .run(this.#journalId, entry.entryId);
         }
       })
       .immediate();
@@ -273,12 +299,31 @@ export class SqliteAcquisitionJournal implements AcquisitionJournal {
       ),
     );
   }
+
+  async isWorkflowProducedJournalEntry(journalEntryHash: string): Promise<boolean> {
+    return (
+      this.#database
+        .prepare(`SELECT 1 present FROM market_acquisition_workflow_journal_proofs
+          WHERE market_acquisition_journal_id = ? AND journal_entry_hash = ?`)
+        .get(this.#journalId, journalEntryHash) !== undefined
+    );
+  }
+
+  async isWorkflowProducedLedgerEntry(entryId: string): Promise<boolean> {
+    return (
+      this.#database
+        .prepare(`SELECT 1 present FROM market_acquisition_workflow_ledger_proofs
+          WHERE market_acquisition_journal_id = ? AND entry_id = ?`)
+        .get(this.#journalId, entryId) !== undefined
+    );
+  }
 }
 
 export function createSqliteAcquisitionJournal(
   database: SqliteDatabase,
   expectedIdentity: JournalIdentityInput,
 ): SqliteAcquisitionJournal {
+  assertOwnedSqliteDatabase(database);
   const journal = new SqliteAcquisitionJournal(database, expectedIdentity);
   ownedSqliteAcquisitionJournals.add(journal);
   Object.freeze(journal);

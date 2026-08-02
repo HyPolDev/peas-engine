@@ -28,6 +28,7 @@ import {
   deriveLogicalPageIdentityHash,
   deriveMarketAcquisitionJournalId,
   journalEntryBody,
+  appendTestAcquisitionWorkflowEvidence,
   type JournalCheckpointBody,
 } from "../src/adapters/market-acquisition/journal.js";
 import { createMemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
@@ -337,9 +338,7 @@ export async function credentialAuthorizationFixture(
     ),
   );
   const journal = createMemoryAcquisitionJournal(journalIdentity);
-  await journal.appendLedgerEntries(ledger.entries);
-  await journal.append(declared);
-  await journal.append(requestStarted);
+  await appendTestAcquisitionWorkflowEvidence(journal, ledger.entries, [declared, requestStarted]);
   const retentionJournal = createMemoryArtifactRetentionJournal();
   const request: CredentialAuthorizationRequest = Object.freeze({
     plan,

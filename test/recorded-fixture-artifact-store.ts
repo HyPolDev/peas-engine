@@ -15,7 +15,7 @@ import {
   createTestRetentionEnforcedArtifactStore,
 } from "../src/adapters/market-acquisition/retention/artifact-access.js";
 import { createTestArtifactRetentionController } from "../src/adapters/market-acquisition/retention/controller.js";
-import { MemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
+import { createMemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
 import { ALPACA_PRIVATE_ARTIFACT_POLICY } from "../src/adapters/market-acquisition/private-artifact-policy.js";
 import { deriveObservationId } from "../src/artifacts/identity.js";
 import { validateRetrievalAttempt } from "../src/artifacts/validation.js";
@@ -177,7 +177,7 @@ export function recordedFixtureArtifactStore(
     },
   };
   const retention = createTestArtifactRetentionController({
-    journal: new MemoryArtifactRetentionJournal(),
+    journal: createMemoryArtifactRetentionJournal(),
     artifacts: {
       async settleActiveReadersAndWriters() {
         return true;

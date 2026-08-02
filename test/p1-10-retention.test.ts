@@ -56,10 +56,7 @@ import {
   MemoryArtifactRetentionJournal,
   createMemoryArtifactRetentionJournal,
 } from "../src/adapters/market-acquisition/retention/memory-journal.js";
-import {
-  SqliteArtifactRetentionJournal,
-  createSqliteArtifactRetentionJournal,
-} from "../src/adapters/market-acquisition/retention/sqlite-journal.js";
+import { createSqliteArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/sqlite-journal.js";
 import {
   RetentionEnforcedArtifactStore,
   assertRetentionEnforcedArtifactStore,
@@ -228,15 +225,15 @@ test("trusted-time use guards deny artifact and derived use exactly at expiry ac
     let database = kind === "sqlite" ? openSqliteDatabase(filename, migrations) : undefined;
     let journal: ArtifactRetentionJournal =
       database === undefined
-        ? new MemoryArtifactRetentionJournal()
-        : new SqliteArtifactRetentionJournal(database);
+        ? createMemoryArtifactRetentionJournal()
+        : createSqliteArtifactRetentionJournal(database);
     controller(journal, new SyntheticArtifactBoundary(), () => now).registerOwnership(
       ownership({ expiresAtMs: expiry }),
     );
     database?.close();
     if (kind === "sqlite") {
       database = openSqliteDatabase(filename, migrations);
-      journal = new SqliteArtifactRetentionJournal(database);
+      journal = createSqliteArtifactRetentionJournal(database);
     }
     const restarted = controller(journal, new SyntheticArtifactBoundary(), () => now);
     assert.doesNotThrow(() => restarted.assertArtifactUseAllowed(digest));
@@ -271,8 +268,8 @@ test("normalized derived lineage is durable and denied on stop across restart", 
     let database = kind === "sqlite" ? openSqliteDatabase(filename, migrations) : undefined;
     let journal: ArtifactRetentionJournal =
       database === undefined
-        ? new MemoryArtifactRetentionJournal()
-        : new SqliteArtifactRetentionJournal(database);
+        ? createMemoryArtifactRetentionJournal()
+        : createSqliteArtifactRetentionJournal(database);
     const artifacts = new SyntheticArtifactBoundary();
     let worker = controller(journal, artifacts, () => captureMs);
     worker.registerOwnership(ownership({ derivedIds: [] }));
@@ -286,7 +283,7 @@ test("normalized derived lineage is durable and denied on stop across restart", 
     database?.close();
     if (kind === "sqlite") {
       database = openSqliteDatabase(filename, migrations);
-      journal = new SqliteArtifactRetentionJournal(database);
+      journal = createSqliteArtifactRetentionJournal(database);
       worker = controller(journal, artifacts, () => stop().effectiveAtMs);
     }
     assert.equal(journal.ownershipForDerivedId(normalizedDerived).length, 1);
@@ -310,8 +307,8 @@ test("recorded loader cannot bypass trusted-time artifact and derived-use guards
     let database = kind === "sqlite" ? openSqliteDatabase(filename, migrations) : undefined;
     let journal: ArtifactRetentionJournal =
       database === undefined
-        ? new MemoryArtifactRetentionJournal()
-        : new SqliteArtifactRetentionJournal(database);
+        ? createMemoryArtifactRetentionJournal()
+        : createSqliteArtifactRetentionJournal(database);
     let retention = controller(journal, new SyntheticArtifactBoundary(), () => now);
     for (const [index, member] of checked.manifest.retrievedMembers.entries()) {
       retention.registerOwnership(
@@ -328,7 +325,7 @@ test("recorded loader cannot bypass trusted-time artifact and derived-use guards
     database?.close();
     if (kind === "sqlite") {
       database = openSqliteDatabase(filename, migrations);
-      journal = new SqliteArtifactRetentionJournal(database);
+      journal = createSqliteArtifactRetentionJournal(database);
       retention = controller(journal, new SyntheticArtifactBoundary(), () => now);
     }
     const fixtureStore = recordedFixtureArtifactStore(checked.fixtureRoot, checked.seeds);
@@ -393,7 +390,7 @@ test("recorded loader cannot bypass trusted-time artifact and derived-use guards
 });
 
 test("ownership registered during or after a provider stop is atomically denied and settled", async () => {
-  const journal = new MemoryArtifactRetentionJournal();
+  const journal = createMemoryArtifactRetentionJournal();
   const artifacts = new SyntheticArtifactBoundary();
   const secondDigest = createHash("sha256").update("second synthetic artifact").digest("hex");
   const secondDerived = identifier("drv1_", "7");
@@ -448,7 +445,7 @@ test("trusted artifact completion closes provider-stop races before, during, and
     derivedIds: [],
   });
 
-  const beforeJournal = new MemoryArtifactRetentionJournal();
+  const beforeJournal = createMemoryArtifactRetentionJournal();
   const beforeArtifacts = new SyntheticArtifactBoundary();
   const beforeWorker = controller(beforeJournal, beforeArtifacts, () => stop().effectiveAtMs);
   beforeWorker.registerOwnership(ownership());
@@ -466,7 +463,7 @@ test("trusted artifact completion closes provider-stop races before, during, and
   assert.equal(beforeSink.commits, 0);
   assert.throws(() => beforeWorker.assertArtifactUseAllowed(secondDigest), isSafeAcquisitionError);
 
-  const duringJournal = new MemoryArtifactRetentionJournal();
+  const duringJournal = createMemoryArtifactRetentionJournal();
   const duringArtifacts = new SyntheticArtifactBoundary();
   const duringWorker = controller(duringJournal, duringArtifacts, () => stop().effectiveAtMs);
   let releaseCommit!: () => void;
@@ -506,7 +503,7 @@ test("trusted artifact completion closes provider-stop races before, during, and
   assert.equal(duringArtifacts.present.has(secondDigest), false);
   assert.throws(() => duringWorker.assertArtifactUseAllowed(secondDigest), isSafeAcquisitionError);
 
-  const afterJournal = new MemoryArtifactRetentionJournal();
+  const afterJournal = createMemoryArtifactRetentionJournal();
   const afterArtifacts = new SyntheticArtifactBoundary();
   const afterWorker = controller(afterJournal, afterArtifacts, () => stop().effectiveAtMs);
   const afterSink = new PreparedRetentionSink(
@@ -527,8 +524,8 @@ test("trusted artifact completion closes provider-stop races before, during, and
 test("SQLite controllers sharing one durable boundary serialize commit against stop", async () => {
   const database = openSqliteDatabase(":memory:", migrations);
   try {
-    const journalA = new SqliteArtifactRetentionJournal(database);
-    const journalB = new SqliteArtifactRetentionJournal(database);
+    const journalA = createSqliteArtifactRetentionJournal(database);
+    const journalB = createSqliteArtifactRetentionJournal(database);
     const artifacts = new SyntheticArtifactBoundary();
     const commitController = controller(journalA, artifacts, () => stop().effectiveAtMs);
     const stopController = controller(journalB, artifacts, () => stop().effectiveAtMs);
@@ -577,7 +574,7 @@ test("SQLite controllers sharing one durable boundary serialize commit against s
 });
 
 test("existing receipts revalidate absence and physical attempt counts use unique ordinals", async () => {
-  const journal = new MemoryArtifactRetentionJournal();
+  const journal = createMemoryArtifactRetentionJournal();
   const artifacts = new SyntheticArtifactBoundary();
   const worker = controller(journal, artifacts, () => stop().effectiveAtMs);
   worker.registerOwnership(ownership());
@@ -594,7 +591,7 @@ test("existing receipts revalidate absence and physical attempt counts use uniqu
 });
 
 test("retention ownership cannot name bytes or sizes different from the committed stream", async () => {
-  const journal = new MemoryArtifactRetentionJournal();
+  const journal = createMemoryArtifactRetentionJournal();
   const artifacts = new SyntheticArtifactBoundary();
   const worker = controller(journal, artifacts, () => captureMs);
   const lower = new PreparedRetentionSink(
@@ -618,7 +615,7 @@ test("retention ownership cannot name bytes or sizes different from the committe
 });
 
 test("owned read admission destroys a delayed post-denial stream before stop settles", async () => {
-  const journal = new MemoryArtifactRetentionJournal();
+  const journal = createMemoryArtifactRetentionJournal();
   const artifacts = new SyntheticArtifactBoundary();
   const worker = controller(journal, artifacts, () => stop().effectiveAtMs);
   worker.registerOwnership(ownership());
@@ -671,7 +668,7 @@ test("owned read admission destroys a delayed post-denial stream before stop set
 });
 
 test("owned retention brands reject structural objects, subclasses, and proxies", () => {
-  const journal = new MemoryArtifactRetentionJournal();
+  const journal = createMemoryArtifactRetentionJournal();
   const artifacts = new SyntheticArtifactBoundary();
   const trusted = controller(journal, artifacts, () => captureMs);
   const prototypeOnly = Object.create(
@@ -682,6 +679,17 @@ test("owned retention brands reject structural objects, subclasses, and proxies"
     value: () => undefined,
     enumerable: true,
   });
+  for (const hostileJournal of [new MemoryArtifactRetentionJournal(), methodShadow]) {
+    assert.throws(
+      () =>
+        createTestArtifactRetentionController({
+          journal: hostileJournal,
+          artifacts,
+          nowMs: () => captureMs,
+        }),
+      /owned-retention-journal-required/u,
+    );
+  }
   class JournalSubclass extends MemoryArtifactRetentionJournal {}
   for (const hostileJournal of [
     prototypeOnly,
@@ -744,7 +752,7 @@ test("owned retention brands reject structural objects, subclasses, and proxies"
 });
 
 test("reconciliation is cancelled before stop settlement and rejected before work after denial", async () => {
-  const journal = new MemoryArtifactRetentionJournal();
+  const journal = createMemoryArtifactRetentionJournal();
   const artifacts = new SyntheticArtifactBoundary();
   const worker = controller(journal, artifacts, () => stop().effectiveAtMs);
   worker.registerOwnership(ownership());
@@ -883,7 +891,7 @@ test("production reconciliation gates link, sync, removal, and repository mutati
 });
 
 test("stop installs denial before erasure and follows the accepted durable sequence", async () => {
-  const journal = new MemoryArtifactRetentionJournal();
+  const journal = createMemoryArtifactRetentionJournal();
   const artifacts = new SyntheticArtifactBoundary();
   const checkpoints: string[] = [];
   const stopInput = stop();
@@ -925,14 +933,14 @@ test("stop installs denial before erasure and follows the accepted durable seque
 });
 
 test("exact stop deadline completes while one millisecond over fails closed with denial installed", async () => {
-  const exactJournal = new MemoryArtifactRetentionJournal();
+  const exactJournal = createMemoryArtifactRetentionJournal();
   const exactArtifacts = new SyntheticArtifactBoundary();
   const input = stop();
   const exact = controller(exactJournal, exactArtifacts, () => input.deadlineMs);
   exact.registerOwnership(ownership());
   assert.equal((await exact.enforceStop(input)).outcome, "verified-erased");
 
-  const lateJournal = new MemoryArtifactRetentionJournal();
+  const lateJournal = createMemoryArtifactRetentionJournal();
   const lateArtifacts = new SyntheticArtifactBoundary();
   const late = controller(lateJournal, lateArtifacts, () => input.deadlineMs + 1);
   late.registerOwnership(ownership());
@@ -949,7 +957,7 @@ test("exact stop deadline completes while one millisecond over fails closed with
 });
 
 test("failure to settle remains denied and performs no physical erasure", async () => {
-  const journal = new MemoryArtifactRetentionJournal();
+  const journal = createMemoryArtifactRetentionJournal();
   const artifacts = new SyntheticArtifactBoundary();
   artifacts.settle = false;
   const worker = controller(journal, artifacts, () => stop().effectiveAtMs);
@@ -972,7 +980,7 @@ test("restart after every durable boundary is idempotent and never resurrects co
     "retention-checkpoint-committed-reread",
   ];
   for (const crashAt of checkpoints) {
-    const journal = new MemoryArtifactRetentionJournal();
+    const journal = createMemoryArtifactRetentionJournal();
     const artifacts = new SyntheticArtifactBoundary();
     const input = stop();
     let crashed = false;
@@ -1004,10 +1012,10 @@ async function runBackend(
 ): Promise<{ receipt: RetentionReceipt; planHash: string; attempts: number }> {
   let database: ReturnType<typeof openSqliteDatabase> | undefined;
   let journal: ArtifactRetentionJournal;
-  if (kind === "memory") journal = new MemoryArtifactRetentionJournal();
+  if (kind === "memory") journal = createMemoryArtifactRetentionJournal();
   else {
     database = openSqliteDatabase(":memory:", migrations);
-    journal = new SqliteArtifactRetentionJournal(database);
+    journal = createSqliteArtifactRetentionJournal(database);
   }
   try {
     const artifacts = new SyntheticArtifactBoundary();
@@ -1035,7 +1043,7 @@ test("memory and SQLite retention journals are semantically equivalent and immut
 
   const database = openSqliteDatabase(":memory:", migrations);
   try {
-    new SqliteArtifactRetentionJournal(database);
+    createSqliteArtifactRetentionJournal(database);
     assert.throws(() => database.prepare("DELETE FROM market_retention_policies").run());
     assert.throws(() => database.prepare("UPDATE market_retention_policies SET enabled = 0").run());
     const migrationFiveTriggers = database
@@ -1050,7 +1058,7 @@ test("memory and SQLite retention journals are semantically equivalent and immut
 });
 
 test("shared digest is conservatively denied and erased for all references", async () => {
-  const journal = new MemoryArtifactRetentionJournal();
+  const journal = createMemoryArtifactRetentionJournal();
   const artifacts = new SyntheticArtifactBoundary();
   const worker = controller(journal, artifacts, () => stop().effectiveAtMs);
   worker.registerOwnership(ownership());

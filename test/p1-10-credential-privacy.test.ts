@@ -5,6 +5,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
+import Database from "better-sqlite3";
+import type { ClientRequest } from "node:http";
+import { createServer, request as dispatchLocalRequest } from "node:https";
 
 import {
   ALPACA_KEY_ID_ENV,
@@ -13,6 +16,8 @@ import {
   authorizeCredentialLoad,
   assertCredentialIsolatedAlpacaTransport,
   createProductionCredentialIsolatedAlpacaTransport,
+  createTestNativeCredentialIsolatedAlpacaTransport,
+  assertTestNativeAlpacaTransportReleased,
   createTestCredentialIsolatedAlpacaTransport,
   createDurableCredentialAuthorizationBoundary,
   createTestDurableCredentialAuthorizationBoundary,
@@ -22,6 +27,7 @@ import {
   type RuntimeSecretSource,
 } from "../src/adapters/market-acquisition/credentials.js";
 import { buildAlpacaTransportRequest } from "../src/adapters/market-acquisition/alpaca/request.js";
+import { appendTestAcquisitionWorkflowEvidence } from "../src/adapters/market-acquisition/journal.js";
 import {
   MemoryAcquisitionJournal,
   createMemoryAcquisitionJournal,
@@ -30,6 +36,8 @@ import { createSqliteAcquisitionJournal } from "../src/adapters/market-acquisiti
 import { MemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
 import { createSqliteArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/sqlite-journal.js";
 import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
+import { createSqliteAlpacaWireSemanticEvidenceStore } from "../src/adapters/market-acquisition/alpaca/wire-semantic-evidence.js";
+import { SqliteArtifactRepository } from "../src/adapters/artifacts/sqlite-artifact-repository.js";
 import {
   ACCESSOR,
   BYTE_LIMIT,
@@ -41,6 +49,63 @@ import {
   safeAcquisitionError,
 } from "../src/adapters/market-acquisition/redaction.js";
 import { credentialAuthorizationFixture, validatedRepairPlan } from "./p1-10-repair-fixtures.js";
+
+const LOCAL_HTTPS_KEY = `-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDyEIZf+PLhNs3l
+LMZkk67+fEnloYodhuTMtxLYQU7cC9R2Ibos7r8ogHTaIXwNvTjpi7/2Vvt94qwS
+y9Kp0n0zandyu+nIrOzJlFj2t41dMRuxjvzQLIPE0noSeGdmKWgy/Ala8/eyu6mo
+dErq4NfdmEp8QZnjg8kPbdYPjXD3Oo91ynu865bA7VUsBCI7aWJIYBODxXUReIVs
+SabgRtCL1vggxKN5qMN14jb4my/5/9BKvd+LYnWiPmZf8C38eQ8ssJFwSnav0zyJ
+XF4l7Yv3BD11US194F78zc4yoAV/qXk71agY4vmv75V357XVzkU4Qd8bBU+yI0Xp
+runwRh1jAgMBAAECggEAH202zOn4unWPiKPmA/PKgd6oB2iQEmJLfSp9h1b/QoFE
+rauWTLQYXE1FHna/cNcyttt+aiCD2SWfGnec25Bo0c6OQHaWFQgiW89nN2zALSut
+gUFjoDFPUDPVRmWcYv6YORpQqp7G90z261hhy5myXOIjNXuc25Vl+ptTccR2uJoA
+l2/vhbryZEWA40QZtY+t2OTJPJqbZp0/KvcUbCLhAYlYiDqe887wmIpJHGErkqqt
+cWJ6NbBa1asjK842p8ux7jP/k1PtfbIuVolFy9G/D+zvRjn4rCwzrZGyJssXdum3
+OX3K/xjreZTag4gESItYFZ24aG8gBwbB9ifFl42Y0QKBgQD6awWF2BcuH4WIKZ/P
+9a97KRiOxjxU4BEv/KCPao99wcpsKm34t8xilSv7FzVdCJ8Y3jQkoS+IlgbJqO8k
+m4MFUU8kvtnyVOZqEFHAKxIaYNW13sNEIt6GjP9k8MVRnBmm4PjfKP3rCzS+eWqa
+BHjV+5wh6965nEWrSb7isqCU8wKBgQD3ddXLtMQJk8tD96qAWLrWmhfAJs06kreo
+tlBOf57yvL1ehx2Cn2I9qTBW+CaJR0Uu3qXA/M5fZREPTheafaOXf0jhOjuF8jM9
+tqCbz5MxJiLCZ4j+yd5clpPxw8uPlo/z9N12VcI6ios1VkxfVRVUP+NAlkKCORrJ
+lDn9uS4x0QKBgH7ja9D+RgChCFCOhuQhYeHOWRs/Z6K6RvtBzzncjQj0AVX9yeuV
+doMdg0Of5vJVRAidz14gLq3PF3FnoIW0Jxeys5+y9UzNqFNmIYZ2TJ4BI0kcr2T/
+JjKXj3Hebp2Ds5vTs0egxckrzHYXn+SbD3+eFuc5VYpHnSXGIGtOh//xAoGBAO+B
+JunADTTPzJ396RHLzxnBjlc1ttCIDCXIPrWbI3YAYrBIybERHf5b8CNcjb+0MSuJ
+5peAlyURJo/Pn1yxWVJZqWoD+HRN1HZYed4T63xYUrAhkSA4tXSbcJlATZatvKn7
+RxUvL4uFZ/K5kbV7Heeq5gIu7DQpnNmZEv+U6TbhAoGBAOET+cckf3+9Y/O0Ahs2
+GsbcpGHHK4IgE7YSd1FgQqTCMoAlLV6F5tP9OKBvgvka1zXyt63yVHfsvW9N7e4o
+0pV7k3vvaokGQ/WcODxU6oSQ+zTnfH70FV8guetKvmt6W/SYsnT55OKXSF3qObDv
+4xLUnudow2dOcgGrc/4moVYC
+-----END PRIVATE KEY-----`;
+
+const LOCAL_HTTPS_CERT = `-----BEGIN CERTIFICATE-----
+MIIDCTCCAfGgAwIBAgIUTuCwAsFNw2QH0+QyJG3KzMissj8wDQYJKoZIhvcNAQEL
+BQAwFDESMBAGA1UEAwwJMTI3LjAuMC4xMB4XDTI2MDgwMjEyMDc1NVoXDTM2MDcz
+MDEyMDc1NVowFDESMBAGA1UEAwwJMTI3LjAuMC4xMIIBIjANBgkqhkiG9w0BAQEF
+AAOCAQ8AMIIBCgKCAQEA8hCGX/jy4TbN5SzGZJOu/nxJ5aGKHYbkzLcS2EFO3AvU
+diG6LO6/KIB02iF8Db046Yu/9lb7feKsEsvSqdJ9M2p3crvpyKzsyZRY9reNXTEb
+sY780CyDxNJ6EnhnZiloMvwJWvP3srupqHRK6uDX3ZhKfEGZ44PJD23WD41w9zqP
+dcp7vOuWwO1VLAQiO2liSGATg8V1EXiFbEmm4EbQi9b4IMSjeajDdeI2+Jsv+f/Q
+Sr3fi2J1oj5mX/At/HkPLLCRcEp2r9M8iVxeJe2L9wQ9dVEtfeBe/M3OMqAFf6l5
+O9WoGOL5r++Vd+e11c5FOEHfGwVPsiNF6a7p8EYdYwIDAQABo1MwUTAdBgNVHQ4E
+FgQUfFGc2ER5StOu+fW0KeHTx4cABdMwHwYDVR0jBBgwFoAUfFGc2ER5StOu+fW0
+KeHTx4cABdMwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEAV3Kr
+yNJUjM0ORdkQtkdZmMbgAKepPzxBt96+uUByeXppozA4hgys5tV9z40bd3FeXgG5
+xKM3lpB/J4azdNdvoPQdPB2+hf/hnd/WFNT35bYbQtQ79+p5odyFbDZ9U0SPNyc4
+AMyqtHfFD8hzaqOdKs110ahSgzO6dHBipw3HvZixIqVklItz0r6a4TuhzxMQPT6b
+GCH4cbvb5GF24Zw81s3hDZEfDaI9WA31EA55Naq6xeY0pSPuWbzW7eqgnJLyiyE0
+skPypOpnkvhtO6ZqISH1/jnW8NXPAtoG9QEDx5DhXYFzlGgdA0AOcoEbEwq5+f+q
+26C+E6T96MU0JlJd8w==
+-----END CERTIFICATE-----`;
+
+function firstRequest(plan: ReturnType<typeof validatedRepairPlan>) {
+  return buildAlpacaTransportRequest(
+    plan,
+    { kind: "first-page", pageOrdinal: 0 },
+    new AbortController().signal,
+  ).request;
+}
 
 test("Alpaca credentials load only into an immutable dispatch capability", async () => {
   const plan = validatedRepairPlan();
@@ -79,17 +144,19 @@ test("Alpaca credentials load only into an immutable dispatch capability", async
     async abort() {},
     async settle() {},
   });
-  const result = await withAlpacaAuthorization(permit, source, async (capability) => {
-    assert.equal(Object.isFrozen(capability), true);
-    assert.deepEqual(Object.keys(capability), ["kind"]);
-    retained = capability;
-    await transport.dispatch(requestLease.request, capability);
-    await assert.rejects(
-      () => transport.dispatch(requestLease.request, capability),
-      /dispatch-capability-invalid/u,
-    );
-    return "settled";
-  });
+  const result = await withAlpacaAuthorization(
+    permit,
+    source,
+    requestLease.request,
+    async (capability) => {
+      assert.equal(Object.isFrozen(capability), true);
+      assert.deepEqual(Object.keys(capability), ["kind"]);
+      retained = capability;
+      await transport.dispatch(capability);
+      await assert.rejects(() => transport.dispatch(capability), /dispatch-capability-invalid/u);
+      return "settled";
+    },
+  );
   requestLease.release();
   assert.deepEqual(result, { ok: true, value: "settled" });
   assert.deepEqual(reads, [ALPACA_KEY_ID_ENV, ALPACA_SECRET_KEY_ENV]);
@@ -108,10 +175,12 @@ test("Alpaca credentials load only into an immutable dispatch capability", async
   assert.equal(copiedKeyId, "synthetic-key-id");
   assert.equal(copiedSecret, "synthetic-secret");
   await assert.rejects(
-    () => transport.dispatch(requestLease.request, retained as AlpacaDispatchCapability),
+    () => transport.dispatch(retained as AlpacaDispatchCapability),
     /dispatch-capability-invalid/u,
   );
-  await assert.rejects(() => withAlpacaAuthorization(permit, source, async () => "reused"));
+  await assert.rejects(() =>
+    withAlpacaAuthorization(permit, source, requestLease.request, async () => "reused"),
+  );
   const credentials = await import("../src/adapters/market-acquisition/credentials.js");
   assert.equal("resolveAlpacaDispatchCapability" in credentials, false);
 });
@@ -119,14 +188,24 @@ test("Alpaca credentials load only into an immutable dispatch capability", async
 test("spoofed NODE_TEST_CONTEXT cannot mint any test root or credential transport", () => {
   const moduleUrl = (path: string): string => pathToFileURL(resolve(path)).href;
   const urls = {
-    credentials: moduleUrl("dist/src/adapters/market-acquisition/credentials.js"),
-    acquisition: moduleUrl("dist/src/adapters/market-acquisition/memory-journal.js"),
-    retentionJournal: moduleUrl("dist/src/adapters/market-acquisition/retention/memory-journal.js"),
-    retentionController: moduleUrl("dist/src/adapters/market-acquisition/retention/controller.js"),
-    artifactAccess: moduleUrl("dist/src/adapters/market-acquisition/retention/artifact-access.js"),
-    retainedSink: moduleUrl("dist/src/adapters/market-acquisition/alpaca/retained-sink.js"),
-    wire: moduleUrl("dist/src/adapters/market-acquisition/alpaca/wire.js"),
-    semantics: moduleUrl("dist/src/adapters/market-acquisition/alpaca/wire-semantic-evidence.js"),
+    credentials: moduleUrl("dist/production/src/adapters/market-acquisition/credentials.js"),
+    acquisition: moduleUrl("dist/production/src/adapters/market-acquisition/memory-journal.js"),
+    retentionJournal: moduleUrl(
+      "dist/production/src/adapters/market-acquisition/retention/memory-journal.js",
+    ),
+    retentionController: moduleUrl(
+      "dist/production/src/adapters/market-acquisition/retention/controller.js",
+    ),
+    artifactAccess: moduleUrl(
+      "dist/production/src/adapters/market-acquisition/retention/artifact-access.js",
+    ),
+    retainedSink: moduleUrl(
+      "dist/production/src/adapters/market-acquisition/alpaca/retained-sink.js",
+    ),
+    wire: moduleUrl("dist/production/src/adapters/market-acquisition/alpaca/wire.js"),
+    semantics: moduleUrl(
+      "dist/production/src/adapters/market-acquisition/alpaca/wire-semantic-evidence.js",
+    ),
   };
   const probe = `
     const urls = JSON.parse(process.argv[1]);
@@ -144,6 +223,8 @@ test("spoofed NODE_TEST_CONTEXT cannot mint any test root or credential transpor
     const driver = { dispatch(_request, headers) { copied = Boolean(headers?.["APCA-API-KEY-ID"]); }, abort() {}, settle() {} };
     const attempts = [
       () => c.createTestCredentialIsolatedAlpacaTransport(driver),
+      () => c.createTestNativeCredentialIsolatedAlpacaTransport(driver),
+      () => c.assertTestNativeAlpacaTransportReleased({}),
       () => c.createTestDurableCredentialAuthorizationBoundary({}, {}),
       () => a.createMemoryAcquisitionJournal({}),
       () => rj.createMemoryArtifactRetentionJournal(),
@@ -162,17 +243,26 @@ test("spoofed NODE_TEST_CONTEXT cannot mint any test root or credential transpor
     }
     if (copied) throw new Error("plaintext-copied");
   `;
-  const result = spawnSync(
-    process.execPath,
-    ["--input-type=module", "--eval", probe, JSON.stringify(urls)],
-    {
-      cwd: process.cwd(),
-      env: { ...process.env, NODE_TEST_CONTEXT: "peas-spoof", NODE_OPTIONS: "" },
-      encoding: "utf8",
-      windowsHide: true,
-    },
-  );
-  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  for (const attack of [
+    { cli: ["--conditions=p1-10-test"], nodeOptions: "" },
+    { cli: [], nodeOptions: "--conditions=p1-10-test" },
+  ]) {
+    const result = spawnSync(
+      process.execPath,
+      [...attack.cli, "--input-type=module", "--eval", probe, JSON.stringify(urls)],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          NODE_TEST_CONTEXT: "peas-spoof",
+          NODE_OPTIONS: attack.nodeOptions,
+        },
+        encoding: "utf8",
+        windowsHide: true,
+      },
+    );
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  }
 });
 
 test("production credential transport is module-owned and accepts no caller driver", () => {
@@ -191,8 +281,129 @@ test("production credential transport is module-owned and accepts no caller driv
   );
 });
 
-test("missing credentials return a closed error and never invoke transport", async () => {
+test("native HTTPS request/response ownership detaches on success, error, and abort", async (t) => {
+  const retainedPlatformRequests: ClientRequest[] = [];
+  const server = createServer(
+    { key: LOCAL_HTTPS_KEY, cert: LOCAL_HTTPS_CERT },
+    (request, response) => {
+      if (request.url?.includes("mode=error")) {
+        request.socket.destroy();
+        return;
+      }
+      if (request.url?.includes("mode=abort")) return;
+      response.writeHead(200, { "content-length": "2" });
+      response.end("ok");
+    },
+  );
+  await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  t.after(() => new Promise<void>((resolveClose) => server.close(() => resolveClose())));
+  const address = server.address();
+  assert.ok(address !== null && typeof address === "object");
+  const nativeTransport = (mode: "success" | "error" | "abort") =>
+    createTestNativeCredentialIsolatedAlpacaTransport((url, options) => {
+      const physical = dispatchLocalRequest({
+        hostname: "127.0.0.1",
+        port: address.port,
+        method: options.method,
+        path: `${url.pathname}?mode=${mode}`,
+        headers: options.headers,
+        signal: options.signal,
+        rejectUnauthorized: false,
+      });
+      retainedPlatformRequests.push(physical);
+      return physical;
+    });
+  const run = async (mode: "success" | "error" | "abort") => {
+    const plan = validatedRepairPlan();
+    const fixture = await credentialAuthorizationFixture(plan);
+    const permit = authorizeCredentialLoad(await fixture.authorization.establish(fixture.request));
+    const request = firstRequest(plan);
+    const transport = nativeTransport(mode);
+    const result = await withAlpacaAuthorization(
+      permit,
+      {
+        read(name) {
+          return name === ALPACA_KEY_ID_ENV ? "native-key-sentinel" : "native-secret-sentinel";
+        },
+      },
+      request,
+      async (capability) => {
+        const responsePromise = transport.dispatch(capability);
+        if (mode === "abort") {
+          await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
+          await transport.abort();
+          return await responsePromise;
+        }
+        const response = await responsePromise;
+        if (mode === "error") return response;
+        for (;;) {
+          const read = await response.body.read();
+          if (read.done) break;
+        }
+        await response.body.settle();
+        await transport.settle();
+        return response;
+      },
+    );
+    assertTestNativeAlpacaTransportReleased(transport);
+    return result;
+  };
+  const success = await run("success");
+  assert.equal(success.ok, true);
+  // ClientRequest may retain outgoing platform headers; PEAS owns no reference after settlement.
+  assert.equal(retainedPlatformRequests[0]?.getHeader("APCA-API-KEY-ID"), "native-key-sentinel");
+  const errored = await run("error");
+  assert.equal(errored.ok, false);
+  const aborted = await run("abort");
+  assert.equal(aborted.ok, false);
+});
+
+test("all production SQLite wrappers reject structural, raw, proxied, and shadowed adapters", async (t) => {
   const fixture = await credentialAuthorizationFixture(validatedRepairPlan());
+  const raw = new Database(":memory:");
+  t.after(() => raw.close());
+  const fake = {
+    exec() {},
+    prepare() {
+      throw new Error("hostile database adapter invoked");
+    },
+    transaction() {
+      throw new Error("hostile database adapter invoked");
+    },
+  };
+  const factories = [
+    (database: never) => createSqliteAcquisitionJournal(database, fixture.request.journalIdentity),
+    (database: never) => createSqliteArtifactRetentionJournal(database),
+    (database: never) => createSqliteAlpacaWireSemanticEvidenceStore(database),
+    (database: never) => new SqliteArtifactRepository(database),
+  ];
+  for (const hostile of [fake, raw, new Proxy(raw, {})]) {
+    for (const factory of factories) {
+      assert.throws(() => factory(hostile as never), /owned-sqlite-database-required/u);
+    }
+  }
+  const directory = await mkdtemp(join(tmpdir(), "peas-owned-sqlite-root-"));
+  const owned = openSqliteDatabase(
+    join(directory, "owned.sqlite"),
+    loadMigrations(join(process.cwd(), "migrations")),
+  );
+  t.after(async () => {
+    if (owned.open) owned.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  assert.throws(
+    () => Object.defineProperty(owned, "prepare", { value: fake.prepare }),
+    /not extensible|Cannot define property/u,
+  );
+  assert.doesNotThrow(() => createSqliteAcquisitionJournal(owned, fixture.request.journalIdentity));
+  assert.doesNotThrow(() => createSqliteArtifactRetentionJournal(owned));
+  assert.doesNotThrow(() => createSqliteAlpacaWireSemanticEvidenceStore(owned));
+  assert.doesNotThrow(() => new SqliteArtifactRepository(owned));
+});
+
+test("missing credentials return a closed error and never invoke transport", async () => {
+  const plan = validatedRepairPlan();
+  const fixture = await credentialAuthorizationFixture(plan);
   const permit = authorizeCredentialLoad(await fixture.authorization.establish(fixture.request));
   let operations = 0;
   const reads: string[] = [];
@@ -204,6 +415,7 @@ test("missing credentials return a closed error and never invoke transport", asy
         return name === ALPACA_KEY_ID_ENV ? "synthetic-key-id" : undefined;
       },
     },
+    firstRequest(plan),
     async () => {
       operations += 1;
       return "unreachable";
@@ -220,6 +432,89 @@ test("missing credentials return a closed error and never invoke transport", asy
   assert.equal(result.error.reasonCode, "credential-unavailable");
   assert.equal(operations, 0);
   assert.deepEqual(reads, [ALPACA_KEY_ID_ENV, ALPACA_SECRET_KEY_ENV]);
+});
+
+test("destination and complete ordered query are capability-bound before every secret read", async () => {
+  const plan = validatedRepairPlan();
+  const baseRequest = (): ReturnType<typeof firstRequest> => firstRequest(plan);
+  const structuralAttacks: readonly Readonly<{
+    name: string;
+    mutate(request: ReturnType<typeof firstRequest>): unknown;
+  }>[] = [
+    { name: "origin", mutate: (request) => ({ ...request, origin: "https://example.invalid" }) },
+    {
+      name: "port",
+      mutate: (request) => ({ ...request, origin: "https://data.alpaca.markets:444" }),
+    },
+    {
+      name: "protocol",
+      mutate: (request) => ({ ...request, origin: "http://data.alpaca.markets" }),
+    },
+    {
+      name: "encoded-host",
+      mutate: (request) => ({ ...request, origin: "https://data%2ealpaca.markets" }),
+    },
+    { name: "path", mutate: (request) => ({ ...request, path: "/v2/stocks/bars" }) },
+    {
+      name: "duplicate-query",
+      mutate: (request) => ({ ...request, query: [...request.query, request.query[0]] }),
+    },
+    {
+      name: "reordered-query",
+      mutate: (request) => ({ ...request, query: [...request.query].reverse() }),
+    },
+    {
+      name: "extra-query",
+      mutate: (request) => ({ ...request, query: [...request.query, ["feed", "sip"]] }),
+    },
+  ];
+  for (const attack of structuralAttacks) {
+    const fixture = await credentialAuthorizationFixture(plan);
+    const permit = authorizeCredentialLoad(await fixture.authorization.establish(fixture.request));
+    let reads = 0;
+    let dispatches = 0;
+    await assert.rejects(
+      () =>
+        withAlpacaAuthorization(
+          permit,
+          {
+            read() {
+              reads += 1;
+              return "must-not-be-read";
+            },
+          },
+          attack.mutate(baseRequest()) as never,
+          async () => {
+            dispatches += 1;
+          },
+        ),
+      /dispatch-destination-invalid/u,
+      attack.name,
+    );
+    assert.equal(reads, 0, attack.name);
+    assert.equal(dispatches, 0, attack.name);
+  }
+  const fixture = await credentialAuthorizationFixture(plan);
+  const permit = authorizeCredentialLoad(await fixture.authorization.establish(fixture.request));
+  const mutated = baseRequest();
+  (mutated.query[0] as [string, string])[1] = "QA,QB,EXTRA";
+  let reads = 0;
+  await assert.rejects(
+    () =>
+      withAlpacaAuthorization(
+        permit,
+        {
+          read() {
+            reads += 1;
+            return "must-not-be-read";
+          },
+        },
+        mutated,
+        async () => undefined,
+      ),
+    /dispatch-destination-invalid/u,
+  );
+  assert.equal(reads, 0);
 });
 
 test("a structurally forged permit and incomplete proof cannot read credentials", async () => {
@@ -242,6 +537,7 @@ test("a structurally forged permit and incomplete proof cannot read credentials"
             return "unreachable";
           },
         },
+        firstRequest(plan),
         async () => "unreachable",
       ),
     /durable-preconditions/u,
@@ -272,7 +568,8 @@ test("a structurally forged permit and incomplete proof cannot read credentials"
 });
 
 test("durable attempt claims exclude replay and concurrent remint before one secret read", async () => {
-  const fixture = await credentialAuthorizationFixture(validatedRepairPlan());
+  const plan = validatedRepairPlan();
+  const fixture = await credentialAuthorizationFixture(plan);
   const outcomes = await Promise.allSettled([
     fixture.authorization.establish(fixture.request),
     fixture.authorization.establish(fixture.request),
@@ -301,6 +598,7 @@ test("durable attempt claims exclude replay and concurrent remint before one sec
         return reads === 1 ? "synthetic-key-id" : "synthetic-secret";
       },
     },
+    firstRequest(plan),
     async () => {
       operations += 1;
       return "authorized-once";
@@ -323,8 +621,7 @@ test("a persisted attempt claim cannot be reminted after SQLite cold restart", a
   const migrations = loadMigrations(join(process.cwd(), "migrations"));
   let database = openSqliteDatabase(filename, migrations);
   let journal = createSqliteAcquisitionJournal(database, fixture.request.journalIdentity);
-  await journal.appendLedgerEntries(fixture.ledgerEntries);
-  for (const entry of fixture.entries) await journal.append(entry);
+  await appendTestAcquisitionWorkflowEvidence(journal, fixture.ledgerEntries, fixture.entries);
   let retentionJournal = createSqliteArtifactRetentionJournal(database);
   const first = createDurableCredentialAuthorizationBoundary(journal, retentionJournal);
   await first.establish(fixture.request);
@@ -339,6 +636,43 @@ test("a persisted attempt claim cannot be reminted after SQLite cold restart", a
   );
   const entries = await journal.load(fixture.request.marketAcquisitionJournalId);
   assert.equal(entries.filter((entry) => entry.checkpointKind === "attempt-started").length, 1);
+  database.close();
+});
+
+test("public journals cannot author coherent credential prerequisite facts", async (t) => {
+  const fixture = await credentialAuthorizationFixture(validatedRepairPlan());
+  const memory = createMemoryAcquisitionJournal(fixture.request.journalIdentity);
+  for (const authority of [undefined, {}, new Proxy({}, {})]) {
+    await assert.rejects(
+      () => memory.appendLedgerEntries(fixture.ledgerEntries, authority),
+      /owned-acquisition-workflow-producer-required/u,
+    );
+    await assert.rejects(
+      () => memory.append(fixture.entries[0] as never, authority),
+      /owned-acquisition-workflow-producer-required/u,
+    );
+  }
+  const directory = await mkdtemp(join(tmpdir(), "peas-credential-forged-chain-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filename = join(directory, "forged.sqlite");
+  const migrations = loadMigrations(join(process.cwd(), "migrations"));
+  let database = openSqliteDatabase(filename, migrations);
+  let journal = createSqliteAcquisitionJournal(database, fixture.request.journalIdentity);
+  await assert.rejects(
+    () => journal.appendLedgerEntries(fixture.ledgerEntries),
+    /owned-acquisition-workflow-producer-required/u,
+  );
+  for (const entry of fixture.entries) {
+    await assert.rejects(
+      () => journal.append(entry),
+      /owned-acquisition-workflow-producer-required/u,
+    );
+  }
+  database.close();
+  database = openSqliteDatabase(filename, migrations);
+  journal = createSqliteAcquisitionJournal(database, fixture.request.journalIdentity);
+  assert.deepEqual(await journal.load(fixture.request.marketAcquisitionJournalId), []);
+  assert.deepEqual(await journal.loadLedgerEntries(), []);
   database.close();
 });
 

@@ -50,6 +50,7 @@ import {
   derivePrivateTokenHash,
   NO_TOKEN_HASH,
   createJournalEntry,
+  appendTestAcquisitionJournalEntry,
   type AcquisitionJournal,
   type JournalCheckpointBody,
 } from "../src/adapters/market-acquisition/journal.js";
@@ -66,7 +67,7 @@ import {
   createTestArtifactRetentionController,
 } from "../src/adapters/market-acquisition/retention/controller.js";
 import type { RetentionArtifactBoundary } from "../src/adapters/market-acquisition/retention/contracts.js";
-import { MemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
+import { createMemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
 import {
   AcquisitionStateMachine,
   createInitialAcquisitionSnapshot,
@@ -122,7 +123,7 @@ function adapterRetention(): DefaultArtifactRetentionController {
     },
   };
   return createTestArtifactRetentionController({
-    journal: new MemoryArtifactRetentionJournal(),
+    journal: createMemoryArtifactRetentionJournal(),
     artifacts,
     nowMs: () => 0,
   });
@@ -133,7 +134,11 @@ async function executeAlpacaAttempt<T>(
     plan: ValidatedMarketAcquisitionConfiguration;
     page: AlpacaPageAuthority;
     authorizationHeaders: AlpacaAuthorizationHeaders;
-    transport: AlpacaTransport;
+    transport: Readonly<{
+      dispatch(request: AlpacaTransportRequest): Promise<AlpacaTransportResponse>;
+      abort(): Promise<void>;
+      settle(): Promise<void>;
+    }>;
     artifactSink: AlpacaArtifactCommitSink<T>;
     deadlineScheduler: AlpacaDeadlineScheduler | TimerDouble;
     acquisitionDeclaredMonotonicMs?: number;
@@ -157,7 +162,7 @@ async function executeAlpacaAttempt<T>(
     credentialAuthorization: credentialFixture.request,
     page: input.page,
     transport: createTestCredentialIsolatedAlpacaTransport({
-      dispatch: (request) => input.transport.dispatch(request, {} as never),
+      dispatch: (request) => input.transport.dispatch(request),
       abort: () => input.transport.abort(),
       settle: () => input.transport.settle(),
     }),
@@ -460,7 +465,7 @@ class TimerDouble {
 
 class CancelDependentTimer extends TimerDouble {}
 
-class TransportDouble implements AlpacaTransport {
+class TransportDouble {
   request: AlpacaTransportRequest | null = null;
   constructor(
     private readonly counters: ResourceCounts,
@@ -482,7 +487,7 @@ class TransportDouble implements AlpacaTransport {
   }
 }
 
-class HangingTransport implements AlpacaTransport {
+class HangingTransport {
   #reject: ((reason: unknown) => void) | null = null;
   constructor(private readonly counters: ResourceCounts) {}
   async dispatch(request: AlpacaTransportRequest): Promise<AlpacaTransportResponse> {
@@ -502,7 +507,7 @@ class HangingTransport implements AlpacaTransport {
   }
 }
 
-class PendingCleanupTransport implements AlpacaTransport {
+class PendingCleanupTransport {
   request: AlpacaTransportRequest | null = null;
   constructor(
     private readonly counters: ResourceCounts,
@@ -739,7 +744,8 @@ async function persistPlan(
 ): Promise<void> {
   if (transition.checkpointKind === null) return;
   const rows = await journal.load(journalId);
-  await journal.append(
+  await appendTestAcquisitionJournalEntry(
+    journal,
     createJournalEntry(
       rows.at(-1) ?? null,
       journalId,
@@ -1048,7 +1054,10 @@ test("caller and test-double sinks cannot attest atomic artifact ownership", asy
     plan,
     credentialAuthorization: credentialFixture.request,
     page: firstPage(),
-    transport: new TransportDouble(counters, response(new BodyDouble(counters, []))),
+    transport: new TransportDouble(
+      counters,
+      response(new BodyDouble(counters, [])),
+    ) as unknown as AlpacaTransport,
     artifactSink: new SinkDouble(counters) as never,
     deadlineScheduler: new TimerDouble().scheduler,
     acquisitionDeclaredMonotonicMs: 0,
@@ -1125,7 +1134,10 @@ test("all non-secret request, scheduler, and transport rejection precedes creden
       plan,
       credentialAuthorization: fixture.request,
       page: rejection === "continuation" ? invalidContinuation : firstPage(),
-      transport: rejection === "transport" ? rawTransport : isolatedTransport,
+      transport:
+        rejection === "transport"
+          ? (rawTransport as unknown as AlpacaTransport)
+          : isolatedTransport,
       artifactSink: createRetentionOwnedAlpacaPageSink(
         createTestAlpacaArtifactCommitSink(new SinkDouble(counters)),
         adapterRetention(),

@@ -1,11 +1,13 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
+import { isProxy } from "node:util/types";
 
 import Database from "better-sqlite3";
 
 import { hashParts } from "../../core/hash.js";
 
 export type SqliteDatabase = Database.Database;
+const ownedSqliteDatabases = new WeakSet<object>();
 
 export type Migration = Readonly<{
   version: number;
@@ -47,7 +49,26 @@ export function openSqliteDatabase(
   if (filename !== ":memory:") database.pragma("journal_mode = WAL");
   database.defaultSafeIntegers(true);
   applyMigrations(database, migrations);
+  Object.preventExtensions(database);
+  ownedSqliteDatabases.add(database);
   return database;
+}
+
+export function assertOwnedSqliteDatabase(database: SqliteDatabase): void {
+  if (
+    !ownedSqliteDatabases.has(database) ||
+    isProxy(database) ||
+    Object.getPrototypeOf(database) !== Database.prototype ||
+    Object.isExtensible(database) ||
+    Reflect.ownKeys(database).some((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(database, key);
+      return (
+        descriptor !== undefined && "value" in descriptor && typeof descriptor.value === "function"
+      );
+    })
+  ) {
+    throw new TypeError("owned-sqlite-database-required");
+  }
 }
 
 export function applyMigrations(database: SqliteDatabase, migrations: readonly Migration[]): void {

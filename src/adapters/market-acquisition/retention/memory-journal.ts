@@ -1,4 +1,4 @@
-import { P1_10_TEST_AUTHORITY } from "#p1-10-test-authority";
+import { P1_10_TEST_AUTHORITY } from "../../../internal-test-authority.js";
 import { canonicalJson } from "../../../core/json.js";
 import type {
   ArtifactRetentionJournal,

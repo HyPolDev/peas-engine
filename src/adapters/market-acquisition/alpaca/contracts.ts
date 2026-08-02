@@ -90,10 +90,7 @@ export type AlpacaTransportResponse = Readonly<{
 }>;
 
 export interface AlpacaTransport {
-  dispatch(
-    request: AlpacaTransportRequest,
-    authorization: AlpacaDispatchCapability,
-  ): Promise<AlpacaTransportResponse>;
+  dispatch(authorization: AlpacaDispatchCapability): Promise<AlpacaTransportResponse>;
   abort(): Promise<void>;
   settle(): Promise<void>;
 }

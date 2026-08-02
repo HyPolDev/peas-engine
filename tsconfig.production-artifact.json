@@ -1,7 +1,7 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "outDir": "dist",
+    "outDir": "dist/production",
     "sourceMap": true,
     "declaration": true,
     "declarationMap": true

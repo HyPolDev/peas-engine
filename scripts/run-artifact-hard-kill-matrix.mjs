@@ -16,7 +16,6 @@ if (expectedSha !== head) throw new Error(`Hard-kill candidate ${expectedSha} is
 const tested = spawnSync(
   process.execPath,
   [
-    "--conditions=p1-10-test",
     "--test",
     "--test-reporter=tap",
     "--test-name-pattern=hard-kill boundar",

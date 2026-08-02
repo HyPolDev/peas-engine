@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { SqliteDatabase } from "../sqlite/database.js";
+import { assertOwnedSqliteDatabase, type SqliteDatabase } from "../sqlite/database.js";
 import type {
   ArtifactMetadata,
   ArtifactObservation,
@@ -210,6 +210,7 @@ export class SqliteArtifactRepository {
   readonly #database: SqliteDatabase;
 
   constructor(database: SqliteDatabase) {
+    assertOwnedSqliteDatabase(database);
     this.#database = database;
   }
 
@@ -290,6 +291,19 @@ export class SqliteArtifactRepository {
       AND expires_at_ms >= ?`)
       .run(nowMs + durationMs, ownerToken, generation, nowMs);
     if (result.changes !== 1) throw new Error("Vault writer lease was lost");
+  }
+
+  releaseWriter(ownerToken: string, generation: number): boolean {
+    return this.#database
+      .transaction(() => {
+        const result = this.#database
+          .prepare(
+            "DELETE FROM artifact_writer_fence WHERE singleton = 1 AND owner_token = ? AND generation = ?",
+          )
+          .run(ownerToken, generation);
+        return result.changes === 1;
+      })
+      .immediate();
   }
 
   assertWriter(fence: WriterFence): void {

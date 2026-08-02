@@ -718,6 +718,133 @@ test("same-owner heartbeat and foreground renewal coalesce around slow lease I/O
   assert.equal(existsSync(join(paths.locks, "writer.lock")), false);
 });
 
+test("same-stack renewal reentrancy shares one rewrite and release waits for it", async (context) => {
+  const root = mkdtempSync(join(tmpdir(), "peas-artifact-lease-reentrant-"));
+  const paths = artifactRuntimePaths(root);
+  mkdirSync(paths.databaseDirectory);
+  mkdirSync(paths.locks, { recursive: true });
+  const database = openSqliteDatabase(paths.databasePath, migrations);
+  const repository = new SqliteArtifactRepository(database);
+  const clock = new ManualClock(1_800_000_000_000);
+  let lease!: VaultWriterLease;
+  let nested: Promise<void> | null = null;
+  let releasePause!: () => void;
+  const paused = new Promise<void>((resolve) => {
+    releasePause = resolve;
+  });
+  let renewalEntries = 0;
+  lease = await VaultWriterLease.acquire({
+    path: join(paths.locks, "writer.lock"),
+    behavior: "fail",
+    waitMs: 0,
+    durationMs: 30_000,
+    renewalMs: 60_000,
+    repository,
+    clock,
+    faultBoundary(checkpoint) {
+      if (checkpoint !== "lease-sqlite-renewal") return;
+      renewalEntries += 1;
+      if (renewalEntries === 1) {
+        nested = lease.renewAndAssert();
+        return paused;
+      }
+      return undefined;
+    },
+  });
+  context.after(() => {
+    if (database.open) database.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+  const foreground = lease.renewAndAssert();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const releasing = lease.release();
+  assert.equal(existsSync(join(paths.locks, "writer.lock")), true);
+  assert.equal(renewalEntries, 1);
+  releasePause();
+  await foreground;
+  await nested;
+  await releasing;
+  assert.equal(renewalEntries, 1);
+  assert.equal(existsSync(join(paths.locks, "writer.lock")), false);
+  assert.equal(
+    (
+      database.prepare("SELECT count(*) count FROM artifact_writer_fence").get() as {
+        count: bigint;
+      }
+    ).count,
+    0n,
+  );
+});
+
+test("clean release clears its durable fence and immediate fail-mode reopen does not spin", async (context) => {
+  const root = mkdtempSync(join(tmpdir(), "peas-artifact-lease-reopen-"));
+  const paths = artifactRuntimePaths(root);
+  mkdirSync(paths.databaseDirectory);
+  mkdirSync(paths.locks, { recursive: true });
+  const database = openSqliteDatabase(paths.databasePath, migrations);
+  const repository = new SqliteArtifactRepository(database);
+  const clock = new ManualClock(1_800_000_000_000);
+  const options = {
+    path: join(paths.locks, "writer.lock"),
+    behavior: "fail" as const,
+    waitMs: 0,
+    durationMs: 30_000,
+    renewalMs: 60_000,
+    repository,
+    clock,
+  };
+  context.after(() => {
+    if (database.open) database.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+  const first = await VaultWriterLease.acquire(options);
+  const staleFence = first.fence();
+  await first.release();
+  assert.equal(repository.releaseWriter(staleFence.ownerToken, staleFence.generation), false);
+  const second = await VaultWriterLease.acquire(options);
+  await second.release();
+  assert.equal(existsSync(options.path), false);
+  assert.equal(
+    (
+      database.prepare("SELECT count(*) count FROM artifact_writer_fence").get() as {
+        count: bigint;
+      }
+    ).count,
+    0n,
+  );
+});
+
+test("database-only competing fence honors fail mode without ENOENT retry churn", async (context) => {
+  const root = mkdtempSync(join(tmpdir(), "peas-artifact-lease-db-only-"));
+  const paths = artifactRuntimePaths(root);
+  mkdirSync(paths.databaseDirectory);
+  mkdirSync(paths.locks, { recursive: true });
+  const database = openSqliteDatabase(paths.databasePath, migrations);
+  const repository = new SqliteArtifactRepository(database);
+  const clock = new ManualClock(1_800_000_000_000);
+  repository.claimWriter("competing-owner", clock.nowMs(), 30_000);
+  context.after(() => {
+    if (database.open) database.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+  const started = performance.now();
+  await assert.rejects(
+    () =>
+      VaultWriterLease.acquire({
+        path: join(paths.locks, "writer.lock"),
+        behavior: "fail",
+        waitMs: 0,
+        durationMs: 30_000,
+        renewalMs: 60_000,
+        repository,
+        clock,
+      }),
+    /writer lease is held/u,
+  );
+  assert.ok(performance.now() - started < 1_000);
+  assert.equal(existsSync(join(paths.locks, "writer.lock")), false);
+});
+
 test("transaction mutations evaluate lease expiry from a fresh clock reading", async (context) => {
   const { database, repository, clock } = await harness(context);
   const bytes = Buffer.from("paused-before-transaction");
@@ -1049,6 +1176,9 @@ test("reconciliation hard-kill boundary matrix replays one deterministic action"
     "quarantine-link",
     "quarantine-sync",
     "quarantine-source-removal",
+    "quarantine-source-removed",
+    "quarantine-source-directory-sync",
+    "quarantine-target-hash",
     "reconciliation-action-application-commit",
     "reconciliation-call-receipt-commit",
     "reconciliation-terminal-receipt-commit",

@@ -1,4 +1,4 @@
-import type { SqliteDatabase } from "../../sqlite/database.js";
+import { assertOwnedSqliteDatabase, type SqliteDatabase } from "../../sqlite/database.js";
 import { canonicalHash } from "../../../core/hash.js";
 import { canonicalJson, type JsonValue } from "../../../core/json.js";
 import {
@@ -542,6 +542,7 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
 export function createSqliteArtifactRetentionJournal(
   database: SqliteDatabase,
 ): SqliteArtifactRetentionJournal {
+  assertOwnedSqliteDatabase(database);
   const journal = new SqliteArtifactRetentionJournal(database);
   ownedSqliteRetentionJournals.add(journal);
   Object.freeze(journal);

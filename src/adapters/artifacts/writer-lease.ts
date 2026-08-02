@@ -85,6 +85,19 @@ export class VaultWriterLease {
           await options.faultBoundary?.("lease-sqlite-claim");
         } catch (error) {
           await rm(options.path, { force: true });
+          if (error instanceof Error && error.message.includes("fence is held")) {
+            if (options.behavior === "fail" || Date.now() >= deadline) {
+              throw new ArtifactVaultError(
+                "writer-lease-unavailable",
+                "Vault writer lease is held by another process",
+                { cause: error },
+              );
+            }
+            await new Promise((resolve) =>
+              setTimeout(resolve, Math.min(50, Math.max(1, deadline - Date.now()))),
+            );
+            continue;
+          }
           throw error;
         }
         const lease = new VaultWriterLease({
@@ -143,8 +156,14 @@ export class VaultWriterLease {
       throw new ArtifactVaultError("writer-lease-unavailable", "Vault writer lease was lost");
     const active = this.#renewal;
     if (active !== null) return await active;
-    const renewal = this.#performRenewal();
+    let resolveRenewal!: () => void;
+    let rejectRenewal!: (error: unknown) => void;
+    const renewal = new Promise<void>((resolve, reject) => {
+      resolveRenewal = resolve;
+      rejectRenewal = reject;
+    });
     this.#renewal = renewal;
+    void this.#performRenewal().then(resolveRenewal, rejectRenewal);
     try {
       await renewal;
     } finally {
@@ -205,14 +224,27 @@ export class VaultWriterLease {
       // The in-flight renewal already marked the lease lost.
     }
     if (!this.#held) return;
-    this.#held = false;
     try {
+      if (!this.#repository.releaseWriter(this.#ownerToken, this.#generation)) {
+        this.#held = false;
+        throw new ArtifactVaultError(
+          "writer-lease-unavailable",
+          "Vault writer lease was replaced before release",
+        );
+      }
       const record = JSON.parse(await readFile(this.#path, "utf8")) as LeaseRecord;
-      if (record.ownerToken === this.#ownerToken && record.generation === this.#generation)
+      if (record.ownerToken === this.#ownerToken && record.generation === this.#generation) {
         await rm(this.#path, { force: true });
+      }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (
+        (error as NodeJS.ErrnoException).code !== "ENOENT" &&
+        !(error instanceof TypeError && error.message.includes("database connection is not open"))
+      ) {
+        throw error;
+      }
     } finally {
+      this.#held = false;
       this.#closing = false;
     }
   }

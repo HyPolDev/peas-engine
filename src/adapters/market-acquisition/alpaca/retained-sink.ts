@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { isProxy } from "node:util/types";
-import { P1_10_TEST_AUTHORITY } from "#p1-10-test-authority";
+import { P1_10_TEST_AUTHORITY } from "../../../internal-test-authority.js";
 
 import type {
   StoreArtifactRequest,

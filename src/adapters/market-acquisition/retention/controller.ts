@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { isProxy } from "node:util/types";
-import { P1_10_TEST_AUTHORITY } from "#p1-10-test-authority";
+import { P1_10_TEST_AUTHORITY } from "../../../internal-test-authority.js";
 
 import { assertArtifactDigest } from "../../../artifacts/validation.js";
 import { canonicalHash } from "../../../core/hash.js";
@@ -44,8 +44,6 @@ import {
   assertOwnedVaultArtifactRetentionBoundary,
   ownedVaultRetentionCoordinatorRoot,
 } from "./vault-boundary.js";
-import { MemoryArtifactRetentionJournal } from "./memory-journal.js";
-import { SqliteArtifactRetentionJournal } from "./sqlite-journal.js";
 
 const ID = /^[a-z][a-z0-9]*_[0-9a-f]{64}$/u;
 const POLICY_ID = /^[a-z0-9][a-z0-9-]{0,127}$/u;
@@ -675,15 +673,7 @@ export function createTestArtifactRetentionController(dependencies: {
   if (P1_10_TEST_AUTHORITY === undefined) {
     throw new TypeError("test-retention-composition-unavailable");
   }
-  const journalPrototype = Object.getPrototypeOf(dependencies.journal as object);
-  if (
-    isProxy(dependencies.journal as object) ||
-    ![MemoryArtifactRetentionJournal.prototype, SqliteArtifactRetentionJournal.prototype].includes(
-      journalPrototype,
-    )
-  ) {
-    throw new TypeError("owned-retention-journal-required");
-  }
+  assertOwnedRetentionJournal(dependencies.journal);
   return constructOwnedArtifactRetentionController(dependencies);
 }
 
