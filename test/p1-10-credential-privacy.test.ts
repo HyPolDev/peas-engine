@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -23,6 +24,7 @@ import {
   openSqliteDurableCredentialAuthorizationBoundary,
   openTestSqliteDurableCredentialAuthorizationBoundary,
   planCredentialAttemptAdmission,
+  provisionSqliteDurableCredentialAuthorityRuntime,
   createTestDurableCredentialAuthorizationBoundary,
   fmpLaneDisabled,
   withAlpacaAuthorization,
@@ -255,6 +257,7 @@ test("spoofed NODE_TEST_CONTEXT cannot mint any test root or credential transpor
       () => c.assertTestNativeAlpacaTransportReleased({}),
       () => c.createTestDurableCredentialAuthorizationBoundary({}, {}),
       () => c.openTestSqliteDurableCredentialAuthorizationBoundary("ignored", [], {}),
+      () => c.provisionSqliteDurableCredentialAuthorityRuntime([]),
       () => a.createMemoryAcquisitionJournal({}),
       () => rj.createMemoryArtifactRetentionJournal(),
       () => rc.createTestArtifactRetentionController({}),
@@ -311,27 +314,142 @@ test("production credential transport is module-owned and accepts no caller driv
   );
 });
 
+test("owned first boot provisions only a completely absent trusted runtime layout", async (t) => {
+  const runtimeRoot = await mkdtemp(join(tmpdir(), "peas-owned-first-boot-"));
+  const nonEmptyRoot = await mkdtemp(join(tmpdir(), "peas-owned-first-boot-nonempty-"));
+  const priorRoot = process.env["PEAS_RUNTIME_ROOT"];
+  t.after(async () => {
+    if (priorRoot === undefined) delete process.env["PEAS_RUNTIME_ROOT"];
+    else process.env["PEAS_RUNTIME_ROOT"] = priorRoot;
+    await rm(runtimeRoot, { recursive: true, force: true });
+    await rm(nonEmptyRoot, { recursive: true, force: true });
+  });
+  const migrations = loadMigrations(join(process.cwd(), "migrations"));
+  process.env["PEAS_RUNTIME_ROOT"] = runtimeRoot;
+  provisionSqliteDurableCredentialAuthorityRuntime(migrations);
+  const primary = join(runtimeRoot, "sqlite", "market-acquisition-authority.sqlite");
+  const anchor = join(runtimeRoot, "sqlite", "market-acquisition-authority-anchor.sqlite");
+  assert.equal(existsSync(primary), true);
+  assert.equal(existsSync(anchor), true);
+  assert.equal(existsSync(join(runtimeRoot, "sqlite", "peas.sqlite")), false);
+  assert.throws(() => openSqliteDatabase(primary, migrations), /protected-sqlite-database-path/u);
+  assert.throws(
+    () => provisionSqliteDurableCredentialAuthorityRuntime(migrations),
+    /credential-authority-provisioning-layout-not-empty/u,
+  );
+
+  process.env["PEAS_RUNTIME_ROOT"] = nonEmptyRoot;
+  await mkdir(join(nonEmptyRoot, "artifacts"));
+  assert.throws(
+    () => provisionSqliteDurableCredentialAuthorityRuntime(migrations),
+    /credential-authority-provisioning-layout-not-empty/u,
+  );
+  assert.equal(existsSync(join(nonEmptyRoot, "sqlite")), false);
+});
+
+test("cold restart never reconstructs a missing anchor or replaced primary", async (t) => {
+  const anchorRoot = await mkdtemp(join(tmpdir(), "peas-anchor-deletion-restart-"));
+  const primaryRoot = await mkdtemp(join(tmpdir(), "peas-primary-replacement-restart-"));
+  t.after(async () => {
+    await rm(anchorRoot, { recursive: true, force: true });
+    await rm(primaryRoot, { recursive: true, force: true });
+  });
+  const probe = `
+    import { join } from "node:path";
+    import {
+      openSqliteDurableCredentialAuthorizationBoundary,
+      provisionSqliteDurableCredentialAuthorityRuntime,
+    } from "./dist/src/adapters/market-acquisition/credentials.js";
+    import { loadMigrations } from "./dist/src/adapters/sqlite/database.js";
+    import { credentialAuthorizationFixture, validatedRepairPlan } from "./dist/test/p1-10-repair-fixtures.js";
+    const root = process.argv[1];
+    const action = process.argv[2];
+    process.env.PEAS_RUNTIME_ROOT = root;
+    const migrations = loadMigrations(join(process.cwd(), "migrations"));
+    let outcome = "ok";
+    let authority;
+    try {
+      if (action === "provision-admit") {
+        provisionSqliteDurableCredentialAuthorityRuntime(migrations);
+        const plan = validatedRepairPlan();
+        const fixture = await credentialAuthorizationFixture(plan);
+        authority = openSqliteDurableCredentialAuthorizationBoundary(migrations, plan);
+        await authority.establish(fixture.request);
+      } else if (action === "provision") {
+        provisionSqliteDurableCredentialAuthorityRuntime(migrations);
+      } else {
+        authority = openSqliteDurableCredentialAuthorizationBoundary(migrations, validatedRepairPlan());
+      }
+    } catch (error) {
+      outcome = error instanceof Error ? error.message : String(error);
+    } finally {
+      authority?.close();
+    }
+    process.stdout.write(JSON.stringify({ outcome }));
+  `;
+  const run = (root: string, action: string) => {
+    const result = spawnSync(
+      process.execPath,
+      ["--input-type=module", "--eval", probe, root, action],
+      {
+        cwd: process.cwd(),
+        env: { ...process.env, PEAS_RUNTIME_ROOT: root },
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 60_000,
+      },
+    );
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    return JSON.parse(result.stdout) as { outcome: string };
+  };
+
+  assert.deepEqual(run(anchorRoot, "provision-admit"), { outcome: "ok" });
+  await rm(join(anchorRoot, "sqlite", "market-acquisition-authority-anchor.sqlite"), {
+    force: true,
+  });
+  assert.deepEqual(run(anchorRoot, "open"), {
+    outcome: "credential-authority-layout-corrupt",
+  });
+  assert.deepEqual(run(anchorRoot, "provision"), {
+    outcome: "credential-authority-provisioning-layout-not-empty",
+  });
+  assert.equal(
+    existsSync(join(anchorRoot, "sqlite", "market-acquisition-authority-anchor.sqlite")),
+    false,
+  );
+
+  assert.deepEqual(run(primaryRoot, "provision-admit"), { outcome: "ok" });
+  eraseAdmissionRowsAndRestoreExactSchema(
+    join(primaryRoot, "sqlite", "market-acquisition-authority.sqlite"),
+  );
+  assert.deepEqual(run(primaryRoot, "open"), {
+    outcome: "credential-admission-state-invalid",
+  });
+  assert.deepEqual(run(primaryRoot, "provision"), {
+    outcome: "credential-authority-provisioning-layout-not-empty",
+  });
+});
+
 test("live credential admission has one canonical non-shardable protected durable root", async (t) => {
   const firstRoot = await mkdtemp(join(tmpdir(), "peas-live-credential-root-"));
   const alternateRoot = await mkdtemp(join(tmpdir(), "peas-live-credential-alternate-"));
-  const authorityDirectory = join(process.cwd(), ".peas-authority");
-  await rm(authorityDirectory, { recursive: true, force: true });
   const priorRoot = process.env["PEAS_RUNTIME_ROOT"];
   t.after(async () => {
     if (priorRoot === undefined) delete process.env["PEAS_RUNTIME_ROOT"];
     else process.env["PEAS_RUNTIME_ROOT"] = priorRoot;
     await rm(firstRoot, { recursive: true, force: true });
     await rm(alternateRoot, { recursive: true, force: true });
-    await rm(authorityDirectory, { recursive: true, force: true });
   });
-  await mkdir(join(firstRoot, "sqlite"), { recursive: true });
-  await mkdir(join(alternateRoot, "sqlite"), { recursive: true });
   process.env["PEAS_RUNTIME_ROOT"] = firstRoot;
   const plan = validatedRepairPlan();
   const fixture = await credentialAuthorizationFixture(plan);
   const migrations = loadMigrations(join(process.cwd(), "migrations"));
-  const authorityPath = join(authorityDirectory, "market-acquisition-authority.sqlite");
-  const anchorPath = join(authorityDirectory, "market-acquisition-authority-anchor.sqlite");
+  const authorityPath = join(firstRoot, "sqlite", "market-acquisition-authority.sqlite");
+  const anchorPath = join(firstRoot, "sqlite", "market-acquisition-authority-anchor.sqlite");
+  assert.throws(
+    () => openSqliteDurableCredentialAuthorizationBoundary(migrations, plan),
+    /credential-authority-not-provisioned/u,
+  );
   assert.throws(
     () => openSqliteDatabase(authorityPath, migrations),
     /protected-sqlite-database-path/u,
@@ -349,6 +467,11 @@ test("live credential admission has one canonical non-shardable protected durabl
         plan,
       ),
     /live-credential-migrations-invalid/u,
+  );
+  provisionSqliteDurableCredentialAuthorityRuntime(migrations);
+  assert.throws(
+    () => provisionSqliteDurableCredentialAuthorityRuntime(migrations),
+    /credential-authority-provisioning-layout-not-empty/u,
   );
   const authority = openSqliteDurableCredentialAuthorizationBoundary(migrations, plan);
   await authority.establish(fixture.request);
@@ -375,29 +498,28 @@ test("live credential admission has one canonical non-shardable protected durabl
 test("separate processes cannot replace the canonical credential runtime root", async (t) => {
   const firstRoot = await mkdtemp(join(tmpdir(), "peas-live-process-root-a-"));
   const secondRoot = await mkdtemp(join(tmpdir(), "peas-live-process-root-b-"));
-  const authorityDirectory = join(process.cwd(), ".peas-authority");
-  await rm(authorityDirectory, { recursive: true, force: true });
   t.after(async () => {
     await rm(firstRoot, { recursive: true, force: true });
     await rm(secondRoot, { recursive: true, force: true });
-    await rm(authorityDirectory, { recursive: true, force: true });
   });
   const probe = `
-    import { mkdir } from "node:fs/promises";
     import { join } from "node:path";
-    import { openSqliteDurableCredentialAuthorizationBoundary } from "./dist/src/adapters/market-acquisition/credentials.js";
+    import { openSqliteDurableCredentialAuthorizationBoundary, provisionSqliteDurableCredentialAuthorityRuntime } from "./dist/src/adapters/market-acquisition/credentials.js";
     import { loadMigrations } from "./dist/src/adapters/sqlite/database.js";
     import { credentialAuthorizationFixture, validatedRepairPlan } from "./dist/test/p1-10-repair-fixtures.js";
     const root = process.argv[1];
     const attempts = Number(process.argv[2]);
+    const provision = process.argv[3] === "provision";
     process.env.PEAS_RUNTIME_ROOT = root;
-    await mkdir(join(root, "sqlite"), { recursive: true });
     const plan = validatedRepairPlan();
     const fixture = await credentialAuthorizationFixture(plan);
     let admitted = 0;
     let denied = null;
     let authority;
     try {
+      if (provision) provisionSqliteDurableCredentialAuthorityRuntime(
+        loadMigrations(join(process.cwd(), "migrations")),
+      );
       authority = openSqliteDurableCredentialAuthorizationBoundary(
         loadMigrations(join(process.cwd(), "migrations")),
         plan,
@@ -413,15 +535,26 @@ test("separate processes cannot replace the canonical credential runtime root", 
     }
     process.stdout.write(JSON.stringify({ admitted, denied }));
   `;
-  const run = (root: string, attempts: number) =>
-    spawnSync(process.execPath, ["--input-type=module", "--eval", probe, root, String(attempts)], {
-      cwd: process.cwd(),
-      env: { ...process.env, PEAS_RUNTIME_ROOT: root },
-      encoding: "utf8",
-      windowsHide: true,
-      timeout: 60_000,
-    });
-  const first = run(firstRoot, 1);
+  const run = (root: string, attempts: number, provision = false) =>
+    spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        probe,
+        root,
+        String(attempts),
+        provision ? "provision" : "open",
+      ],
+      {
+        cwd: process.cwd(),
+        env: { ...process.env, PEAS_RUNTIME_ROOT: root },
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 60_000,
+      },
+    );
+  const first = run(firstRoot, 1, true);
   assert.equal(first.status, 0, `${first.stdout}\n${first.stderr}`);
   assert.deepEqual(JSON.parse(first.stdout), {
     admitted: 1,
@@ -431,7 +564,7 @@ test("separate processes cannot replace the canonical credential runtime root", 
   assert.equal(second.status, 0, `${second.stdout}\n${second.stderr}`);
   assert.deepEqual(JSON.parse(second.stdout), {
     admitted: 0,
-    denied: "credential-authority-runtime-root-mismatch",
+    denied: "credential-authority-not-provisioned",
   });
 });
 

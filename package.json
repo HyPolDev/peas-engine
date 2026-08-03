@@ -14,7 +14,7 @@
     "verify:candidate": "node scripts/verify-candidate.mjs",
     "verify:fault-boundaries": "node scripts/verify-artifact-fault-boundaries.mjs",
     "verify:vault-runtime-root": "node scripts/verify-vault-runtime-root.mjs",
-    "initialize:vault-runtime": "npm run build && node scripts/initialize-vault-runtime.mjs",
+    "initialize:vault-runtime": "npm run build && node scripts/activate-provisioning-authority.mjs && node scripts/initialize-vault-runtime.mjs",
     "verify:vault-cross-device": "npm run build && node scripts/verify-vault-cross-device-rejection.mjs",
     "write:evidence": "node scripts/write-audit-evidence.mjs",
     "write:vault-platform-evidence": "node scripts/write-vault-platform-evidence.mjs",

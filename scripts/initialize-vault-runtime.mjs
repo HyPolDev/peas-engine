@@ -6,6 +6,7 @@ import {
   artifactRuntimePaths,
   configuredPeasRuntimeRoot,
 } from "../dist/src/adapters/artifacts/runtime-root.js";
+import { provisionSqliteDurableCredentialAuthorityRuntime } from "../dist/src/adapters/market-acquisition/credentials.js";
 import { loadMigrations, openSqliteDatabase } from "../dist/src/adapters/sqlite/database.js";
 
 const validationPath = process.env.PEAS_RUNTIME_VALIDATION_PATH;
@@ -25,6 +26,8 @@ if (
 ) {
   throw new Error("Runtime-root validation does not authorize this configured layout");
 }
+
+provisionSqliteDurableCredentialAuthorityRuntime(loadMigrations(join(process.cwd(), "migrations")));
 
 const database = openSqliteDatabase(
   paths.databasePath,
