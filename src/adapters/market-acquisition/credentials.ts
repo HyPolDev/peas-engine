@@ -1,6 +1,7 @@
 import {
   ACCEPTED_PR_2E_CANDIDATE_SHA,
   AUTHORIZATION_MODE,
+  MARKET_ACQUISITION_LIMITS,
   type ValidatedMarketAcquisitionConfiguration,
 } from "./contracts.js";
 import {
@@ -36,6 +37,7 @@ import { MarketAcquisitionLedger, validateJournalLedgerBindings } from "./artifa
 import { P1_10_TEST_AUTHORITY } from "../../internal-test-authority.js";
 import { request as dispatchHttpsRequest } from "node:https";
 import type { ClientRequest, IncomingMessage } from "node:http";
+import { performance } from "node:perf_hooks";
 import { assertOwnedAlpacaTransportRequest } from "./alpaca/request.js";
 import { canonicalHash } from "../../core/hash.js";
 import { canonicalJson, type JsonValue } from "../../core/json.js";
@@ -70,6 +72,7 @@ export type CredentialPreflightPermit = Readonly<{
   acquisitionConfigurationHash: string;
   acquisitionObservationId: string;
   retrievalAttemptId: string;
+  attemptBudgetMs: number;
 }>;
 
 export type AlpacaAuthorizationHeaders = Readonly<{
@@ -89,6 +92,9 @@ type PermitBinding = Readonly<{
   plan: ValidatedMarketAcquisitionConfiguration;
   acquisitionObservationId: string;
   retrievalAttemptId: string;
+  attemptBudgetMs: number;
+  attemptAdmittedAtMs: number;
+  credentialUseDeadlineMs: number;
 }>;
 
 type AuthorizationLeaseState = {
@@ -111,6 +117,9 @@ const credentialIsolatedTransports = new WeakSet<object>();
 const credentialAuthorizationBoundaries = new WeakSet<object>();
 const productionCredentialDatabases = new WeakMap<object, SqliteDatabase>();
 const CREDENTIAL_BOUNDARY_CONSTRUCTION_AUTHORITY = Object.freeze({});
+const trustedTimeOriginMs = performance.timeOrigin;
+const trustedMonotonicNowMs = performance.now.bind(performance);
+const trustedSystemNowMs = (): number => Math.trunc(trustedTimeOriginMs + trustedMonotonicNowMs());
 
 function revokeAuthorization(state: AuthorizationLeaseState): void {
   state.active = false;
@@ -220,16 +229,7 @@ export class DurableCredentialAuthorizationBoundary {
       throw new TypeError("credential-retention-denied");
     }
     if (this.#productionStore !== undefined) {
-      const expected = deriveRequestStartedWorkflow(input);
-      this.#productionStore.ensure(expected);
-      if (!this.#productionStore.claim(expected.workflowId)) {
-        throw new TypeError("credential-request-started-already-claimed");
-      }
-      const binding = Object.freeze({
-        plan: input.plan,
-        acquisitionObservationId: input.acquisitionObservationId,
-        retrievalAttemptId: input.retrievalAttemptId,
-      });
+      const binding = this.#productionStore.admit(input);
       const evidence = Object.freeze({
         kind: "p1-10-durable-credential-evidence" as const,
       });
@@ -296,12 +296,16 @@ export class DurableCredentialAuthorizationBoundary {
       throw new TypeError("credential-retention-denied");
     }
     const evidence = Object.freeze({ kind: "p1-10-durable-credential-evidence" as const });
+    const attemptAdmittedAtMs = trustedSystemNowMs();
     establishedEvidence.set(
       evidence,
       Object.freeze({
         plan: input.plan,
         acquisitionObservationId: input.acquisitionObservationId,
         retrievalAttemptId: input.retrievalAttemptId,
+        attemptBudgetMs: MARKET_ACQUISITION_LIMITS.attemptDeadlineMs,
+        attemptAdmittedAtMs,
+        credentialUseDeadlineMs: attemptAdmittedAtMs + MARKET_ACQUISITION_LIMITS.attemptDeadlineMs,
       }),
     );
     return evidence;
@@ -341,26 +345,39 @@ function exactJournalIdentity(plan: ValidatedMarketAcquisitionConfiguration): Jo
   });
 }
 
-function deriveRequestStartedWorkflow(input: CredentialAuthorizationRequest) {
+type OwnedAttemptIdentity = Readonly<{
+  acquisitionObservationId: string;
+  retrievalAttemptId: string;
+}>;
+
+function deriveRequestStartedWorkflow(
+  input: CredentialAuthorizationRequest,
+  ownedAttempt: OwnedAttemptIdentity,
+) {
   validatePlan(input.plan);
   const identity = exactJournalIdentity(input.plan);
   const journalId = deriveMarketAcquisitionJournalId(identity);
   if (
     input.marketAcquisitionJournalId !== journalId ||
-    JSON.stringify(input.journalIdentity) !== JSON.stringify(identity) ||
-    input.acquisitionObservationId !==
-      deriveAcquisitionObservationId({
-        provider: "alpaca",
-        retrievalAttemptId: input.retrievalAttemptId,
-        sanitizedRequestIdentityHash: input.plan.requestIdentityHash,
-        routeLabel: input.plan.route.safeRouteLabel,
-      })
+    JSON.stringify(input.journalIdentity) !== JSON.stringify(identity)
+  ) {
+    throw new TypeError("credential-request-started-workflow-invalid");
+  }
+  const { acquisitionObservationId, retrievalAttemptId } = ownedAttempt;
+  if (
+    acquisitionObservationId !==
+    deriveAcquisitionObservationId({
+      provider: "alpaca",
+      retrievalAttemptId,
+      sanitizedRequestIdentityHash: input.plan.requestIdentityHash,
+      routeLabel: input.plan.route.safeRouteLabel,
+    })
   ) {
     throw new TypeError("credential-request-started-workflow-invalid");
   }
   const clock = input.plan.trustedClockEvidence;
   const ledger = new MarketAcquisitionLedger(
-    `market-acquisition:${journalId}:${input.retrievalAttemptId}`,
+    `market-acquisition:${journalId}:${retrievalAttemptId}`,
     {
       clockBasisId: clock.basisId,
       wallClock: clock.wallClock,
@@ -378,9 +395,9 @@ function deriveRequestStartedWorkflow(input: CredentialAuthorizationRequest) {
   const declaration = ledger.declareAcquisition(
     {
       kind: "acquisition.declared",
-      acquisitionObservationId: input.acquisitionObservationId,
+      acquisitionObservationId,
       provider: "alpaca",
-      retrievalAttemptId: input.retrievalAttemptId,
+      retrievalAttemptId,
       sanitizedRequestIdentityHash: input.plan.requestIdentityHash,
       routeLabel: input.plan.route.safeRouteLabel,
     },
@@ -388,13 +405,13 @@ function deriveRequestStartedWorkflow(input: CredentialAuthorizationRequest) {
   );
   const started = ledger.requestStarted(
     declaration,
-    { kind: "request.started", acquisitionObservationId: input.acquisitionObservationId },
+    { kind: "request.started", acquisitionObservationId },
     stamp(clock.currentSample),
   );
   const memberHash = canonicalHash("peas/market-acquisition-owned-workflow/v1", {
     journalId,
-    acquisitionObservationId: input.acquisitionObservationId,
-    retrievalAttemptId: input.retrievalAttemptId,
+    acquisitionObservationId,
+    retrievalAttemptId,
   });
   const logicalPageIdentityHash = deriveLogicalPageIdentityHash({
     requestIdentityHash: input.plan.requestIdentityHash,
@@ -405,7 +422,7 @@ function deriveRequestStartedWorkflow(input: CredentialAuthorizationRequest) {
     Object.freeze({
       schemaVersion: 1 as const,
       runSessionNonce: `owned-${memberHash}`,
-      acquisitionObservationId: input.acquisitionObservationId,
+      acquisitionObservationId,
       marketAcquisitionId: `maq1_${memberHash}`,
       admittedMarketAcquisitionIds: Object.freeze([]),
       requestIdentityHash: input.plan.requestIdentityHash,
@@ -424,7 +441,7 @@ function deriveRequestStartedWorkflow(input: CredentialAuthorizationRequest) {
       currentContinuationBindingHash: null,
       nextContinuationBindingHash: null,
       attemptId: `mat1_${memberHash}`,
-      retrievalAttemptId: input.retrievalAttemptId,
+      retrievalAttemptId,
       attemptOrdinal: 0,
       artifactObservationId: null,
       artifactDigest: null,
@@ -466,8 +483,8 @@ function deriveRequestStartedWorkflow(input: CredentialAuthorizationRequest) {
   const workflowId = canonicalHash("peas/market-acquisition-owned-request-started/v1", {
     journalId,
     requestIdentityHash: input.plan.requestIdentityHash,
-    retrievalAttemptId: input.retrievalAttemptId,
-    acquisitionObservationId: input.acquisitionObservationId,
+    retrievalAttemptId,
+    acquisitionObservationId,
     journalEntries,
     ledgerEntries: ledger.entries,
   } as unknown as JsonValue);
@@ -480,21 +497,177 @@ function deriveRequestStartedWorkflow(input: CredentialAuthorizationRequest) {
   });
 }
 
-type DerivedRequestStartedWorkflow = ReturnType<typeof deriveRequestStartedWorkflow>;
 type ProductionCredentialStore = Readonly<{
-  ensure(value: DerivedRequestStartedWorkflow): void;
-  claim(workflowId: string): boolean;
+  admit(input: CredentialAuthorizationRequest): PermitBinding;
 }>;
 
-function productionCredentialStore(database: SqliteDatabase): ProductionCredentialStore {
+type AttemptClaimRow = Readonly<{
+  request_identity_hash: string;
+  acquisition_configuration_hash: string;
+  acquisition_started_ms: bigint;
+  attempt_started_ms: bigint;
+  attempt_ordinal: bigint;
+}>;
+
+class CredentialAdmissionDenied extends Error {
+  readonly reason:
+    | "acquisition-deadline"
+    | "attempt-budget-exhausted"
+    | "clock-regression"
+    | "quota-exhausted";
+
+  constructor(reason: CredentialAdmissionDenied["reason"]) {
+    super(`credential-${reason}`);
+    this.reason = reason;
+  }
+}
+
+export type CredentialAttemptAdmissionPlan =
+  | Readonly<{ kind: "admit"; attemptOrdinal: number; attemptBudgetMs: number }>
+  | Readonly<{
+      kind: "stop";
+      reason:
+        | "acquisition-deadline"
+        | "attempt-budget-exhausted"
+        | "clock-regression"
+        | "quota-exhausted";
+    }>;
+
+/** Pure planner only; durable production authority remains inside the owned SQLite transaction. */
+export function planCredentialAttemptAdmission(
+  input: Readonly<{
+    nowMs: number;
+    acquisitionStartedMs: number | null;
+    lastAttemptStartedMs: number | null;
+    attemptsStarted: number;
+    rollingProjectAttempts: number;
+  }>,
+): CredentialAttemptAdmissionPlan {
+  for (const value of [input.nowMs, input.attemptsStarted, input.rollingProjectAttempts]) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new RangeError("credential-admission-input-invalid");
+    }
+  }
+  if (
+    (input.acquisitionStartedMs === null) !== (input.lastAttemptStartedMs === null) ||
+    (input.acquisitionStartedMs !== null &&
+      (!Number.isSafeInteger(input.acquisitionStartedMs) || input.acquisitionStartedMs < 0)) ||
+    (input.lastAttemptStartedMs !== null &&
+      (!Number.isSafeInteger(input.lastAttemptStartedMs) || input.lastAttemptStartedMs < 0))
+  ) {
+    throw new RangeError("credential-admission-input-invalid");
+  }
+  const acquisitionStartedMs = input.acquisitionStartedMs ?? input.nowMs;
+  const lastAttemptStartedMs = input.lastAttemptStartedMs ?? acquisitionStartedMs;
+  if (input.nowMs < acquisitionStartedMs || input.nowMs < lastAttemptStartedMs) {
+    return Object.freeze({ kind: "stop", reason: "clock-regression" });
+  }
+  const elapsedMs = input.nowMs - acquisitionStartedMs;
+  if (elapsedMs >= MARKET_ACQUISITION_LIMITS.acquisitionDeadlineMs) {
+    return Object.freeze({ kind: "stop", reason: "acquisition-deadline" });
+  }
+  if (input.attemptsStarted >= MARKET_ACQUISITION_LIMITS.attemptsPerAcquisition) {
+    return Object.freeze({ kind: "stop", reason: "attempt-budget-exhausted" });
+  }
+  if (input.rollingProjectAttempts >= MARKET_ACQUISITION_LIMITS.rateAttempts) {
+    return Object.freeze({ kind: "stop", reason: "quota-exhausted" });
+  }
   return Object.freeze({
-    ensure(value) {
-      const journalJson = canonicalJson(value.journalEntries as unknown as JsonValue);
-      const ledgerJson = canonicalJson(value.ledgerEntries as unknown as JsonValue);
-      database
+    kind: "admit",
+    attemptOrdinal: input.attemptsStarted,
+    attemptBudgetMs: Math.min(
+      MARKET_ACQUISITION_LIMITS.attemptDeadlineMs,
+      MARKET_ACQUISITION_LIMITS.acquisitionDeadlineMs - elapsedMs,
+    ),
+  });
+}
+
+export function credentialAuthorizationDenialReason(
+  error: unknown,
+): CredentialAdmissionDenied["reason"] | null {
+  return error instanceof CredentialAdmissionDenied ? error.reason : null;
+}
+
+function productionCredentialStore(
+  database: SqliteDatabase,
+  rootPlan: ValidatedMarketAcquisitionConfiguration,
+): ProductionCredentialStore {
+  const acquisitionId = `maa1_${canonicalHash("peas/market-acquisition-owned-admission/v1", {
+    requestIdentityHash: rootPlan.requestIdentityHash,
+    acquisitionConfigurationHash: rootPlan.acquisitionConfigurationHash,
+    trustedRequestStartedAtNs: rootPlan.trustedRequestStartedAtNs.toString(),
+    clockSampleId: rootPlan.trustedClockEvidence.currentSample.sampleId,
+  })}`;
+  return Object.freeze({
+    admit(input) {
+      if (input.plan !== rootPlan) {
+        throw new TypeError("credential-production-plan-mismatch");
+      }
+      const nowMs = trustedSystemNowMs();
+      if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
+        throw new CredentialAdmissionDenied("clock-regression");
+      }
+      return database
         .transaction(() => {
+          const claims = database
+            .prepare(`SELECT request_identity_hash, acquisition_configuration_hash,
+              acquisition_started_ms, attempt_started_ms, attempt_ordinal
+              FROM market_acquisition_owned_attempt_claims
+              WHERE acquisition_id = ? ORDER BY attempt_ordinal`)
+            .all(acquisitionId) as AttemptClaimRow[];
+          if (
+            claims.some(
+              (claim, index) =>
+                claim.request_identity_hash !== rootPlan.requestIdentityHash ||
+                claim.acquisition_configuration_hash !== rootPlan.acquisitionConfigurationHash ||
+                claim.attempt_ordinal !== BigInt(index) ||
+                (index > 0 && claim.acquisition_started_ms !== claims[0]?.acquisition_started_ms),
+            )
+          ) {
+            throw new TypeError("credential-admission-state-invalid");
+          }
+          const acquisitionStartedMs =
+            claims.length === 0 ? nowMs : Number(claims[0]?.acquisition_started_ms);
+          const lastAttemptStartedMs =
+            claims.length === 0 ? acquisitionStartedMs : Number(claims.at(-1)?.attempt_started_ms);
+          const rolling = database
+            .prepare(`SELECT COUNT(CASE WHEN attempt_started_ms > ? THEN 1 END) AS count,
+              MAX(attempt_started_ms) AS latest
+              FROM market_acquisition_owned_attempt_claims`)
+            .get(nowMs - MARKET_ACQUISITION_LIMITS.rateWindowMs) as {
+            count: bigint;
+            latest: bigint | null;
+          };
+          if (rolling.latest !== null && rolling.latest > BigInt(nowMs)) {
+            throw new CredentialAdmissionDenied("clock-regression");
+          }
+          const admission = planCredentialAttemptAdmission({
+            nowMs,
+            acquisitionStartedMs: claims.length === 0 ? null : acquisitionStartedMs,
+            lastAttemptStartedMs: claims.length === 0 ? null : lastAttemptStartedMs,
+            attemptsStarted: claims.length,
+            rollingProjectAttempts: Number(rolling.count),
+          });
+          if (admission.kind === "stop") throw new CredentialAdmissionDenied(admission.reason);
+          const { attemptOrdinal, attemptBudgetMs } = admission;
+          const retrievalAttemptId = `rat1_${canonicalHash(
+            "peas/market-acquisition-owned-retrieval-attempt/v1",
+            { acquisitionId, attemptOrdinal, attemptStartedMs: nowMs },
+          )}`;
+          const acquisitionObservationId = deriveAcquisitionObservationId({
+            provider: "alpaca",
+            retrievalAttemptId,
+            sanitizedRequestIdentityHash: rootPlan.requestIdentityHash,
+            routeLabel: rootPlan.route.safeRouteLabel,
+          });
+          const value = deriveRequestStartedWorkflow(input, {
+            retrievalAttemptId,
+            acquisitionObservationId,
+          });
+          const journalJson = canonicalJson(value.journalEntries as unknown as JsonValue);
+          const ledgerJson = canonicalJson(value.ledgerEntries as unknown as JsonValue);
           database
-            .prepare(`INSERT OR IGNORE INTO market_acquisition_owned_request_started (
+            .prepare(`INSERT INTO market_acquisition_owned_request_started (
               workflow_id, request_identity_hash, retrieval_attempt_id, acquisition_observation_id,
               journal_json, ledger_json, workflow_hash
             ) VALUES (?, ?, ?, ?, ?, ?, ?)`)
@@ -507,41 +680,35 @@ function productionCredentialStore(database: SqliteDatabase): ProductionCredenti
               ledgerJson,
               value.workflowId,
             );
-          const row = database
-            .prepare(`SELECT request_identity_hash, retrieval_attempt_id,
-              acquisition_observation_id, journal_json, ledger_json, workflow_hash
-              FROM market_acquisition_owned_request_started WHERE workflow_id = ?`)
-            .get(value.workflowId) as
-            | {
-                request_identity_hash: string;
-                retrieval_attempt_id: string;
-                acquisition_observation_id: string;
-                journal_json: string;
-                ledger_json: string;
-                workflow_hash: string;
-              }
-            | undefined;
-          if (
-            row === undefined ||
-            row.request_identity_hash !== value.identity.requestIdentityHash ||
-            row.retrieval_attempt_id !== value.journalEntries[1]?.retrievalAttemptId ||
-            row.acquisition_observation_id !== value.journalEntries[1]?.acquisitionObservationId ||
-            row.journal_json !== journalJson ||
-            row.ledger_json !== ledgerJson ||
-            row.workflow_hash !== value.workflowId
-          ) {
-            throw new TypeError("credential-request-started-workflow-invalid");
-          }
+          database
+            .prepare(`INSERT INTO market_acquisition_owned_attempt_claims (
+              workflow_id, acquisition_id, request_identity_hash,
+              acquisition_configuration_hash, acquisition_started_ms, attempt_started_ms,
+              attempt_ordinal, attempt_budget_ms, retrieval_attempt_id,
+              acquisition_observation_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+            .run(
+              value.workflowId,
+              acquisitionId,
+              rootPlan.requestIdentityHash,
+              rootPlan.acquisitionConfigurationHash,
+              acquisitionStartedMs,
+              nowMs,
+              attemptOrdinal,
+              attemptBudgetMs,
+              retrievalAttemptId,
+              acquisitionObservationId,
+            );
+          return Object.freeze({
+            plan: rootPlan,
+            acquisitionObservationId,
+            retrievalAttemptId,
+            attemptBudgetMs,
+            attemptAdmittedAtMs: nowMs,
+            credentialUseDeadlineMs: nowMs + attemptBudgetMs,
+          });
         })
         .immediate();
-    },
-    claim(workflowId) {
-      return (
-        database
-          .prepare(`INSERT OR IGNORE INTO market_acquisition_owned_attempt_claims (workflow_id)
-            VALUES (?)`)
-          .run(workflowId).changes === 1
-      );
     },
   });
 }
@@ -559,7 +726,7 @@ export function openSqliteDurableCredentialAuthorizationBoundary(
   const database = openSqliteDatabase(filename, migrations);
   try {
     const retention = createSqliteArtifactRetentionJournal(database);
-    const store = productionCredentialStore(database);
+    const store = productionCredentialStore(database, plan);
     const boundary = new DurableCredentialAuthorizationBoundary(
       undefined,
       retention,
@@ -613,9 +780,26 @@ export function authorizeCredentialLoad(
     acquisitionConfigurationHash: binding.plan.acquisitionConfigurationHash,
     acquisitionObservationId: binding.acquisitionObservationId,
     retrievalAttemptId: binding.retrievalAttemptId,
+    attemptBudgetMs: binding.attemptBudgetMs,
   });
   issuedPermits.set(permit, binding);
   return permit;
+}
+
+export function discardCredentialPreflightPermit(permit: CredentialPreflightPermit): void {
+  issuedPermits.delete(permit);
+}
+
+export function remainingCredentialAttemptBudgetMs(permit: CredentialPreflightPermit): number {
+  const binding = issuedPermits.get(permit);
+  if (binding === undefined) throw new TypeError("credential-capability-invalid");
+  const nowMs = trustedSystemNowMs();
+  if (!Number.isSafeInteger(nowMs) || nowMs < binding.attemptAdmittedAtMs) {
+    throw new CredentialAdmissionDenied("clock-regression");
+  }
+  const remainingMs = binding.credentialUseDeadlineMs - nowMs;
+  if (remainingMs < 1) throw new CredentialAdmissionDenied("acquisition-deadline");
+  return Math.min(binding.attemptBudgetMs, remainingMs);
 }
 
 function credentialUnavailable<T>(): CredentialAttemptResult<T> {
@@ -659,6 +843,14 @@ export async function withAlpacaAuthorization<T>(
     url.hash !== ""
   ) {
     throw new TypeError("alpaca-dispatch-destination-invalid");
+  }
+  const credentialUseNowMs = trustedSystemNowMs();
+  if (
+    !Number.isSafeInteger(credentialUseNowMs) ||
+    credentialUseNowMs < binding.attemptAdmittedAtMs ||
+    credentialUseNowMs >= binding.credentialUseDeadlineMs
+  ) {
+    return credentialUnavailable();
   }
   let keyId: unknown;
   let secretKey: unknown;

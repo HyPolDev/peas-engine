@@ -21,12 +21,14 @@ import {
   assertTestNativeAlpacaTransportReleased,
   createTestCredentialIsolatedAlpacaTransport,
   openSqliteDurableCredentialAuthorizationBoundary,
+  planCredentialAttemptAdmission,
   createTestDurableCredentialAuthorizationBoundary,
   fmpLaneDisabled,
   withAlpacaAuthorization,
   type AlpacaDispatchCapability,
   type RuntimeSecretSource,
 } from "../src/adapters/market-acquisition/credentials.js";
+import { MARKET_ACQUISITION_LIMITS } from "../src/adapters/market-acquisition/contracts.js";
 import { buildAlpacaTransportRequest } from "../src/adapters/market-acquisition/alpaca/request.js";
 import { appendTestAcquisitionWorkflowEvidence } from "../src/adapters/market-acquisition/journal.js";
 import {
@@ -616,7 +618,7 @@ test("durable attempt claims exclude replay and concurrent remint before one sec
   );
 });
 
-test("a persisted attempt claim cannot be reminted after SQLite cold restart", async (t) => {
+test("SQLite restart advances one owned attempt ordinal without reminting caller identity", async (t) => {
   const fixture = await credentialAuthorizationFixture(validatedRepairPlan());
   const directory = await mkdtemp(join(tmpdir(), "peas-p1-10-credential-claim-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -634,17 +636,168 @@ test("a persisted attempt claim cannot be reminted after SQLite cold restart", a
     migrations,
     fixture.request.plan,
   );
-  await assert.rejects(
-    () => restarted.establish(fixture.request),
-    /request-started|already-claimed/u,
-  );
+  await restarted.establish(fixture.request);
   restarted.close();
   const database = openSqliteDatabase(filename, migrations);
   const claims = database
-    .prepare("SELECT COUNT(*) AS count FROM market_acquisition_owned_attempt_claims")
-    .get() as { count: bigint };
-  assert.equal(claims.count, 1n);
+    .prepare(`SELECT attempt_ordinal, retrieval_attempt_id
+      FROM market_acquisition_owned_attempt_claims ORDER BY attempt_ordinal`)
+    .all() as Array<{ attempt_ordinal: bigint; retrieval_attempt_id: string }>;
+  assert.deepEqual(
+    claims.map((claim) => claim.attempt_ordinal),
+    [0n, 1n],
+  );
+  assert.equal(new Set(claims.map((claim) => claim.retrieval_attempt_id)).size, 2);
+  assert.equal(
+    claims.some((claim) => claim.retrieval_attempt_id === fixture.request.retrievalAttemptId),
+    false,
+  );
   database.close();
+});
+
+test("owned production admission caps caller-selected workflows before secret reads", async (t) => {
+  const fixture = await credentialAuthorizationFixture(validatedRepairPlan());
+  const directory = await mkdtemp(join(tmpdir(), "peas-p1-10-owned-admission-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filename = join(directory, "admission.sqlite");
+  const migrations = loadMigrations(join(process.cwd(), "migrations"));
+  const authorization = openSqliteDurableCredentialAuthorizationBoundary(
+    filename,
+    migrations,
+    fixture.request.plan,
+  );
+  let reads = 0;
+  const admittedRetrievalIds = new Set<string>();
+  for (let index = 0; index < MARKET_ACQUISITION_LIMITS.rateAttempts; index += 1) {
+    const callerRetrievalAttemptId = `rat1_${index.toString(16).padStart(64, "0")}`;
+    const evidence = await authorization.establish({
+      ...fixture.request,
+      retrievalAttemptId: callerRetrievalAttemptId,
+      acquisitionObservationId: index.toString(16).padStart(64, "f"),
+    });
+    const permit = authorizeCredentialLoad(evidence);
+    admittedRetrievalIds.add(permit.retrievalAttemptId);
+    assert.notEqual(permit.retrievalAttemptId, callerRetrievalAttemptId);
+    const result = await withAlpacaAuthorization(
+      permit,
+      {
+        read(name) {
+          reads += 1;
+          return name === ALPACA_KEY_ID_ENV ? "synthetic-key" : "synthetic-secret";
+        },
+      },
+      firstRequest(fixture.request.plan),
+      async () => "admitted",
+    );
+    assert.deepEqual(result, { ok: true, value: "admitted" });
+  }
+  for (
+    let index = MARKET_ACQUISITION_LIMITS.rateAttempts;
+    index < MARKET_ACQUISITION_LIMITS.attemptsPerAcquisition + 1;
+    index += 1
+  ) {
+    await assert.rejects(
+      () =>
+        authorization.establish({
+          ...fixture.request,
+          retrievalAttemptId: `rat1_${index.toString(16).padStart(64, "0")}`,
+        }),
+      /credential-quota-exhausted/u,
+    );
+  }
+  assert.equal(reads, MARKET_ACQUISITION_LIMITS.rateAttempts * 2);
+  assert.equal(admittedRetrievalIds.size, MARKET_ACQUISITION_LIMITS.rateAttempts);
+  authorization.close();
+
+  const restarted = openSqliteDurableCredentialAuthorizationBoundary(
+    filename,
+    migrations,
+    fixture.request.plan,
+  );
+  await assert.rejects(() => restarted.establish(fixture.request), /credential-quota-exhausted/u);
+  restarted.close();
+  const database = openSqliteDatabase(filename, migrations);
+  const claims = database
+    .prepare(`SELECT COUNT(*) AS count, COUNT(DISTINCT acquisition_id) AS acquisitions,
+      MIN(attempt_ordinal) AS minimum_ordinal, MAX(attempt_ordinal) AS maximum_ordinal
+      FROM market_acquisition_owned_attempt_claims`)
+    .get() as {
+    count: bigint;
+    acquisitions: bigint;
+    minimum_ordinal: bigint;
+    maximum_ordinal: bigint;
+  };
+  assert.deepEqual(claims, {
+    count: BigInt(MARKET_ACQUISITION_LIMITS.rateAttempts),
+    acquisitions: 1n,
+    minimum_ordinal: 0n,
+    maximum_ordinal: BigInt(MARKET_ACQUISITION_LIMITS.rateAttempts - 1),
+  });
+  database.close();
+});
+
+test("owned credential admission planner enforces exact quota, attempt, and deadline edges", () => {
+  const base = {
+    nowMs: 1_000,
+    acquisitionStartedMs: 1_000,
+    lastAttemptStartedMs: 1_000,
+    attemptsStarted: 0,
+    rollingProjectAttempts: 0,
+  } as const;
+  assert.deepEqual(
+    planCredentialAttemptAdmission({
+      ...base,
+      nowMs: base.acquisitionStartedMs + MARKET_ACQUISITION_LIMITS.acquisitionDeadlineMs - 1,
+    }),
+    { kind: "admit", attemptOrdinal: 0, attemptBudgetMs: 1 },
+  );
+  assert.deepEqual(
+    planCredentialAttemptAdmission({
+      ...base,
+      nowMs: base.acquisitionStartedMs + MARKET_ACQUISITION_LIMITS.acquisitionDeadlineMs,
+    }),
+    { kind: "stop", reason: "acquisition-deadline" },
+  );
+  assert.deepEqual(
+    planCredentialAttemptAdmission({
+      ...base,
+      attemptsStarted: MARKET_ACQUISITION_LIMITS.attemptsPerAcquisition - 1,
+    }),
+    {
+      kind: "admit",
+      attemptOrdinal: MARKET_ACQUISITION_LIMITS.attemptsPerAcquisition - 1,
+      attemptBudgetMs: MARKET_ACQUISITION_LIMITS.attemptDeadlineMs,
+    },
+  );
+  assert.deepEqual(
+    planCredentialAttemptAdmission({
+      ...base,
+      attemptsStarted: MARKET_ACQUISITION_LIMITS.attemptsPerAcquisition,
+    }),
+    { kind: "stop", reason: "attempt-budget-exhausted" },
+  );
+  assert.deepEqual(
+    planCredentialAttemptAdmission({
+      ...base,
+      rollingProjectAttempts: MARKET_ACQUISITION_LIMITS.rateAttempts - 1,
+    }),
+    {
+      kind: "admit",
+      attemptOrdinal: 0,
+      attemptBudgetMs: MARKET_ACQUISITION_LIMITS.attemptDeadlineMs,
+    },
+  );
+  assert.deepEqual(
+    planCredentialAttemptAdmission({
+      ...base,
+      rollingProjectAttempts: MARKET_ACQUISITION_LIMITS.rateAttempts,
+    }),
+    { kind: "stop", reason: "quota-exhausted" },
+  );
+  assert.deepEqual(
+    planCredentialAttemptAdmission({ ...base, nowMs: base.lastAttemptStartedMs - 1 }),
+    { kind: "stop", reason: "clock-regression" },
+  );
 });
 
 test("an alternate raw-handle chain cannot satisfy the opaque production credential root", async (t) => {
@@ -700,16 +853,20 @@ test("an alternate raw-handle chain cannot satisfy the opaque production credent
     migrations,
     fixture.request.plan,
   );
-  await assert.rejects(
-    () =>
-      authorization.establish({
-        ...fixture.request,
-        acquisitionObservationId: "f".repeat(64),
-      }),
-    /credential-request-started-workflow-invalid/u,
-  );
-  await authorization.establish(fixture.request);
+  await authorization.establish({
+    ...fixture.request,
+    acquisitionObservationId: "f".repeat(64),
+    retrievalAttemptId: `rat1_${"e".repeat(64)}`,
+  });
   authorization.close();
+  const owned = openSqliteDatabase(filename, migrations);
+  const admitted = owned
+    .prepare(`SELECT retrieval_attempt_id, acquisition_observation_id
+      FROM market_acquisition_owned_attempt_claims`)
+    .get() as { retrieval_attempt_id: string; acquisition_observation_id: string };
+  assert.notEqual(admitted.retrieval_attempt_id, `rat1_${"e".repeat(64)}`);
+  assert.notEqual(admitted.acquisition_observation_id, "f".repeat(64));
+  owned.close();
 });
 
 test("public journals cannot author coherent credential prerequisite facts", async (t) => {

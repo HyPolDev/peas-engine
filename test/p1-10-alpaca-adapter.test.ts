@@ -141,8 +141,6 @@ async function executeAlpacaAttempt<T>(
     }>;
     artifactSink: AlpacaArtifactCommitSink<T>;
     deadlineScheduler: AlpacaDeadlineScheduler | TimerDouble;
-    acquisitionDeclaredMonotonicMs?: number;
-    nowMonotonicMs?: number;
   }>,
 ) {
   assert.equal(Object.isFrozen(input.authorizationHeaders), true);
@@ -174,8 +172,6 @@ async function executeAlpacaAttempt<T>(
       input.deadlineScheduler instanceof TimerDouble
         ? input.deadlineScheduler.scheduler
         : input.deadlineScheduler,
-    acquisitionDeclaredMonotonicMs: input.acquisitionDeclaredMonotonicMs ?? 0,
-    nowMonotonicMs: input.nowMonotonicMs ?? 0,
   });
 }
 
@@ -990,40 +986,6 @@ test("frozen quotes, trades, and bars compile exact GET route and closed query p
   assert.equal(unexpectedNetworkCalls, 0);
 });
 
-test("production boundary uses the minimum remaining acquisition budget and rejects exact exhaustion", async () => {
-  const plan = validatedPlan();
-  const exactCounters = counts();
-  const exactTimer = new TimerDouble();
-  const exact = await executeAlpacaAttempt({
-    plan,
-    page: firstPage(),
-    authorizationHeaders: HEADERS,
-    transport: new TransportDouble(exactCounters, response(new BodyDouble(exactCounters, []))),
-    artifactSink: new SinkDouble(exactCounters),
-    deadlineScheduler: exactTimer,
-    acquisitionDeclaredMonotonicMs: 0,
-    nowMonotonicMs: MARKET_ACQUISITION_LIMITS.acquisitionDeadlineMs,
-  });
-  assert.equal(exact.ok, false);
-  assert.equal(exactCounters.transport, 0);
-  assert.equal(exactTimer.armedWith, null);
-
-  const oneCounters = counts();
-  const oneTimer = new TimerDouble();
-  const one = await executeAlpacaAttempt({
-    plan,
-    page: firstPage(),
-    authorizationHeaders: HEADERS,
-    transport: new TransportDouble(oneCounters, response(new BodyDouble(oneCounters, []))),
-    artifactSink: new SinkDouble(oneCounters),
-    deadlineScheduler: oneTimer,
-    acquisitionDeclaredMonotonicMs: 0,
-    nowMonotonicMs: MARKET_ACQUISITION_LIMITS.acquisitionDeadlineMs - 1,
-  });
-  assert.equal(one.ok, true);
-  assert.equal(oneTimer.armedWith, 1);
-});
-
 test("caller and test-double sinks cannot attest atomic artifact ownership", async () => {
   const plan = validatedPlan();
   assert.throws(
@@ -1060,8 +1022,6 @@ test("caller and test-double sinks cannot attest atomic artifact ownership", asy
     ) as unknown as AlpacaTransport,
     artifactSink: new SinkDouble(counters) as never,
     deadlineScheduler: new TimerDouble().scheduler,
-    acquisitionDeclaredMonotonicMs: 0,
-    nowMonotonicMs: 0,
   });
   assert.equal(result.ok, false);
   if (!result.ok) assert.equal(result.error.reasonCode, "configuration-invalid");
@@ -1148,8 +1108,6 @@ test("all non-secret request, scheduler, and transport rejection precedes creden
           : rejection === "scheduler-handle"
             ? ({ arm: () => Object.freeze({}) } as unknown as AlpacaDeadlineScheduler)
             : new TimerDouble().scheduler,
-      acquisitionDeclaredMonotonicMs: 0,
-      nowMonotonicMs: 0,
     });
     assert.equal(result.ok, false, rejection);
     assert.equal(credentialReads, 0, rejection);
@@ -1193,8 +1151,6 @@ test("a hostile retained transport request contains no plaintext credential surf
       adapterRetention(),
     ),
     deadlineScheduler: new TimerDouble().scheduler,
-    acquisitionDeclaredMonotonicMs: 0,
-    nowMonotonicMs: 0,
   });
   assert.equal(result.ok, true);
   assert.equal(reads, 2);

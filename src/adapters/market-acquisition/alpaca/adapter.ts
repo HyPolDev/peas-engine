@@ -11,6 +11,9 @@ import {
   authorizeCredentialLoad,
   assertCredentialIsolatedAlpacaTransport,
   assertOwnedDurableCredentialAuthorizationBoundary,
+  credentialAuthorizationDenialReason,
+  discardCredentialPreflightPermit,
+  remainingCredentialAttemptBudgetMs,
   type DurableCredentialAuthorizationBoundary,
   withAlpacaAuthorization,
   type CredentialAuthorizationRequest,
@@ -353,8 +356,6 @@ export type AlpacaProductionAttemptInput<T> = Readonly<
   Omit<AlpacaAttemptInput<T>, "plan" | "dispatchCapability" | "attemptBudgetMs"> & {
     plan: AlpacaAttemptInput<T>["plan"];
     credentialAuthorization: CredentialAuthorizationRequest;
-    acquisitionDeclaredMonotonicMs: number;
-    nowMonotonicMs: number;
   }
 >;
 
@@ -382,26 +383,6 @@ export class AlpacaProductionAttemptBoundary {
         true,
       );
     }
-    const { acquisitionDeclaredMonotonicMs, nowMonotonicMs } = input;
-    if (
-      !Number.isSafeInteger(acquisitionDeclaredMonotonicMs) ||
-      !Number.isSafeInteger(nowMonotonicMs) ||
-      nowMonotonicMs < acquisitionDeclaredMonotonicMs
-    ) {
-      return safeFailure(
-        new AttemptFailure("configuration-invalid", "request-preflight", { kind: "authorization" }),
-        false,
-      );
-    }
-    const remaining =
-      MARKET_ACQUISITION_LIMITS.acquisitionDeadlineMs -
-      (nowMonotonicMs - acquisitionDeclaredMonotonicMs);
-    if (remaining < 1) {
-      return safeFailure(
-        new AttemptFailure("acquisition-deadline", "request-preflight", { kind: "authorization" }),
-        false,
-      );
-    }
     const abortController = new AbortController();
     let requestLease: AlpacaTransportRequestLease;
     try {
@@ -414,11 +395,23 @@ export class AlpacaProductionAttemptBoundary {
         true,
       );
     }
+    let permit: CredentialPreflightPermit;
+    try {
+      const evidence = await this.#authorization.establish(input.credentialAuthorization);
+      permit = authorizeCredentialLoad(evidence);
+    } catch (error) {
+      requestLease.release();
+      const denial = credentialAuthorizationDenialReason(error);
+      return safeFailure(
+        new AttemptFailure(denial ?? "configuration-invalid", "request-preflight", {
+          kind: "authorization",
+        }),
+        true,
+      );
+    }
     let deadline: AlpacaDeadlineHandle;
     try {
-      const scheduled = input.deadlineScheduler.arm(
-        Math.min(MARKET_ACQUISITION_LIMITS.attemptDeadlineMs, remaining),
-      );
+      const scheduled = input.deadlineScheduler.arm(remainingCredentialAttemptBudgetMs(permit));
       if (
         scheduled === null ||
         typeof scheduled !== "object" ||
@@ -433,25 +426,15 @@ export class AlpacaProductionAttemptBoundary {
         cancel: scheduled.cancel.bind(scheduled),
         settle: scheduled.settle.bind(scheduled),
       });
-    } catch {
+    } catch (error) {
+      discardCredentialPreflightPermit(permit);
       requestLease.release();
+      const denial = credentialAuthorizationDenialReason(error);
       return safeFailure(
-        new AttemptFailure("attempt-timeout", "request-started", {
+        new AttemptFailure(denial ?? "attempt-timeout", "request-started", {
           kind: "cleanup-unprovable",
         }),
         false,
-      );
-    }
-    let permit: CredentialPreflightPermit;
-    try {
-      const evidence = await this.#authorization.establish(input.credentialAuthorization);
-      permit = authorizeCredentialLoad(evidence);
-    } catch {
-      requestLease.release();
-      const timerSettled = await settleTimer(deadline);
-      return safeFailure(
-        new AttemptFailure("configuration-invalid", "request-preflight", { kind: "authorization" }),
-        timerSettled,
       );
     }
     const authorized = await withAlpacaAuthorization(
