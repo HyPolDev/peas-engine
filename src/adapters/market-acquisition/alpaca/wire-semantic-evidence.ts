@@ -370,6 +370,8 @@ export async function revalidateOwnedAlpacaWireSemanticEvidence(
     semantic.requestIdentityHash !== plan.requestIdentityHash ||
     semantic.pageArtifactObservationId !== value.artifactObservationId ||
     semantic.pageArtifactDigest !== value.artifactDigest ||
+    semantic.queryStartNs !== plan.queryStartNs.toString() ||
+    semantic.queryEndNs !== plan.queryEndNs.toString() ||
     semantic.calendarDigest !== value.calendarDigest ||
     semantic.corpusAdmissionHash !== value.corpusAdmissionHash ||
     canonicalJson(semantic.calendarEntries as unknown as JsonValue) !==
