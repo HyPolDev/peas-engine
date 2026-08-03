@@ -38,7 +38,9 @@ import { P1_10_TEST_AUTHORITY } from "../../internal-test-authority.js";
 import { request as dispatchHttpsRequest } from "node:https";
 import type { ClientRequest, IncomingMessage } from "node:http";
 import { performance } from "node:perf_hooks";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { assertOwnedAlpacaTransportRequest } from "./alpaca/request.js";
 import { canonicalHash } from "../../core/hash.js";
@@ -127,12 +129,36 @@ const credentialAuthorizationBoundaries = new WeakSet<object>();
 const productionCredentialDatabases = new WeakMap<object, readonly SqliteDatabase[]>();
 const CREDENTIAL_BOUNDARY_CONSTRUCTION_AUTHORITY = Object.freeze({});
 const LIVE_CREDENTIAL_DATABASE_FILENAME = "market-acquisition-authority.sqlite";
+const LIVE_CREDENTIAL_ANCHOR_DATABASE_FILENAME = "market-acquisition-authority-anchor.sqlite";
 const LIVE_CREDENTIAL_MIGRATIONS_HASH =
   "80bc328608773561cefeda775579ff05f3d53ddb89ff118f0550b87d5f2b4da3";
 let liveCredentialBoundaryOpened = false;
 const trustedTimeOriginMs = performance.timeOrigin;
 const trustedMonotonicNowMs = performance.now.bind(performance);
 const trustedSystemNowMs = (): number => Math.trunc(trustedTimeOriginMs + trustedMonotonicNowMs());
+
+function installedPeasPackageRoot(): string {
+  let candidate = dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    const manifest = join(candidate, "package.json");
+    if (existsSync(manifest)) {
+      const parsed = JSON.parse(readFileSync(manifest, "utf8")) as { name?: unknown };
+      if (parsed.name === "peas-engine") return realpathSync(candidate);
+    }
+    const parent = dirname(candidate);
+    if (parent === candidate) throw new TypeError("peas-package-root-unavailable");
+    candidate = parent;
+  }
+}
+
+function liveCredentialAuthorityPaths(): Readonly<{ database: string; anchor: string }> {
+  const directory = join(installedPeasPackageRoot(), ".peas-authority");
+  mkdirSync(directory, { recursive: true });
+  return Object.freeze({
+    database: join(directory, LIVE_CREDENTIAL_DATABASE_FILENAME),
+    anchor: join(directory, LIVE_CREDENTIAL_ANCHOR_DATABASE_FILENAME),
+  });
+}
 
 function assertLiveCredentialMigrations(migrations: readonly Migration[]): void {
   if (
@@ -547,6 +573,58 @@ const OWNED_ADMISSION_SCHEMA_OBJECTS = Object.freeze([
 ] as const);
 const OWNED_ADMISSION_SCHEMA_HASH =
   "271ec4cc673d41a80d89ef0aa371187caaa9e1de96e614de3b7dde4a0eb5ec3e";
+const CREDENTIAL_ANCHOR_SCHEMA_SQL = `
+  CREATE TABLE credential_anchor.credential_authority_anchor_metadata (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+    authority_namespace TEXT NOT NULL,
+    runtime_root TEXT NOT NULL
+  ) STRICT;
+
+  CREATE TABLE credential_anchor.credential_authority_attempt_claims (
+    workflow_id TEXT PRIMARY KEY,
+    acquisition_id TEXT NOT NULL,
+    request_identity_hash TEXT NOT NULL,
+    acquisition_configuration_hash TEXT NOT NULL,
+    acquisition_started_ms INTEGER NOT NULL CHECK (acquisition_started_ms >= 0),
+    attempt_started_ms INTEGER NOT NULL CHECK (attempt_started_ms >= acquisition_started_ms),
+    attempt_ordinal INTEGER NOT NULL CHECK (attempt_ordinal >= 0 AND attempt_ordinal < 48),
+    attempt_budget_ms INTEGER NOT NULL CHECK (attempt_budget_ms >= 1 AND attempt_budget_ms <= 30000),
+    retrieval_attempt_id TEXT NOT NULL UNIQUE,
+    acquisition_observation_id TEXT NOT NULL UNIQUE,
+    UNIQUE (acquisition_id, attempt_ordinal)
+  ) STRICT;
+
+  CREATE INDEX credential_anchor.credential_authority_attempt_claims_rate_window
+  ON credential_authority_attempt_claims (attempt_started_ms);
+
+  CREATE TRIGGER credential_anchor.credential_authority_attempt_claims_no_update
+  BEFORE UPDATE ON credential_authority_attempt_claims
+  BEGIN SELECT RAISE(ABORT, 'credential authority anchor is immutable'); END;
+
+  CREATE TRIGGER credential_anchor.credential_authority_attempt_claims_no_delete
+  BEFORE DELETE ON credential_authority_attempt_claims
+  BEGIN SELECT RAISE(ABORT, 'credential authority anchor is immutable'); END;
+
+  CREATE TRIGGER credential_anchor.credential_authority_anchor_metadata_no_update
+  BEFORE UPDATE ON credential_authority_anchor_metadata
+  BEGIN SELECT RAISE(ABORT, 'credential authority anchor metadata is immutable'); END;
+
+  CREATE TRIGGER credential_anchor.credential_authority_anchor_metadata_no_delete
+  BEFORE DELETE ON credential_authority_anchor_metadata
+  BEGIN SELECT RAISE(ABORT, 'credential authority anchor metadata is immutable'); END;
+`;
+const CREDENTIAL_ANCHOR_SCHEMA_OBJECTS = Object.freeze([
+  "credential_authority_anchor_metadata",
+  "credential_authority_anchor_metadata_no_delete",
+  "credential_authority_anchor_metadata_no_update",
+  "credential_authority_attempt_claims",
+  "credential_authority_attempt_claims_no_delete",
+  "credential_authority_attempt_claims_no_update",
+  "credential_authority_attempt_claims_rate_window",
+] as const);
+const CREDENTIAL_ANCHOR_SCHEMA_HASH =
+  "be14a9c0fa7c5ea9e2b8d9b98d8e786a615d497f15aa36ad6ecac977a5623522";
 
 function assertOwnedAdmissionSchema(database: SqliteDatabase): void {
   const rows = database
@@ -568,6 +646,125 @@ function assertOwnedAdmissionSchema(database: SqliteDatabase): void {
   ) {
     throw new TypeError("credential-admission-schema-invalid");
   }
+}
+
+function credentialAuthorityNamespace(databaseFilename: string): string {
+  return canonicalHash("peas/market-acquisition-authority-namespace/v1", {
+    packageRoot: installedPeasPackageRoot(),
+    databaseFilename: realpathSync(dirname(databaseFilename)),
+  });
+}
+
+function anchorSchemaRows(database: SqliteDatabase): Array<{
+  name: string;
+  type: string;
+  sql: string | null;
+}> {
+  return database
+    .prepare(`SELECT name, type, sql FROM credential_anchor.sqlite_schema
+      WHERE name LIKE 'credential_authority_%'
+      ORDER BY name`)
+    .all() as Array<{ name: string; type: string; sql: string | null }>;
+}
+
+function assertCredentialAuthorityAnchorSchema(database: SqliteDatabase): void {
+  const rows = anchorSchemaRows(database);
+  if (
+    rows.length !== CREDENTIAL_ANCHOR_SCHEMA_OBJECTS.length ||
+    rows.some((row, index) => row.name !== CREDENTIAL_ANCHOR_SCHEMA_OBJECTS[index]) ||
+    canonicalHash(
+      "peas/market-acquisition-authority-anchor-schema/v1",
+      rows as unknown as JsonValue,
+    ) !== CREDENTIAL_ANCHOR_SCHEMA_HASH
+  ) {
+    throw new TypeError("credential-admission-anchor-schema-invalid");
+  }
+}
+
+function assertCredentialAuthorityAnchorState(
+  database: SqliteDatabase,
+  authorityNamespace: string,
+  runtimeRoot: string,
+): number {
+  assertOwnedAdmissionSchema(database);
+  assertCredentialAuthorityAnchorSchema(database);
+  const metadata = database
+    .prepare(`SELECT schema_version, authority_namespace, runtime_root
+      FROM credential_anchor.credential_authority_anchor_metadata WHERE singleton = 1`)
+    .get() as
+    | { schema_version: bigint; authority_namespace: string; runtime_root: string }
+    | undefined;
+  if (metadata?.schema_version !== 1n || metadata.authority_namespace !== authorityNamespace) {
+    throw new TypeError("credential-admission-anchor-state-invalid");
+  }
+  if (metadata.runtime_root !== runtimeRoot) {
+    throw new TypeError("credential-authority-runtime-root-mismatch");
+  }
+  const mismatch = database
+    .prepare(`SELECT
+      (SELECT COUNT(*) FROM market_acquisition_owned_attempt_claims) AS primary_count,
+      (SELECT COUNT(*) FROM credential_anchor.credential_authority_attempt_claims) AS anchor_count,
+      (SELECT COUNT(*) FROM market_acquisition_owned_attempt_claims AS primary_claim
+        LEFT JOIN credential_anchor.credential_authority_attempt_claims AS anchor_claim
+          ON anchor_claim.workflow_id = primary_claim.workflow_id
+        WHERE anchor_claim.workflow_id IS NULL
+          OR anchor_claim.acquisition_id <> primary_claim.acquisition_id
+          OR anchor_claim.request_identity_hash <> primary_claim.request_identity_hash
+          OR anchor_claim.acquisition_configuration_hash <>
+            primary_claim.acquisition_configuration_hash
+          OR anchor_claim.acquisition_started_ms <> primary_claim.acquisition_started_ms
+          OR anchor_claim.attempt_started_ms <> primary_claim.attempt_started_ms
+          OR anchor_claim.attempt_ordinal <> primary_claim.attempt_ordinal
+          OR anchor_claim.attempt_budget_ms <> primary_claim.attempt_budget_ms
+          OR anchor_claim.retrieval_attempt_id <> primary_claim.retrieval_attempt_id
+          OR anchor_claim.acquisition_observation_id <>
+            primary_claim.acquisition_observation_id) AS differing_count`)
+    .get() as { primary_count: bigint; anchor_count: bigint; differing_count: bigint };
+  if (
+    mismatch.primary_count !== mismatch.anchor_count ||
+    mismatch.differing_count !== 0n ||
+    mismatch.primary_count < 0n ||
+    mismatch.primary_count > BigInt(Number.MAX_SAFE_INTEGER)
+  ) {
+    throw new TypeError("credential-admission-state-invalid");
+  }
+  return Number(mismatch.primary_count);
+}
+
+function attachCredentialAuthorityAnchor(
+  database: SqliteDatabase,
+  databaseFilename: string,
+  anchorFilename: string,
+  runtimeRoot: string,
+): string {
+  database.prepare("ATTACH DATABASE ? AS credential_anchor").run(anchorFilename);
+  database.pragma("credential_anchor.synchronous = FULL");
+  database.pragma("credential_anchor.journal_mode = DELETE");
+  const authorityNamespace = credentialAuthorityNamespace(databaseFilename);
+  const existing = anchorSchemaRows(database);
+  if (existing.length === 0) {
+    database
+      .transaction(() => {
+        assertOwnedAdmissionSchema(database);
+        database.exec(CREDENTIAL_ANCHOR_SCHEMA_SQL);
+        database
+          .prepare(`INSERT INTO credential_anchor.credential_authority_anchor_metadata (
+            singleton, schema_version, authority_namespace, runtime_root
+          ) VALUES (1, 1, ?, ?)`)
+          .run(authorityNamespace, runtimeRoot);
+        database.exec(`INSERT INTO credential_anchor.credential_authority_attempt_claims (
+          workflow_id, acquisition_id, request_identity_hash, acquisition_configuration_hash,
+          acquisition_started_ms, attempt_started_ms, attempt_ordinal, attempt_budget_ms,
+          retrieval_attempt_id, acquisition_observation_id
+        ) SELECT workflow_id, acquisition_id, request_identity_hash,
+          acquisition_configuration_hash, acquisition_started_ms, attempt_started_ms,
+          attempt_ordinal, attempt_budget_ms, retrieval_attempt_id, acquisition_observation_id
+          FROM market_acquisition_owned_attempt_claims`);
+      })
+      .immediate();
+  }
+  assertCredentialAuthorityAnchorState(database, authorityNamespace, runtimeRoot);
+  return authorityNamespace;
 }
 
 class CredentialAdmissionDenied extends Error {
@@ -651,6 +848,8 @@ export function credentialAuthorizationDenialReason(
 
 function productionCredentialStore(
   database: SqliteDatabase,
+  authorityNamespace: string,
+  runtimeRoot: string,
   rootPlan: ValidatedMarketAcquisitionConfiguration,
 ): ProductionCredentialStore {
   const acquisitionId = `maa1_${canonicalHash("peas/market-acquisition-owned-admission/v1", {
@@ -659,13 +858,10 @@ function productionCredentialStore(
     trustedRequestStartedAtNs: rootPlan.trustedRequestStartedAtNs.toString(),
     clockSampleId: rootPlan.trustedClockEvidence.currentSample.sampleId,
   })}`;
-  assertOwnedAdmissionSchema(database);
-  let durableHighWatermark = Number(
-    (
-      database
-        .prepare("SELECT COUNT(*) AS count FROM market_acquisition_owned_attempt_claims")
-        .get() as { count: bigint }
-    ).count,
+  let durableHighWatermark = assertCredentialAuthorityAnchorState(
+    database,
+    authorityNamespace,
+    runtimeRoot,
   );
   return Object.freeze({
     admit(input) {
@@ -678,13 +874,10 @@ function productionCredentialStore(
       }
       return database
         .transaction(() => {
-          assertOwnedAdmissionSchema(database);
-          const durableCount = Number(
-            (
-              database
-                .prepare("SELECT COUNT(*) AS count FROM market_acquisition_owned_attempt_claims")
-                .get() as { count: bigint }
-            ).count,
+          const durableCount = assertCredentialAuthorityAnchorState(
+            database,
+            authorityNamespace,
+            runtimeRoot,
           );
           if (!Number.isSafeInteger(durableCount) || durableCount < durableHighWatermark) {
             throw new TypeError("credential-admission-state-invalid");
@@ -779,6 +972,25 @@ function productionCredentialStore(
               retrievalAttemptId,
               acquisitionObservationId,
             );
+          database
+            .prepare(`INSERT INTO credential_anchor.credential_authority_attempt_claims (
+              workflow_id, acquisition_id, request_identity_hash,
+              acquisition_configuration_hash, acquisition_started_ms, attempt_started_ms,
+              attempt_ordinal, attempt_budget_ms, retrieval_attempt_id,
+              acquisition_observation_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+            .run(
+              value.workflowId,
+              acquisitionId,
+              rootPlan.requestIdentityHash,
+              rootPlan.acquisitionConfigurationHash,
+              acquisitionStartedMs,
+              nowMs,
+              attemptOrdinal,
+              attemptBudgetMs,
+              retrievalAttemptId,
+              acquisitionObservationId,
+            );
           durableHighWatermark = durableCount + 1;
           return Object.freeze({
             plan: rootPlan,
@@ -796,13 +1008,22 @@ function productionCredentialStore(
 
 function openCredentialAuthorizationBoundaryAtPath(
   filename: string,
+  anchorFilename: string,
   migrations: readonly Migration[],
   plan: ValidatedMarketAcquisitionConfiguration,
 ): DurableCredentialAuthorizationBoundary {
   const database = openSqliteDatabase(filename, migrations);
   try {
+    database.pragma("journal_mode = DELETE");
+    const runtimeRoot = realpathSync(dirname(filename));
+    const authorityNamespace = attachCredentialAuthorityAnchor(
+      database,
+      filename,
+      anchorFilename,
+      runtimeRoot,
+    );
     const retention = createSqliteArtifactRetentionJournal(database);
-    const store = productionCredentialStore(database, plan);
+    const store = productionCredentialStore(database, authorityNamespace, runtimeRoot, plan);
     const boundary = new DurableCredentialAuthorizationBoundary(
       undefined,
       retention,
@@ -840,13 +1061,14 @@ class LiveCredentialRetentionGuard {
 function openLiveCredentialDatabase(
   filename: string,
   migrations: readonly Migration[],
+  journalMode: "DELETE" | "WAL",
 ): SqliteDatabase {
   const database = new Database(filename);
   try {
     database.pragma("foreign_keys = ON");
     database.pragma("busy_timeout = 5000");
     database.pragma("synchronous = FULL");
-    database.pragma("journal_mode = WAL");
+    database.pragma(`journal_mode = ${journalMode}`);
     database.defaultSafeIntegers(true);
     applyMigrations(database, migrations);
     Object.preventExtensions(database);
@@ -859,15 +1081,23 @@ function openLiveCredentialDatabase(
 
 function openLiveCredentialAuthorizationBoundaryAtPath(
   filename: string,
+  anchorFilename: string,
   retentionFilename: string,
+  runtimeRoot: string,
   migrations: readonly Migration[],
   plan: ValidatedMarketAcquisitionConfiguration,
 ): DurableCredentialAuthorizationBoundary {
-  const database = openLiveCredentialDatabase(filename, migrations);
+  const database = openLiveCredentialDatabase(filename, migrations, "DELETE");
   let retentionDatabase: SqliteDatabase | undefined;
   try {
-    retentionDatabase = openLiveCredentialDatabase(retentionFilename, migrations);
-    const store = productionCredentialStore(database, plan);
+    const authorityNamespace = attachCredentialAuthorityAnchor(
+      database,
+      filename,
+      anchorFilename,
+      runtimeRoot,
+    );
+    retentionDatabase = openLiveCredentialDatabase(retentionFilename, migrations, "WAL");
+    const store = productionCredentialStore(database, authorityNamespace, runtimeRoot, plan);
     const boundary = new DurableCredentialAuthorizationBoundary(
       undefined,
       new LiveCredentialRetentionGuard(retentionDatabase),
@@ -899,14 +1129,17 @@ export function openSqliteDurableCredentialAuthorizationBoundary(
     throw new TypeError("live-credential-authorization-root-already-opened");
   }
   const runtime = artifactRuntimePaths(configuredPeasRuntimeRoot());
-  const filename = join(runtime.databaseDirectory, LIVE_CREDENTIAL_DATABASE_FILENAME);
+  const authority = liveCredentialAuthorityPaths();
   const boundary = openLiveCredentialAuthorizationBoundaryAtPath(
-    filename,
+    authority.database,
+    authority.anchor,
     runtime.databasePath,
+    runtime.runtimeRoot,
     migrations,
     plan,
   );
-  protectSqliteDatabasePath(filename);
+  protectSqliteDatabasePath(authority.database);
+  protectSqliteDatabasePath(authority.anchor);
   liveCredentialBoundaryOpened = true;
   return boundary;
 }
@@ -920,7 +1153,12 @@ export function openTestSqliteDurableCredentialAuthorizationBoundary(
     throw new TypeError("test-credential-authorization-composition-unavailable");
   }
   validatePlan(plan);
-  return openCredentialAuthorizationBoundaryAtPath(filename, migrations, plan);
+  return openCredentialAuthorizationBoundaryAtPath(
+    filename,
+    `${filename}.credential-anchor.sqlite`,
+    migrations,
+    plan,
+  );
 }
 
 export function createTestDurableCredentialAuthorizationBoundary(

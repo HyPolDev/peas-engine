@@ -111,6 +111,29 @@ function firstRequest(plan: ReturnType<typeof validatedRepairPlan>) {
   ).request;
 }
 
+function eraseAdmissionRowsAndRestoreExactSchema(filename: string): void {
+  const hostile = new Database(filename);
+  try {
+    const immutableDeleteTriggers = hostile
+      .prepare(`SELECT name, sql FROM sqlite_schema
+        WHERE name IN (
+          'market_acquisition_owned_attempt_claims_no_delete',
+          'market_acquisition_owned_request_started_no_delete'
+        ) ORDER BY name`)
+      .all() as Array<{ name: string; sql: string }>;
+    assert.equal(immutableDeleteTriggers.length, 2);
+    hostile.exec(`
+      DROP TRIGGER market_acquisition_owned_attempt_claims_no_delete;
+      DROP TRIGGER market_acquisition_owned_request_started_no_delete;
+      DELETE FROM market_acquisition_owned_attempt_claims;
+      DELETE FROM market_acquisition_owned_request_started;
+    `);
+    for (const trigger of immutableDeleteTriggers) hostile.exec(trigger.sql);
+  } finally {
+    hostile.close();
+  }
+}
+
 test("Alpaca credentials load only into an immutable dispatch capability", async () => {
   const plan = validatedRepairPlan();
   const fixture = await credentialAuthorizationFixture(plan);
@@ -291,12 +314,15 @@ test("production credential transport is module-owned and accepts no caller driv
 test("live credential admission has one canonical non-shardable protected durable root", async (t) => {
   const firstRoot = await mkdtemp(join(tmpdir(), "peas-live-credential-root-"));
   const alternateRoot = await mkdtemp(join(tmpdir(), "peas-live-credential-alternate-"));
+  const authorityDirectory = join(process.cwd(), ".peas-authority");
+  await rm(authorityDirectory, { recursive: true, force: true });
   const priorRoot = process.env["PEAS_RUNTIME_ROOT"];
   t.after(async () => {
     if (priorRoot === undefined) delete process.env["PEAS_RUNTIME_ROOT"];
     else process.env["PEAS_RUNTIME_ROOT"] = priorRoot;
     await rm(firstRoot, { recursive: true, force: true });
     await rm(alternateRoot, { recursive: true, force: true });
+    await rm(authorityDirectory, { recursive: true, force: true });
   });
   await mkdir(join(firstRoot, "sqlite"), { recursive: true });
   await mkdir(join(alternateRoot, "sqlite"), { recursive: true });
@@ -304,9 +330,14 @@ test("live credential admission has one canonical non-shardable protected durabl
   const plan = validatedRepairPlan();
   const fixture = await credentialAuthorizationFixture(plan);
   const migrations = loadMigrations(join(process.cwd(), "migrations"));
-  const authorityPath = join(firstRoot, "sqlite", "market-acquisition-authority.sqlite");
+  const authorityPath = join(authorityDirectory, "market-acquisition-authority.sqlite");
+  const anchorPath = join(authorityDirectory, "market-acquisition-authority-anchor.sqlite");
   assert.throws(
     () => openSqliteDatabase(authorityPath, migrations),
+    /protected-sqlite-database-path/u,
+  );
+  assert.throws(
+    () => openSqliteDatabase(anchorPath, migrations),
     /protected-sqlite-database-path/u,
   );
   assert.throws(
@@ -333,19 +364,75 @@ test("live credential admission has one canonical non-shardable protected durabl
     );
   }
 
-  const hostile = new Database(authorityPath);
-  hostile.exec(`
-    DROP TRIGGER market_acquisition_owned_attempt_claims_no_delete;
-    DROP TRIGGER market_acquisition_owned_request_started_no_delete;
-    DELETE FROM market_acquisition_owned_attempt_claims;
-    DELETE FROM market_acquisition_owned_request_started;
-  `);
-  hostile.close();
+  eraseAdmissionRowsAndRestoreExactSchema(authorityPath);
   await assert.rejects(
     () => authority.establish(fixture.request),
-    /credential-admission-schema-invalid/u,
+    /credential-admission-state-invalid/u,
   );
   authority.close();
+});
+
+test("separate processes cannot replace the canonical credential runtime root", async (t) => {
+  const firstRoot = await mkdtemp(join(tmpdir(), "peas-live-process-root-a-"));
+  const secondRoot = await mkdtemp(join(tmpdir(), "peas-live-process-root-b-"));
+  const authorityDirectory = join(process.cwd(), ".peas-authority");
+  await rm(authorityDirectory, { recursive: true, force: true });
+  t.after(async () => {
+    await rm(firstRoot, { recursive: true, force: true });
+    await rm(secondRoot, { recursive: true, force: true });
+    await rm(authorityDirectory, { recursive: true, force: true });
+  });
+  const probe = `
+    import { mkdir } from "node:fs/promises";
+    import { join } from "node:path";
+    import { openSqliteDurableCredentialAuthorizationBoundary } from "./dist/src/adapters/market-acquisition/credentials.js";
+    import { loadMigrations } from "./dist/src/adapters/sqlite/database.js";
+    import { credentialAuthorizationFixture, validatedRepairPlan } from "./dist/test/p1-10-repair-fixtures.js";
+    const root = process.argv[1];
+    const attempts = Number(process.argv[2]);
+    process.env.PEAS_RUNTIME_ROOT = root;
+    await mkdir(join(root, "sqlite"), { recursive: true });
+    const plan = validatedRepairPlan();
+    const fixture = await credentialAuthorizationFixture(plan);
+    let admitted = 0;
+    let denied = null;
+    let authority;
+    try {
+      authority = openSqliteDurableCredentialAuthorizationBoundary(
+        loadMigrations(join(process.cwd(), "migrations")),
+        plan,
+      );
+      for (let index = 0; index < attempts; index += 1) {
+        await authority.establish(fixture.request);
+        admitted += 1;
+      }
+    } catch (error) {
+      denied = error instanceof Error ? error.message : String(error);
+    } finally {
+      authority?.close();
+    }
+    process.stdout.write(JSON.stringify({ admitted, denied }));
+  `;
+  const run = (root: string, attempts: number) =>
+    spawnSync(process.execPath, ["--input-type=module", "--eval", probe, root, String(attempts)], {
+      cwd: process.cwd(),
+      env: { ...process.env, PEAS_RUNTIME_ROOT: root },
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 60_000,
+    });
+  const first = run(firstRoot, 1);
+  assert.equal(first.status, 0, `${first.stdout}\n${first.stderr}`);
+  assert.deepEqual(JSON.parse(first.stdout), {
+    admitted: 1,
+    denied: null,
+  });
+  const second = run(secondRoot, 1);
+  assert.equal(second.status, 0, `${second.stdout}\n${second.stderr}`);
+  assert.deepEqual(JSON.parse(second.stdout), {
+    admitted: 0,
+    denied: "credential-authority-runtime-root-mismatch",
+  });
 });
 
 test("native HTTPS request/response ownership detaches on success, error, and abort", async (t) => {
@@ -798,7 +885,7 @@ test("owned production admission caps caller-selected workflows before secret re
   database.close();
 });
 
-test("cold restart rejects reset admission rows and forged replacement triggers", async (t) => {
+test("cold restart rejects reset admission rows with the exact official schema restored", async (t) => {
   const fixture = await credentialAuthorizationFixture(validatedRepairPlan());
   const directory = await mkdtemp(join(tmpdir(), "peas-p1-10-admission-reset-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -812,18 +899,7 @@ test("cold restart rejects reset admission rows and forged replacement triggers"
   await authority.establish(fixture.request);
   authority.close();
 
-  const hostile = new Database(filename);
-  hostile.exec(`
-    DROP TRIGGER market_acquisition_owned_attempt_claims_no_delete;
-    DROP TRIGGER market_acquisition_owned_request_started_no_delete;
-    DELETE FROM market_acquisition_owned_attempt_claims;
-    DELETE FROM market_acquisition_owned_request_started;
-    CREATE TRIGGER market_acquisition_owned_attempt_claims_no_delete
-      AFTER INSERT ON market_acquisition_owned_attempt_claims BEGIN SELECT 1; END;
-    CREATE TRIGGER market_acquisition_owned_request_started_no_delete
-      AFTER INSERT ON market_acquisition_owned_request_started BEGIN SELECT 1; END;
-  `);
-  hostile.close();
+  eraseAdmissionRowsAndRestoreExactSchema(filename);
   assert.throws(
     () =>
       openTestSqliteDurableCredentialAuthorizationBoundary(
@@ -831,7 +907,7 @@ test("cold restart rejects reset admission rows and forged replacement triggers"
         migrations,
         fixture.request.plan,
       ),
-    /credential-admission-schema-invalid/u,
+    /credential-admission-state-invalid/u,
   );
 });
 

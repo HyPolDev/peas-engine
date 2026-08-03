@@ -9,7 +9,10 @@ import { hashParts } from "../../core/hash.js";
 export type SqliteDatabase = Database.Database;
 const ownedSqliteDatabases = new WeakSet<object>();
 const protectedSqliteDatabasePaths = new Set<string>();
-const RESERVED_DATABASE_FILENAMES = new Set(["market-acquisition-authority.sqlite"]);
+const RESERVED_DATABASE_FILENAMES = new Set([
+  "market-acquisition-authority.sqlite",
+  "market-acquisition-authority-anchor.sqlite",
+]);
 
 function normalizedDatabasePath(filename: string): string {
   const resolved = resolve(filename);

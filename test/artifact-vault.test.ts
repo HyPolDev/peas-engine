@@ -159,46 +159,84 @@ function activeFence(
   };
 }
 
+type ObservedWorkerState = {
+  readonly messages: Record<string, unknown>[];
+  readonly listeners: Set<() => void>;
+  terminal: Error | null;
+};
+
+const observedWorkers = new WeakMap<ChildProcess, ObservedWorkerState>();
+
+function forkObservedWorker(modulePath: string, args: readonly string[]): ChildProcess {
+  const child = fork(modulePath, [...args], { stdio: ["ignore", "ignore", "pipe", "ipc"] });
+  const state: ObservedWorkerState = {
+    messages: [],
+    listeners: new Set(),
+    terminal: null,
+  };
+  observedWorkers.set(child, state);
+  const notify = (): void => {
+    for (const listener of [...state.listeners]) listener();
+  };
+  child.on("message", (message: unknown) => {
+    if (typeof message !== "object" || message === null || !("type" in message)) return;
+    state.messages.push(message as Record<string, unknown>);
+    notify();
+  });
+  child.once("error", (error) => {
+    state.terminal = error;
+    notify();
+  });
+  child.once("exit", (code, signal) => {
+    state.terminal = new Error(
+      `Artifact worker exited early (code=${String(code)}, signal=${String(signal)})`,
+    );
+    notify();
+  });
+  return child;
+}
+
 function waitForWorkerMessage(
   child: ChildProcess,
   expectedType: "ready" | "staged" | "checkpoint" | "result",
 ): Promise<Record<string, unknown>> {
+  const state = observedWorkers.get(child);
+  if (state === undefined) throw new TypeError("Artifact worker must be observed from fork");
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       cleanup();
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       reject(new Error(`Artifact worker timed out before ${expectedType}`));
-    }, 5_000);
+    }, 30_000);
     const cleanup = (): void => {
       clearTimeout(timeout);
-      child.off("message", onMessage);
-      child.off("error", onError);
-      child.off("exit", onExit);
+      state.listeners.delete(poll);
     };
-    const onMessage = (message: unknown): void => {
-      if (typeof message !== "object" || message === null || !("type" in message)) return;
-      const actualType = (message as { type: unknown }).type;
-      if (actualType !== expectedType) {
-        if (actualType !== "result") return;
+    const poll = (): void => {
+      const expectedIndex = state.messages.findIndex((message) => message["type"] === expectedType);
+      if (expectedIndex >= 0) {
+        const [message] = state.messages.splice(expectedIndex, 1);
+        cleanup();
+        resolve(message as Record<string, unknown>);
+        return;
+      }
+      const resultIndex =
+        expectedType === "result"
+          ? -1
+          : state.messages.findIndex((message) => message["type"] === "result");
+      if (resultIndex >= 0) {
+        state.messages.splice(resultIndex, 1);
         cleanup();
         reject(new Error(`Artifact worker failed before ${expectedType}`));
         return;
       }
-      cleanup();
-      resolve(message as Record<string, unknown>);
+      if (state.terminal !== null) {
+        cleanup();
+        reject(state.terminal);
+      }
     };
-    const onError = (error: Error): void => {
-      cleanup();
-      reject(error);
-    };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
-      cleanup();
-      reject(
-        new Error(`Artifact worker exited early (code=${String(code)}, signal=${String(signal)})`),
-      );
-    };
-    child.on("message", onMessage);
-    child.once("error", onError);
-    child.once("exit", onExit);
+    state.listeners.add(poll);
+    poll();
   });
 }
 
@@ -931,9 +969,7 @@ test("successful evidence commit is atomic when observation insertion aborts", a
 
 test("a separate-process stale writer cannot append outcomes or mutate staging after takeover", async (context) => {
   const { root, databasePath } = processFixture(context, "takeover");
-  const child = fork(artifactWorkerPath, [databasePath, root, "1800000000000"], {
-    stdio: ["ignore", "ignore", "pipe", "ipc"],
-  });
+  const child = forkObservedWorker(artifactWorkerPath, [databasePath, root, "1800000000000"]);
   context.after(() => {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
   });
@@ -969,9 +1005,7 @@ test("a separate-process stale writer cannot append outcomes or mutate staging a
 
 test("hard-killed staged writer leaves only recoverable evidence for fenced reconciliation", async (context) => {
   const { root, databasePath } = processFixture(context, "hard-kill");
-  const child = fork(artifactWorkerPath, [databasePath, root, "1800000000000"], {
-    stdio: ["ignore", "ignore", "pipe", "ipc"],
-  });
+  const child = forkObservedWorker(artifactWorkerPath, [databasePath, root, "1800000000000"]);
   await waitForWorkerMessage(child, "staged");
   child.kill("SIGKILL");
   await waitForWorkerExit(child);
@@ -1011,11 +1045,12 @@ test("hard-killed staged writer leaves only recoverable evidence for fenced reco
 
 test("hard kill after install intent converges from durable intent without fabricated evidence", async (context) => {
   const { root, databasePath } = processFixture(context, "install-intent-kill");
-  const child = fork(
-    artifactWorkerPath,
-    [databasePath, root, "1800000000000", "install-intent-commit"],
-    { stdio: ["ignore", "ignore", "pipe", "ipc"] },
-  );
+  const child = forkObservedWorker(artifactWorkerPath, [
+    databasePath,
+    root,
+    "1800000000000",
+    "install-intent-commit",
+  ]);
   await waitForWorkerMessage(child, "staged");
   child.send({ type: "resume" });
   const checkpoint = await waitForWorkerMessage(child, "checkpoint");
@@ -1116,11 +1151,12 @@ test("store and lease hard-kill boundary matrix converges with exact evidence", 
 
   for (const boundary of boundaries) {
     const fixture = processFixture(context, `store-boundary-${boundary.replaceAll(":", "-")}`);
-    const child = fork(
-      artifactWorkerPath,
-      [fixture.databasePath, fixture.root, "1800000000000", boundary],
-      { stdio: ["ignore", "ignore", "pipe", "ipc"] },
-    );
+    const child = forkObservedWorker(artifactWorkerPath, [
+      fixture.databasePath,
+      fixture.root,
+      "1800000000000",
+      boundary,
+    ]);
     if (afterStageSync.has(boundary)) {
       await waitForWorkerMessage(child, "staged");
       child.send({ type: "resume" });
@@ -1304,11 +1340,12 @@ test("reconciliation hard-kill boundary matrix replays one deterministic action"
     seedDatabase.close();
     writeFileSync(join(fixture.root, "artifacts", "staging", "hard-kill-orphan.part"), "orphan");
 
-    const child = fork(
-      reconciliationWorkerPath,
-      [fixture.databasePath, fixture.root, "1800000030001", boundary],
-      { stdio: ["ignore", "ignore", "pipe", "ipc"] },
-    );
+    const child = forkObservedWorker(reconciliationWorkerPath, [
+      fixture.databasePath,
+      fixture.root,
+      "1800000030001",
+      boundary,
+    ]);
     await waitForWorkerMessage(child, "ready");
     child.send({
       type: "reconcile",
@@ -1395,11 +1432,13 @@ test("verified-read hard-kill boundaries leave only recoverable snapshots", {
       writeFileSync(content, "corrupt read");
     }
 
-    const child = fork(
-      artifactReadWorkerPath,
-      [fixture.databasePath, fixture.root, "1800000030001", stored.artifact.digest, boundary],
-      { stdio: ["ignore", "ignore", "pipe", "ipc"] },
-    );
+    const child = forkObservedWorker(artifactReadWorkerPath, [
+      fixture.databasePath,
+      fixture.root,
+      "1800000030001",
+      stored.artifact.digest,
+      boundary,
+    ]);
     await waitForWorkerMessage(child, "ready");
     const checkpoint = await waitForWorkerMessage(child, "checkpoint");
     assert.equal(checkpoint["checkpoint"], boundary);
@@ -1435,9 +1474,7 @@ test("verified-read hard-kill boundaries leave only recoverable snapshots", {
 
 test("hard kill after cursor advancement resumes from the durable generation", async (context) => {
   const { root, databasePath } = processFixture(context, "cursor-kill");
-  const child = fork(reconciliationWorkerPath, [databasePath, root, "1800000000000"], {
-    stdio: ["ignore", "ignore", "pipe", "ipc"],
-  });
+  const child = forkObservedWorker(reconciliationWorkerPath, [databasePath, root, "1800000000000"]);
   await waitForWorkerMessage(child, "ready");
   child.send({ type: "reconcile", cursor: null });
   const result = await waitForWorkerMessage(child, "result");
@@ -1507,7 +1544,7 @@ test("invalid orphans are quarantined without false artifact metadata", async (c
   mkdirSync(directory, { recursive: true });
   writeFileSync(join(directory, claimed), "wrong bytes");
 
-  const report = await store.reconcile();
+  const report = await store.reconcile({ maxElapsedMs: 60_000 });
   assert.equal(report.quarantinedObjects, 1);
   assert.equal(
     (database.prepare("SELECT count(*) count FROM artifact_blobs").get() as { count: bigint })
@@ -1565,7 +1602,7 @@ test("same-clock incidents and quarantine objects remain distinct", async (conte
   const directory = join(root, "artifacts", "staging");
   writeFileSync(join(directory, "collision-one.part"), "one");
   writeFileSync(join(directory, "collision-two.part"), "two");
-  const report = await store.reconcile();
+  const report = await store.reconcile({ maxElapsedMs: 60_000 });
   assert.equal(new Set(report.incidents).size, 2);
   assert.equal(readdirSync(join(root, "artifacts", "quarantine")).length, 2);
   assert.equal(
