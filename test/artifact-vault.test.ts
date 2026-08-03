@@ -1173,7 +1173,15 @@ test("store and lease hard-kill boundary matrix converges with exact evidence", 
       config: vaultConfig(fixture.root),
     });
     try {
-      await recovered.reconcile();
+      let reconciliationCalls = 0;
+      let recoveryReport = await recovered.reconcile();
+      while (recoveryReport.continuationCursor !== null) {
+        reconciliationCalls += 1;
+        assert.equal(reconciliationCalls < 30, true, boundary);
+        recoveryReport = await recovered.reconcile({
+          cursor: recoveryReport.continuationCursor,
+        });
+      }
       const count = (table: string): bigint =>
         (database.prepare(`SELECT count(*) count FROM ${table}`).get() as { count: bigint }).count;
       assert.equal(count("artifact_observations"), successful.has(boundary) ? 1n : 0n, boundary);
