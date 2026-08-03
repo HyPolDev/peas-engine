@@ -38,10 +38,19 @@ import { P1_10_TEST_AUTHORITY } from "../../internal-test-authority.js";
 import { request as dispatchHttpsRequest } from "node:https";
 import type { ClientRequest, IncomingMessage } from "node:http";
 import { performance } from "node:perf_hooks";
+import { join } from "node:path";
+import Database from "better-sqlite3";
 import { assertOwnedAlpacaTransportRequest } from "./alpaca/request.js";
 import { canonicalHash } from "../../core/hash.js";
 import { canonicalJson, type JsonValue } from "../../core/json.js";
-import { openSqliteDatabase, type Migration, type SqliteDatabase } from "../sqlite/database.js";
+import {
+  applyMigrations,
+  openSqliteDatabase,
+  protectSqliteDatabasePath,
+  type Migration,
+  type SqliteDatabase,
+} from "../sqlite/database.js";
+import { artifactRuntimePaths, configuredPeasRuntimeRoot } from "../artifacts/runtime-root.js";
 import { createSqliteArtifactRetentionJournal } from "./retention/sqlite-journal.js";
 
 export const ALPACA_KEY_ID_ENV = "PEAS_ALPACA_API_KEY_ID";
@@ -115,11 +124,26 @@ const issuedDispatchCapabilities = new WeakMap<object, DispatchBinding>();
 const establishedEvidence = new WeakMap<object, PermitBinding>();
 const credentialIsolatedTransports = new WeakSet<object>();
 const credentialAuthorizationBoundaries = new WeakSet<object>();
-const productionCredentialDatabases = new WeakMap<object, SqliteDatabase>();
+const productionCredentialDatabases = new WeakMap<object, readonly SqliteDatabase[]>();
 const CREDENTIAL_BOUNDARY_CONSTRUCTION_AUTHORITY = Object.freeze({});
+const LIVE_CREDENTIAL_DATABASE_FILENAME = "market-acquisition-authority.sqlite";
+const LIVE_CREDENTIAL_MIGRATIONS_HASH =
+  "80bc328608773561cefeda775579ff05f3d53ddb89ff118f0550b87d5f2b4da3";
+let liveCredentialBoundaryOpened = false;
 const trustedTimeOriginMs = performance.timeOrigin;
 const trustedMonotonicNowMs = performance.now.bind(performance);
 const trustedSystemNowMs = (): number => Math.trunc(trustedTimeOriginMs + trustedMonotonicNowMs());
+
+function assertLiveCredentialMigrations(migrations: readonly Migration[]): void {
+  if (
+    canonicalHash(
+      "peas/market-acquisition-live-migrations/v1",
+      migrations as unknown as JsonValue,
+    ) !== LIVE_CREDENTIAL_MIGRATIONS_HASH
+  ) {
+    throw new TypeError("live-credential-migrations-invalid");
+  }
+}
 
 function revokeAuthorization(state: AuthorizationLeaseState): void {
   state.active = false;
@@ -198,17 +222,19 @@ function validatePlan(plan: ValidatedMarketAcquisitionConfiguration): void {
  */
 export class DurableCredentialAuthorizationBoundary {
   readonly #journal: AcquisitionJournal | undefined;
-  readonly #retentionJournal: ArtifactRetentionJournal;
+  readonly #retentionJournal: Pick<ArtifactRetentionJournal, "providerUseDenied">;
   readonly #productionStore: ProductionCredentialStore | undefined;
 
   constructor(
     journal: AcquisitionJournal | undefined,
-    retentionJournal: ArtifactRetentionJournal,
+    retentionJournal: Pick<ArtifactRetentionJournal, "providerUseDenied">,
     productionStore?: ProductionCredentialStore,
     authority?: object,
   ) {
     if (journal !== undefined) assertOwnedAcquisitionJournal(journal);
-    assertOwnedRetentionJournal(retentionJournal);
+    if (authority !== CREDENTIAL_BOUNDARY_CONSTRUCTION_AUTHORITY) {
+      assertOwnedRetentionJournal(retentionJournal as ArtifactRetentionJournal);
+    }
     this.#journal = journal;
     this.#retentionJournal = retentionJournal;
     this.#productionStore = productionStore;
@@ -313,10 +339,10 @@ export class DurableCredentialAuthorizationBoundary {
 
   close(): void {
     assertOwnedDurableCredentialAuthorizationBoundary(this);
-    const database = productionCredentialDatabases.get(this);
-    if (database === undefined) throw new TypeError("production-credential-root-required");
+    const databases = productionCredentialDatabases.get(this);
+    if (databases === undefined) throw new TypeError("production-credential-root-required");
     productionCredentialDatabases.delete(this);
-    database.close();
+    for (const database of databases) database.close();
   }
 }
 
@@ -509,6 +535,41 @@ type AttemptClaimRow = Readonly<{
   attempt_ordinal: bigint;
 }>;
 
+const OWNED_ADMISSION_SCHEMA_OBJECTS = Object.freeze([
+  "market_acquisition_owned_attempt_claims",
+  "market_acquisition_owned_attempt_claims_acquisition",
+  "market_acquisition_owned_attempt_claims_no_delete",
+  "market_acquisition_owned_attempt_claims_no_update",
+  "market_acquisition_owned_attempt_claims_rate_window",
+  "market_acquisition_owned_request_started",
+  "market_acquisition_owned_request_started_no_delete",
+  "market_acquisition_owned_request_started_no_update",
+] as const);
+const OWNED_ADMISSION_SCHEMA_HASH =
+  "271ec4cc673d41a80d89ef0aa371187caaa9e1de96e614de3b7dde4a0eb5ec3e";
+
+function assertOwnedAdmissionSchema(database: SqliteDatabase): void {
+  const rows = database
+    .prepare(`SELECT name, type, sql FROM sqlite_schema
+      WHERE name LIKE 'market_acquisition_owned_%'
+      ORDER BY name`)
+    .all() as Array<{
+    name: string;
+    type: string;
+    sql: string | null;
+  }>;
+  if (
+    rows.length !== OWNED_ADMISSION_SCHEMA_OBJECTS.length ||
+    rows.some((row, index) => row.name !== OWNED_ADMISSION_SCHEMA_OBJECTS[index]) ||
+    canonicalHash(
+      "peas/market-acquisition-owned-admission-schema/v1",
+      rows as unknown as JsonValue,
+    ) !== OWNED_ADMISSION_SCHEMA_HASH
+  ) {
+    throw new TypeError("credential-admission-schema-invalid");
+  }
+}
+
 class CredentialAdmissionDenied extends Error {
   readonly reason:
     | "acquisition-deadline"
@@ -598,6 +659,14 @@ function productionCredentialStore(
     trustedRequestStartedAtNs: rootPlan.trustedRequestStartedAtNs.toString(),
     clockSampleId: rootPlan.trustedClockEvidence.currentSample.sampleId,
   })}`;
+  assertOwnedAdmissionSchema(database);
+  let durableHighWatermark = Number(
+    (
+      database
+        .prepare("SELECT COUNT(*) AS count FROM market_acquisition_owned_attempt_claims")
+        .get() as { count: bigint }
+    ).count,
+  );
   return Object.freeze({
     admit(input) {
       if (input.plan !== rootPlan) {
@@ -609,6 +678,17 @@ function productionCredentialStore(
       }
       return database
         .transaction(() => {
+          assertOwnedAdmissionSchema(database);
+          const durableCount = Number(
+            (
+              database
+                .prepare("SELECT COUNT(*) AS count FROM market_acquisition_owned_attempt_claims")
+                .get() as { count: bigint }
+            ).count,
+          );
+          if (!Number.isSafeInteger(durableCount) || durableCount < durableHighWatermark) {
+            throw new TypeError("credential-admission-state-invalid");
+          }
           const claims = database
             .prepare(`SELECT request_identity_hash, acquisition_configuration_hash,
               acquisition_started_ms, attempt_started_ms, attempt_ordinal
@@ -699,6 +779,7 @@ function productionCredentialStore(
               retrievalAttemptId,
               acquisitionObservationId,
             );
+          durableHighWatermark = durableCount + 1;
           return Object.freeze({
             plan: rootPlan,
             acquisitionObservationId,
@@ -713,16 +794,11 @@ function productionCredentialStore(
   });
 }
 
-/**
- * Live credential root. It owns the SQLite handle and derives request-started evidence internally;
- * callers never receive a journal, producer, database, or workflow-write authority.
- */
-export function openSqliteDurableCredentialAuthorizationBoundary(
+function openCredentialAuthorizationBoundaryAtPath(
   filename: string,
   migrations: readonly Migration[],
   plan: ValidatedMarketAcquisitionConfiguration,
 ): DurableCredentialAuthorizationBoundary {
-  validatePlan(plan);
   const database = openSqliteDatabase(filename, migrations);
   try {
     const retention = createSqliteArtifactRetentionJournal(database);
@@ -735,12 +811,116 @@ export function openSqliteDurableCredentialAuthorizationBoundary(
     );
     credentialAuthorizationBoundaries.add(boundary);
     Object.freeze(boundary);
-    productionCredentialDatabases.set(boundary, database);
+    productionCredentialDatabases.set(boundary, Object.freeze([database]));
     return boundary;
   } catch (error) {
     database.close();
     throw error;
   }
+}
+
+class LiveCredentialRetentionGuard {
+  readonly #database: SqliteDatabase;
+
+  constructor(database: SqliteDatabase) {
+    this.#database = database;
+    Object.freeze(this);
+  }
+
+  providerUseDenied(lane: "alpaca" | "fmp", providerId: string): boolean {
+    return (
+      this.#database
+        .prepare(`SELECT 1 AS present FROM market_retention_provider_denials
+          WHERE provider_lane = ? AND provider_id = ?`)
+        .get(lane, providerId) !== undefined
+    );
+  }
+}
+
+function openLiveCredentialDatabase(
+  filename: string,
+  migrations: readonly Migration[],
+): SqliteDatabase {
+  const database = new Database(filename);
+  try {
+    database.pragma("foreign_keys = ON");
+    database.pragma("busy_timeout = 5000");
+    database.pragma("synchronous = FULL");
+    database.pragma("journal_mode = WAL");
+    database.defaultSafeIntegers(true);
+    applyMigrations(database, migrations);
+    Object.preventExtensions(database);
+    return database;
+  } catch (error) {
+    database.close();
+    throw error;
+  }
+}
+
+function openLiveCredentialAuthorizationBoundaryAtPath(
+  filename: string,
+  retentionFilename: string,
+  migrations: readonly Migration[],
+  plan: ValidatedMarketAcquisitionConfiguration,
+): DurableCredentialAuthorizationBoundary {
+  const database = openLiveCredentialDatabase(filename, migrations);
+  let retentionDatabase: SqliteDatabase | undefined;
+  try {
+    retentionDatabase = openLiveCredentialDatabase(retentionFilename, migrations);
+    const store = productionCredentialStore(database, plan);
+    const boundary = new DurableCredentialAuthorizationBoundary(
+      undefined,
+      new LiveCredentialRetentionGuard(retentionDatabase),
+      store,
+      CREDENTIAL_BOUNDARY_CONSTRUCTION_AUTHORITY,
+    );
+    credentialAuthorizationBoundaries.add(boundary);
+    Object.freeze(boundary);
+    productionCredentialDatabases.set(boundary, Object.freeze([database, retentionDatabase]));
+    return boundary;
+  } catch (error) {
+    retentionDatabase?.close();
+    database.close();
+    throw error;
+  }
+}
+
+/**
+ * Live credential root. It owns the SQLite handle and derives request-started evidence internally;
+ * callers never receive a journal, producer, database, or workflow-write authority.
+ */
+export function openSqliteDurableCredentialAuthorizationBoundary(
+  migrations: readonly Migration[],
+  plan: ValidatedMarketAcquisitionConfiguration,
+): DurableCredentialAuthorizationBoundary {
+  validatePlan(plan);
+  assertLiveCredentialMigrations(migrations);
+  if (liveCredentialBoundaryOpened) {
+    throw new TypeError("live-credential-authorization-root-already-opened");
+  }
+  const runtime = artifactRuntimePaths(configuredPeasRuntimeRoot());
+  const filename = join(runtime.databaseDirectory, LIVE_CREDENTIAL_DATABASE_FILENAME);
+  const boundary = openLiveCredentialAuthorizationBoundaryAtPath(
+    filename,
+    runtime.databasePath,
+    migrations,
+    plan,
+  );
+  protectSqliteDatabasePath(filename);
+  liveCredentialBoundaryOpened = true;
+  return boundary;
+}
+
+export function openTestSqliteDurableCredentialAuthorizationBoundary(
+  filename: string,
+  migrations: readonly Migration[],
+  plan: ValidatedMarketAcquisitionConfiguration,
+): DurableCredentialAuthorizationBoundary {
+  if (P1_10_TEST_AUTHORITY === undefined) {
+    throw new TypeError("test-credential-authorization-composition-unavailable");
+  }
+  validatePlan(plan);
+  return openCredentialAuthorizationBoundaryAtPath(filename, migrations, plan);
 }
 
 export function createTestDurableCredentialAuthorizationBoundary(

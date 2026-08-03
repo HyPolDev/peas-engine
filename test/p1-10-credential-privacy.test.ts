@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -21,6 +21,7 @@ import {
   assertTestNativeAlpacaTransportReleased,
   createTestCredentialIsolatedAlpacaTransport,
   openSqliteDurableCredentialAuthorizationBoundary,
+  openTestSqliteDurableCredentialAuthorizationBoundary,
   planCredentialAttemptAdmission,
   createTestDurableCredentialAuthorizationBoundary,
   fmpLaneDisabled,
@@ -230,6 +231,7 @@ test("spoofed NODE_TEST_CONTEXT cannot mint any test root or credential transpor
       () => c.createTestNativeCredentialIsolatedAlpacaTransport(driver),
       () => c.assertTestNativeAlpacaTransportReleased({}),
       () => c.createTestDurableCredentialAuthorizationBoundary({}, {}),
+      () => c.openTestSqliteDurableCredentialAuthorizationBoundary("ignored", [], {}),
       () => a.createMemoryAcquisitionJournal({}),
       () => rj.createMemoryArtifactRetentionJournal(),
       () => rc.createTestArtifactRetentionController({}),
@@ -284,6 +286,66 @@ test("production credential transport is module-owned and accepts no caller driv
       ),
     /takes-no-driver/u,
   );
+});
+
+test("live credential admission has one canonical non-shardable protected durable root", async (t) => {
+  const firstRoot = await mkdtemp(join(tmpdir(), "peas-live-credential-root-"));
+  const alternateRoot = await mkdtemp(join(tmpdir(), "peas-live-credential-alternate-"));
+  const priorRoot = process.env["PEAS_RUNTIME_ROOT"];
+  t.after(async () => {
+    if (priorRoot === undefined) delete process.env["PEAS_RUNTIME_ROOT"];
+    else process.env["PEAS_RUNTIME_ROOT"] = priorRoot;
+    await rm(firstRoot, { recursive: true, force: true });
+    await rm(alternateRoot, { recursive: true, force: true });
+  });
+  await mkdir(join(firstRoot, "sqlite"), { recursive: true });
+  await mkdir(join(alternateRoot, "sqlite"), { recursive: true });
+  process.env["PEAS_RUNTIME_ROOT"] = firstRoot;
+  const plan = validatedRepairPlan();
+  const fixture = await credentialAuthorizationFixture(plan);
+  const migrations = loadMigrations(join(process.cwd(), "migrations"));
+  const authorityPath = join(firstRoot, "sqlite", "market-acquisition-authority.sqlite");
+  assert.throws(
+    () => openSqliteDatabase(authorityPath, migrations),
+    /protected-sqlite-database-path/u,
+  );
+  assert.throws(
+    () =>
+      openSqliteDurableCredentialAuthorizationBoundary(
+        migrations.map((migration, index) =>
+          index === 0 ? { ...migration, sql: `${migration.sql}\nSELECT 1;` } : migration,
+        ),
+        plan,
+      ),
+    /live-credential-migrations-invalid/u,
+  );
+  const authority = openSqliteDurableCredentialAuthorizationBoundary(migrations, plan);
+  await authority.establish(fixture.request);
+  assert.throws(
+    () => openSqliteDatabase(authorityPath, migrations),
+    /protected-sqlite-database-path/u,
+  );
+  process.env["PEAS_RUNTIME_ROOT"] = alternateRoot;
+  for (let attempt = 1; attempt < 49; attempt += 1) {
+    assert.throws(
+      () => openSqliteDurableCredentialAuthorizationBoundary(migrations, plan),
+      /live-credential-authorization-root-already-opened/u,
+    );
+  }
+
+  const hostile = new Database(authorityPath);
+  hostile.exec(`
+    DROP TRIGGER market_acquisition_owned_attempt_claims_no_delete;
+    DROP TRIGGER market_acquisition_owned_request_started_no_delete;
+    DELETE FROM market_acquisition_owned_attempt_claims;
+    DELETE FROM market_acquisition_owned_request_started;
+  `);
+  hostile.close();
+  await assert.rejects(
+    () => authority.establish(fixture.request),
+    /credential-admission-schema-invalid/u,
+  );
+  authority.close();
 });
 
 test("native HTTPS request/response ownership detaches on success, error, and abort", async (t) => {
@@ -624,14 +686,14 @@ test("SQLite restart advances one owned attempt ordinal without reminting caller
   t.after(() => rm(directory, { recursive: true, force: true }));
   const filename = join(directory, "claim.sqlite");
   const migrations = loadMigrations(join(process.cwd(), "migrations"));
-  const first = openSqliteDurableCredentialAuthorizationBoundary(
+  const first = openTestSqliteDurableCredentialAuthorizationBoundary(
     filename,
     migrations,
     fixture.request.plan,
   );
   await first.establish(fixture.request);
   first.close();
-  const restarted = openSqliteDurableCredentialAuthorizationBoundary(
+  const restarted = openTestSqliteDurableCredentialAuthorizationBoundary(
     filename,
     migrations,
     fixture.request.plan,
@@ -661,7 +723,7 @@ test("owned production admission caps caller-selected workflows before secret re
   t.after(() => rm(directory, { recursive: true, force: true }));
   const filename = join(directory, "admission.sqlite");
   const migrations = loadMigrations(join(process.cwd(), "migrations"));
-  const authorization = openSqliteDurableCredentialAuthorizationBoundary(
+  const authorization = openTestSqliteDurableCredentialAuthorizationBoundary(
     filename,
     migrations,
     fixture.request.plan,
@@ -709,7 +771,7 @@ test("owned production admission caps caller-selected workflows before secret re
   assert.equal(admittedRetrievalIds.size, MARKET_ACQUISITION_LIMITS.rateAttempts);
   authorization.close();
 
-  const restarted = openSqliteDurableCredentialAuthorizationBoundary(
+  const restarted = openTestSqliteDurableCredentialAuthorizationBoundary(
     filename,
     migrations,
     fixture.request.plan,
@@ -734,6 +796,43 @@ test("owned production admission caps caller-selected workflows before secret re
     maximum_ordinal: BigInt(MARKET_ACQUISITION_LIMITS.rateAttempts - 1),
   });
   database.close();
+});
+
+test("cold restart rejects reset admission rows and forged replacement triggers", async (t) => {
+  const fixture = await credentialAuthorizationFixture(validatedRepairPlan());
+  const directory = await mkdtemp(join(tmpdir(), "peas-p1-10-admission-reset-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filename = join(directory, "admission.sqlite");
+  const migrations = loadMigrations(join(process.cwd(), "migrations"));
+  const authority = openTestSqliteDurableCredentialAuthorizationBoundary(
+    filename,
+    migrations,
+    fixture.request.plan,
+  );
+  await authority.establish(fixture.request);
+  authority.close();
+
+  const hostile = new Database(filename);
+  hostile.exec(`
+    DROP TRIGGER market_acquisition_owned_attempt_claims_no_delete;
+    DROP TRIGGER market_acquisition_owned_request_started_no_delete;
+    DELETE FROM market_acquisition_owned_attempt_claims;
+    DELETE FROM market_acquisition_owned_request_started;
+    CREATE TRIGGER market_acquisition_owned_attempt_claims_no_delete
+      AFTER INSERT ON market_acquisition_owned_attempt_claims BEGIN SELECT 1; END;
+    CREATE TRIGGER market_acquisition_owned_request_started_no_delete
+      AFTER INSERT ON market_acquisition_owned_request_started BEGIN SELECT 1; END;
+  `);
+  hostile.close();
+  assert.throws(
+    () =>
+      openTestSqliteDurableCredentialAuthorizationBoundary(
+        filename,
+        migrations,
+        fixture.request.plan,
+      ),
+    /credential-admission-schema-invalid/u,
+  );
 });
 
 test("owned credential admission planner enforces exact quota, attempt, and deadline edges", () => {
@@ -848,7 +947,7 @@ test("an alternate raw-handle chain cannot satisfy the opaque production credent
     insertJournalProof.run(fixture.request.marketAcquisitionJournalId, entry.journalEntryHash);
   }
   database.close();
-  const authorization = openSqliteDurableCredentialAuthorizationBoundary(
+  const authorization = openTestSqliteDurableCredentialAuthorizationBoundary(
     filename,
     migrations,
     fixture.request.plan,
@@ -962,7 +1061,7 @@ test("public journals cannot author coherent credential prerequisite facts", asy
     /workflow proof write denied/u,
   );
   database.close();
-  const sqliteAuthorization = openSqliteDurableCredentialAuthorizationBoundary(
+  const sqliteAuthorization = openTestSqliteDurableCredentialAuthorizationBoundary(
     filename,
     migrations,
     fixture.request.plan,

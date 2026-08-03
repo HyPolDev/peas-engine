@@ -1601,7 +1601,7 @@ test("canonical evidence reads fail closed on relational-only forgery", async (c
   database.prepare("UPDATE artifact_observations SET etag = '\"fixture\"'").run();
   database.prepare("UPDATE artifact_blobs SET size_bytes = size_bytes + 1").run();
   await assert.rejects(() => store.stat(stored.artifact.digest), /relational mismatch/u);
-  await assert.rejects(() => store.reconcile(), /relational mismatch/u);
+  await assert.rejects(() => store.reconcile({ maxElapsedMs: 60_000 }), /relational mismatch/u);
 });
 
 test("tampered and missing committed content fails before consumer bytes", async (context) => {

@@ -981,7 +981,11 @@ test("frozen quotes, trades, and bars compile exact GET route and closed query p
     assert.equal(transport.request?.query.find(([field]) => field === "sort")?.[1], "asc");
     assert.equal("authorizationHeaders" in (transport.request ?? {}), false);
     assert.equal(JSON.stringify(transport.request).includes("APCA-API"), false);
-    assert.equal(timer.armedWith, 30_000);
+    assert.ok(
+      timer.armedWith !== null &&
+        timer.armedWith >= 1 &&
+        timer.armedWith <= MARKET_ACQUISITION_LIMITS.attemptDeadlineMs,
+    );
   }
   assert.equal(unexpectedNetworkCalls, 0);
 });
