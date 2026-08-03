@@ -39,7 +39,7 @@ import { P1_10_PROVISIONING_AUTHORITY } from "../../internal-provisioning-author
 import { request as dispatchHttpsRequest } from "node:https";
 import type { ClientRequest, IncomingMessage } from "node:http";
 import { performance } from "node:perf_hooks";
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { assertOwnedAlpacaTransportRequest } from "./alpaca/request.js";
@@ -144,6 +144,16 @@ function liveCredentialAuthorityPaths(
     database: join(databaseDirectory, LIVE_CREDENTIAL_DATABASE_FILENAME),
     anchor: join(databaseDirectory, LIVE_CREDENTIAL_ANCHOR_DATABASE_FILENAME),
   });
+}
+
+function filesystemEntryExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 function assertLiveCredentialMigrations(migrations: readonly Migration[]): void {
@@ -1165,11 +1175,11 @@ export function provisionSqliteDurableCredentialAuthorityRuntime(
   const runtime = artifactRuntimePaths(configuredPeasRuntimeRoot());
   const authority = liveCredentialAuthorityPaths(runtime.databaseDirectory);
   if (
-    existsSync(runtime.databaseDirectory) ||
-    existsSync(runtime.artifactsRoot) ||
-    existsSync(authority.database) ||
-    existsSync(authority.anchor) ||
-    existsSync(runtime.databasePath)
+    filesystemEntryExists(runtime.databaseDirectory) ||
+    filesystemEntryExists(runtime.artifactsRoot) ||
+    filesystemEntryExists(authority.database) ||
+    filesystemEntryExists(authority.anchor) ||
+    filesystemEntryExists(runtime.databasePath)
   ) {
     throw new TypeError("credential-authority-provisioning-layout-not-empty");
   }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -317,12 +317,16 @@ test("production credential transport is module-owned and accepts no caller driv
 test("owned first boot provisions only a completely absent trusted runtime layout", async (t) => {
   const runtimeRoot = await mkdtemp(join(tmpdir(), "peas-owned-first-boot-"));
   const nonEmptyRoot = await mkdtemp(join(tmpdir(), "peas-owned-first-boot-nonempty-"));
+  const danglingRoot = await mkdtemp(join(tmpdir(), "peas-owned-first-boot-dangling-"));
+  const danglingTarget = await mkdtemp(join(tmpdir(), "peas-owned-first-boot-target-"));
   const priorRoot = process.env["PEAS_RUNTIME_ROOT"];
   t.after(async () => {
     if (priorRoot === undefined) delete process.env["PEAS_RUNTIME_ROOT"];
     else process.env["PEAS_RUNTIME_ROOT"] = priorRoot;
     await rm(runtimeRoot, { recursive: true, force: true });
     await rm(nonEmptyRoot, { recursive: true, force: true });
+    await rm(danglingRoot, { recursive: true, force: true });
+    await rm(danglingTarget, { recursive: true, force: true });
   });
   const migrations = loadMigrations(join(process.cwd(), "migrations"));
   process.env["PEAS_RUNTIME_ROOT"] = runtimeRoot;
@@ -345,6 +349,22 @@ test("owned first boot provisions only a completely absent trusted runtime layou
     /credential-authority-provisioning-layout-not-empty/u,
   );
   assert.equal(existsSync(join(nonEmptyRoot, "sqlite")), false);
+
+  process.env["PEAS_RUNTIME_ROOT"] = danglingRoot;
+  const danglingArtifacts = join(danglingRoot, "artifacts");
+  await symlink(
+    danglingTarget,
+    danglingArtifacts,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  await rm(danglingTarget, { recursive: true, force: true });
+  assert.equal((await lstat(danglingArtifacts)).isSymbolicLink(), true);
+  assert.equal(existsSync(danglingArtifacts), false);
+  assert.throws(
+    () => provisionSqliteDurableCredentialAuthorityRuntime(migrations),
+    /credential-authority-provisioning-layout-not-empty/u,
+  );
+  assert.equal(existsSync(join(danglingRoot, "sqlite")), false);
 });
 
 test("cold restart never reconstructs a missing anchor or replaced primary", async (t) => {
