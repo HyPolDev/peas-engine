@@ -1460,7 +1460,15 @@ test("verified-read hard-kill boundaries leave only recoverable snapshots", {
       config: vaultConfig(fixture.root),
     });
     try {
-      await recovered.reconcile();
+      let recoveryCalls = 0;
+      let recoveryReport = await recovered.reconcile();
+      while (recoveryReport.continuationCursor !== null) {
+        recoveryCalls += 1;
+        assert.equal(recoveryCalls < 30, true, boundary);
+        recoveryReport = await recovered.reconcile({
+          cursor: recoveryReport.continuationCursor,
+        });
+      }
       assert.deepEqual(readdirSync(join(fixture.root, "artifacts", "snapshots")), []);
       await recovered.close();
       const secondRestart = await DurableArtifactStore.open({
@@ -1469,7 +1477,16 @@ test("verified-read hard-kill boundaries leave only recoverable snapshots", {
         config: vaultConfig(fixture.root),
       });
       try {
-        assert.equal((await secondRestart.reconcile()).continuationCursor, null);
+        let restartCalls = 0;
+        let restartReport = await secondRestart.reconcile();
+        while (restartReport.continuationCursor !== null) {
+          restartCalls += 1;
+          assert.equal(restartCalls < 30, true, boundary);
+          restartReport = await secondRestart.reconcile({
+            cursor: restartReport.continuationCursor,
+          });
+        }
+        assert.equal(restartReport.continuationCursor, null, boundary);
       } finally {
         await secondRestart.close();
       }

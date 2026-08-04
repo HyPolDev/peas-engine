@@ -415,6 +415,13 @@ test("owned initializer keeps first-boot authority private, root-bound, and ephe
     "internal-provisioning-authority.js",
   );
   const productionAuthorityBefore = await readFile(productionAuthorityPath);
+  const provisioningParent = join(process.cwd(), ".tmp-output-integrity");
+  const privateProvisioningCopies = async (): Promise<string[]> =>
+    existsSync(provisioningParent)
+      ? (await readdir(provisioningParent)).filter((entry) =>
+          entry.startsWith("p1-10-provisioning-"),
+        )
+      : [];
 
   await writeValidation(runtimeRoot);
   const initialized = runInitializer(runtimeRoot);
@@ -428,10 +435,7 @@ test("owned initializer keeps first-boot authority private, root-bound, and ephe
     true,
   );
   assert.deepEqual(await readFile(productionAuthorityPath), productionAuthorityBefore);
-  assert.deepEqual(
-    (await readdir(privateTemp)).filter((entry) => entry.startsWith("peas-p1-10-provisioning-")),
-    [],
-  );
+  assert.deepEqual(await privateProvisioningCopies(), []);
 
   const publicProbe = `
     import { join } from "node:path";
@@ -460,10 +464,7 @@ test("owned initializer keeps first-boot authority private, root-bound, and ephe
   assert.notEqual(failed.status, 0, `${failed.stdout}\n${failed.stderr}`);
   assert.match(failed.stderr, /credential-authority-provisioning-layout-not-empty/u);
   assert.deepEqual(await readFile(productionAuthorityPath), productionAuthorityBefore);
-  assert.deepEqual(
-    (await readdir(privateTemp)).filter((entry) => entry.startsWith("peas-p1-10-provisioning-")),
-    [],
-  );
+  assert.deepEqual(await privateProvisioningCopies(), []);
   assert.equal(existsSync(join(failedRoot, "sqlite")), false);
 });
 

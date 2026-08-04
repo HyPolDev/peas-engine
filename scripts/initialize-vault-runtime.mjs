@@ -3,12 +3,11 @@ import {
   cpSync,
   existsSync,
   mkdtempSync,
+  mkdirSync,
   readFileSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -36,7 +35,9 @@ if (
   throw new Error("Runtime-root validation does not authorize this configured layout");
 }
 
-const provisioningRoot = mkdtempSync(join(tmpdir(), "peas-p1-10-provisioning-"));
+const provisioningParent = resolve(process.cwd(), ".tmp-output-integrity");
+mkdirSync(provisioningParent, { recursive: true });
+const provisioningRoot = mkdtempSync(join(provisioningParent, "p1-10-provisioning-"));
 const provisioningSourceRoot = join(provisioningRoot, "src");
 const provisioningAuthorityPath = join(
   provisioningSourceRoot,
@@ -58,11 +59,6 @@ export const P1_10_PROVISIONING_AUTHORITY = Object.freeze({
 let database;
 try {
   cpSync(resolve(process.cwd(), "dist/src"), provisioningSourceRoot, { recursive: true });
-  symlinkSync(
-    resolve(process.cwd(), "node_modules"),
-    join(provisioningRoot, "node_modules"),
-    process.platform === "win32" ? "junction" : "dir",
-  );
   writeFileSync(provisioningAuthorityPath, activatedProvisioningAuthority, {
     encoding: "utf8",
     flag: "w",
