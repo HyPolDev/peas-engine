@@ -23,8 +23,10 @@ import {
   assertTestNativeAlpacaTransportReleased,
   createTestCredentialIsolatedAlpacaTransport,
   openSqliteDurableCredentialAuthorizationBoundary,
+  ownedLiveCredentialAcquisitionJournal,
   openTestSqliteDurableCredentialAuthorizationBoundary,
   planCredentialAttemptAdmission,
+  prepareOwnedWorkflowJournalLinks,
   provisionSqliteDurableCredentialAuthorityRuntime,
   createTestDurableCredentialAuthorizationBoundary,
   fmpLaneDisabled,
@@ -32,8 +34,13 @@ import {
   type AlpacaDispatchCapability,
   type RuntimeSecretSource,
 } from "../src/adapters/market-acquisition/credentials.js";
+import {
+  createInitialAcquisitionSnapshot,
+  createOwnedAcquisitionStateMachine,
+} from "../src/adapters/market-acquisition/state-machine.js";
 import { MARKET_ACQUISITION_LIMITS } from "../src/adapters/market-acquisition/contracts.js";
 import { buildAlpacaTransportRequest } from "../src/adapters/market-acquisition/alpaca/request.js";
+import { AlpacaDeadlineElapsed } from "../src/adapters/market-acquisition/alpaca/deadline.js";
 import { appendTestAcquisitionWorkflowEvidence } from "../src/adapters/market-acquisition/journal.js";
 import {
   MemoryAcquisitionJournal,
@@ -596,6 +603,56 @@ test("live credential admission has one canonical non-shardable protected durabl
   );
   const authority = openSqliteDurableCredentialAuthorizationBoundary(migrations, plan);
   await authority.establish(fixture.request);
+  const liveJournal = await ownedLiveCredentialAcquisitionJournal(authority, plan);
+  const seeded = await liveJournal.load(fixture.request.marketAcquisitionJournalId);
+  assert.deepEqual(
+    seeded.map((entry) => entry.checkpointKind),
+    ["acquisition-declared", "request-started"],
+  );
+  assert.equal(
+    await liveJournal.isWorkflowProducedJournalEntry(seeded[0]?.journalEntryHash ?? ""),
+    true,
+  );
+  assert.equal(
+    await liveJournal.isWorkflowProducedJournalEntry(seeded[1]?.journalEntryHash ?? ""),
+    true,
+  );
+  assert.throws(
+    () => prepareOwnedWorkflowJournalLinks(liveJournal, [seeded[1] as (typeof seeded)[number]]),
+    /owned-workflow-transition-missing/u,
+  );
+  const initial = createInitialAcquisitionSnapshot({
+    requestIdentityHash: plan.requestIdentityHash,
+    acquisitionConfigurationHash: plan.acquisitionConfigurationHash,
+    marketAcquisitionJournalId: fixture.request.marketAcquisitionJournalId,
+    runSessionNonce: "owned-production-state-run-v1",
+    acquisitionDeclaredMonotonicMs: 0,
+  });
+  const machine = createOwnedAcquisitionStateMachine(authority, initial);
+  await machine.applyAcquisitionEvent({
+    kind: "begin-preflight",
+    proof: {
+      requestIdentityHash: initial.requestIdentityHash,
+      acquisitionConfigurationHash: initial.acquisitionConfigurationHash,
+      marketAcquisitionJournalId: initial.marketAcquisitionJournalId,
+      runSessionNonce: initial.runSessionNonce,
+      nowMonotonicMs: 0,
+      resourcesSettled: true,
+    },
+  });
+  const restarted = createOwnedAcquisitionStateMachine(authority, machine.snapshot);
+  await restarted.applyAcquisitionEvent({
+    kind: "preflight-approved",
+    proof: {
+      requestIdentityHash: initial.requestIdentityHash,
+      acquisitionConfigurationHash: initial.acquisitionConfigurationHash,
+      marketAcquisitionJournalId: initial.marketAcquisitionJournalId,
+      runSessionNonce: initial.runSessionNonce,
+      nowMonotonicMs: 0,
+      resourcesSettled: true,
+    },
+  });
+  assert.equal(restarted.snapshot.currentState, "dispatch-ready");
   assert.throws(
     () => openSqliteDatabase(authorityPath, migrations),
     /protected-sqlite-database-path/u,
@@ -923,6 +980,74 @@ test("destination and complete ordered query are capability-bound before every s
     /dispatch-destination-invalid/u,
   );
   assert.equal(reads, 0);
+
+  const alternatePlan = validatedRepairPlan("quotes", "9999");
+  assert.equal(alternatePlan.requestIdentityHash, plan.requestIdentityHash);
+  assert.notEqual(alternatePlan.acquisitionConfigurationHash, plan.acquisitionConfigurationHash);
+  const exactFixture = await credentialAuthorizationFixture(plan);
+  const exactRequest = firstRequest(plan);
+  const exactPermit = authorizeCredentialLoad(
+    await exactFixture.authorization.establish(exactFixture.request),
+    exactRequest,
+  );
+  const alternateRequest = firstRequest(alternatePlan);
+  let genuineReads = 0;
+  await assert.rejects(
+    () =>
+      withAlpacaAuthorization(
+        exactPermit,
+        {
+          read() {
+            genuineReads += 1;
+            return "must-not-be-read";
+          },
+        },
+        alternateRequest,
+        async () => undefined,
+      ),
+    /dispatch-destination-invalid/u,
+  );
+  assert.equal(genuineReads, 0);
+});
+
+test("an already-expired owned deadline performs zero secret reads and zero dispatch", async () => {
+  const plan = validatedRepairPlan();
+  const fixture = await credentialAuthorizationFixture(plan);
+  const request = firstRequest(plan);
+  const permit = authorizeCredentialLoad(await fixture.authorization.establish(fixture.request));
+  let reads = 0;
+  let dispatches = 0;
+  let checks = 0;
+  const deadline = Object.freeze({
+    expired: Promise.resolve(),
+    assertRemaining(): void {
+      checks += 1;
+      throw new AlpacaDeadlineElapsed();
+    },
+    cancel(): void {},
+    async settle(): Promise<void> {},
+  });
+  await assert.rejects(
+    () =>
+      withAlpacaAuthorization(
+        permit,
+        {
+          read() {
+            reads += 1;
+            return "must-not-be-read";
+          },
+        },
+        request,
+        async () => {
+          dispatches += 1;
+        },
+        deadline,
+      ),
+    AlpacaDeadlineElapsed,
+  );
+  assert.equal(checks, 1);
+  assert.equal(reads, 0);
+  assert.equal(dispatches, 0);
 });
 
 test("a structurally forged permit and incomplete proof cannot read credentials", async () => {

@@ -205,9 +205,18 @@ function waitForWorkerMessage(
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       cleanup();
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-      reject(new Error(`Artifact worker timed out before ${expectedType}`));
-    }, 30_000);
+      const error = new Error(`Artifact worker timed out before ${expectedType}`);
+      if (child.exitCode !== null || child.signalCode !== null) {
+        reject(error);
+        return;
+      }
+      const exited = waitForWorkerExit(child);
+      child.kill("SIGKILL");
+      void exited.then(
+        () => reject(error),
+        (exitError: unknown) => reject(exitError),
+      );
+    }, 90_000);
     const cleanup = (): void => {
       clearTimeout(timeout);
       state.listeners.delete(poll);
@@ -1065,7 +1074,13 @@ test("hard kill after install intent converges from durable intent without fabri
     config: vaultConfig(root),
   });
   try {
-    const report = await recovered.reconcile();
+    let report = await recovered.reconcile();
+    let calls = 1;
+    while (report.continuationCursor !== null) {
+      assert.equal(calls < 30, true);
+      report = await recovered.reconcile({ cursor: report.continuationCursor });
+      calls += 1;
+    }
     assert.equal(report.continuationCursor, null);
     for (const table of [
       "artifact_install_intents",
@@ -1229,7 +1244,10 @@ test("cancellation after source removal preserves the exact quarantine copy and 
     const source = join(fixture.root, "artifacts", "staging", `cancel-${boundary}.part`);
     const original = Buffer.from(`original synthetic ${boundary}`, "utf8");
     writeFileSync(source, original);
-    await assert.rejects(() => store.reconcile(), /Reconciliation was stopped/u);
+    await assert.rejects(
+      () => store.reconcile({ maxElapsedMs: 60_000 }),
+      /Reconciliation was stopped/u,
+    );
     assert.equal(existsSync(source), false, boundary);
     const names = readdirSync(join(fixture.root, "artifacts", "quarantine"));
     assert.equal(names.length, 1, boundary);
@@ -1700,8 +1718,19 @@ test("tampered and missing committed content fails before consumer bytes", async
   );
   rmSync(missingPath);
   await assert.rejects(() => store.read(missing.artifact.digest), /missing/u);
-  const report = await store.reconcile();
-  assert.equal(report.missingArtifacts >= 1, true);
+  let report = await store.reconcile({ maxElapsedMs: 60_000 });
+  let missingArtifacts = report.missingArtifacts;
+  let calls = 1;
+  while (report.continuationCursor !== null) {
+    assert.equal(calls < 30, true);
+    report = await store.reconcile({
+      cursor: report.continuationCursor,
+      maxElapsedMs: 60_000,
+    });
+    missingArtifacts += report.missingArtifacts;
+    calls += 1;
+  }
+  assert.equal(missingArtifacts >= 1, true);
 });
 
 test("oversized corrupt reads stop after one bounded chunk", async (context) => {

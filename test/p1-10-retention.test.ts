@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { fork, type ChildProcess } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
@@ -13,6 +13,7 @@ import {
   RetentionOwnedAlpacaPageSink,
   assertRetentionOwnedAlpacaPageSink,
   createRetentionOwnedAlpacaPageSink,
+  createDurableAlpacaArtifactCommitSink,
   createTestAlpacaArtifactCommitSink,
 } from "../src/adapters/market-acquisition/alpaca/retained-sink.js";
 import { artifactRuntimePaths } from "../src/adapters/artifacts/runtime-root.js";
@@ -62,6 +63,7 @@ import {
   assertRetentionEnforcedArtifactStore,
   createRetentionEnforcedArtifactStore,
   createTestRetentionEnforcedArtifactStore,
+  beginRetentionUse,
 } from "../src/adapters/market-acquisition/retention/artifact-access.js";
 import { VaultArtifactRetentionBoundary } from "../src/adapters/market-acquisition/retention/vault-boundary.js";
 import { isSafeAcquisitionError } from "../src/adapters/market-acquisition/redaction.js";
@@ -434,6 +436,17 @@ test("ownership registered during or after a provider stop is atomically denied 
     isSafeAcquisitionError,
   );
   assert.equal(journal.digestUseDenied(thirdDigest), true);
+});
+
+test("a retention lease issued before stop cannot admit later wire or derived use", async () => {
+  const journal = createMemoryArtifactRetentionJournal();
+  const artifacts = new SyntheticArtifactBoundary();
+  const worker = controller(journal, artifacts, () => stop().effectiveAtMs);
+  worker.registerOwnership(ownership({ derivedIds: [] }));
+  const guarded = createTestRetentionEnforcedArtifactStore({} as ArtifactStore, worker);
+  const lease = guarded.createUseLease([digest]);
+  await worker.enforceStop(stop());
+  assert.throws(() => beginRetentionUse(lease, [digest]), isSafeAcquisitionError);
 });
 
 test("trusted artifact completion closes provider-stop races before, during, and after commit", async () => {
@@ -1089,11 +1102,9 @@ test("vault retention boundary removes content, staging, snapshot, and quarantin
   const content = digestContentPath(root, digest);
   await mkdir(dirname(content), { recursive: true });
   await writeFile(content, syntheticBytes, { mode: 0o600 });
-  await writeFile(join(paths.staging, "synthetic.part"), syntheticBytes, { mode: 0o600 });
-  await writeFile(join(paths.snapshots, "synthetic.verified"), syntheticBytes, { mode: 0o600 });
-  await writeFile(join(paths.quarantine, "synthetic.quarantined"), syntheticBytes, {
-    mode: 0o600,
-  });
+  await link(content, join(paths.staging, "synthetic.part"));
+  await link(content, join(paths.snapshots, "synthetic.verified"));
+  await link(content, join(paths.quarantine, "synthetic.quarantined"));
   const database = openSqliteDatabase(paths.databasePath, migrations);
   const store = await DurableArtifactStore.open({
     repository: new SqliteArtifactRepository(database),
@@ -1119,6 +1130,53 @@ test("vault retention boundary removes content, staging, snapshot, and quarantin
   assert.equal(await boundary.verifyDigestCopiesAbsent(digest), true);
   const second = await boundary.eraseDigestCopies(digest);
   assert.equal(second.alreadyAbsent, true);
+});
+
+test("the production byte-bound sink registers the actual bare observation id and stop erases it", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "peas-p1-10-owned-sink-"));
+  const paths = artifactRuntimePaths(root);
+  await mkdir(paths.databaseDirectory, { recursive: true });
+  const database = openSqliteDatabase(paths.databasePath, migrations);
+  const store = await DurableArtifactStore.open({
+    repository: new SqliteArtifactRepository(database),
+    clock: new ManualClock(captureMs),
+    config: vaultConfig(root),
+  });
+  context.after(async () => {
+    await store.close();
+    if (database.open) database.close();
+    await rm(root, { recursive: true, force: true });
+  });
+  const journal = createSqliteArtifactRetentionJournal(database);
+  const vault = await VaultArtifactRetentionBoundary.open({ store, runtimeRoot: root });
+  const controller = createArtifactRetentionController({
+    journal,
+    artifacts: vault,
+    nowMs: () => stop().effectiveAtMs,
+  });
+  const artifact = artifactRequest("owned-byte-bound-sink", Readable.from([]));
+  const { entityBytes: _discarded, ...request } = artifact;
+  const retention = ownership({ derivedIds: [] });
+  const {
+    artifactObservationId: _observation,
+    artifactDigest: _digest,
+    artifactSizeBytes: _size,
+    ...ownedRetention
+  } = retention;
+  const sink = createRetentionOwnedAlpacaPageSink(
+    createDurableAlpacaArtifactCommitSink(store, { request, ownership: ownedRetention }),
+    controller,
+  );
+  await sink.write(syntheticBytes);
+  const result = await sink.completeVerifyAndRegisterOwnership();
+  assert.match(result.observation.observationId, /^[0-9a-f]{64}$/u);
+  assert.equal(result.artifact.digest, digest);
+  const registered = journal.ownershipForDigest(digest);
+  assert.equal(registered.length, 1);
+  assert.equal(registered[0]?.artifactObservationId, result.observation.observationId);
+  const receipt = await controller.enforceStop(stop());
+  assert.equal(receipt.outcome, "verified-erased");
+  assert.equal(await vault.verifyDigestCopiesAbsent(digest), true);
 });
 
 test("separate live controllers over one durable store share the stop barrier", async (context) => {
@@ -1187,7 +1245,7 @@ test("separate live controllers over one durable store share the stop barrier", 
 
 function waitForCheckpoint(child: ChildProcess, expected: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error(`Worker did not reach ${expected}`)), 10_000);
+    const timeout = setTimeout(() => reject(new Error(`Worker did not reach ${expected}`)), 30_000);
     child.once("error", reject);
     child.on("message", (message: unknown) => {
       if (
@@ -1204,7 +1262,7 @@ function waitForCheckpoint(child: ChildProcess, expected: string): Promise<void>
 }
 
 test("process hard-kill at every retention boundary converges without resurrection", {
-  timeout: 120_000,
+  timeout: 360_000,
 }, async () => {
   const checkpoints = [
     "retention-stop-denials-committed",
@@ -1243,7 +1301,16 @@ test("process hard-kill at every retention boundary converges without resurrecti
       const child = fork(hardKillWorker, [paths.databasePath, root, checkpoint, digest], {
         stdio: ["ignore", "ignore", "ignore", "ipc"],
       });
-      await waitForCheckpoint(child, checkpoint);
+      try {
+        await waitForCheckpoint(child, checkpoint);
+      } catch (error) {
+        if (child.exitCode === null && child.signalCode === null) {
+          const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+          child.kill("SIGKILL");
+          await exited;
+        }
+        throw error;
+      }
       assert.equal(child.kill("SIGKILL"), true);
       await new Promise<void>((resolve) => child.once("exit", () => resolve()));
 

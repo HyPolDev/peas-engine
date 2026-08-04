@@ -27,7 +27,10 @@ import {
 } from "../src/adapters/market-acquisition/alpaca/retained-sink.js";
 import { createOwnedAlpacaDeadlineScheduler } from "../src/adapters/market-acquisition/alpaca/deadline.js";
 import { openSqliteDatabase } from "../src/adapters/sqlite/database.js";
-import { decideAcquisitionRestart } from "../src/adapters/market-acquisition/artifact-integration.js";
+import {
+  MarketAcquisitionLedger,
+  decideAcquisitionRestart,
+} from "../src/adapters/market-acquisition/artifact-integration.js";
 import {
   ACCEPTED_PR_2E_CANDIDATE_SHA,
   MARKET_ACQUISITION_LIMITS,
@@ -50,18 +53,22 @@ import {
   derivePrivateTokenHash,
   NO_TOKEN_HASH,
   createJournalEntry,
-  appendTestAcquisitionJournalEntry,
+  appendTestAcquisitionWorkflowEvidence,
   type AcquisitionJournal,
   type JournalCheckpointBody,
 } from "../src/adapters/market-acquisition/journal.js";
-import { MemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
+import { createMemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
 import {
   MAX_ATTEMPTS_PER_ACQUISITION,
   MAX_ATTEMPTS_PER_PAGE,
   decideRetry,
   type RetryFailure,
 } from "../src/adapters/market-acquisition/retry.js";
-import { SqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
+import { createSqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
+import {
+  deriveAcquisitionObservationId,
+  type ObservationLedgerEntryV1,
+} from "../src/providers/observation-ledger.js";
 import {
   type DefaultArtifactRetentionController,
   createTestArtifactRetentionController,
@@ -672,16 +679,31 @@ function eventProof(
   };
 }
 
+function retryRetrievalAttemptId(): string {
+  return `rat1_${canonicalHash("peas/p1-10-adapter-retry-test/v1", {
+    member: "pending-attempt",
+  })}`;
+}
+
+function retryAcquisitionObservationId(plan: ValidatedMarketAcquisitionConfiguration): string {
+  return deriveAcquisitionObservationId({
+    provider: "alpaca",
+    retrievalAttemptId: retryRetrievalAttemptId(),
+    sanitizedRequestIdentityHash: plan.requestIdentityHash,
+    routeLabel: plan.route.safeRouteLabel,
+  });
+}
+
 function checkpointBody(
   snapshot: AcquisitionMachineSnapshot,
   plan: ValidatedMarketAcquisitionConfiguration,
+  stage: ObservationLedgerEntryV1 | null = null,
+  clockDeclarationId: string | null = null,
 ): JournalCheckpointBody {
   return {
     schemaVersion: 1,
     runSessionNonce: snapshot.runSessionNonce,
-    acquisitionObservationId: canonicalHash("peas/p1-10-adapter-retry-test/v1", {
-      member: "acquisition-observation",
-    }),
+    acquisitionObservationId: retryAcquisitionObservationId(plan),
     marketAcquisitionId: `maq1_${canonicalHash("peas/p1-10-adapter-retry-test/v1", {
       member: "market-acquisition",
     })}`,
@@ -704,9 +726,7 @@ function checkpointBody(
     attemptId:
       snapshot.attemptId ??
       `mat1_${canonicalHash("peas/p1-10-adapter-retry-test/v1", { member: "pending-attempt" })}`,
-    retrievalAttemptId:
-      snapshot.retrievalAttemptId ??
-      `rat1_${canonicalHash("peas/p1-10-adapter-retry-test/v1", { member: "pending-attempt" })}`,
+    retrievalAttemptId: snapshot.retrievalAttemptId ?? retryRetrievalAttemptId(),
     attemptOrdinal: snapshot.attemptOrdinal ?? 0,
     artifactObservationId: null,
     artifactDigest: null,
@@ -714,8 +734,9 @@ function checkpointBody(
     artifactObservationHash: null,
     artifactContentId: null,
     rawArtifactId: null,
-    stageLedgerFactId: null,
-    causalParentFactIds: [],
+    stageLedgerFactId: stage?.entryId ?? null,
+    causalParentFactIds:
+      stage === null ? [] : stage.parentEntryIds.filter((parent) => parent !== clockDeclarationId),
     pageRecordCount: null,
     pageNormalizedFactCount: null,
     pageChainHash: snapshot.pageChainHash,
@@ -732,23 +753,76 @@ function checkpointBody(
   };
 }
 
+type RetryWorkflowEvidence = Readonly<{
+  ledger: readonly ObservationLedgerEntryV1[];
+  clockDeclarationId: string;
+  acquisitionDeclared: ObservationLedgerEntryV1;
+  requestStarted: ObservationLedgerEntryV1;
+}>;
+
+function retryWorkflowEvidence(
+  plan: ValidatedMarketAcquisitionConfiguration,
+): RetryWorkflowEvidence {
+  const ledger = new MarketAcquisitionLedger("p1-10-adapter-retry-ledger-v1", {
+    wallClock: "system-utc",
+    synchronization: "verified-bound",
+    maximumErrorMs: 0,
+    monotonicClock: "process-monotonic-us",
+    monotonicSessionId: "p1-10-adapter-retry-session-v1",
+  });
+  const stamp = (offset: number) => ({
+    clockBasisId: ledger.clockBasis.clockBasisId,
+    wallTimeMs: 1_000 + offset,
+    monotonicTimeUs: 10_000 + offset,
+  });
+  const acquisitionObservationId = retryAcquisitionObservationId(plan);
+  const acquisitionDeclared = ledger.declareAcquisition(
+    {
+      kind: "acquisition.declared",
+      acquisitionObservationId,
+      provider: "alpaca",
+      retrievalAttemptId: retryRetrievalAttemptId(),
+      sanitizedRequestIdentityHash: plan.requestIdentityHash,
+      routeLabel: plan.route.safeRouteLabel,
+    },
+    stamp(0),
+  );
+  const requestStarted = ledger.requestStarted(
+    acquisitionDeclared,
+    { kind: "request.started", acquisitionObservationId },
+    stamp(1),
+  );
+  return Object.freeze({
+    ledger: ledger.entries,
+    clockDeclarationId: ledger.clockDeclaration.entryId,
+    acquisitionDeclared,
+    requestStarted,
+  });
+}
+
 async function persistPlan(
   journal: AcquisitionJournal,
   journalId: string,
   plan: ValidatedMarketAcquisitionConfiguration,
   transition: AcquisitionTransitionPlan,
+  workflow: RetryWorkflowEvidence,
 ): Promise<void> {
   if (transition.checkpointKind === null) return;
   const rows = await journal.load(journalId);
-  await appendTestAcquisitionJournalEntry(
-    journal,
+  const stage =
+    transition.checkpointKind === "acquisition-declared"
+      ? workflow.acquisitionDeclared
+      : transition.checkpointKind === "request-started"
+        ? workflow.requestStarted
+        : null;
+  await appendTestAcquisitionWorkflowEvidence(journal, workflow.ledger, [
     createJournalEntry(
       rows.at(-1) ?? null,
       journalId,
       transition.checkpointKind,
-      checkpointBody(transition.next, plan),
+      checkpointBody(transition.next, plan, stage, workflow.clockDeclarationId),
     ),
-  );
+  ]);
 }
 
 async function driveCleanFailureToRetryBoundary(
@@ -765,8 +839,9 @@ async function driveCleanFailureToRetryBoundary(
     runSessionNonce: "offline-adapter-retry-session-v1",
     acquisitionDeclaredMonotonicMs: 0,
   });
+  const workflow = retryWorkflowEvidence(plan);
   const machine = new AcquisitionStateMachine(initial, (transition) =>
-    persistPlan(journal, journalId, plan, transition),
+    persistPlan(journal, journalId, plan, transition, workflow),
   );
   await machine.applyAcquisitionEvent({
     kind: "begin-preflight",
@@ -889,7 +964,7 @@ test("clean adapter retry has byte-identical memory and SQLite restart boundarie
   const projections: string[] = [];
   for (const failureKind of ["transport", "timeout"] as const) {
     const identity = journalIdentity(plan);
-    const memory = new MemoryAcquisitionJournal(identity);
+    const memory = createMemoryAcquisitionJournal(identity);
     const memoryBoundary = await driveCleanFailureToRetryBoundary(failureKind, memory, plan);
     const memoryRows = await memory.load(memoryBoundary.journalId);
     assert.equal(memoryRows.length, 3);
@@ -913,14 +988,14 @@ test("clean adapter retry has byte-identical memory and SQLite restart boundarie
     t.after(() => rmSync(directory, { recursive: true, force: true }));
     const filename = join(directory, "journal.sqlite");
     let database = openSqliteDatabase(filename, []);
-    let sqlite = new SqliteAcquisitionJournal(database, identity);
+    let sqlite = createSqliteAcquisitionJournal(database, identity);
     const sqliteBoundary = await driveCleanFailureToRetryBoundary(failureKind, sqlite, plan);
     const sqliteRows = await sqlite.load(sqliteBoundary.journalId);
     assert.equal(canonicalJson(sqliteRows as unknown as JsonValue), beforeRestart);
     database.close();
 
     database = openSqliteDatabase(filename, []);
-    sqlite = new SqliteAcquisitionJournal(database, identity);
+    sqlite = createSqliteAcquisitionJournal(database, identity);
     assert.deepEqual(
       await decideAcquisitionRestart({
         journal: sqlite,

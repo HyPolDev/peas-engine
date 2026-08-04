@@ -10,6 +10,7 @@ import {
   type ObservationLedgerEntryV1,
 } from "../../providers/observation-ledger.js";
 import Database from "better-sqlite3";
+import { P1_10_TEST_AUTHORITY } from "../../internal-test-authority.js";
 import { assertOwnedSqliteDatabase, type SqliteDatabase } from "../sqlite/database.js";
 import {
   type AcquisitionJournal,
@@ -19,6 +20,7 @@ import {
   assertAcquisitionWorkflowProducerAuthority,
   validateJournalEntries,
 } from "./journal.js";
+import { isOwnedLiveCredentialSqliteDatabase } from "./credentials.js";
 
 const ownedSqliteAcquisitionJournals = new WeakSet<object>();
 const workflowProofWriteScopes = new WeakMap<SqliteDatabase, Set<string>>();
@@ -271,6 +273,9 @@ export class SqliteAcquisitionJournal implements AcquisitionJournal {
     expectedRequestStartedHash: string,
     entry: JournalEntry,
   ): Promise<boolean> {
+    if (P1_10_TEST_AUTHORITY === undefined) {
+      throw new TypeError("owned-attempt-claim-required");
+    }
     if (entry.checkpointKind !== "attempt-started") return false;
     const entryJson = canonicalJson(entry as unknown as JsonValue);
     assertJsonWithinLimits(entry as unknown as JsonValue, JOURNAL_ENTRY_LIMITS);
@@ -414,7 +419,11 @@ export function createSqliteAcquisitionJournal(
   database: SqliteDatabase,
   expectedIdentity: JournalIdentityInput,
 ): SqliteAcquisitionJournal {
-  assertOwnedSqliteDatabase(database);
+  try {
+    assertOwnedSqliteDatabase(database);
+  } catch (error) {
+    if (!isOwnedLiveCredentialSqliteDatabase(database)) throw error;
+  }
   const journal = new SqliteAcquisitionJournal(database, expectedIdentity);
   ownedSqliteAcquisitionJournals.add(journal);
   Object.freeze(journal);
@@ -429,3 +438,5 @@ export function isOwnedSqliteAcquisitionJournal(value: object): boolean {
     Reflect.ownKeys(value).length === 0
   );
 }
+
+Object.freeze(SqliteAcquisitionJournal.prototype);

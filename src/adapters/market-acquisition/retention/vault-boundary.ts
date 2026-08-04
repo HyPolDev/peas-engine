@@ -5,6 +5,7 @@ import { isProxy } from "node:util/types";
 import {
   type DurableArtifactStore,
   assertOwnedDurableArtifactStore,
+  ownedDurableArtifactStoreRuntimeIdentity,
 } from "../../artifacts/durable-artifact-store.js";
 import { artifactRuntimePaths, assertPathBelowRuntimeRoot } from "../../artifacts/runtime-root.js";
 import { hashTrustedFile, safeChild, syncDirectory } from "../../artifacts/trusted-filesystem.js";
@@ -14,6 +15,7 @@ import type { ErasureCopyKind, ErasureResult, RetentionArtifactBoundary } from "
 const MAX_PRIVATE_DIRECTORY_ENTRIES = 1_024;
 const ownedVaultBoundaries = new WeakSet<object>();
 const vaultCoordinatorRoots = new WeakMap<object, DurableArtifactStore>();
+const vaultRuntimeIdentities = new WeakMap<object, object>();
 
 async function directoryNames(path: string, device: number): Promise<readonly string[]> {
   const info = await lstat(path);
@@ -71,6 +73,7 @@ export class VaultArtifactRetentionBoundary implements RetentionArtifactBoundary
     );
     ownedVaultBoundaries.add(boundary);
     vaultCoordinatorRoots.set(boundary, input.store);
+    vaultRuntimeIdentities.set(boundary, ownedDurableArtifactStoreRuntimeIdentity(input.store));
     Object.freeze(boundary);
     return boundary;
   }
@@ -198,6 +201,13 @@ export function ownedVaultRetentionCoordinatorRoot(
   return root;
 }
 
+export function ownedVaultRetentionRuntimeIdentity(value: RetentionArtifactBoundary): object {
+  assertOwnedVaultArtifactRetentionBoundary(value);
+  const identity = vaultRuntimeIdentities.get(value as object);
+  if (identity === undefined) throw new TypeError("owned-vault-retention-boundary-required");
+  return identity;
+}
+
 export function assertOwnedVaultArtifactRetentionBoundary(
   value: RetentionArtifactBoundary,
 ): asserts value is VaultArtifactRetentionBoundary {
@@ -209,3 +219,5 @@ export function assertOwnedVaultArtifactRetentionBoundary(
     throw new TypeError("owned-vault-retention-boundary-required");
   }
 }
+
+Object.freeze(VaultArtifactRetentionBoundary.prototype);

@@ -212,6 +212,7 @@ export class SqliteArtifactRepository {
   constructor(database: SqliteDatabase) {
     assertOwnedSqliteDatabase(database);
     this.#database = database;
+    Object.preventExtensions(this);
   }
 
   databasePath(): string {
@@ -2031,3 +2032,5 @@ export class SqliteArtifactRepository {
     return observation;
   }
 }
+
+Object.freeze(SqliteArtifactRepository.prototype);

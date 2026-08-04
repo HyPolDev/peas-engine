@@ -17,6 +17,7 @@ import {
   type DurableCredentialAuthorizationBoundary,
   withAlpacaAuthorization,
   type CredentialAuthorizationRequest,
+  type CredentialAttemptResult,
   type CredentialPreflightPermit,
   type RuntimeSecretSource,
 } from "../credentials.js";
@@ -33,6 +34,7 @@ import type {
 import { buildAlpacaTransportRequest } from "./request.js";
 import { assertRetentionOwnedAlpacaPageSink } from "./retained-sink.js";
 import { assertOwnedAlpacaDeadlineScheduler } from "./deadline.js";
+import { AlpacaDeadlineElapsed } from "./deadline.js";
 
 class DeadlineElapsed {}
 
@@ -235,7 +237,7 @@ async function executeAlpacaAttempt<T>(
     try {
       response = await run(input.transport.dispatch(input.dispatchCapability));
     } catch (error) {
-      if (error instanceof DeadlineElapsed) {
+      if (error instanceof DeadlineElapsed || error instanceof AlpacaDeadlineElapsed) {
         return failure("attempt-timeout", "dispatch", { kind: "pre-response-transport" });
       }
       return failure("transport-failed", "dispatch", { kind: "pre-response-transport" });
@@ -398,7 +400,7 @@ export class AlpacaProductionAttemptBoundary {
     let permit: CredentialPreflightPermit;
     try {
       const evidence = await this.#authorization.establish(input.credentialAuthorization);
-      permit = authorizeCredentialLoad(evidence);
+      permit = authorizeCredentialLoad(evidence, requestLease.request);
     } catch (error) {
       requestLease.release();
       const denial = credentialAuthorizationDenialReason(error);
@@ -416,6 +418,7 @@ export class AlpacaProductionAttemptBoundary {
         scheduled === null ||
         typeof scheduled !== "object" ||
         !(scheduled.expired instanceof Promise) ||
+        typeof scheduled.assertRemaining !== "function" ||
         typeof scheduled.cancel !== "function" ||
         typeof scheduled.settle !== "function"
       ) {
@@ -423,6 +426,7 @@ export class AlpacaProductionAttemptBoundary {
       }
       deadline = Object.freeze({
         expired: scheduled.expired,
+        assertRemaining: scheduled.assertRemaining.bind(scheduled),
         cancel: scheduled.cancel.bind(scheduled),
         settle: scheduled.settle.bind(scheduled),
       });
@@ -437,20 +441,38 @@ export class AlpacaProductionAttemptBoundary {
         false,
       );
     }
-    const authorized = await withAlpacaAuthorization(
-      permit,
-      this.#secrets,
-      requestLease.request,
-      (dispatchCapability) =>
-        executeAlpacaAttempt({
-          dispatchCapability,
-          transport: input.transport,
-          artifactSink: input.artifactSink,
-          requestLease,
-          abortController,
-          deadline,
-        }),
-    );
+    let authorized: CredentialAttemptResult<AlpacaAttemptResult<T>>;
+    try {
+      authorized = await withAlpacaAuthorization(
+        permit,
+        this.#secrets,
+        requestLease.request,
+        (dispatchCapability) =>
+          executeAlpacaAttempt({
+            dispatchCapability,
+            transport: input.transport,
+            artifactSink: input.artifactSink,
+            requestLease,
+            abortController,
+            deadline,
+          }),
+        deadline,
+      );
+    } catch (error) {
+      requestLease.release();
+      abortController.abort();
+      await boundedBoolean(input.transport.abort(), deadline.expired);
+      const timerSettled = await settleTimer(deadline);
+      if (error instanceof AlpacaDeadlineElapsed) {
+        return safeFailure(
+          new AttemptFailure("attempt-timeout", "credential-load", {
+            kind: "pre-response-transport",
+          }),
+          timerSettled,
+        );
+      }
+      throw error;
+    }
     if (authorized.ok) return authorized.value;
     requestLease.release();
     const timerSettled = await settleTimer(deadline);
@@ -462,3 +484,5 @@ export class AlpacaProductionAttemptBoundary {
     );
   }
 }
+
+Object.freeze(AlpacaProductionAttemptBoundary.prototype);

@@ -496,7 +496,7 @@ test("verified replay requires exact complete ledger-to-artifact coverage and co
   await assert.rejects(
     () =>
       replay([expected, { ...expected, artifactObservationId: hash("unexpected-observation") }]),
-    /replay-artifact-coverage-mismatch|non-JSON undefined/u,
+    /artifact-expectation-invalid|replay-artifact-coverage-mismatch|non-JSON undefined/u,
   );
   await assert.rejects(
     () => replay([expected, { ...expected, provider: "substituted" } as never]),
@@ -504,7 +504,35 @@ test("verified replay requires exact complete ledger-to-artifact coverage and co
   );
   await assert.rejects(
     () => replay([{ ...expected, artifactObservationHash: undefined } as never]),
-    /replay-artifact-coverage-mismatch|non-JSON undefined/u,
+    /artifact-expectation-invalid|replay-artifact-coverage-mismatch|non-JSON undefined/u,
   );
   assert.equal(fixture.readCalls(), 0);
+});
+
+test("verified replay snapshots the complete expectation tuple before the first await", async () => {
+  const ledger = buildLiveLedger();
+  const fixture = artifactStoreDouble();
+  const guarded = retentionGuardedArtifactStore(fixture.store, [
+    { artifactDigest: digest, artifactSizeBytes: bytes.byteLength, artifactObservationId },
+  ]);
+  const mutable = {
+    artifactObservationId,
+    artifactDigest: digest,
+    artifactSizeBytes: bytes.byteLength,
+    artifactObservationHash,
+    retrievalAttemptId,
+    requestIdentityHash,
+    provider: "alpaca",
+  };
+  const pending = replayVerifiedAcquisition({
+    artifactStore: guarded,
+    artifacts: [mutable],
+    ledger,
+    executionId: "p1-10-replay-expectation-snapshot-v1",
+    pageSize: 2,
+  });
+  mutable.provider = "substituted-after-call";
+  mutable.artifactDigest = hash("substituted-after-call");
+  await pending;
+  assert.equal(fixture.readCalls(), 1);
 });

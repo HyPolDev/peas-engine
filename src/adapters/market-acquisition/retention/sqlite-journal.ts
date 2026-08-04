@@ -1,4 +1,8 @@
 import { assertOwnedSqliteDatabase, type SqliteDatabase } from "../../sqlite/database.js";
+import { resolve } from "node:path";
+import { P1_10_TEST_AUTHORITY } from "../../../internal-test-authority.js";
+import { artifactRuntimePaths, configuredPeasRuntimeRoot } from "../../artifacts/runtime-root.js";
+import { retentionDatabaseIdentity } from "./runtime-identity.js";
 import { canonicalHash } from "../../../core/hash.js";
 import { canonicalJson, type JsonValue } from "../../../core/json.js";
 import {
@@ -19,6 +23,7 @@ import type {
 } from "./contracts.js";
 
 const ownedSqliteRetentionJournals = new WeakSet<object>();
+const sqliteRetentionJournalRoots = new WeakMap<object, object>();
 
 type JsonRow = Readonly<{ json: string; hash: string }>;
 
@@ -543,10 +548,29 @@ export function createSqliteArtifactRetentionJournal(
   database: SqliteDatabase,
 ): SqliteArtifactRetentionJournal {
   assertOwnedSqliteDatabase(database);
+  if (
+    P1_10_TEST_AUTHORITY === undefined &&
+    resolve(database.name) !==
+      resolve(artifactRuntimePaths(configuredPeasRuntimeRoot()).databasePath)
+  ) {
+    throw new TypeError("canonical-retention-database-required");
+  }
   const journal = new SqliteArtifactRetentionJournal(database);
   ownedSqliteRetentionJournals.add(journal);
+  sqliteRetentionJournalRoots.set(journal, retentionDatabaseIdentity(database.name));
   Object.freeze(journal);
   return journal;
+}
+
+export function ownedSqliteRetentionJournalRuntimeIdentity(
+  value: ArtifactRetentionJournal,
+): object {
+  if (!isOwnedSqliteArtifactRetentionJournal(value as object)) {
+    throw new TypeError("owned-sqlite-retention-journal-required");
+  }
+  const identity = sqliteRetentionJournalRoots.get(value as object);
+  if (identity === undefined) throw new TypeError("owned-sqlite-retention-journal-required");
+  return identity;
 }
 
 export function isOwnedSqliteArtifactRetentionJournal(value: object): boolean {
@@ -557,3 +581,5 @@ export function isOwnedSqliteArtifactRetentionJournal(value: object): boolean {
     Reflect.ownKeys(value).length === 0
   );
 }
+
+Object.freeze(SqliteArtifactRetentionJournal.prototype);

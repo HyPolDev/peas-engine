@@ -43,11 +43,17 @@ import {
 import {
   assertOwnedVaultArtifactRetentionBoundary,
   ownedVaultRetentionCoordinatorRoot,
+  ownedVaultRetentionRuntimeIdentity,
 } from "./vault-boundary.js";
+import { ownedSqliteRetentionJournalRuntimeIdentity } from "./sqlite-journal.js";
+import type { AlpacaPreparedArtifactCommit } from "../alpaca/contracts.js";
+import { consumePreparedAlpacaArtifactCommit } from "../alpaca/retained-sink.js";
+import { resolveRetentionDerivedLineageLease } from "./artifact-access.js";
 
 const ID = /^[a-z][a-z0-9]*_[0-9a-f]{64}$/u;
 const POLICY_ID = /^[a-z0-9][a-z0-9-]{0,127}$/u;
 const ownedRetentionControllers = new WeakSet<object>();
+const retentionControllerRoots = new WeakMap<object, object>();
 const CONTROLLER_CONSTRUCTION_AUTHORITY = Object.freeze({});
 type RetentionCoordinator = {
   admissionClosed: boolean;
@@ -126,6 +132,13 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
   }
 
   registerOwnership(input: Omit<RetentionOwnership, "ownershipId">): RetentionOwnership {
+    if (P1_10_TEST_AUTHORITY === undefined) {
+      throw new TypeError("retention-owned-mutation-required");
+    }
+    return this.#registerOwnership(input);
+  }
+
+  #registerOwnership(input: Omit<RetentionOwnership, "ownershipId">): RetentionOwnership {
     this.#validateOwnership(input);
     const value: RetentionOwnership = {
       ...input,
@@ -192,15 +205,33 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
     });
   }
 
+  async commitArtifact<T>(prepared: AlpacaPreparedArtifactCommit<T>): Promise<T>;
   async commitArtifact<T>(
     input: Omit<RetentionOwnership, "ownershipId">,
     commit: () => Promise<T>,
+  ): Promise<T>;
+  async commitArtifact<T>(
+    preparedOrInput: AlpacaPreparedArtifactCommit<T> | Omit<RetentionOwnership, "ownershipId">,
+    testCommit?: () => Promise<T>,
   ): Promise<T> {
+    const prepared =
+      testCommit === undefined
+        ? consumePreparedAlpacaArtifactCommit(preparedOrInput as AlpacaPreparedArtifactCommit<T>)
+        : P1_10_TEST_AUTHORITY === undefined
+          ? (() => {
+              throw new TypeError("retention-owned-mutation-required");
+            })()
+          : Object.freeze({
+              ownership: preparedOrInput as Omit<RetentionOwnership, "ownershipId">,
+              commit: testCommit,
+            });
+    const input = prepared.ownership;
+    const commit = prepared.commit;
     this.#validateOwnership(input);
     const operation = this.beginUse();
     let committed = false;
     try {
-      this.registerOwnership(input);
+      this.#registerOwnership(input);
       const artifact = await commit();
       committed = true;
       operation.assertAllowed();
@@ -224,6 +255,17 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
   }
 
   registerDerivedLineage(artifactDigests: readonly string[], derivedIds: readonly string[]): void {
+    if (P1_10_TEST_AUTHORITY === undefined) {
+      throw new TypeError("retention-owned-mutation-required");
+    }
+    this.#registerDerivedLineage(artifactDigests, derivedIds);
+  }
+
+  registerDerivedLineageFromLease(lease: object, derivedIds: readonly string[]): void {
+    this.#registerDerivedLineage(resolveRetentionDerivedLineageLease(lease, this), derivedIds);
+  }
+
+  #registerDerivedLineage(artifactDigests: readonly string[], derivedIds: readonly string[]): void {
     const digests = sortedSet(artifactDigests);
     const derived = sortedUnique(derivedIds);
     if (digests.length === 0 || derived.length === 0) {
@@ -577,9 +619,14 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
       ["Dataset", value.datasetId],
       ["Feed", value.feedId],
       ["Channel", value.endpointChannelId],
-      ["Observation", value.artifactObservationId],
     ] as const)
       assertId(id, label);
+    if (
+      !/^[0-9a-f]{64}$/u.test(value.artifactObservationId) &&
+      !(P1_10_TEST_AUTHORITY !== undefined && ID.test(value.artifactObservationId))
+    ) {
+      throw new TypeError("Observation is invalid");
+    }
     assertArtifactDigest(value.artifactDigest);
     for (const id of value.derivedIds) assertId(id, "Derived identifier");
     sortedUnique(value.derivedIds);
@@ -638,6 +685,7 @@ function constructOwnedArtifactRetentionController(
     faultBoundary?: RetentionFaultBoundary;
   },
   coordinatorRoot?: object,
+  runtimeIdentity?: object,
 ): DefaultArtifactRetentionController {
   const controller = new DefaultArtifactRetentionController(
     dependencies,
@@ -645,6 +693,7 @@ function constructOwnedArtifactRetentionController(
     coordinatorRoot,
   );
   Object.freeze(controller);
+  if (runtimeIdentity !== undefined) retentionControllerRoots.set(controller, runtimeIdentity);
   return controller;
 }
 
@@ -657,9 +706,15 @@ export function createArtifactRetentionController(dependencies: {
 }): DefaultArtifactRetentionController {
   assertOwnedSqliteRetentionJournal(dependencies.journal);
   assertOwnedVaultArtifactRetentionBoundary(dependencies.artifacts);
+  const journalIdentity = ownedSqliteRetentionJournalRuntimeIdentity(dependencies.journal);
+  const vaultIdentity = ownedVaultRetentionRuntimeIdentity(dependencies.artifacts);
+  if (journalIdentity !== vaultIdentity) {
+    throw new TypeError("retention-runtime-root-mismatch");
+  }
   return constructOwnedArtifactRetentionController(
     dependencies,
     ownedVaultRetentionCoordinatorRoot(dependencies.artifacts),
+    vaultIdentity,
   );
 }
 
@@ -688,6 +743,15 @@ export function assertOwnedArtifactRetentionController(value: ArtifactRetentionC
   }
 }
 
+export function ownedArtifactRetentionControllerRuntimeIdentity(
+  value: ArtifactRetentionController,
+): object {
+  assertOwnedArtifactRetentionController(value);
+  const identity = retentionControllerRoots.get(value as object);
+  if (identity === undefined) throw new TypeError("production-retention-controller-required");
+  return identity;
+}
+
 export function recomputeRetentionPlanHash(plan: RetentionErasurePlan): string {
   const { planHash: _planHash, ...withoutHash } = plan;
   return canonicalHash(
@@ -695,3 +759,5 @@ export function recomputeRetentionPlanHash(plan: RetentionErasurePlan): string {
     withoutHash as unknown as JsonValue,
   );
 }
+
+Object.freeze(DefaultArtifactRetentionController.prototype);

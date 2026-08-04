@@ -61,6 +61,9 @@ export class MemoryAcquisitionJournal implements AcquisitionJournal {
     expectedRequestStartedHash: string,
     entry: JournalEntry,
   ): Promise<boolean> {
+    if (P1_10_TEST_AUTHORITY === undefined) {
+      throw new TypeError("owned-attempt-claim-required");
+    }
     const latest = this.#entries.at(-1);
     if (
       latest?.checkpointKind !== "request-started" ||
@@ -129,6 +132,8 @@ export function createMemoryAcquisitionJournal(
   Object.freeze(journal);
   return journal;
 }
+
+Object.freeze(MemoryAcquisitionJournal.prototype);
 
 export function isOwnedMemoryAcquisitionJournal(value: object): boolean {
   return (

@@ -20,7 +20,9 @@ import { assertOwnedArtifactRetentionController } from "./controller.js";
 import {
   type DurableArtifactStore,
   assertOwnedDurableArtifactStore,
+  ownedDurableArtifactStoreRuntimeIdentity,
 } from "../../artifacts/durable-artifact-store.js";
+import { ownedArtifactRetentionControllerRuntimeIdentity } from "./controller.js";
 
 export type RetentionUseLease = Readonly<{ kind: "retention-enforced-use-lease" }>;
 
@@ -31,6 +33,7 @@ type LeaseBinding = Readonly<{
 
 const retentionStores = new WeakSet<object>();
 const retentionLeases = new WeakMap<object, LeaseBinding>();
+const retentionStoreRoots = new WeakMap<object, object>();
 const RETENTION_STORE_CONSTRUCTION_AUTHORITY = Object.freeze({});
 
 class RetentionGuardedReadable extends Readable {
@@ -243,12 +246,19 @@ export function createRetentionEnforcedArtifactStore(
 ): RetentionEnforcedArtifactStore {
   assertOwnedDurableArtifactStore(store);
   assertOwnedArtifactRetentionController(controller);
+  if (
+    ownedDurableArtifactStoreRuntimeIdentity(store) !==
+    ownedArtifactRetentionControllerRuntimeIdentity(controller)
+  ) {
+    throw new TypeError("retention-runtime-root-mismatch");
+  }
   const guarded = new RetentionEnforcedArtifactStore(
     store,
     controller,
     RETENTION_STORE_CONSTRUCTION_AUTHORITY,
     () => store.closeRetentionAdmission(),
   );
+  retentionStoreRoots.set(guarded, ownedDurableArtifactStoreRuntimeIdentity(store));
   Object.freeze(guarded);
   return guarded;
 }
@@ -283,6 +293,27 @@ export function assertRetentionEnforcedArtifactStore(store: RetentionEnforcedArt
   }
 }
 
+export function ownedRetentionEnforcedArtifactStoreRuntimeIdentity(
+  store: RetentionEnforcedArtifactStore,
+): object {
+  assertRetentionEnforcedArtifactStore(store);
+  const identity = retentionStoreRoots.get(store);
+  if (identity === undefined) throw new TypeError("production-retention-store-root-required");
+  return identity;
+}
+
+/** Controller-side resolution of an opaque lease; no caller-supplied digest is trusted. */
+export function resolveRetentionDerivedLineageLease(
+  lease: object,
+  controller: ArtifactRetentionController,
+): readonly string[] {
+  const binding = retentionLeases.get(lease);
+  if (binding === undefined || binding.controller !== controller || isProxy(lease)) {
+    throw new TypeError("retention-use-lease-invalid");
+  }
+  return Object.freeze([...binding.digests]);
+}
+
 export function assertRetentionUseLease(
   lease: RetentionUseLease,
   artifactDigests: readonly string[],
@@ -302,7 +333,7 @@ export function registerRetentionDerivedLineage(
 ): void {
   const binding = retentionLeases.get(lease);
   if (binding === undefined) throw new TypeError("retention-use-lease-invalid");
-  binding.controller.registerDerivedLineage([...binding.digests], derivedIds);
+  binding.controller.registerDerivedLineageFromLease(lease, derivedIds);
 }
 
 export function beginRetentionUse(
@@ -316,3 +347,6 @@ export function beginRetentionUse(
   }
   return binding.controller.beginUse(artifactDigests, derivedIds);
 }
+
+Object.freeze(RetentionGuardedReadable.prototype);
+Object.freeze(RetentionEnforcedArtifactStore.prototype);

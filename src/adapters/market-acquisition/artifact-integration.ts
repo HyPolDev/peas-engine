@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
+import { isProxy } from "node:util/types";
 import { canonicalJson, type JsonValue } from "../../core/json.js";
 
 import type { ArtifactObservation, StoreArtifactResult } from "../../artifacts/artifact-store.js";
@@ -21,14 +22,22 @@ import {
   type JournalEntry,
   type JournalIdentityInput,
   TERMINAL_TOKEN_HASH,
+  deriveMarketAcquisitionJournalId,
   validateJournalEntries,
 } from "./journal.js";
 import {
   assertRetentionEnforcedArtifactStore,
   type RetentionEnforcedArtifactStore,
 } from "./retention/artifact-access.js";
+import { assertOwnedAcquisitionJournal } from "./owned-journal.js";
 
 const HASH = /^[0-9a-f]{64}$/u;
+type VerifiedWorkflowReceiptBinding = Readonly<{
+  journal: AcquisitionJournal;
+  ledgerEntries: readonly ObservationLedgerEntryV1[];
+  journalEntries: readonly JournalEntry[];
+}>;
+const verifiedWorkflowReceipts = new WeakMap<object, VerifiedWorkflowReceiptBinding>();
 
 function sortIds(values: readonly string[]): readonly string[] {
   const sorted = [...values].sort((left, right) =>
@@ -212,6 +221,59 @@ export type CommittedArtifactExpectation = Readonly<{
   provider: string;
 }>;
 
+const ARTIFACT_EXPECTATION_KEYS = Object.freeze([
+  "artifactObservationId",
+  "artifactDigest",
+  "artifactSizeBytes",
+  "artifactObservationHash",
+  "retrievalAttemptId",
+  "requestIdentityHash",
+  "provider",
+] as const);
+
+/** Detaches a complete inert expectation tuple before any asynchronous artifact operation. */
+export function snapshotCommittedArtifactExpectation(
+  value: CommittedArtifactExpectation,
+): CommittedArtifactExpectation {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    isProxy(value) ||
+    (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)
+  ) {
+    throw new TypeError("artifact-expectation-invalid");
+  }
+  const values = new Map<string, unknown>();
+  for (const key of ARTIFACT_EXPECTATION_KEYS) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined || !("value" in descriptor) || descriptor.enumerable !== true) {
+      throw new TypeError("artifact-expectation-invalid");
+    }
+    values.set(key, descriptor.value);
+  }
+  const snapshot = Object.freeze({
+    artifactObservationId: values.get("artifactObservationId"),
+    artifactDigest: values.get("artifactDigest"),
+    artifactSizeBytes: values.get("artifactSizeBytes"),
+    artifactObservationHash: values.get("artifactObservationHash"),
+    retrievalAttemptId: values.get("retrievalAttemptId"),
+    requestIdentityHash: values.get("requestIdentityHash"),
+    provider: values.get("provider"),
+  });
+  if (
+    typeof snapshot.artifactObservationId !== "string" ||
+    typeof snapshot.artifactDigest !== "string" ||
+    typeof snapshot.artifactSizeBytes !== "number" ||
+    typeof snapshot.artifactObservationHash !== "string" ||
+    typeof snapshot.retrievalAttemptId !== "string" ||
+    typeof snapshot.requestIdentityHash !== "string" ||
+    typeof snapshot.provider !== "string"
+  ) {
+    throw new TypeError("artifact-expectation-invalid");
+  }
+  return snapshot as CommittedArtifactExpectation;
+}
+
 export type VerifiedAcquisitionArtifact = Readonly<{
   observation: ArtifactObservation;
   digest: string;
@@ -224,6 +286,7 @@ export async function verifyCommittedArtifact(
   expected: CommittedArtifactExpectation,
 ): Promise<VerifiedAcquisitionArtifact> {
   assertRetentionEnforcedArtifactStore(store);
+  expected = snapshotCommittedArtifactExpectation(expected);
   if (
     !HASH.test(expected.artifactDigest) ||
     !HASH.test(expected.artifactObservationHash) ||
@@ -367,6 +430,157 @@ export function validateJournalLedgerBindings(
   }
 }
 
+export async function loadWorkflowProducedAcquisitionEvidence(
+  journal: AcquisitionJournal,
+  journalId: string,
+  expectedIdentity: JournalIdentityInput,
+): Promise<
+  Readonly<{
+    journal: readonly JournalEntry[];
+    ledger: readonly ObservationLedgerEntryV1[];
+  }>
+> {
+  assertOwnedAcquisitionJournal(journal);
+  if (journalId !== deriveMarketAcquisitionJournalId(expectedIdentity)) {
+    throw new TypeError("journal-identity-invalid");
+  }
+  const entries = await journal.load(journalId);
+  validateJournalEntries(entries, expectedIdentity);
+  const ledger = await journal.loadLedgerEntries();
+  validateJournalLedgerBindings(entries, ledger);
+  const journalProofs = await Promise.all(
+    entries.map((entry) => journal.isWorkflowProducedJournalEntry(entry.journalEntryHash)),
+  );
+  const ledgerProofs = await Promise.all(
+    ledger.map((entry) => journal.isWorkflowProducedLedgerEntry(entry.entryId)),
+  );
+  const { isOwnedLiveCredentialAcquisitionJournal, isOwnedLiveWorkflowJournalEntryTrusted } =
+    await import("./credentials.js");
+  const liveWorkflowTrusted = !isOwnedLiveCredentialAcquisitionJournal(journal)
+    ? true
+    : entries.every((entry) => isOwnedLiveWorkflowJournalEntryTrusted(journal, entry));
+  if (
+    entries.length === 0 ||
+    ledger.length === 0 ||
+    journalProofs.some((proved) => !proved) ||
+    ledgerProofs.some((proved) => !proved) ||
+    !liveWorkflowTrusted ||
+    entries.some(
+      (entry) =>
+        entry.stageLedgerFactId === null &&
+        entry.checkpointKind !== "attempt-started" &&
+        entry.checkpointKind !== "page-checkpointed",
+    )
+  ) {
+    throw new TypeError("acquisition-workflow-provenance-invalid");
+  }
+  return Object.freeze({ journal: entries, ledger });
+}
+
+/**
+ * Sole live workflow extension. Existing credential-rooted bytes must be an exact prefix and every
+ * artifact-bearing checkpoint is re-proved against the owned retention-enforced store before the
+ * private journal writer can receive a one-shot receipt.
+ */
+export async function persistVerifiedAcquisitionWorkflowEvidence(
+  input: Readonly<{
+    journal: AcquisitionJournal;
+    journalId: string;
+    expectedIdentity: JournalIdentityInput;
+    artifactStore: RetentionEnforcedArtifactStore;
+    journalEntries: readonly JournalEntry[];
+    ledgerEntries: readonly ObservationLedgerEntryV1[];
+  }>,
+): Promise<void> {
+  assertOwnedAcquisitionJournal(input.journal);
+  assertRetentionEnforcedArtifactStore(input.artifactStore);
+  const { assertOwnedLiveCredentialAcquisitionJournal } = await import("./credentials.js");
+  assertOwnedLiveCredentialAcquisitionJournal(input.journal);
+  if (input.journalId !== deriveMarketAcquisitionJournalId(input.expectedIdentity)) {
+    throw new TypeError("journal-identity-invalid");
+  }
+  validateJournalEntries(input.journalEntries, input.expectedIdentity);
+  const ledgerEntries = validateObservationLedgerBundle(input.ledgerEntries);
+  validateJournalLedgerBindings(input.journalEntries, ledgerEntries);
+  const currentJournal = await input.journal.load(input.journalId);
+  const currentLedger = await input.journal.loadLedgerEntries();
+  if (
+    currentJournal.length < 2 ||
+    currentJournal.length > input.journalEntries.length ||
+    currentLedger.length > ledgerEntries.length ||
+    canonicalJson(input.journalEntries.slice(0, currentJournal.length) as unknown as JsonValue) !==
+      canonicalJson(currentJournal as unknown as JsonValue) ||
+    canonicalJson(ledgerEntries.slice(0, currentLedger.length) as unknown as JsonValue) !==
+      canonicalJson(currentLedger as unknown as JsonValue)
+  ) {
+    throw new TypeError("acquisition-workflow-prefix-conflict");
+  }
+  const suffix = input.journalEntries.slice(currentJournal.length);
+  const { isOwnedLiveWorkflowJournalEntryTrusted, prepareOwnedWorkflowJournalLinks } = await import(
+    "./credentials.js"
+  );
+  const pending = currentJournal.filter(
+    (entry) => !isOwnedLiveWorkflowJournalEntryTrusted(input.journal, entry),
+  );
+  const extension = [...pending, ...suffix];
+  if (
+    extension.length === 0 ||
+    pending.some(
+      (entry, index) =>
+        currentJournal[currentJournal.length - pending.length + index]?.journalEntryHash !==
+        entry.journalEntryHash,
+    ) ||
+    extension.some(
+      (entry) =>
+        entry.stageLedgerFactId === null &&
+        entry.checkpointKind !== "attempt-started" &&
+        entry.checkpointKind !== "page-checkpointed",
+    )
+  ) {
+    throw new TypeError("acquisition-workflow-extension-invalid");
+  }
+  const links = prepareOwnedWorkflowJournalLinks(input.journal, extension);
+  for (const entry of extension) {
+    const expected = artifactExpectation(entry);
+    if (
+      [
+        "artifact-committed",
+        "artifact-verified",
+        "page-checkpointed",
+        "chain-complete",
+        "normalization-started",
+        "normalization-complete",
+        "selection-started",
+        "completed",
+      ].includes(entry.checkpointKind)
+    ) {
+      if (expected === null) throw new TypeError("journal-artifact-tuple-required");
+      await verifyCommittedArtifact(input.artifactStore, expected);
+    }
+  }
+  const receipt = Object.freeze({ kind: "verified-acquisition-workflow-receipt" as const });
+  verifiedWorkflowReceipts.set(receipt, {
+    journal: input.journal,
+    ledgerEntries,
+    journalEntries: Object.freeze(suffix),
+  });
+  const { persistVerifiedAcquisitionWorkflowReceipt } = await import("./journal.js");
+  await persistVerifiedAcquisitionWorkflowReceipt(receipt);
+  const { commitOwnedWorkflowJournalLinks } = await import("./credentials.js");
+  commitOwnedWorkflowJournalLinks(input.journal, links);
+}
+
+export function consumeVerifiedAcquisitionWorkflowReceipt(
+  receipt: object,
+): VerifiedWorkflowReceiptBinding {
+  const binding = verifiedWorkflowReceipts.get(receipt);
+  if (binding === undefined) {
+    throw new TypeError("verified-acquisition-workflow-receipt-required");
+  }
+  verifiedWorkflowReceipts.delete(receipt);
+  return binding;
+}
+
 export type DeliveryDisposition =
   | Readonly<{ kind: "first-delivery"; digests: readonly string[] }>
   | Readonly<{ kind: "exact-redelivery"; digests: readonly string[] }>
@@ -438,8 +652,11 @@ export async function decideAcquisitionRestart(
     artifactStore: RetentionEnforcedArtifactStore;
   }>,
 ): Promise<RestartDecision> {
-  const entries = await input.journal.load(input.journalId);
-  validateJournalEntries(entries, input.expectedIdentity);
+  const { journal: entries } = await loadWorkflowProducedAcquisitionEvidence(
+    input.journal,
+    input.journalId,
+    input.expectedIdentity,
+  );
   if (
     entries.some(
       (entry) =>
@@ -530,3 +747,6 @@ export async function decideAcquisitionRestart(
       throw new TypeError("journal-terminal-state-missing");
   }
 }
+
+Object.freeze(MarketAcquisitionLedger.prototype);
+Object.freeze(DeliveryConflictRegistry.prototype);

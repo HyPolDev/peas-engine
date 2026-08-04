@@ -54,6 +54,7 @@ import {
   safeChild,
   syncDirectory,
 } from "./trusted-filesystem.js";
+import { retentionRuntimeIdentity } from "../market-acquisition/retention/runtime-identity.js";
 
 type Paths = Readonly<{
   root: string;
@@ -1702,3 +1703,12 @@ export function assertOwnedDurableArtifactStore(
     throw new TypeError("owned-durable-artifact-store-required");
   }
 }
+
+export function ownedDurableArtifactStoreRuntimeIdentity(value: DurableArtifactStore): object {
+  assertOwnedDurableArtifactStore(value);
+  const root = ownedDurableArtifactStores.get(value);
+  if (root === undefined) throw new TypeError("owned-durable-artifact-store-required");
+  return retentionRuntimeIdentity(root);
+}
+
+Object.freeze(DurableArtifactStore.prototype);

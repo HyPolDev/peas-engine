@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { isProxy } from "node:util/types";
+import { existsSync } from "node:fs";
 import { P1_10_TEST_AUTHORITY } from "../../../internal-test-authority.js";
 
 import { canonicalHash } from "../../../core/hash.js";
@@ -28,7 +29,7 @@ import {
 import type { ValidatedMarketAcquisitionConfiguration } from "../contracts.js";
 import { assertValidatedMarketAcquisitionConfiguration } from "../configuration.js";
 import { ALPACA_ROUTE_REGISTRY } from "../identity.js";
-import { validateJournalLedgerBindings } from "../artifact-integration.js";
+import { loadWorkflowProducedAcquisitionEvidence } from "../artifact-integration.js";
 import { assertOwnedAcquisitionJournal } from "../owned-journal.js";
 import {
   type AlpacaWireSemanticEvidenceStore,
@@ -39,12 +40,25 @@ import {
 } from "./wire-semantic-evidence.js";
 import { openSqliteDatabase, type Migration, type SqliteDatabase } from "../../sqlite/database.js";
 import { createSqliteAcquisitionJournal } from "../sqlite-journal.js";
-import type { RetentionEnforcedArtifactStore } from "../retention/artifact-access.js";
+import {
+  beginRetentionUse,
+  type RetentionEnforcedArtifactStore,
+  type RetentionUseLease,
+} from "../retention/artifact-access.js";
+import type { RetentionOperationLease } from "../retention/contracts.js";
 import type { ArtifactRetentionJournal } from "../retention/contracts.js";
 import { createSqliteArtifactRetentionJournal } from "../retention/sqlite-journal.js";
+import {
+  ownedLiveCredentialAcquisitionJournal,
+  type DurableCredentialAuthorizationBoundary,
+} from "../credentials.js";
+import { artifactRuntimePaths, configuredPeasRuntimeRoot } from "../../artifacts/runtime-root.js";
+import { ownedRetentionEnforcedArtifactStoreRuntimeIdentity } from "../retention/artifact-access.js";
+import { retentionRuntimeIdentity } from "../retention/runtime-identity.js";
 export {
   DurableAlpacaWireSemanticEvidenceBoundary,
   openSqliteDurableAlpacaWireSemanticEvidenceBoundary,
+  openOwnedDurableAlpacaWireSemanticEvidenceBoundary,
   createTestDurableAlpacaWireSemanticEvidenceBoundary,
 } from "./wire-semantic-evidence.js";
 import {
@@ -109,6 +123,7 @@ type AuthenticatedAdmissionBinding = Readonly<{
   artifactDigest: string;
   artifactSizeBytes: number;
   admissionHash: string;
+  retentionLease?: RetentionUseLease;
 }>;
 
 const authenticatedAdmissions = new WeakMap<object, AuthenticatedAdmissionBinding>();
@@ -119,10 +134,11 @@ const wireAdmissionAuthorities = new WeakMap<
     artifactDigest: string;
     artifactSizeBytes: number;
     context: AlpacaWireParseContext;
+    retentionLease?: RetentionUseLease;
   }>
 >();
 const wireAdmissionBoundaries = new WeakSet<object>();
-const productionWireAdmissionDatabases = new WeakMap<object, SqliteDatabase>();
+const productionWireAdmissionDatabases = new WeakMap<object, readonly SqliteDatabase[]>();
 const WIRE_ADMISSION_BOUNDARY_CONSTRUCTION_AUTHORITY = Object.freeze({});
 
 export type AlpacaWireAdmissionAuthority = Readonly<{
@@ -194,10 +210,11 @@ export class DurableAlpacaWireAdmissionBoundary {
     ) {
       reject("page-semantic-authority-invalid");
     }
-    const journal = await this.#journal.load(input.marketAcquisitionJournalId);
-    validateJournalEntries(journal, input.expectedIdentity);
-    const ledger = await this.#journal.loadLedgerEntries();
-    validateJournalLedgerBindings(journal, ledger);
+    const { journal, ledger } = await loadWorkflowProducedAcquisitionEvidence(
+      this.#journal,
+      input.marketAcquisitionJournalId,
+      input.expectedIdentity,
+    );
     const latest = journal.at(-1);
     if (latest === undefined) {
       throw new AlpacaWireContractError("page-semantic-authority-invalid");
@@ -305,6 +322,10 @@ export class DurableAlpacaWireAdmissionBoundary {
     const authority = Object.freeze({
       kind: "p1-10-durable-wire-admission-authority" as const,
     });
+    const retentionLease = this.#artifacts?.createUseLease([artifactDigest]);
+    if (retentionLease === undefined && P1_10_TEST_AUTHORITY === undefined) {
+      reject("page-semantic-authority-invalid");
+    }
     wireAdmissionAuthorities.set(
       authority,
       Object.freeze({
@@ -312,6 +333,7 @@ export class DurableAlpacaWireAdmissionBoundary {
         artifactDigest,
         artifactSizeBytes,
         context,
+        ...(retentionLease === undefined ? {} : { retentionLease }),
       }),
     );
     return authority;
@@ -319,10 +341,10 @@ export class DurableAlpacaWireAdmissionBoundary {
 
   close(): void {
     assertOwnedDurableAlpacaWireAdmissionBoundary(this);
-    const database = productionWireAdmissionDatabases.get(this);
-    if (database === undefined) throw new TypeError("production-wire-admission-root-required");
+    const databases = productionWireAdmissionDatabases.get(this);
+    if (databases === undefined) throw new TypeError("production-wire-admission-root-required");
     productionWireAdmissionDatabases.delete(this);
-    database.close();
+    for (const database of databases) database.close();
   }
 }
 
@@ -349,13 +371,46 @@ export function openSqliteDurableAlpacaWireAdmissionBoundary(
   expectedIdentity: JournalIdentityInput,
   artifacts: RetentionEnforcedArtifactStore,
 ): DurableAlpacaWireAdmissionBoundary {
+  if (P1_10_TEST_AUTHORITY === undefined) {
+    throw new TypeError("arbitrary-wire-admission-root-unavailable");
+  }
   const database = openSqliteDatabase(filename, migrations);
   try {
     const journal = createSqliteAcquisitionJournal(database, expectedIdentity);
     const evidence = createSqliteAlpacaWireSemanticEvidenceStore(database);
     const retention = createSqliteArtifactRetentionJournal(database);
     const boundary = constructAlpacaWireAdmissionBoundary(journal, evidence, artifacts, retention);
-    productionWireAdmissionDatabases.set(boundary, database);
+    productionWireAdmissionDatabases.set(boundary, Object.freeze([database]));
+    return boundary;
+  } catch (error) {
+    database.close();
+    throw error;
+  }
+}
+
+/** Canonical live admission root; journal authority comes only from the owned credential root. */
+export async function openOwnedDurableAlpacaWireAdmissionBoundary(
+  authorization: DurableCredentialAuthorizationBoundary,
+  migrations: readonly Migration[],
+  plan: ValidatedMarketAcquisitionConfiguration,
+  artifacts: RetentionEnforcedArtifactStore,
+): Promise<DurableAlpacaWireAdmissionBoundary> {
+  assertValidatedMarketAcquisitionConfiguration(plan);
+  if (
+    ownedRetentionEnforcedArtifactStoreRuntimeIdentity(artifacts) !==
+    retentionRuntimeIdentity(configuredPeasRuntimeRoot())
+  ) {
+    throw new TypeError("wire-runtime-root-mismatch");
+  }
+  const runtime = artifactRuntimePaths(configuredPeasRuntimeRoot());
+  if (!existsSync(runtime.databasePath)) throw new TypeError("wire-runtime-layout-corrupt");
+  const journal = await ownedLiveCredentialAcquisitionJournal(authorization, plan);
+  const database = openSqliteDatabase(runtime.databasePath, migrations);
+  try {
+    const evidence = createSqliteAlpacaWireSemanticEvidenceStore(database);
+    const retention = createSqliteArtifactRetentionJournal(database);
+    const boundary = constructAlpacaWireAdmissionBoundary(journal, evidence, artifacts, retention);
+    productionWireAdmissionDatabases.set(boundary, Object.freeze([database]));
     return boundary;
   } catch (error) {
     database.close();
@@ -1255,6 +1310,7 @@ export function parseAndAdmitAlpacaHistoricalPage(
   authority: AlpacaWireAdmissionAuthority,
 ): AlpacaWirePageAdmission {
   const snapshot = Buffer.from(bytes);
+  let operation: RetentionOperationLease | undefined;
   try {
     const binding = wireAdmissionAuthorities.get(authority);
     const artifactDigest = createHash("sha256").update(snapshot).digest("hex");
@@ -1264,6 +1320,12 @@ export function parseAndAdmitAlpacaHistoricalPage(
       binding.artifactDigest !== artifactDigest ||
       binding.artifactSizeBytes !== snapshot.byteLength
     ) {
+      return reject("page-semantic-authority-invalid");
+    }
+    if (binding.retentionLease !== undefined) {
+      operation = beginRetentionUse(binding.retentionLease, [binding.artifactDigest]);
+      operation.assertAllowed();
+    } else if (P1_10_TEST_AUTHORITY === undefined) {
       return reject("page-semantic-authority-invalid");
     }
     wireAdmissionAuthorities.delete(authority);
@@ -1281,10 +1343,12 @@ export function parseAndAdmitAlpacaHistoricalPage(
           "peas/alpaca-authenticated-page-admission/v1",
           admission as unknown as JsonValue,
         ),
+        ...(binding.retentionLease === undefined ? {} : { retentionLease: binding.retentionLease }),
       }),
     );
     return admission;
   } finally {
+    operation?.release();
     snapshot.fill(0);
   }
 }
@@ -1306,8 +1370,7 @@ function semanticRecordProjection(record: RecordedMarketRecordV1): JsonValue {
   return semantic as unknown as JsonValue;
 }
 
-/** Resolves only after the verified complete chain; duplicate/conflict decisions are corpus-wide. */
-export function resolveAlpacaHistoricalChain(
+function resolveDurablyAuthenticatedAlpacaHistoricalChain(
   endpointKind: AlpacaWireEndpointKind,
   admissions: readonly AlpacaWirePageAdmission[],
   proof: Readonly<{
@@ -1439,3 +1502,86 @@ export function resolveAlpacaHistoricalChain(
     barObservationCount: observations.length,
   });
 }
+
+/** Resolves only after reloading the owned, workflow-produced durable complete chain. */
+export function resolveAlpacaHistoricalChain(
+  endpointKind: AlpacaWireEndpointKind,
+  admissions: readonly AlpacaWirePageAdmission[],
+  proof: Readonly<{
+    journal: readonly JournalEntry[];
+    expectedIdentity: JournalIdentityInput;
+  }>,
+): AlpacaWireChainResolution;
+export function resolveAlpacaHistoricalChain(
+  endpointKind: AlpacaWireEndpointKind,
+  admissions: readonly AlpacaWirePageAdmission[],
+  proof: Readonly<{
+    journal: AcquisitionJournal;
+    journalId: string;
+    expectedIdentity: JournalIdentityInput;
+  }>,
+): Promise<AlpacaWireChainResolution>;
+export function resolveAlpacaHistoricalChain(
+  endpointKind: AlpacaWireEndpointKind,
+  admissions: readonly AlpacaWirePageAdmission[],
+  proof:
+    | Readonly<{
+        journal: readonly JournalEntry[];
+        expectedIdentity: JournalIdentityInput;
+      }>
+    | Readonly<{
+        journal: AcquisitionJournal;
+        journalId: string;
+        expectedIdentity: JournalIdentityInput;
+      }>,
+): AlpacaWireChainResolution | Promise<AlpacaWireChainResolution> {
+  if (Array.isArray(proof.journal)) {
+    if (P1_10_TEST_AUTHORITY === undefined) reject("page-chain-incomplete");
+    return resolveDurablyAuthenticatedAlpacaHistoricalChain(
+      endpointKind,
+      admissions,
+      proof as Readonly<{
+        journal: readonly JournalEntry[];
+        expectedIdentity: JournalIdentityInput;
+      }>,
+    );
+  }
+  const durableProof = proof as Readonly<{
+    journal: AcquisitionJournal;
+    journalId: string;
+    expectedIdentity: JournalIdentityInput;
+  }>;
+  return (async () => {
+    const evidence = await loadWorkflowProducedAcquisitionEvidence(
+      durableProof.journal,
+      durableProof.journalId,
+      durableProof.expectedIdentity,
+    );
+    const operations: RetentionOperationLease[] = [];
+    try {
+      for (const admission of admissions) {
+        const binding =
+          authenticatedAdmissions.get(admission) ?? reject("page-semantic-evidence-invalid");
+        if (binding.retentionLease !== undefined) {
+          const operation = beginRetentionUse(binding.retentionLease, [binding.artifactDigest]);
+          operation.assertAllowed();
+          operations.push(operation);
+        } else if (P1_10_TEST_AUTHORITY === undefined) {
+          reject("page-semantic-evidence-invalid");
+        }
+      }
+      return resolveDurablyAuthenticatedAlpacaHistoricalChain(
+        endpointKind,
+        admissions,
+        Object.freeze({
+          journal: evidence.journal,
+          expectedIdentity: durableProof.expectedIdentity,
+        }),
+      );
+    } finally {
+      for (const operation of operations.reverse()) operation.release();
+    }
+  })();
+}
+
+Object.freeze(DurableAlpacaWireAdmissionBoundary.prototype);

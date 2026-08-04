@@ -177,6 +177,8 @@ export function createMemoryArtifactRetentionJournal(): MemoryArtifactRetentionJ
   return journal;
 }
 
+Object.freeze(MemoryArtifactRetentionJournal.prototype);
+
 export function isOwnedMemoryArtifactRetentionJournal(value: object): boolean {
   return (
     ownedMemoryRetentionJournals.has(value) &&

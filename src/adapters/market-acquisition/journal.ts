@@ -838,6 +838,26 @@ class DurableAcquisitionWorkflowProducer {
   }
 }
 
+/** Consumes a credential-rooted first-attempt seed without exporting its write authority. */
+export async function persistOwnedCredentialWorkflowSeed(seed: object): Promise<void> {
+  const { consumeOwnedCredentialWorkflowSeed } = await import("./credentials.js");
+  const binding = consumeOwnedCredentialWorkflowSeed(seed);
+  await new DurableAcquisitionWorkflowProducer(
+    binding.journal,
+    ACQUISITION_WORKFLOW_PRODUCER_CONSTRUCTION_AUTHORITY,
+  ).persist(binding.ledgerEntries, binding.journalEntries);
+}
+
+/** Consumes a one-shot artifact-verified workflow extension receipt. */
+export async function persistVerifiedAcquisitionWorkflowReceipt(receipt: object): Promise<void> {
+  const { consumeVerifiedAcquisitionWorkflowReceipt } = await import("./artifact-integration.js");
+  const binding = consumeVerifiedAcquisitionWorkflowReceipt(receipt);
+  await new DurableAcquisitionWorkflowProducer(
+    binding.journal,
+    ACQUISITION_WORKFLOW_PRODUCER_CONSTRUCTION_AUTHORITY,
+  ).persist(binding.ledgerEntries, binding.journalEntries);
+}
+
 /** Test-only fixture ingress for facts otherwise written only by the owned workflow producer. */
 export async function appendTestAcquisitionWorkflowEvidence(
   journal: AcquisitionJournal,
@@ -852,6 +872,8 @@ export async function appendTestAcquisitionWorkflowEvidence(
     ACQUISITION_WORKFLOW_PRODUCER_CONSTRUCTION_AUTHORITY,
   ).persist(ledgerEntries, entries);
 }
+
+Object.freeze(DurableAcquisitionWorkflowProducer.prototype);
 
 export async function appendTestAcquisitionJournalEntry(
   journal: AcquisitionJournal,

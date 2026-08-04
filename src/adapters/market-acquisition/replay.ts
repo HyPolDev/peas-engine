@@ -11,6 +11,7 @@ import {
 } from "../../providers/observation-ledger.js";
 import {
   type CommittedArtifactExpectation,
+  snapshotCommittedArtifactExpectation,
   verifyCommittedArtifact,
 } from "./artifact-integration.js";
 import type { JournalEntry, JournalIdentityInput } from "./journal.js";
@@ -149,7 +150,8 @@ export async function replayVerifiedAcquisition(
     required.set(expectation.artifactObservationId, expectation);
   }
   const supplied = new Map<string, CommittedArtifactExpectation>();
-  for (const artifact of input.artifacts) {
+  for (const candidate of input.artifacts) {
+    const artifact = snapshotCommittedArtifactExpectation(candidate);
     const prior = supplied.get(artifact.artifactObservationId);
     if (
       prior !== undefined &&

@@ -118,6 +118,7 @@ export interface AlpacaArtifactCommitSink<T> extends AlpacaAttemptResource {
 
 export interface AlpacaDeadlineHandle {
   readonly expired: Promise<void>;
+  assertRemaining(): void;
   cancel(): void;
   settle(): Promise<void>;
 }

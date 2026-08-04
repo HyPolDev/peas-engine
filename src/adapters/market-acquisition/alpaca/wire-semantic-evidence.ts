@@ -2,6 +2,7 @@ import { isProxy } from "node:util/types";
 import { P1_10_TEST_AUTHORITY } from "../../../internal-test-authority.js";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 
 import { canonicalHash } from "../../../core/hash.js";
 import { canonicalJson, type JsonValue } from "../../../core/json.js";
@@ -30,9 +31,16 @@ import { createSqliteArtifactRetentionJournal } from "../retention/sqlite-journa
 import {
   type RetentionEnforcedArtifactStore,
   assertRetentionEnforcedArtifactStore,
+  ownedRetentionEnforcedArtifactStoreRuntimeIdentity,
 } from "../retention/artifact-access.js";
 import type { ValidatedMarketAcquisitionConfiguration } from "../contracts.js";
 import { assertValidatedMarketAcquisitionConfiguration } from "../configuration.js";
+import {
+  ownedLiveCredentialAcquisitionJournal,
+  type DurableCredentialAuthorizationBoundary,
+} from "../credentials.js";
+import { artifactRuntimePaths, configuredPeasRuntimeRoot } from "../../artifacts/runtime-root.js";
+import { retentionRuntimeIdentity } from "../retention/runtime-identity.js";
 import {
   acceptedAlpacaWireCalendarEntries,
   ALPACA_PRIMARY_CORPUS_AUTHORITY_ID,
@@ -108,7 +116,7 @@ type AlpacaPrimaryCorpusAdmissionV1 = Readonly<{
 const EVIDENCE_ID = /^wse1_[0-9a-f]{64}$/u;
 const HASH = /^[0-9a-f]{64}$/u;
 const semanticEvidenceBoundaries = new WeakSet<object>();
-const productionSemanticEvidenceDatabases = new WeakMap<object, SqliteDatabase>();
+const productionSemanticEvidenceDatabases = new WeakMap<object, readonly SqliteDatabase[]>();
 const ownedSemanticEvidenceStores = new WeakSet<object>();
 const SEMANTIC_EVIDENCE_BOUNDARY_CONSTRUCTION_AUTHORITY = Object.freeze({});
 
@@ -783,10 +791,10 @@ export class DurableAlpacaWireSemanticEvidenceBoundary {
 
   close(): void {
     assertOwnedDurableAlpacaWireSemanticEvidenceBoundary(this);
-    const database = productionSemanticEvidenceDatabases.get(this);
-    if (database === undefined) throw new TypeError("production-wire-semantic-root-required");
+    const databases = productionSemanticEvidenceDatabases.get(this);
+    if (databases === undefined) throw new TypeError("production-wire-semantic-root-required");
     productionSemanticEvidenceDatabases.delete(this);
-    database.close();
+    for (const database of databases) database.close();
   }
 
   async persist(
@@ -993,6 +1001,9 @@ export function openSqliteDurableAlpacaWireSemanticEvidenceBoundary(
   expectedIdentity: JournalIdentityInput,
   artifacts: RetentionEnforcedArtifactStore,
 ): DurableAlpacaWireSemanticEvidenceBoundary {
+  if (P1_10_TEST_AUTHORITY === undefined) {
+    throw new TypeError("arbitrary-wire-semantic-root-unavailable");
+  }
   assertRetentionEnforcedArtifactStore(artifacts);
   const database = openSqliteDatabase(filename, migrations);
   try {
@@ -1005,7 +1016,42 @@ export function openSqliteDurableAlpacaWireSemanticEvidenceBoundary(
       artifacts,
       retention,
     );
-    productionSemanticEvidenceDatabases.set(boundary, database);
+    productionSemanticEvidenceDatabases.set(boundary, Object.freeze([database]));
+    return boundary;
+  } catch (error) {
+    database.close();
+    throw error;
+  }
+}
+
+/** Canonical live semantic-evidence root bound to credential, vault, and retention roots. */
+export async function openOwnedDurableAlpacaWireSemanticEvidenceBoundary(
+  authorization: DurableCredentialAuthorizationBoundary,
+  migrations: readonly Migration[],
+  plan: ValidatedMarketAcquisitionConfiguration,
+  artifacts: RetentionEnforcedArtifactStore,
+): Promise<DurableAlpacaWireSemanticEvidenceBoundary> {
+  assertValidatedMarketAcquisitionConfiguration(plan);
+  if (
+    ownedRetentionEnforcedArtifactStoreRuntimeIdentity(artifacts) !==
+    retentionRuntimeIdentity(configuredPeasRuntimeRoot())
+  ) {
+    throw new TypeError("wire-runtime-root-mismatch");
+  }
+  const runtime = artifactRuntimePaths(configuredPeasRuntimeRoot());
+  if (!existsSync(runtime.databasePath)) throw new TypeError("wire-runtime-layout-corrupt");
+  const journal = await ownedLiveCredentialAcquisitionJournal(authorization, plan);
+  const database = openSqliteDatabase(runtime.databasePath, migrations);
+  try {
+    const evidence = createSqliteAlpacaWireSemanticEvidenceStore(database);
+    const retention = createSqliteArtifactRetentionJournal(database);
+    const boundary = constructAlpacaWireSemanticEvidenceBoundary(
+      journal,
+      evidence,
+      artifacts,
+      retention,
+    );
+    productionSemanticEvidenceDatabases.set(boundary, Object.freeze([database]));
     return boundary;
   } catch (error) {
     database.close();
@@ -1041,6 +1087,10 @@ export function assertOwnedDurableAlpacaWireSemanticEvidenceBoundary(
     throw new TypeError("owned-durable-wire-semantic-evidence-boundary-required");
   }
 }
+
+Object.freeze(MemoryAlpacaWireSemanticEvidenceStore.prototype);
+Object.freeze(SqliteAlpacaWireSemanticEvidenceStore.prototype);
+Object.freeze(DurableAlpacaWireSemanticEvidenceBoundary.prototype);
 
 /** Explicit synthetic-fixture ingress; unavailable outside the Node test runner. */
 export function appendTestAlpacaWireSemanticEvidence(

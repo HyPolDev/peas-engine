@@ -24,6 +24,12 @@ import {
   decideRetry,
   validateRetryDelayProof,
 } from "./retry.js";
+import { P1_10_TEST_AUTHORITY } from "../../internal-test-authority.js";
+import type { DurableCredentialAuthorizationBoundary } from "./credentials.js";
+import {
+  assertOwnedAcquisitionStateSnapshot,
+  persistOwnedAcquisitionTransition,
+} from "./credentials.js";
 
 export const ACQUISITION_STATES = Object.freeze([
   "declared",
@@ -189,7 +195,16 @@ export type AcquisitionTransitionPlan = Readonly<{
   next: AcquisitionMachineSnapshot;
 }>;
 
-export type PersistTransitionPlan = (plan: AcquisitionTransitionPlan) => Promise<void>;
+export type PersistTransitionPlan = (
+  plan: AcquisitionTransitionPlan,
+  event?: AcquisitionEvent,
+) => Promise<void>;
+const ownedStatePersistence = new WeakSet<object>();
+export type OwnedAcquisitionTransitionBinding = Readonly<{
+  plan: AcquisitionTransitionPlan;
+  event: AcquisitionEvent;
+}>;
+const transitionReceipts = new WeakMap<object, OwnedAcquisitionTransitionBinding>();
 
 const TERMINAL_STATES = new Set<AcquisitionState>([
   "completed",
@@ -709,6 +724,9 @@ export class AcquisitionStateMachine {
     if (typeof persist !== "function") {
       throw new TypeError("acquisition-durable-persistence-required");
     }
+    if (P1_10_TEST_AUTHORITY === undefined && !ownedStatePersistence.has(persist)) {
+      throw new TypeError("owned-acquisition-durable-persistence-required");
+    }
     this.#snapshot = immutableSnapshot(snapshot);
     this.#persist = persist;
   }
@@ -732,8 +750,37 @@ export class AcquisitionStateMachine {
       checkpointKind: CHECKPOINT_FOR_EVENT[event.kind] ?? null,
       next,
     });
-    await this.#persist(plan);
+    await this.#persist(plan, event);
     this.#snapshot = next;
     return plan;
   }
 }
+
+/** Sole production constructor; its persistence callback cannot be supplied or replaced. */
+export function createOwnedAcquisitionStateMachine(
+  authorization: DurableCredentialAuthorizationBoundary,
+  snapshot: AcquisitionMachineSnapshot,
+): AcquisitionStateMachine {
+  assertOwnedAcquisitionStateSnapshot(authorization, snapshot);
+  const persist: PersistTransitionPlan = async (plan, event) => {
+    if (event === undefined) throw new TypeError("owned-acquisition-event-required");
+    const receipt = Object.freeze({ kind: "owned-acquisition-transition-receipt" as const });
+    transitionReceipts.set(receipt, Object.freeze({ plan, event }));
+    await persistOwnedAcquisitionTransition(authorization, receipt);
+  };
+  ownedStatePersistence.add(persist);
+  const machine = new AcquisitionStateMachine(snapshot, persist);
+  Object.freeze(machine);
+  return machine;
+}
+
+export function consumeOwnedAcquisitionTransitionReceipt(
+  receipt: object,
+): OwnedAcquisitionTransitionBinding {
+  const binding = transitionReceipts.get(receipt);
+  if (binding === undefined) throw new TypeError("owned-acquisition-transition-receipt-required");
+  transitionReceipts.delete(receipt);
+  return binding;
+}
+
+Object.freeze(AcquisitionStateMachine.prototype);

@@ -36,6 +36,7 @@ import {
   authenticatedAlpacaAdmissionArtifact,
   type AlpacaWirePageAdmission,
 } from "../src/adapters/market-acquisition/alpaca/wire.js";
+import type { AlpacaPreparedArtifactCommit } from "../src/adapters/market-acquisition/alpaca/contracts.js";
 import { createMemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
 import { createTestArtifactRetentionController } from "../src/adapters/market-acquisition/retention/controller.js";
 import {
@@ -68,12 +69,15 @@ export const ALLOW_ALL_RETENTION: ArtifactRetentionController = Object.freeze({
     throw new Error("unused test retention stop");
   },
   async commitArtifact<T>(
-    _input: Omit<RetentionOwnership, "ownershipId">,
-    commit: () => Promise<T>,
+    preparedOrInput: AlpacaPreparedArtifactCommit<T> | Omit<RetentionOwnership, "ownershipId">,
+    commit?: () => Promise<T>,
   ): Promise<T> {
-    return commit();
+    return commit === undefined
+      ? (preparedOrInput as AlpacaPreparedArtifactCommit<T>).commit()
+      : commit();
   },
   registerDerivedLineage() {},
+  registerDerivedLineageFromLease() {},
   beginUse() {
     return Object.freeze({ assertAllowed() {}, onStop() {}, release() {} });
   },
@@ -140,13 +144,14 @@ function timestamp(epochNs: bigint): string {
 
 export function validatedRepairPlan(
   kind: AlpacaAcquisitionKind = "quotes",
+  limit = "10000",
 ): ValidatedMarketAcquisitionConfiguration {
   const route = ALPACA_ROUTE_REGISTRY[kind];
   const common = {
     symbols: "QA,QB",
     start: timestamp(BOUNDARY_NS - 60_000_000_000n),
     end: timestamp(BOUNDARY_NS),
-    limit: "10000",
+    limit,
     feed: "sip",
     sort: "asc",
   };

@@ -34,6 +34,7 @@ const ownedRequests = new WeakMap<
     redirect: "error";
     endpointChannelId: string;
     requestIdentityHash: string;
+    plan: ValidatedMarketAcquisitionConfiguration;
     pageOrdinal: number;
     query: readonly (readonly [string, string])[];
     signal: AbortSignal;
@@ -219,6 +220,7 @@ export function buildAlpacaTransportRequest(
       redirect: request.redirect,
       endpointChannelId: request.endpointChannelId,
       requestIdentityHash: request.requestIdentityHash,
+      plan,
       pageOrdinal: request.pageOrdinal,
       query: Object.freeze(
         request.query.map(([name, value]) => Object.freeze([name, value] as const)),
@@ -237,7 +239,10 @@ export function buildAlpacaTransportRequest(
   });
 }
 
-export function assertOwnedAlpacaTransportRequest(value: AlpacaTransportRequest): void {
+export function assertOwnedAlpacaTransportRequest(
+  value: AlpacaTransportRequest,
+  expectedPlan?: ValidatedMarketAcquisitionConfiguration,
+): void {
   const snapshot = ownedRequests.get(value);
   if (
     snapshot === undefined ||
@@ -249,6 +254,7 @@ export function assertOwnedAlpacaTransportRequest(value: AlpacaTransportRequest)
     value.redirect !== snapshot.redirect ||
     value.endpointChannelId !== snapshot.endpointChannelId ||
     value.requestIdentityHash !== snapshot.requestIdentityHash ||
+    (expectedPlan !== undefined && snapshot.plan !== expectedPlan) ||
     value.pageOrdinal !== snapshot.pageOrdinal ||
     value.signal !== snapshot.signal ||
     value.query.length !== snapshot.query.length ||

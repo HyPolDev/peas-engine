@@ -1,7 +1,15 @@
 import type { AlpacaDeadlineHandle, AlpacaDeadlineScheduler } from "./contracts.js";
 import { clearTimeout, setTimeout } from "node:timers";
+import { performance } from "node:perf_hooks";
 
 const ownedSchedulers = new WeakSet<object>();
+
+export class AlpacaDeadlineElapsed extends Error {
+  constructor() {
+    super("alpaca-attempt-deadline-elapsed");
+    this.name = "AlpacaDeadlineElapsed";
+  }
+}
 
 export type AlpacaDeadlineProbe = Readonly<{
   armed(input: Readonly<{ delayMs: number; expireNow(): void }>): void;
@@ -25,6 +33,7 @@ export function createOwnedAlpacaDeadlineScheduler(
       let settle!: () => void;
       let expired = false;
       let cancelled = false;
+      const absoluteDeadlineMs = performance.now() + delayMs;
       const expiredPromise = new Promise<void>((resolve) => {
         expire = (): void => {
           if (expired || cancelled) return;
@@ -39,6 +48,12 @@ export function createOwnedAlpacaDeadlineScheduler(
       const timer = setTimeout(expire, delayMs);
       const handle: AlpacaDeadlineHandle = Object.freeze({
         expired: expiredPromise,
+        assertRemaining(): void {
+          if (expired || performance.now() >= absoluteDeadlineMs) {
+            expire();
+            throw new AlpacaDeadlineElapsed();
+          }
+        },
         cancel(): void {
           if (cancelled) return;
           cancelled = true;

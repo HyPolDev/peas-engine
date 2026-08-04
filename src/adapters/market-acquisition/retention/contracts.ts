@@ -1,3 +1,5 @@
+import type { AlpacaPreparedArtifactCommit } from "../alpaca/contracts.js";
+
 export type RetentionProviderLane = "alpaca" | "fmp";
 export type RetentionStopReason =
   | "maximum-retention"
@@ -133,11 +135,13 @@ export interface ArtifactRetentionJournal {
 
 export interface ArtifactRetentionController {
   registerOwnership(input: Omit<RetentionOwnership, "ownershipId">): RetentionOwnership;
+  commitArtifact<T>(prepared: AlpacaPreparedArtifactCommit<T>): Promise<T>;
   commitArtifact<T>(
     input: Omit<RetentionOwnership, "ownershipId">,
     commit: () => Promise<T>,
   ): Promise<T>;
   registerDerivedLineage(artifactDigests: readonly string[], derivedIds: readonly string[]): void;
+  registerDerivedLineageFromLease(lease: object, derivedIds: readonly string[]): void;
   beginUse(
     artifactDigests?: readonly string[],
     derivedIds?: readonly string[],
