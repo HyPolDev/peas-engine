@@ -1173,6 +1173,7 @@ export function provisionSqliteDurableCredentialAuthorityRuntime(
   }
   assertLiveCredentialMigrations(migrations);
   const runtime = artifactRuntimePaths(configuredPeasRuntimeRoot());
+  P1_10_PROVISIONING_AUTHORITY.claim(runtime.runtimeRoot);
   const authority = liveCredentialAuthorityPaths(runtime.databaseDirectory);
   if (
     filesystemEntryExists(runtime.databaseDirectory) ||

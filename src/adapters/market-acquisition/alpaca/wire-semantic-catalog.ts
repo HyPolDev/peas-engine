@@ -10,131 +10,187 @@ export const ALPACA_PRIMARY_CORPUS_AUTHORITY_ID =
     role: "primary",
   });
 
-const SIX_HOURS_MS = 6 * 60 * 60 * 1_000;
-const MINUTE_MS = 60 * 1_000;
-const FIRST_SUPPORTED_CALENDAR_YEAR = 2007;
-const LAST_SUPPORTED_CALENDAR_YEAR = 9_999;
-const pad = (value: number): string => String(value).padStart(2, "0");
-
-function nthSundayUtcMs(year: number, month: number, ordinal: number, hour: number): number {
-  const first = new Date(Date.UTC(year, month, 1));
-  const day = 1 + ((7 - first.getUTCDay()) % 7) + (ordinal - 1) * 7;
-  return Date.UTC(year, month, day, hour);
+interface AcceptedCalendarRecord {
+  readonly dayStartNs: bigint;
+  readonly dayEndNs: bigint;
+  readonly entry: FrozenSessionCalendarEntryV1;
 }
 
-/** Immutable post-2007 America/New_York DST rule used by this frozen synthetic authority. */
-function utcOffsetAt(milliseconds: number): -300 | -240 {
-  const year = new Date(milliseconds).getUTCFullYear();
-  if (year < FIRST_SUPPORTED_CALENDAR_YEAR || year > LAST_SUPPORTED_CALENDAR_YEAR) {
-    throw new TypeError("wire-semantic-calendar-year-unsupported");
-  }
-  const daylightStart = nthSundayUtcMs(year, 2, 2, 7);
-  const daylightEnd = nthSundayUtcMs(year, 10, 1, 6);
-  return milliseconds >= daylightStart && milliseconds < daylightEnd ? -240 : -300;
+function acceptedRecord(
+  dayStartNs: string,
+  dayEndNs: string,
+  entry: FrozenSessionCalendarEntryV1,
+): AcceptedCalendarRecord {
+  return Object.freeze({ dayStartNs: BigInt(dayStartNs), dayEndNs: BigInt(dayEndNs), entry });
 }
 
-function localDate(milliseconds: number): string {
-  const offset = utcOffsetAt(milliseconds);
-  const local = new Date(milliseconds + offset * MINUTE_MS);
-  return (
-    String(local.getUTCFullYear()).padStart(4, "0") +
-    "-" +
-    pad(local.getUTCMonth() + 1) +
-    "-" +
-    pad(local.getUTCDate())
-  );
+function closedSession(
+  sessionDate: string,
+  utcOffsetMinutes: -300 | -240,
+): FrozenSessionCalendarEntryV1 {
+  return Object.freeze({
+    sessionDate,
+    timeZone: "America/New_York",
+    utcOffsetMinutes,
+    calendarVersion: ALPACA_WIRE_CALENDAR_VERSION,
+    holiday: true,
+    extendedOpenNs: null,
+    regularOpenNs: null,
+    regularCloseNs: null,
+    extendedCloseNs: null,
+  });
 }
 
-function parseDate(value: string): Readonly<{ year: number; month: number; day: number }> {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
-  if (match === null) throw new TypeError("wire-semantic-calendar-date-invalid");
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const verified = new Date(Date.UTC(year, month - 1, day));
-  if (
-    verified.getUTCFullYear() !== year ||
-    verified.getUTCMonth() !== month - 1 ||
-    verified.getUTCDate() !== day
-  ) {
-    throw new TypeError("wire-semantic-calendar-date-invalid");
-  }
-  if (year < FIRST_SUPPORTED_CALENDAR_YEAR || year > LAST_SUPPORTED_CALENDAR_YEAR) {
-    throw new TypeError("wire-semantic-calendar-year-unsupported");
-  }
-  return Object.freeze({ year, month, day });
-}
-
-function localEpochNs(
-  date: Readonly<{ year: number; month: number; day: number }>,
-  hour: number,
-  minute: number,
-  offset: -300 | -240,
-): string {
-  return (
-    BigInt(Date.UTC(date.year, date.month - 1, date.day, hour, minute) - offset * MINUTE_MS) *
-    1_000_000n
-  ).toString();
-}
-
-function syntheticCalendarEntry(sessionDate: string): FrozenSessionCalendarEntryV1 {
-  const date = parseDate(sessionDate);
-  const noonUtc = Date.UTC(date.year, date.month - 1, date.day, 17);
-  const utcOffsetMinutes = utcOffsetAt(noonUtc);
-  const dayOfWeek = new Date(Date.UTC(date.year, date.month - 1, date.day)).getUTCDay();
-  const holiday = dayOfWeek === 0 || dayOfWeek === 6 || sessionDate === "2033-05-05";
-  if (holiday) {
-    return Object.freeze({
-      sessionDate,
-      timeZone: "America/New_York",
-      utcOffsetMinutes,
-      calendarVersion: ALPACA_WIRE_CALENDAR_VERSION,
-      holiday: true,
-      extendedOpenNs: null,
-      regularOpenNs: null,
-      regularCloseNs: null,
-      extendedCloseNs: null,
-    });
-  }
-  if (sessionDate === "2033-05-06") {
-    return Object.freeze({
-      sessionDate,
-      timeZone: "America/New_York",
-      utcOffsetMinutes: -240,
-      calendarVersion: ALPACA_WIRE_CALENDAR_VERSION,
-      holiday: false,
-      extendedOpenNs: "1998950399999999999",
-      regularOpenNs: "1998950400000000000",
-      regularCloseNs: "1999036800000000001",
-      extendedCloseNs: "1999036800000000002",
-    });
-  }
+function openSession(
+  sessionDate: string,
+  utcOffsetMinutes: -300 | -240,
+  extendedOpenNs: string,
+  regularOpenNs: string,
+  regularCloseNs: string,
+  extendedCloseNs: string,
+): FrozenSessionCalendarEntryV1 {
   return Object.freeze({
     sessionDate,
     timeZone: "America/New_York",
     utcOffsetMinutes,
     calendarVersion: ALPACA_WIRE_CALENDAR_VERSION,
     holiday: false,
-    extendedOpenNs: localEpochNs(date, 4, 0, utcOffsetMinutes),
-    regularOpenNs: localEpochNs(date, 9, 30, utcOffsetMinutes),
-    regularCloseNs: localEpochNs(date, 16, 0, utcOffsetMinutes),
-    extendedCloseNs: localEpochNs(date, 20, 0, utcOffsetMinutes),
+    extendedOpenNs,
+    regularOpenNs,
+    regularCloseNs,
+    extendedCloseNs,
   });
+}
+
+/**
+ * Complete immutable authority for the original synthetic P1-10 query fixtures only.
+ * Dates, local-day bounds, UTC offsets, closures, and session boundaries are literal accepted
+ * evidence. Unknown dates are never reconstructed from weekday, holiday, or DST rules.
+ */
+const ACCEPTED_CALENDAR = Object.freeze([
+  acceptedRecord(
+    "1994043600000000000",
+    "1994130000000000000",
+    openSession(
+      "2033-03-10",
+      -300,
+      "1994058000000000000",
+      "1994077800000000000",
+      "1994101200000000000",
+      "1994115600000000000",
+    ),
+  ),
+  acceptedRecord(
+    "1994130000000000000",
+    "1994216400000000000",
+    openSession(
+      "2033-03-11",
+      -300,
+      "1994144400000000000",
+      "1994164200000000000",
+      "1994187600000000000",
+      "1994202000000000000",
+    ),
+  ),
+  acceptedRecord("1994216400000000000", "1994302800000000000", closedSession("2033-03-12", -300)),
+  acceptedRecord("1994302800000000000", "1994385600000000000", closedSession("2033-03-13", -240)),
+  acceptedRecord(
+    "1994385600000000000",
+    "1994472000000000000",
+    openSession(
+      "2033-03-14",
+      -240,
+      "1994400000000000000",
+      "1994419800000000000",
+      "1994443200000000000",
+      "1994457600000000000",
+    ),
+  ),
+  acceptedRecord("1998878400000000000", "1998964800000000000", closedSession("2033-05-05", -240)),
+  acceptedRecord(
+    "1998964800000000000",
+    "1999051200000000000",
+    openSession(
+      "2033-05-06",
+      -240,
+      "1998950399999999999",
+      "1998950400000000000",
+      "1999036800000000001",
+      "1999036800000000002",
+    ),
+  ),
+  acceptedRecord(
+    "2014603200000000000",
+    "2014689600000000000",
+    openSession(
+      "2033-11-03",
+      -240,
+      "2014617600000000000",
+      "2014637400000000000",
+      "2014660800000000000",
+      "2014675200000000000",
+    ),
+  ),
+  acceptedRecord(
+    "2014689600000000000",
+    "2014776000000000000",
+    openSession(
+      "2033-11-04",
+      -240,
+      "2014704000000000000",
+      "2014723800000000000",
+      "2014747200000000000",
+      "2014761600000000000",
+    ),
+  ),
+  acceptedRecord("2014776000000000000", "2014862400000000000", closedSession("2033-11-05", -240)),
+  acceptedRecord("2014862400000000000", "2014952400000000000", closedSession("2033-11-06", -300)),
+  acceptedRecord(
+    "2014952400000000000",
+    "2015038800000000000",
+    openSession(
+      "2033-11-07",
+      -300,
+      "2014966800000000000",
+      "2014986600000000000",
+      "2015010000000000000",
+      "2015024400000000000",
+    ),
+  ),
+]);
+
+function containingRecordIndex(epochNs: bigint): number {
+  return ACCEPTED_CALENDAR.findIndex(
+    (record) => epochNs >= record.dayStartNs && epochNs < record.dayEndNs,
+  );
 }
 
 export function acceptedAlpacaWireCalendarEntries(
   queryStartNs: string,
   queryEndNs: string,
 ): readonly FrozenSessionCalendarEntryV1[] {
-  const startMs = Number(BigInt(queryStartNs) / 1_000_000n);
-  const endMs = Number(BigInt(queryEndNs) / 1_000_000n);
-  if (!Number.isSafeInteger(startMs) || !Number.isSafeInteger(endMs) || startMs > endMs) {
+  let startNs: bigint;
+  let endNs: bigint;
+  try {
+    startNs = BigInt(queryStartNs);
+    endNs = BigInt(queryEndNs);
+  } catch {
     throw new TypeError("wire-semantic-calendar-range-invalid");
   }
-  const dates = new Set<string>();
-  for (let cursor = startMs; cursor <= endMs; cursor += SIX_HOURS_MS) {
-    dates.add(localDate(cursor));
+  if (startNs > endNs) throw new TypeError("wire-semantic-calendar-range-invalid");
+  const startIndex = containingRecordIndex(startNs);
+  const endIndex = containingRecordIndex(endNs);
+  if (startIndex < 0 || endIndex < startIndex) {
+    throw new TypeError("wire-semantic-calendar-unknown");
   }
-  dates.add(localDate(endMs));
-  return Object.freeze([...dates].sort().map(syntheticCalendarEntry));
+  for (let index = startIndex; index < endIndex; index += 1) {
+    const current = ACCEPTED_CALENDAR[index];
+    const next = ACCEPTED_CALENDAR[index + 1];
+    if (current === undefined || next === undefined || current.dayEndNs !== next.dayStartNs) {
+      throw new TypeError("wire-semantic-calendar-unknown");
+    }
+  }
+  return Object.freeze(
+    ACCEPTED_CALENDAR.slice(startIndex, endIndex + 1).map((record) => record.entry),
+  );
 }

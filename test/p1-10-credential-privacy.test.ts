@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -365,6 +366,105 @@ test("owned first boot provisions only a completely absent trusted runtime layou
     /credential-authority-provisioning-layout-not-empty/u,
   );
   assert.equal(existsSync(join(danglingRoot, "sqlite")), false);
+});
+
+test("owned initializer keeps first-boot authority private, root-bound, and ephemeral", async (t) => {
+  const runtimeRoot = await mkdtemp(join(tmpdir(), "peas-owned-initializer-root-"));
+  const alternateRoot = await mkdtemp(join(tmpdir(), "peas-owned-initializer-alternate-"));
+  const failedRoot = await mkdtemp(join(tmpdir(), "peas-owned-initializer-failure-"));
+  const privateTemp = await mkdtemp(join(tmpdir(), "peas-owned-initializer-temp-"));
+  t.after(async () => {
+    await rm(runtimeRoot, { recursive: true, force: true });
+    await rm(alternateRoot, { recursive: true, force: true });
+    await rm(failedRoot, { recursive: true, force: true });
+    await rm(privateTemp, { recursive: true, force: true });
+  });
+  const policyBytes = await readFile("config/artifact-vault-deployment-policy.v1.json");
+  const policySha256 = createHash("sha256").update(policyBytes).digest("hex");
+  const validationPath = join(privateTemp, "runtime-validation.json");
+  const writeValidation = async (root: string): Promise<void> => {
+    await writeFile(
+      validationPath,
+      JSON.stringify({
+        status: "passed",
+        runtimeRoot: resolve(root),
+        policySha256,
+        layout: { database: join(resolve(root), "sqlite", "peas.sqlite") },
+      }),
+    );
+  };
+  const runInitializer = (root: string) =>
+    spawnSync(process.execPath, ["scripts/initialize-vault-runtime.mjs"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        PEAS_RUNTIME_ROOT: root,
+        PEAS_RUNTIME_VALIDATION_PATH: validationPath,
+        TEMP: privateTemp,
+        TMP: privateTemp,
+      },
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 60_000,
+    });
+  const productionAuthorityPath = join(
+    process.cwd(),
+    "dist",
+    "production",
+    "src",
+    "internal-provisioning-authority.js",
+  );
+  const productionAuthorityBefore = await readFile(productionAuthorityPath);
+
+  await writeValidation(runtimeRoot);
+  const initialized = runInitializer(runtimeRoot);
+  assert.equal(initialized.status, 0, `${initialized.stdout}\n${initialized.stderr}`);
+  assert.equal(
+    existsSync(join(runtimeRoot, "sqlite", "market-acquisition-authority.sqlite")),
+    true,
+  );
+  assert.equal(
+    existsSync(join(runtimeRoot, "sqlite", "market-acquisition-authority-anchor.sqlite")),
+    true,
+  );
+  assert.deepEqual(await readFile(productionAuthorityPath), productionAuthorityBefore);
+  assert.deepEqual(
+    (await readdir(privateTemp)).filter((entry) => entry.startsWith("peas-p1-10-provisioning-")),
+    [],
+  );
+
+  const publicProbe = `
+    import { join } from "node:path";
+    import { provisionSqliteDurableCredentialAuthorityRuntime } from "./dist/production/src/adapters/market-acquisition/credentials.js";
+    import { loadMigrations } from "./dist/production/src/adapters/sqlite/database.js";
+    process.env.PEAS_RUNTIME_ROOT = process.argv[1];
+    let outcome = "unexpected-success";
+    try { provisionSqliteDurableCredentialAuthorityRuntime(loadMigrations(join(process.cwd(), "migrations"))); }
+    catch (error) { outcome = error instanceof Error ? error.message : String(error); }
+    process.stdout.write(JSON.stringify({ outcome }));
+  `;
+  const publicAttempt = spawnSync(
+    process.execPath,
+    ["--input-type=module", "--eval", publicProbe, alternateRoot],
+    { cwd: process.cwd(), encoding: "utf8", windowsHide: true, timeout: 60_000 },
+  );
+  assert.equal(publicAttempt.status, 0, `${publicAttempt.stdout}\n${publicAttempt.stderr}`);
+  assert.deepEqual(JSON.parse(publicAttempt.stdout), {
+    outcome: "credential-authority-provisioning-unavailable",
+  });
+  assert.equal(existsSync(join(alternateRoot, "sqlite")), false);
+
+  await mkdir(join(failedRoot, "artifacts"));
+  await writeValidation(failedRoot);
+  const failed = runInitializer(failedRoot);
+  assert.notEqual(failed.status, 0, `${failed.stdout}\n${failed.stderr}`);
+  assert.match(failed.stderr, /credential-authority-provisioning-layout-not-empty/u);
+  assert.deepEqual(await readFile(productionAuthorityPath), productionAuthorityBefore);
+  assert.deepEqual(
+    (await readdir(privateTemp)).filter((entry) => entry.startsWith("peas-p1-10-provisioning-")),
+    [],
+  );
+  assert.equal(existsSync(join(failedRoot, "sqlite")), false);
 });
 
 test("cold restart never reconstructs a missing anchor or replaced primary", async (t) => {

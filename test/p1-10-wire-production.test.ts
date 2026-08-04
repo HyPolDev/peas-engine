@@ -1196,8 +1196,22 @@ test("production parser reject and quarantine branches remain executable and ine
         (BigInt(Date.parse("2006-03-20T12:00:00Z")) * 1_000_000n).toString(),
         (BigInt(Date.parse("2006-03-20T12:15:00Z")) * 1_000_000n).toString(),
       ),
-    /calendar-year-unsupported/u,
+    /calendar-unknown/u,
   );
+  for (const unsupported of [
+    ["2026-12-25T12:00:00Z", "2026-12-25T12:15:00Z"],
+    ["2026-11-27T12:00:00Z", "2026-11-27T21:00:00Z"],
+    ["2033-03-14T12:00:00Z", "2033-05-06T12:00:00Z"],
+  ] as const) {
+    assert.throws(
+      () =>
+        acceptedAlpacaWireCalendarEntries(
+          (BigInt(Date.parse(unsupported[0])) * 1_000_000n).toString(),
+          (BigInt(Date.parse(unsupported[1])) * 1_000_000n).toString(),
+        ),
+      /calendar-unknown/u,
+    );
+  }
   assert.deepEqual(
     spring.map((entry) => [entry.sessionDate, entry.utcOffsetMinutes]),
     [
