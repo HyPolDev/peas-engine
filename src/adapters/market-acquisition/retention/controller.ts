@@ -24,6 +24,7 @@ import type {
   RetentionOwnership,
   RetentionOperationLease,
   RetentionReceipt,
+  RetentionReceiptRevalidation,
   RetentionStopEvent,
   RetentionTombstone,
 } from "./contracts.js";
@@ -34,6 +35,7 @@ import {
   deriveRetentionPlanHash,
   deriveRetentionPlanId,
   deriveRetentionReceiptId,
+  deriveRetentionReceiptRevalidationId,
   deriveRetentionStopEventId,
   deriveRetentionTombstoneId,
 } from "./identity.js";
@@ -396,18 +398,26 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
       throw safeAcquisitionError("retention-erasure-unprovable", "retention-plan");
     await this.#faultBoundary("retention-plan-committed");
 
-    const priorReceipt = this.#journal.getReceiptForPlan(plan.planId);
+    const baseReceipt = this.#journal.getReceiptForPlan(plan.planId);
+    const priorReceipt = this.#latestReceipt(plan, baseReceipt);
     if (priorReceipt !== undefined) {
       if (!(await this.#artifacts.settleActiveReadersAndWriters())) {
         throw safeAcquisitionError("retention-erasure-unprovable", "retention-verify");
       }
       try {
         await this.#verifyPlanErased(plan);
-        await this.#ensureCheckpoint(plan, priorReceipt);
-        return priorReceipt;
+        if (baseReceipt === undefined) {
+          throw safeAcquisitionError("retention-erasure-unprovable", "retention-verify");
+        }
+        await this.#ensureCheckpoint(plan, baseReceipt);
+        if (
+          priorReceipt.attemptCount === this.#physicalAttemptCount(plan) &&
+          !this.#hasIncompletePhysicalAttempt(plan)
+        ) {
+          return priorReceipt;
+        }
       } catch {
-        // Reappearance is repaired under the immutable original plan. A successor plan would reuse
-        // the same unique stop event and diverge between memory and SQLite journals.
+        // Physical reappearance or incomplete prior settlement is repaired under the immutable plan.
       }
     }
 
@@ -422,44 +432,65 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
 
     for (const digest of plan.artifactDigests) {
       this.#assertDeadline(input.deadlineMs);
-      if (this.#journal.hasTombstone(digest)) {
-        if (await this.#artifacts.verifyDigestCopiesAbsent(digest)) continue;
-      }
       const priorAttempts = this.#journal.attemptsFor(plan.planId, digest);
-      const attemptOrdinal =
-        priorAttempts.reduce((maximum, value) => Math.max(maximum, value.attemptOrdinal), -1) + 1;
-      const startedAtMs = this.#trustedNow();
-      const startedBody = {
-        planId: plan.planId,
-        artifactDigest: digest,
-        attemptOrdinal,
-        startedAtMs,
-        outcome: "started",
-      } as const;
-      const started: RetentionErasureAttempt = {
-        ...startedBody,
-        attemptId: deriveRetentionAttemptId(startedBody),
-      };
-      this.#journal.recordAttempt(started);
-      await this.#faultBoundary(`retention-erasure-attempt-started:${digest}`);
-      let erasure: ErasureResult;
-      try {
-        erasure = await this.#artifacts.eraseDigestCopies(digest);
-      } catch {
-        throw safeAcquisitionError("retention-erasure-failed", "retention-erase");
+      const latestOrdinal = priorAttempts.reduce(
+        (maximum, value) => Math.max(maximum, value.attemptOrdinal),
+        -1,
+      );
+      const latestRows = priorAttempts.filter((value) => value.attemptOrdinal === latestOrdinal);
+      const completedAttempt = latestRows.some(
+        (value) => value.outcome === "erased" || value.outcome === "already-absent",
+      );
+      const terminalAttempt = latestRows.some((value) => value.outcome !== "started");
+      const pendingStarted = terminalAttempt
+        ? undefined
+        : latestRows.find((value) => value.outcome === "started");
+      if (
+        pendingStarted === undefined &&
+        this.#journal.hasTombstone(digest) &&
+        (await this.#artifacts.verifyDigestCopiesAbsent(digest))
+      ) {
+        continue;
       }
-      const outcomeBody = {
-        planId: plan.planId,
-        artifactDigest: digest,
-        attemptOrdinal,
-        startedAtMs,
-        outcome: erasure.alreadyAbsent ? "already-absent" : "erased",
-      } as const;
-      this.#journal.recordAttempt({
-        ...outcomeBody,
-        attemptId: deriveRetentionAttemptId(outcomeBody),
-      });
-      await this.#faultBoundary(`retention-physical-erasure-complete:${digest}`);
+      const completedAndAbsent =
+        completedAttempt && (await this.#artifacts.verifyDigestCopiesAbsent(digest));
+      if (!completedAndAbsent) {
+        const attemptOrdinal = pendingStarted === undefined ? latestOrdinal + 1 : latestOrdinal;
+        const startedAtMs = pendingStarted?.startedAtMs ?? this.#trustedNow();
+        if (pendingStarted === undefined) {
+          const startedBody = {
+            planId: plan.planId,
+            artifactDigest: digest,
+            attemptOrdinal,
+            startedAtMs,
+            outcome: "started",
+          } as const;
+          const started: RetentionErasureAttempt = {
+            ...startedBody,
+            attemptId: deriveRetentionAttemptId(startedBody),
+          };
+          this.#journal.recordAttempt(started);
+          await this.#faultBoundary(`retention-erasure-attempt-started:${digest}`);
+        }
+        let erasure: ErasureResult;
+        try {
+          erasure = await this.#artifacts.eraseDigestCopies(digest);
+        } catch {
+          throw safeAcquisitionError("retention-erasure-failed", "retention-erase");
+        }
+        const outcomeBody = {
+          planId: plan.planId,
+          artifactDigest: digest,
+          attemptOrdinal,
+          startedAtMs,
+          outcome: erasure.alreadyAbsent ? "already-absent" : "erased",
+        } as const;
+        this.#journal.recordAttempt({
+          ...outcomeBody,
+          attemptId: deriveRetentionAttemptId(outcomeBody),
+        });
+        await this.#faultBoundary(`retention-physical-erasure-complete:${digest}`);
+      }
 
       if (!this.#journal.hasTombstone(digest)) {
         const tombstoneBody = {
@@ -487,8 +518,49 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
     await this.#faultBoundary("retention-erasure-verified");
 
     if (priorReceipt !== undefined) {
-      await this.#ensureCheckpoint(plan, priorReceipt);
-      return priorReceipt;
+      if (baseReceipt === undefined) {
+        throw safeAcquisitionError("retention-erasure-unprovable", "retention-verify");
+      }
+      await this.#ensureCheckpoint(plan, baseReceipt);
+      const attemptCount = this.#physicalAttemptCount(plan);
+      if (attemptCount < priorReceipt.attemptCount) {
+        throw safeAcquisitionError("retention-erasure-unprovable", "retention-verify");
+      }
+      if (attemptCount === priorReceipt.attemptCount) return priorReceipt;
+      const completedAtMs = this.#trustedNow();
+      const receiptBody = {
+        planId: priorReceipt.planId,
+        planHash: priorReceipt.planHash,
+        artifactDigests: priorReceipt.artifactDigests,
+        artifactObservationIds: priorReceipt.artifactObservationIds,
+        priorSizeBytes: priorReceipt.priorSizeBytes,
+        attemptCount,
+        outcome: "verified-erased" as const,
+        completedAtMs,
+      };
+      const receipt: RetentionReceipt = {
+        ...receiptBody,
+        receiptId: deriveRetentionReceiptId(receiptBody),
+      };
+      const revalidations = this.#journal.receiptRevalidationsForPlan(plan.planId);
+      const revalidationBody = {
+        planId: plan.planId,
+        sequence: revalidations.length + 1,
+        predecessorReceiptId: priorReceipt.receiptId,
+        receipt,
+        recordedAtMs: completedAtMs,
+      };
+      const revalidation: RetentionReceiptRevalidation = {
+        ...revalidationBody,
+        revalidationId: deriveRetentionReceiptRevalidationId(revalidationBody),
+      };
+      this.#journal.recordReceiptRevalidation(revalidation);
+      const reread = this.#latestReceipt(plan, baseReceipt);
+      if (reread?.receiptId !== receipt.receiptId) {
+        throw safeAcquisitionError("retention-erasure-unprovable", "retention-verify");
+      }
+      await this.#faultBoundary("retention-revalidation-committed-reread");
+      return reread;
     }
 
     const receiptBody = {
@@ -524,6 +596,114 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
     await this.#faultBoundary("retention-receipt-committed-reread");
     await this.#ensureCheckpoint(plan, receipt);
     return receipt;
+  }
+
+  #physicalAttemptCount(plan: RetentionErasurePlan): number {
+    return new Set(
+      plan.artifactDigests.flatMap((digest) =>
+        this.#journal
+          .attemptsFor(plan.planId, digest)
+          .filter((attempt) => attempt.outcome !== "started")
+          .map((attempt) => `${attempt.artifactDigest}:${attempt.attemptOrdinal}`),
+      ),
+    ).size;
+  }
+
+  #hasIncompletePhysicalAttempt(plan: RetentionErasurePlan): boolean {
+    return plan.artifactDigests.some((digest) => {
+      const attempts = this.#journal.attemptsFor(plan.planId, digest);
+      return attempts.some(
+        (started) =>
+          started.outcome === "started" &&
+          !attempts.some(
+            (outcome) =>
+              outcome.attemptOrdinal === started.attemptOrdinal && outcome.outcome !== "started",
+          ),
+      );
+    });
+  }
+
+  #latestReceipt(
+    plan: RetentionErasurePlan,
+    baseReceipt: RetentionReceipt | undefined,
+  ): RetentionReceipt | undefined {
+    const revalidations = this.#journal.receiptRevalidationsForPlan(plan.planId);
+    if (baseReceipt === undefined) {
+      if (revalidations.length !== 0) {
+        throw safeAcquisitionError("retention-erasure-unprovable", "retention-verify");
+      }
+      return undefined;
+    }
+    if (
+      baseReceipt.planId !== plan.planId ||
+      baseReceipt.planHash !== plan.planHash ||
+      canonicalJson(baseReceipt.artifactDigests as unknown as JsonValue) !==
+        canonicalJson(plan.artifactDigests as unknown as JsonValue) ||
+      canonicalJson(baseReceipt.artifactObservationIds as unknown as JsonValue) !==
+        canonicalJson(plan.artifactObservationIds as unknown as JsonValue) ||
+      !Number.isSafeInteger(baseReceipt.priorSizeBytes) ||
+      baseReceipt.priorSizeBytes < 0 ||
+      !Number.isSafeInteger(baseReceipt.attemptCount) ||
+      baseReceipt.attemptCount < 0 ||
+      !Number.isSafeInteger(baseReceipt.completedAtMs) ||
+      baseReceipt.completedAtMs < 0 ||
+      baseReceipt.outcome !== "verified-erased" ||
+      baseReceipt.receiptId !==
+        deriveRetentionReceiptId({
+          planId: baseReceipt.planId,
+          planHash: baseReceipt.planHash,
+          artifactDigests: baseReceipt.artifactDigests,
+          artifactObservationIds: baseReceipt.artifactObservationIds,
+          priorSizeBytes: baseReceipt.priorSizeBytes,
+          attemptCount: baseReceipt.attemptCount,
+          outcome: baseReceipt.outcome,
+          completedAtMs: baseReceipt.completedAtMs,
+        })
+    ) {
+      throw safeAcquisitionError("retention-erasure-unprovable", "retention-verify");
+    }
+    let latest = baseReceipt;
+    for (const [index, value] of revalidations.entries()) {
+      const expectedBody = {
+        planId: value.planId,
+        sequence: value.sequence,
+        predecessorReceiptId: value.predecessorReceiptId,
+        receipt: value.receipt,
+        recordedAtMs: value.recordedAtMs,
+      };
+      if (
+        value.planId !== plan.planId ||
+        value.sequence !== index + 1 ||
+        value.predecessorReceiptId !== latest.receiptId ||
+        value.recordedAtMs !== value.receipt.completedAtMs ||
+        value.receipt.planId !== plan.planId ||
+        value.receipt.planHash !== plan.planHash ||
+        canonicalJson(value.receipt.artifactDigests as unknown as JsonValue) !==
+          canonicalJson(plan.artifactDigests as unknown as JsonValue) ||
+        canonicalJson(value.receipt.artifactObservationIds as unknown as JsonValue) !==
+          canonicalJson(plan.artifactObservationIds as unknown as JsonValue) ||
+        value.receipt.priorSizeBytes !== baseReceipt.priorSizeBytes ||
+        value.receipt.attemptCount <= latest.attemptCount ||
+        value.receipt.completedAtMs < latest.completedAtMs ||
+        value.receipt.outcome !== "verified-erased" ||
+        value.receipt.receiptId !==
+          deriveRetentionReceiptId({
+            planId: value.receipt.planId,
+            planHash: value.receipt.planHash,
+            artifactDigests: value.receipt.artifactDigests,
+            artifactObservationIds: value.receipt.artifactObservationIds,
+            priorSizeBytes: value.receipt.priorSizeBytes,
+            attemptCount: value.receipt.attemptCount,
+            outcome: value.receipt.outcome,
+            completedAtMs: value.receipt.completedAtMs,
+          }) ||
+        value.revalidationId !== deriveRetentionReceiptRevalidationId(expectedBody)
+      ) {
+        throw safeAcquisitionError("retention-erasure-unprovable", "retention-verify");
+      }
+      latest = value.receipt;
+    }
+    return latest;
   }
 
   assertArtifactUseAllowed(digest: string): void {

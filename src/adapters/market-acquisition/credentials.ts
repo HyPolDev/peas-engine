@@ -19,6 +19,7 @@ import {
   type JournalCheckpointBody,
   type JournalIdentityInput,
   createJournalEntry,
+  deriveAttemptControlIdentities,
   deriveLogicalPageIdentityHash,
   deriveMarketAcquisitionJournalId,
   derivePrivateTokenHash,
@@ -110,6 +111,10 @@ export type AlpacaDispatchCapability = Readonly<{
   kind: "p1-10-alpaca-dispatch-capability";
 }>;
 
+export type AlpacaArtifactCommitAuthority = Readonly<{
+  kind: "p1-10-alpaca-artifact-commit-authority";
+}>;
+
 export type CredentialAttemptResult<T> =
   | Readonly<{ ok: true; value: T }>
   | Readonly<{ ok: false; error: SafeAcquisitionError }>;
@@ -147,6 +152,14 @@ type DispatchBinding = PermitBinding &
 
 const issuedPermits = new WeakMap<object, PermitBinding>();
 const issuedDispatchCapabilities = new WeakMap<object, DispatchBinding>();
+const issuedArtifactCommitAuthorities = new WeakMap<
+  object,
+  Readonly<{
+    plan: ValidatedMarketAcquisitionConfiguration;
+    retrievalAttemptId: string;
+    admittedAtMs: number;
+  }>
+>();
 const establishedEvidence = new WeakMap<object, PermitBinding>();
 const credentialIsolatedTransports = new WeakSet<object>();
 const credentialAuthorizationBoundaries = new WeakSet<object>();
@@ -167,7 +180,7 @@ const CREDENTIAL_BOUNDARY_CONSTRUCTION_AUTHORITY = Object.freeze({});
 const LIVE_CREDENTIAL_DATABASE_FILENAME = "market-acquisition-authority.sqlite";
 const LIVE_CREDENTIAL_ANCHOR_DATABASE_FILENAME = "market-acquisition-authority-anchor.sqlite";
 const LIVE_CREDENTIAL_MIGRATIONS_HASH =
-  "f2b2e8dd83f716c5bdb8ce79d314e12b9319e5867c451b76f369ac3de1f39f47";
+  "f08cae58309bfdb960d165210d7ac9c76d4a1a54cf8ec2416a0721317b719895";
 let liveCredentialBoundaryOpened = false;
 const trustedTimeOriginMs = performance.timeOrigin;
 const trustedMonotonicNowMs = performance.now.bind(performance);
@@ -468,7 +481,11 @@ function exactJournalIdentity(plan: ValidatedMarketAcquisitionConfiguration): Jo
 
 type OwnedAttemptIdentity = Readonly<{
   acquisitionObservationId: string;
+  attemptId: string;
+  attemptOrdinal: number;
   retrievalAttemptId: string;
+  runSessionNonce: string;
+  stateBound: boolean;
 }>;
 
 function deriveRequestStartedWorkflow(
@@ -484,7 +501,14 @@ function deriveRequestStartedWorkflow(
   ) {
     throw new TypeError("credential-request-started-workflow-invalid");
   }
-  const { acquisitionObservationId, retrievalAttemptId } = ownedAttempt;
+  const {
+    acquisitionObservationId,
+    attemptId,
+    attemptOrdinal,
+    retrievalAttemptId,
+    runSessionNonce,
+    stateBound,
+  } = ownedAttempt;
   if (
     acquisitionObservationId !==
     deriveAcquisitionObservationId({
@@ -539,10 +563,24 @@ function deriveRequestStartedWorkflow(
     pageOrdinal: 0,
     currentTokenHash: NO_TOKEN_HASH,
   });
+  const expectedAttempt = stateBound
+    ? deriveAttemptControlIdentities({
+        logicalPageIdentityHash,
+        attemptOrdinal,
+        runSessionNonce,
+      })
+    : null;
+  if (
+    expectedAttempt !== null &&
+    (expectedAttempt.attemptId !== attemptId ||
+      expectedAttempt.retrievalAttemptId !== retrievalAttemptId)
+  ) {
+    throw new TypeError("credential-attempt-control-identity-invalid");
+  }
   const body = (stageLedgerFactId: string, causalParentFactIds: readonly string[]) =>
     Object.freeze({
       schemaVersion: 1 as const,
-      runSessionNonce: `owned-${memberHash}`,
+      runSessionNonce,
       acquisitionObservationId,
       marketAcquisitionId: `maq1_${memberHash}`,
       admittedMarketAcquisitionIds: Object.freeze([]),
@@ -561,9 +599,9 @@ function deriveRequestStartedWorkflow(
       nextResumableTokenMaterial: null,
       currentContinuationBindingHash: null,
       nextContinuationBindingHash: null,
-      attemptId: `mat1_${memberHash}`,
+      attemptId,
       retrievalAttemptId,
-      attemptOrdinal: 0,
+      attemptOrdinal: stateBound ? attemptOrdinal : 0,
       artifactObservationId: null,
       artifactDigest: null,
       artifactSizeBytes: null,
@@ -1014,10 +1052,39 @@ function productionCredentialStore(
           });
           if (admission.kind === "stop") throw new CredentialAdmissionDenied(admission.reason);
           const { attemptOrdinal, attemptBudgetMs } = admission;
-          const retrievalAttemptId = `rat1_${canonicalHash(
-            "peas/market-acquisition-owned-retrieval-attempt/v1",
-            { acquisitionId, attemptOrdinal, attemptStartedMs: nowMs },
+          const runSessionNonce = `owned-${canonicalHash(
+            "peas/market-acquisition-owned-run-session/v1",
+            {
+              acquisitionId,
+              requestIdentityHash: rootPlan.requestIdentityHash,
+              acquisitionConfigurationHash: rootPlan.acquisitionConfigurationHash,
+              acquisitionStartedMs,
+            },
           )}`;
+          const logicalPageIdentityHash = deriveLogicalPageIdentityHash({
+            requestIdentityHash: rootPlan.requestIdentityHash,
+            pageOrdinal: 0,
+            currentTokenHash: NO_TOKEN_HASH,
+          });
+          const stateBound = attemptOrdinal < MARKET_ACQUISITION_LIMITS.attemptsPerLogicalPage;
+          const attemptControl = stateBound
+            ? deriveAttemptControlIdentities({
+                logicalPageIdentityHash,
+                attemptOrdinal,
+                runSessionNonce,
+              })
+            : (() => {
+                const digest = canonicalHash("peas/market-acquisition-owned-retrieval-attempt/v1", {
+                  acquisitionId,
+                  attemptOrdinal,
+                  attemptStartedMs: nowMs,
+                });
+                return Object.freeze({
+                  attemptId: `mat1_${digest}`,
+                  retrievalAttemptId: `rat1_${digest}`,
+                });
+              })();
+          const { attemptId, retrievalAttemptId } = attemptControl;
           const acquisitionObservationId = deriveAcquisitionObservationId({
             provider: "alpaca",
             retrievalAttemptId,
@@ -1025,8 +1092,12 @@ function productionCredentialStore(
             routeLabel: rootPlan.route.safeRouteLabel,
           });
           const value = deriveRequestStartedWorkflow(input, {
+            attemptId,
+            attemptOrdinal,
             retrievalAttemptId,
             acquisitionObservationId,
+            runSessionNonce,
+            stateBound,
           });
           const journalJson = canonicalJson(value.journalEntries as unknown as JsonValue);
           const ledgerJson = canonicalJson(value.ledgerEntries as unknown as JsonValue);
@@ -1892,6 +1963,13 @@ export function assertOwnedDurableCredentialAuthorizationBoundary(
   }
 }
 
+export function isOwnedProductionCredentialAuthorizationBoundary(
+  value: DurableCredentialAuthorizationBoundary,
+): boolean {
+  assertOwnedDurableCredentialAuthorizationBoundary(value);
+  return productionCredentialDatabases.has(value) && productionCredentialPlans.has(value);
+}
+
 export function authorizeCredentialLoad(
   evidence: CredentialAuthorizationEvidence,
   request?: AlpacaTransportRequest,
@@ -1935,6 +2013,80 @@ export function remainingCredentialAttemptBudgetMs(permit: CredentialPreflightPe
   const remainingMs = binding.credentialUseDeadlineMs - nowMs;
   if (remainingMs < 1) throw new CredentialAdmissionDenied("acquisition-deadline");
   return Math.min(binding.attemptBudgetMs, remainingMs);
+}
+
+export function ownedCredentialAttemptStateEvidence(
+  permit: CredentialPreflightPermit,
+): Readonly<{ admittedAtMs: number; retrievalAttemptId: string }> {
+  const binding = issuedPermits.get(permit);
+  if (binding === undefined) throw new TypeError("credential-capability-invalid");
+  return Object.freeze({
+    admittedAtMs: binding.attemptAdmittedAtMs,
+    retrievalAttemptId: binding.retrievalAttemptId,
+  });
+}
+
+export function issueOwnedAlpacaArtifactCommitAuthority(
+  permit: CredentialPreflightPermit,
+): AlpacaArtifactCommitAuthority {
+  const binding = issuedPermits.get(permit);
+  if (binding === undefined) throw new TypeError("credential-capability-invalid");
+  const authority = Object.freeze({
+    kind: "p1-10-alpaca-artifact-commit-authority" as const,
+  });
+  issuedArtifactCommitAuthorities.set(
+    authority,
+    Object.freeze({
+      plan: binding.plan,
+      retrievalAttemptId: binding.retrievalAttemptId,
+      admittedAtMs: binding.attemptAdmittedAtMs,
+    }),
+  );
+  return authority;
+}
+
+export function createTestAlpacaArtifactCommitAuthority(
+  plan: ValidatedMarketAcquisitionConfiguration,
+  retrievalAttemptId: string,
+  admittedAtMs: number,
+): AlpacaArtifactCommitAuthority {
+  if (P1_10_TEST_AUTHORITY === undefined) {
+    throw new TypeError("test-alpaca-artifact-commit-authority-unavailable");
+  }
+  validatePlan(plan);
+  if (!/^rat1_[0-9a-f]{64}$/u.test(retrievalAttemptId)) {
+    throw new TypeError("test-alpaca-artifact-attempt-invalid");
+  }
+  if (!Number.isSafeInteger(admittedAtMs) || admittedAtMs < 0) {
+    throw new TypeError("test-alpaca-artifact-time-invalid");
+  }
+  const authority = Object.freeze({
+    kind: "p1-10-alpaca-artifact-commit-authority" as const,
+  });
+  issuedArtifactCommitAuthorities.set(
+    authority,
+    Object.freeze({ plan, retrievalAttemptId, admittedAtMs }),
+  );
+  return authority;
+}
+
+export function consumeOwnedAlpacaArtifactCommitAuthority(
+  authority: AlpacaArtifactCommitAuthority,
+): Readonly<{
+  plan: ValidatedMarketAcquisitionConfiguration;
+  retrievalAttemptId: string;
+  admittedAtMs: number;
+}> {
+  const binding = issuedArtifactCommitAuthorities.get(authority);
+  if (binding === undefined) throw new TypeError("alpaca-artifact-commit-authority-invalid");
+  issuedArtifactCommitAuthorities.delete(authority);
+  return binding;
+}
+
+export function discardOwnedAlpacaArtifactCommitAuthority(
+  authority: AlpacaArtifactCommitAuthority,
+): void {
+  issuedArtifactCommitAuthorities.delete(authority);
 }
 
 function credentialUnavailable<T>(): CredentialAttemptResult<T> {

@@ -6,13 +6,21 @@ import { P1_10_TEST_AUTHORITY } from "../../../internal-test-authority.js";
 import { assertValidatedMarketAcquisitionConfiguration } from "../configuration.js";
 import type { ValidatedMarketAcquisitionConfiguration } from "../contracts.js";
 import { ALPACA_ROUTE_REGISTRY } from "../identity.js";
-import { ALPACA_RETENTION_POLICY_ID } from "../private-artifact-policy.js";
+import {
+  ALPACA_PRIVATE_ARTIFACT_POLICY,
+  ALPACA_RETENTION_POLICY_ID,
+  retentionExpiryMs,
+} from "../private-artifact-policy.js";
+import {
+  consumeOwnedAlpacaArtifactCommitAuthority,
+  type AlpacaArtifactCommitAuthority,
+} from "../credentials.js";
 
 import type {
   StoreArtifactRequest,
   StoreArtifactResult,
 } from "../../../artifacts/artifact-store.js";
-import { deriveObservationId } from "../../../artifacts/identity.js";
+import { deriveObservationId, sanitizeRequestIdentity } from "../../../artifacts/identity.js";
 import {
   validateHttpResponseMetadata,
   validateRetrievalAttempt,
@@ -36,6 +44,15 @@ import type {
 const retentionOwnedSinks = new WeakSet<object>();
 const ownedArtifactCommitSinks = new WeakSet<object>();
 const artifactCommitSinkRoots = new WeakMap<object, object>();
+const retentionSinkCommitSinks = new WeakMap<object, AlpacaArtifactCommitSink<unknown>>();
+const artifactCommitAuthorities = new WeakMap<
+  object,
+  Readonly<{
+    plan: ValidatedMarketAcquisitionConfiguration;
+    retrievalAttemptId: string;
+    admittedAtMs: number;
+  }>
+>();
 type PreparedArtifactCommitBinding<T> = Readonly<{
   prepared: AlpacaPreparedArtifactCommit<T>;
   runtimeIdentity?: object;
@@ -45,9 +62,9 @@ const preparedArtifactCommits = new WeakMap<object, PreparedArtifactCommitBindin
 const RETENTION_SINK_CONSTRUCTION_AUTHORITY = Object.freeze({});
 
 type AlpacaDurableSinkInput = Readonly<{
-  request: Omit<StoreArtifactRequest, "entityBytes">;
+  request: Pick<StoreArtifactRequest, "response">;
   plan: ValidatedMarketAcquisitionConfiguration;
-  retention: Pick<RetentionOwnership, "derivedIds" | "trustedCaptureMs" | "expiresAtMs">;
+  retention: Pick<RetentionOwnership, "derivedIds">;
 }>;
 
 class DurableAlpacaArtifactCommitSink implements AlpacaArtifactCommitSink<StoreArtifactResult> {
@@ -59,10 +76,7 @@ class DurableAlpacaArtifactCommitSink implements AlpacaArtifactCommitSink<StoreA
   constructor(store: DurableArtifactStore, input: AlpacaDurableSinkInput) {
     this.#store = store;
     assertValidatedMarketAcquisitionConfiguration(input.plan);
-    if (
-      input.plan.route !== ALPACA_ROUTE_REGISTRY[input.plan.kind] ||
-      input.request.attempt.provider !== "alpaca"
-    ) {
+    if (input.plan.route !== ALPACA_ROUTE_REGISTRY[input.plan.kind]) {
       throw new TypeError("alpaca-artifact-request-authority-invalid");
     }
     this.#input = Object.freeze({
@@ -70,8 +84,6 @@ class DurableAlpacaArtifactCommitSink implements AlpacaArtifactCommitSink<StoreA
       plan: input.plan,
       retention: Object.freeze({
         derivedIds: Object.freeze([...input.retention.derivedIds]),
-        trustedCaptureMs: input.retention.trustedCaptureMs,
-        expiresAtMs: input.retention.expiresAtMs,
       }),
     });
   }
@@ -87,61 +99,89 @@ class DurableAlpacaArtifactCommitSink implements AlpacaArtifactCommitSink<StoreA
     const snapshot = Buffer.concat(this.#chunks);
     for (const chunk of this.#chunks) chunk.fill(0);
     this.#chunks.length = 0;
-    const digest = createHash("sha256").update(snapshot).digest("hex");
-    const observationId = deriveObservationId(
-      validateRetrievalAttempt(this.#input.request.attempt),
-      digest,
-      validateHttpResponseMetadata(this.#input.request.response),
-    );
-    const ownership = Object.freeze({
-      policyId: ALPACA_RETENTION_POLICY_ID,
-      providerLane: "alpaca" as const,
-      providerId: this.#input.plan.route.providerId,
-      datasetId: this.#input.plan.route.datasetId,
-      feedId: this.#input.plan.route.feedId,
-      endpointChannelId: this.#input.plan.route.endpointChannelId,
-      ...this.#input.retention,
-      artifactObservationId: observationId,
-      artifactDigest: digest,
-      artifactSizeBytes: snapshot.byteLength,
-    });
-    const prepared = Object.freeze({
-      ownership,
-      commit: async (): Promise<StoreArtifactResult> => {
-        try {
-          const result = await this.#store.store({
-            ...this.#input.request,
-            entityBytes: Readable.from([snapshot]),
-          });
-          if (
-            result.artifact.digest !== digest ||
-            result.artifact.sizeBytes !== snapshot.byteLength ||
-            result.observation.observationId !== observationId ||
-            result.observation.artifactDigest !== digest
-          ) {
-            throw new TypeError("alpaca-artifact-commit-evidence-mismatch");
+    try {
+      const authority = artifactCommitAuthorities.get(this);
+      if (authority === undefined || authority.plan !== this.#input.plan) {
+        throw new TypeError("alpaca-artifact-commit-authority-required");
+      }
+      artifactCommitAuthorities.delete(this);
+      const trustedCaptureMs = authority.admittedAtMs;
+      const attempt = Object.freeze({
+        attemptId: authority.retrievalAttemptId,
+        provider: "alpaca",
+        recordId: `acquisition-${this.#input.plan.requestIdentityHash}`,
+        revisionId: `configuration-${this.#input.plan.acquisitionConfigurationHash}`,
+        startedAtMs: trustedCaptureMs,
+        request: sanitizeRequestIdentity({
+          method: this.#input.plan.route.method,
+          origin: this.#input.plan.route.origin,
+          path: this.#input.plan.route.path,
+          routeLabel: this.#input.plan.route.safeRouteLabel,
+        }),
+      });
+      const digest = createHash("sha256").update(snapshot).digest("hex");
+      const observationId = deriveObservationId(
+        validateRetrievalAttempt(attempt),
+        digest,
+        validateHttpResponseMetadata(this.#input.request.response),
+      );
+      const ownership = Object.freeze({
+        policyId: ALPACA_RETENTION_POLICY_ID,
+        providerLane: "alpaca" as const,
+        providerId: this.#input.plan.route.providerId,
+        datasetId: this.#input.plan.route.datasetId,
+        feedId: this.#input.plan.route.feedId,
+        endpointChannelId: this.#input.plan.route.endpointChannelId,
+        ...this.#input.retention,
+        trustedCaptureMs,
+        expiresAtMs: retentionExpiryMs(ALPACA_PRIVATE_ARTIFACT_POLICY, trustedCaptureMs, null),
+        artifactObservationId: observationId,
+        artifactDigest: digest,
+        artifactSizeBytes: snapshot.byteLength,
+      });
+      const prepared = Object.freeze({
+        ownership,
+        commit: async (): Promise<StoreArtifactResult> => {
+          try {
+            const result = await this.#store.store({
+              attempt,
+              response: this.#input.request.response,
+              entityBytes: Readable.from([snapshot]),
+            });
+            if (
+              result.artifact.digest !== digest ||
+              result.artifact.sizeBytes !== snapshot.byteLength ||
+              result.observation.observationId !== observationId ||
+              result.observation.artifactDigest !== digest
+            ) {
+              throw new TypeError("alpaca-artifact-commit-evidence-mismatch");
+            }
+            return result;
+          } finally {
+            snapshot.fill(0);
           }
-          return result;
-        } finally {
-          snapshot.fill(0);
-        }
-      },
-    });
-    const runtimeIdentity = artifactCommitSinkRoots.get(this);
-    preparedArtifactCommits.set(
-      prepared,
-      Object.freeze({
-        prepared,
-        ...(runtimeIdentity === undefined ? {} : { runtimeIdentity }),
-        dispose(): void {
-          snapshot.fill(0);
         },
-      }),
-    );
-    return prepared;
+      });
+      const runtimeIdentity = artifactCommitSinkRoots.get(this);
+      preparedArtifactCommits.set(
+        prepared,
+        Object.freeze({
+          prepared,
+          ...(runtimeIdentity === undefined ? {} : { runtimeIdentity }),
+          dispose(): void {
+            snapshot.fill(0);
+          },
+        }),
+      );
+      return prepared;
+    } catch (error) {
+      snapshot.fill(0);
+      throw error;
+    }
   }
 
   async abort(): Promise<void> {
+    artifactCommitAuthorities.delete(this);
     for (const chunk of this.#chunks) chunk.fill(0);
     this.#chunks.length = 0;
     this.#settled = true;
@@ -223,6 +263,13 @@ function takePreparedAlpacaArtifactCommit<T>(
   return binding;
 }
 
+function discardPreparedAlpacaArtifactCommit(value: AlpacaPreparedArtifactCommit<unknown>): void {
+  const binding = preparedArtifactCommits.get(value as object);
+  if (binding === undefined) return;
+  preparedArtifactCommits.delete(value as object);
+  binding.dispose();
+}
+
 export function consumePreparedAlpacaArtifactCommit<T>(
   value: AlpacaPreparedArtifactCommit<T>,
   expectedRuntimeIdentity?: object,
@@ -277,17 +324,24 @@ export class RetentionOwnedAlpacaPageSink<T> implements AlpacaVerifiedPageSink<T
     if (this.#prepared) throw new TypeError("alpaca-artifact-commit-already-prepared");
     this.#prepared = true;
     const prepared = await this.#sink.prepareVerifiedCommit();
-    const digest = this.#hash.digest("hex");
-    if (
-      prepared.ownership.artifactDigest !== digest ||
-      prepared.ownership.artifactSizeBytes !== this.#sizeBytes
-    ) {
-      throw new TypeError("alpaca-artifact-ownership-byte-mismatch");
+    try {
+      const digest = this.#hash.digest("hex");
+      if (
+        prepared.ownership.artifactDigest !== digest ||
+        prepared.ownership.artifactSizeBytes !== this.#sizeBytes
+      ) {
+        throw new TypeError("alpaca-artifact-ownership-byte-mismatch");
+      }
+      return await this.#retention.commitArtifact(prepared);
+    } catch (error) {
+      discardPreparedAlpacaArtifactCommit(prepared);
+      throw error;
     }
-    return this.#retention.commitArtifact(prepared);
   }
 
   abort(): Promise<void> {
+    const commitSink = retentionSinkCommitSinks.get(this);
+    if (commitSink !== undefined) artifactCommitAuthorities.delete(commitSink as object);
     return this.#sink.abort();
   }
 
@@ -320,8 +374,29 @@ export function createRetentionOwnedAlpacaPageSink<T>(
     RETENTION_SINK_CONSTRUCTION_AUTHORITY,
   );
   retentionOwnedSinks.add(value);
+  retentionSinkCommitSinks.set(value, sink as AlpacaArtifactCommitSink<unknown>);
   Object.freeze(value);
   return value;
+}
+
+export function bindRetentionOwnedAlpacaPageSinkAttempt(
+  sink: AlpacaVerifiedPageSink<unknown>,
+  authority: AlpacaArtifactCommitAuthority,
+): void {
+  assertRetentionOwnedAlpacaPageSink(sink);
+  const commitSink = retentionSinkCommitSinks.get(sink as object);
+  if (commitSink === undefined) throw new TypeError("alpaca-retention-owned-sink-binding-missing");
+  const binding = consumeOwnedAlpacaArtifactCommitAuthority(authority);
+  if (artifactCommitSinkRoots.get(commitSink as object) === undefined) {
+    if (P1_10_TEST_AUTHORITY === undefined) {
+      throw new TypeError("owned-alpaca-artifact-commit-sink-required");
+    }
+    return;
+  }
+  if (artifactCommitAuthorities.has(commitSink as object)) {
+    throw new TypeError("alpaca-artifact-commit-authority-already-bound");
+  }
+  artifactCommitAuthorities.set(commitSink as object, binding);
 }
 
 export function assertRetentionOwnedAlpacaPageSink(value: AlpacaVerifiedPageSink<unknown>): void {

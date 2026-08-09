@@ -960,6 +960,47 @@ export class DurableArtifactStore implements ArtifactStore {
           assertRunning();
           const contentPath = await this.#contentPath(intent.digest, true, false);
           assertRunning();
+          const attempt = this.#repository.getAttempt(intent.attemptId);
+          if (attempt === undefined) {
+            throw new ArtifactVaultError(
+              "artifact-integrity-failure",
+              "Install intent retrieval attempt is missing",
+            );
+          }
+          const retentionDenied = (): boolean =>
+            this.#repository.retentionProviderUseDenied(attempt.provider) ||
+            this.#repository.retentionDigestUseDenied(intent.digest);
+          const abortDeniedIntent = async (): Promise<void> => {
+            await this.#lease.renewAndAssert();
+            assertRunning();
+            await rm(contentPath, { force: true });
+            assertRunning();
+            await rm(stagePath, { force: true });
+            assertRunning();
+            await syncDirectory(dirname(contentPath));
+            assertRunning();
+            await syncDirectory(dirname(stagePath));
+            await this.#lease.renewAndAssert();
+            assertRunning();
+            this.#repository.abortIntent(
+              intent.intentId,
+              {
+                attemptId: intent.attemptId,
+                outcome: "failed",
+                completedAtMs: this.#clock.nowMs(),
+                reasonCode: "retention-denied",
+                detailHash: null,
+              } as RetrievalAttemptOutcome,
+              this.#lease.fence(),
+            );
+          };
+          if (retentionDenied()) {
+            await abortDeniedIntent();
+            throw new ArtifactVaultError(
+              "artifact-integrity-failure",
+              "Install intent was denied by retention policy",
+            );
+          }
           const verify = async (path: string): Promise<boolean> => {
             try {
               assertRunning();
@@ -999,7 +1040,21 @@ export class DurableArtifactStore implements ArtifactStore {
             }
             await this.#lease.renewAndAssert();
             assertRunning();
+            if (retentionDenied()) {
+              await abortDeniedIntent();
+              throw new ArtifactVaultError(
+                "artifact-integrity-failure",
+                "Install intent was denied by retention policy",
+              );
+            }
             this.#repository.markIntentContentInstalled(intent.intentId, this.#lease.fence());
+            if (retentionDenied()) {
+              await abortDeniedIntent();
+              throw new ArtifactVaultError(
+                "artifact-integrity-failure",
+                "Install intent was denied by retention policy",
+              );
+            }
             this.#repository.commitIntentSuccess(intent.intentId, this.#lease.fence());
             await this.#lease.renewAndAssert();
             assertRunning();

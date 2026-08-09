@@ -8,6 +8,7 @@ import type {
   RetentionOwnership,
   RetentionProviderLane,
   RetentionReceipt,
+  RetentionReceiptRevalidation,
   RetentionStopEvent,
   RetentionTombstone,
 } from "./contracts.js";
@@ -30,6 +31,7 @@ export class MemoryArtifactRetentionJournal implements ArtifactRetentionJournal 
   readonly #attempts = new Map<string, RetentionErasureAttempt>();
   readonly #tombstones = new Map<string, RetentionTombstone>();
   readonly #receipts = new Map<string, RetentionReceipt>();
+  readonly #receiptRevalidations = new Map<string, RetentionReceiptRevalidation>();
   readonly #checkpoints = new Map<string, RetentionCheckpoint>();
 
   registerOwnershipAndApplyActiveStop(value: RetentionOwnership): boolean {
@@ -154,6 +156,34 @@ export class MemoryArtifactRetentionJournal implements ArtifactRetentionJournal 
   getReceiptForPlan(planId: string): RetentionReceipt | undefined {
     const value = this.#receipts.get(planId);
     return value === undefined ? undefined : structuredClone(value);
+  }
+
+  recordReceiptRevalidation(value: RetentionReceiptRevalidation): void {
+    const existing = this.#receiptRevalidations.get(value.revalidationId);
+    if (existing !== undefined) {
+      replayEqual("Receipt revalidation", existing, value);
+      return;
+    }
+    const sameSequence = [...this.#receiptRevalidations.values()].find(
+      (member) => member.planId === value.planId && member.sequence === value.sequence,
+    );
+    if (sameSequence !== undefined) {
+      throw new Error("Receipt revalidation conflicts with immutable retention evidence");
+    }
+    if (
+      [...this.#receiptRevalidations.values()].some(
+        (member) => member.receipt.receiptId === value.receipt.receiptId,
+      )
+    ) {
+      throw new Error("Receipt revalidation conflicts with immutable retention evidence");
+    }
+    this.#receiptRevalidations.set(value.revalidationId, structuredClone(value));
+  }
+  receiptRevalidationsForPlan(planId: string): readonly RetentionReceiptRevalidation[] {
+    return [...this.#receiptRevalidations.values()]
+      .filter((value) => value.planId === planId)
+      .sort((left, right) => left.sequence - right.sequence)
+      .map((value) => structuredClone(value));
   }
 
   recordCheckpoint(value: RetentionCheckpoint): void {

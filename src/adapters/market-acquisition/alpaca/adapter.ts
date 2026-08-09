@@ -13,14 +13,24 @@ import {
   assertOwnedDurableCredentialAuthorizationBoundary,
   credentialAuthorizationDenialReason,
   discardCredentialPreflightPermit,
+  discardOwnedAlpacaArtifactCommitAuthority,
+  isOwnedProductionCredentialAuthorizationBoundary,
+  issueOwnedAlpacaArtifactCommitAuthority,
+  ownedCredentialAttemptStateEvidence,
   remainingCredentialAttemptBudgetMs,
   type DurableCredentialAuthorizationBoundary,
   withAlpacaAuthorization,
   type CredentialAuthorizationRequest,
   type CredentialAttemptResult,
   type CredentialPreflightPermit,
+  type AlpacaArtifactCommitAuthority,
   type RuntimeSecretSource,
 } from "../credentials.js";
+import {
+  openOwnedAcquisitionStateMachine,
+  type AcquisitionEventProof,
+  type AcquisitionStateMachine,
+} from "../state-machine.js";
 import type {
   AlpacaAttemptFailure,
   AlpacaAttemptInput,
@@ -32,7 +42,10 @@ import type {
   AlpacaTransportResponse,
 } from "./contracts.js";
 import { buildAlpacaTransportRequest } from "./request.js";
-import { assertRetentionOwnedAlpacaPageSink } from "./retained-sink.js";
+import {
+  assertRetentionOwnedAlpacaPageSink,
+  bindRetentionOwnedAlpacaPageSinkAttempt,
+} from "./retained-sink.js";
 import { assertOwnedAlpacaDeadlineScheduler } from "./deadline.js";
 import { AlpacaDeadlineElapsed } from "./deadline.js";
 
@@ -201,6 +214,8 @@ type AuthorizedAlpacaAttemptInput<T> = Readonly<{
   requestLease: AlpacaTransportRequestLease;
   abortController: AbortController;
   deadline: AlpacaDeadlineHandle;
+  machine: AcquisitionStateMachine | null;
+  stateProof(): AcquisitionEventProof;
 }>;
 
 async function executeAlpacaAttempt<T>(
@@ -251,6 +266,16 @@ async function executeAlpacaAttempt<T>(
       response.contentLength > MARKET_ACQUISITION_LIMITS.rawArtifactBytes
     ) {
       return failure("bound-exceeded", "response-headers", { kind: "bound" });
+    }
+    if (input.machine !== null) {
+      await input.machine.applyAcquisitionEvent({
+        kind: "response-accepted",
+        proof: input.stateProof(),
+      });
+      await input.machine.applyAcquisitionEvent({
+        kind: "artifact-store-started",
+        proof: input.stateProof(),
+      });
     }
 
     let consumedBytes = 0;
@@ -318,6 +343,20 @@ async function executeAlpacaAttempt<T>(
         }),
         false,
       );
+    }
+    if (input.machine !== null) {
+      await input.machine.applyAcquisitionEvent({
+        kind: "artifact-store-committed",
+        proof: input.stateProof(),
+      });
+      await input.machine.applyAcquisitionEvent({
+        kind: "artifact-verification-started",
+        proof: input.stateProof(),
+      });
+      await input.machine.applyAcquisitionEvent({
+        kind: "page-verified",
+        proof: input.stateProof(),
+      });
     }
     return Object.freeze({
       ok: true,
@@ -398,9 +437,38 @@ export class AlpacaProductionAttemptBoundary {
       );
     }
     let permit: CredentialPreflightPermit;
+    let machine: AcquisitionStateMachine | null = null;
+    let admittedAtMs: number;
+    let admittedRetrievalAttemptId: string;
     try {
       const evidence = await this.#authorization.establish(input.credentialAuthorization);
       permit = authorizeCredentialLoad(evidence, requestLease.request);
+      const stateEvidence = ownedCredentialAttemptStateEvidence(permit);
+      admittedAtMs = stateEvidence.admittedAtMs;
+      admittedRetrievalAttemptId = stateEvidence.retrievalAttemptId;
+      if (isOwnedProductionCredentialAuthorizationBoundary(this.#authorization)) {
+        machine = openOwnedAcquisitionStateMachine(this.#authorization);
+        const proof = (): AcquisitionEventProof => {
+          if (machine === null) throw new TypeError("production-acquisition-state-required");
+          return Object.freeze({
+            requestIdentityHash: machine.snapshot.requestIdentityHash,
+            acquisitionConfigurationHash: machine.snapshot.acquisitionConfigurationHash,
+            marketAcquisitionJournalId: machine.snapshot.marketAcquisitionJournalId,
+            runSessionNonce: machine.snapshot.runSessionNonce,
+            nowMonotonicMs: admittedAtMs,
+            resourcesSettled: true,
+          });
+        };
+        if (machine.snapshot.currentState === "declared") {
+          await machine.applyAcquisitionEvent({ kind: "begin-preflight", proof: proof() });
+        }
+        if (machine.snapshot.currentState === "preflighting") {
+          await machine.applyAcquisitionEvent({ kind: "preflight-approved", proof: proof() });
+        }
+        if (machine.snapshot.currentState !== "dispatch-ready") {
+          throw new TypeError("production-acquisition-state-not-dispatch-ready");
+        }
+      }
     } catch (error) {
       requestLease.release();
       const denial = credentialAuthorizationDenialReason(error);
@@ -442,20 +510,89 @@ export class AlpacaProductionAttemptBoundary {
       );
     }
     let authorized: CredentialAttemptResult<AlpacaAttemptResult<T>>;
+    const artifactCommitAuthority: AlpacaArtifactCommitAuthority =
+      issueOwnedAlpacaArtifactCommitAuthority(permit);
     try {
       authorized = await withAlpacaAuthorization(
         permit,
         this.#secrets,
         requestLease.request,
-        (dispatchCapability) =>
-          executeAlpacaAttempt({
+        async (dispatchCapability) => {
+          bindRetentionOwnedAlpacaPageSinkAttempt(input.artifactSink, artifactCommitAuthority);
+          const proof = (): AcquisitionEventProof => {
+            if (machine === null) throw new TypeError("production-acquisition-state-required");
+            return Object.freeze({
+              requestIdentityHash: machine.snapshot.requestIdentityHash,
+              acquisitionConfigurationHash: machine.snapshot.acquisitionConfigurationHash,
+              marketAcquisitionJournalId: machine.snapshot.marketAcquisitionJournalId,
+              runSessionNonce: machine.snapshot.runSessionNonce,
+              nowMonotonicMs: admittedAtMs,
+              resourcesSettled: true,
+            });
+          };
+          if (machine !== null) {
+            await machine.applyAcquisitionEvent({ kind: "credentials-loaded", proof: proof() });
+            await machine.applyAcquisitionEvent({
+              kind: "dispatch-started",
+              proof: proof(),
+              deadlineProof: Object.freeze({
+                acquisitionDeclaredMonotonicMs: machine.snapshot.acquisitionDeclaredMonotonicMs,
+                attemptStartedMonotonicMs: admittedAtMs,
+                nowMonotonicMs: admittedAtMs,
+              }),
+              entitlementQuotaLimit: MARKET_ACQUISITION_LIMITS.rateAttempts,
+            });
+            if (machine.snapshot.retrievalAttemptId !== admittedRetrievalAttemptId) {
+              throw new TypeError("production-acquisition-attempt-identity-mismatch");
+            }
+          }
+          const stateProof = (): AcquisitionEventProof =>
+            machine === null
+              ? (() => {
+                  throw new TypeError("production-acquisition-state-required");
+                })()
+              : Object.freeze({
+                  requestIdentityHash: machine.snapshot.requestIdentityHash,
+                  acquisitionConfigurationHash: machine.snapshot.acquisitionConfigurationHash,
+                  marketAcquisitionJournalId: machine.snapshot.marketAcquisitionJournalId,
+                  runSessionNonce: machine.snapshot.runSessionNonce,
+                  nowMonotonicMs: admittedAtMs,
+                  resourcesSettled: true,
+                });
+          const result = await executeAlpacaAttempt({
             dispatchCapability,
             transport: input.transport,
             artifactSink: input.artifactSink,
             requestLease,
             abortController,
             deadline,
-          }),
+            machine,
+            stateProof,
+          });
+          if (!result.ok && machine !== null) {
+            if (machine.snapshot.currentState === "attempt-active") {
+              await machine.applyAcquisitionEvent({
+                kind: "attempt-failed",
+                reason: result.error.reasonCode,
+                proof: stateProof(),
+              });
+            } else if (
+              machine.snapshot.currentState === "response-accepted" ||
+              machine.snapshot.currentState === "artifact-committing"
+            ) {
+              await machine.applyAcquisitionEvent({
+                kind: "artifact-store-failed",
+                proof: stateProof(),
+              });
+            } else if (machine.snapshot.currentState === "artifact-verifying") {
+              await machine.applyAcquisitionEvent({
+                kind: "page-verification-failed",
+                proof: stateProof(),
+              });
+            }
+          }
+          return result;
+        },
         deadline,
       );
     } catch (error) {
@@ -472,6 +609,8 @@ export class AlpacaProductionAttemptBoundary {
         );
       }
       throw error;
+    } finally {
+      discardOwnedAlpacaArtifactCommitAuthority(artifactCommitAuthority);
     }
     if (authorized.ok) return authorized.value;
     requestLease.release();

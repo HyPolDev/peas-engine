@@ -18,6 +18,7 @@ import type {
   RetentionOwnership,
   RetentionProviderLane,
   RetentionReceipt,
+  RetentionReceiptRevalidation,
   RetentionStopEvent,
   RetentionTombstone,
 } from "./contracts.js";
@@ -37,6 +38,14 @@ function parseRecord<T>(row: JsonRow, domain: string): T {
 function sameRecord(label: string, stored: unknown, value: unknown): void {
   if (canonicalJson(stored as JsonValue) !== canonicalJson(value as JsonValue))
     throw new Error(`${label} conflicts with immutable retention evidence`);
+}
+
+function safeSqliteNumber(value: number | bigint, label: string): number {
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < 0) {
+    throw new Error(`${label} is invalid`);
+  }
+  return number;
 }
 
 export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal {
@@ -447,6 +456,103 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
     return row === undefined
       ? undefined
       : parseRecord<RetentionReceipt>(row, "peas/market-acquisition-retention-receipt-record/v1");
+  }
+
+  recordReceiptRevalidation(value: RetentionReceiptRevalidation): void {
+    const json = canonicalJson(value as unknown as JsonValue);
+    const hash = canonicalHash(
+      "peas/market-acquisition-retention-revalidation-record/v1",
+      value as unknown as JsonValue,
+    );
+    this.#database
+      .prepare(`INSERT OR IGNORE INTO market_retention_receipt_revalidations (
+        revalidation_id, plan_id, sequence, predecessor_receipt_id, receipt_id, attempt_count,
+        completed_at_ms, revalidation_json, revalidation_hash
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(
+        value.revalidationId,
+        value.planId,
+        value.sequence,
+        value.predecessorReceiptId,
+        value.receipt.receiptId,
+        value.receipt.attemptCount,
+        value.recordedAtMs,
+        json,
+        hash,
+      );
+    const existing = this.#database
+      .prepare(`SELECT revalidation_json AS json, revalidation_hash AS hash,
+        revalidation_id, plan_id, sequence, predecessor_receipt_id, receipt_id, attempt_count,
+        completed_at_ms
+        FROM market_retention_receipt_revalidations WHERE plan_id = ? AND sequence = ?`)
+      .get(value.planId, value.sequence) as
+      | (JsonRow & {
+          revalidation_id: string;
+          plan_id: string;
+          sequence: bigint;
+          predecessor_receipt_id: string;
+          receipt_id: string;
+          attempt_count: bigint;
+          completed_at_ms: bigint;
+        })
+      | undefined;
+    if (existing === undefined) throw new Error("Retention receipt revalidation insert failed");
+    const parsed = parseRecord<RetentionReceiptRevalidation>(
+      existing,
+      "peas/market-acquisition-retention-revalidation-record/v1",
+    );
+    if (
+      existing.revalidation_id !== parsed.revalidationId ||
+      existing.plan_id !== parsed.planId ||
+      safeSqliteNumber(existing.sequence, "Receipt revalidation sequence") !== parsed.sequence ||
+      existing.predecessor_receipt_id !== parsed.predecessorReceiptId ||
+      existing.receipt_id !== parsed.receipt.receiptId ||
+      safeSqliteNumber(existing.attempt_count, "Receipt revalidation attempt count") !==
+        parsed.receipt.attemptCount ||
+      safeSqliteNumber(existing.completed_at_ms, "Receipt revalidation time") !==
+        parsed.recordedAtMs
+    ) {
+      throw new Error("Retention receipt revalidation relational evidence mismatch");
+    }
+    sameRecord("Receipt revalidation", parsed, value);
+  }
+
+  receiptRevalidationsForPlan(planId: string): readonly RetentionReceiptRevalidation[] {
+    const rows = this.#database
+      .prepare(`SELECT revalidation_json AS json, revalidation_hash AS hash,
+        revalidation_id, plan_id, sequence, predecessor_receipt_id, receipt_id, attempt_count,
+        completed_at_ms
+        FROM market_retention_receipt_revalidations WHERE plan_id = ? ORDER BY sequence`)
+      .all(planId) as Array<
+      JsonRow & {
+        revalidation_id: string;
+        plan_id: string;
+        sequence: bigint;
+        predecessor_receipt_id: string;
+        receipt_id: string;
+        attempt_count: bigint;
+        completed_at_ms: bigint;
+      }
+    >;
+    return rows.map((row) => {
+      const parsed = parseRecord<RetentionReceiptRevalidation>(
+        row,
+        "peas/market-acquisition-retention-revalidation-record/v1",
+      );
+      if (
+        row.revalidation_id !== parsed.revalidationId ||
+        row.plan_id !== parsed.planId ||
+        safeSqliteNumber(row.sequence, "Receipt revalidation sequence") !== parsed.sequence ||
+        row.predecessor_receipt_id !== parsed.predecessorReceiptId ||
+        row.receipt_id !== parsed.receipt.receiptId ||
+        safeSqliteNumber(row.attempt_count, "Receipt revalidation attempt count") !==
+          parsed.receipt.attemptCount ||
+        safeSqliteNumber(row.completed_at_ms, "Receipt revalidation time") !== parsed.recordedAtMs
+      ) {
+        throw new Error("Retention receipt revalidation relational evidence mismatch");
+      }
+      return parsed;
+    });
   }
 
   recordCheckpoint(value: RetentionCheckpoint): void {

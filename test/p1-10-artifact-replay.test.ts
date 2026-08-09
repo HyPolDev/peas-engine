@@ -607,3 +607,176 @@ test("replay remaps a valid clock-regression witness without prefix rejection at
     assert.ok(replayWitness.parentEntryIds.includes(replayWitness.facts.regressingEntryId));
   }
 });
+
+test("replay chains consecutive clock regressions through each synthesized witness", () => {
+  const basis = createClockBasis({
+    wallClock: "recorded-fixture",
+    synchronization: "not-applicable",
+    maximumErrorMs: null,
+    monotonicClock: "process-monotonic-us",
+    monotonicSessionId: "p1-10-replay-consecutive-regression-session",
+  });
+  const executionId = "p1-10-replay-consecutive-regression-source";
+  const basisEntry = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId,
+    parentEntryIds: [],
+    clock: { clockBasisId: null, wallTimeMs: null, monotonicTimeUs: null },
+    facts: { kind: "clock-basis.declared", clockBasis: basis },
+  });
+  const declaration = (label: string, wallTimeMs: number, monotonicTimeUs: number) => {
+    const retrievalAttemptId = `rat1_${hash(`consecutive-${label}`)}`;
+    const acquisitionObservationId = deriveAcquisitionObservationId({
+      provider: "alpaca",
+      retrievalAttemptId,
+      sanitizedRequestIdentityHash: requestIdentityHash,
+      routeLabel: "alpaca-v2-historical-quotes",
+    });
+    return createObservationLedgerEntry({
+      schemaVersion: 1,
+      executionId,
+      parentEntryIds: [basisEntry.entryId],
+      clock: { clockBasisId: basis.clockBasisId, wallTimeMs, monotonicTimeUs },
+      facts: {
+        kind: "acquisition.declared",
+        acquisitionObservationId,
+        provider: "alpaca",
+        retrievalAttemptId,
+        sanitizedRequestIdentityHash: requestIdentityHash,
+        routeLabel: "alpaca-v2-historical-quotes",
+      },
+    });
+  };
+  const first = declaration("first", 300, 1);
+  const second = declaration("second", 200, 2);
+  const firstWitness = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId,
+    parentEntryIds: [basisEntry.entryId, first.entryId, second.entryId].sort(),
+    clock: second.clock,
+    facts: {
+      kind: "clock.regression",
+      priorEntryId: first.entryId,
+      regressingEntryId: second.entryId,
+      priorWallTimeMs: 300,
+      currentWallTimeMs: 200,
+      monotonicOrderPreserved: true,
+    },
+  });
+  const third = declaration("third", 100, 3);
+  const secondWitness = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId,
+    parentEntryIds: [basisEntry.entryId, firstWitness.entryId, third.entryId].sort(),
+    clock: third.clock,
+    facts: {
+      kind: "clock.regression",
+      priorEntryId: firstWitness.entryId,
+      regressingEntryId: third.entryId,
+      priorWallTimeMs: 200,
+      currentWallTimeMs: 100,
+      monotonicOrderPreserved: true,
+    },
+  });
+  const original = validateObservationLedgerBundle([
+    basisEntry,
+    first,
+    second,
+    firstWitness,
+    third,
+    secondWitness,
+  ]);
+  for (let pageSize = 1; pageSize <= original.length; pageSize += 1) {
+    const replayed = replayAcquisitionLedger(original, `p1-10-consecutive-${pageSize}`, pageSize);
+    const witnesses = replayed.filter((entry) => entry.facts.kind === "clock.regression");
+    assert.equal(witnesses.length, 2);
+    assert.deepEqual(
+      witnesses.map((entry) =>
+        entry.facts.kind === "clock.regression"
+          ? [entry.facts.priorWallTimeMs, entry.facts.currentWallTimeMs]
+          : null,
+      ),
+      [
+        [300, 200],
+        [200, 100],
+      ],
+    );
+  }
+});
+
+test("replay remaps a regression endpoint that is intentionally omitted", () => {
+  const basis = createClockBasis({
+    wallClock: "recorded-fixture",
+    synchronization: "not-applicable",
+    maximumErrorMs: null,
+    monotonicClock: "process-monotonic-us",
+    monotonicSessionId: "p1-10-replay-omitted-regression-session",
+  });
+  const executionId = "p1-10-replay-omitted-regression-source";
+  const basisEntry = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId,
+    parentEntryIds: [],
+    clock: { clockBasisId: null, wallTimeMs: null, monotonicTimeUs: null },
+    facts: { kind: "clock-basis.declared", clockBasis: basis },
+  });
+  const retrievalAttemptId = `rat1_${hash("omitted-regression-attempt")}`;
+  const acquisitionObservationId = deriveAcquisitionObservationId({
+    provider: "alpaca",
+    retrievalAttemptId,
+    sanitizedRequestIdentityHash: requestIdentityHash,
+    routeLabel: "alpaca-v2-historical-quotes",
+  });
+  const declaration = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId,
+    parentEntryIds: [basisEntry.entryId],
+    clock: { clockBasisId: basis.clockBasisId, wallTimeMs: 300, monotonicTimeUs: 1 },
+    facts: {
+      kind: "acquisition.declared",
+      acquisitionObservationId,
+      provider: "alpaca",
+      retrievalAttemptId,
+      sanitizedRequestIdentityHash: requestIdentityHash,
+      routeLabel: "alpaca-v2-historical-quotes",
+    },
+  });
+  const requestStarted = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId,
+    parentEntryIds: [basisEntry.entryId, declaration.entryId].sort(),
+    clock: { clockBasisId: basis.clockBasisId, wallTimeMs: 200, monotonicTimeUs: 2 },
+    facts: { kind: "request.started", acquisitionObservationId },
+  });
+  const witness = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId,
+    parentEntryIds: [basisEntry.entryId, declaration.entryId, requestStarted.entryId].sort(),
+    clock: requestStarted.clock,
+    facts: {
+      kind: "clock.regression",
+      priorEntryId: declaration.entryId,
+      regressingEntryId: requestStarted.entryId,
+      priorWallTimeMs: 300,
+      currentWallTimeMs: 200,
+      monotonicOrderPreserved: true,
+    },
+  });
+  const original = validateObservationLedgerBundle([
+    basisEntry,
+    declaration,
+    requestStarted,
+    witness,
+  ]);
+  for (let pageSize = 1; pageSize <= original.length; pageSize += 1) {
+    const replayed = replayAcquisitionLedger(original, `p1-10-omitted-${pageSize}`, pageSize);
+    assert.equal(
+      replayed.some((entry) => entry.facts.kind === "request.started"),
+      false,
+    );
+    assert.equal(
+      replayed.some((entry) => entry.facts.kind === "clock.regression"),
+      false,
+    );
+  }
+});

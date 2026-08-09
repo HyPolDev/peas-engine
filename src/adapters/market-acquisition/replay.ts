@@ -68,6 +68,19 @@ export function replayAcquisitionLedger(
       if (source.facts.kind === "clock.regression") {
         const regressing = remapped.get(source.facts.regressingEntryId);
         const prior = remapped.get(source.facts.priorEntryId);
+        const originalRegressing = originalById.get(source.facts.regressingEntryId);
+        const originalPrior = originalById.get(source.facts.priorEntryId);
+        if (
+          (originalRegressing !== undefined && shouldOmit(originalRegressing)) ||
+          (originalPrior !== undefined && shouldOmit(originalPrior))
+        ) {
+          const representative = regressing ?? prior;
+          if (representative === undefined) {
+            throw new TypeError("replay-clock-regression-endpoint-missing");
+          }
+          remapped.set(source.entryId, representative);
+          continue;
+        }
         const witness = replayed.find(
           (entry) =>
             entry.facts.kind === "clock.regression" &&
@@ -78,20 +91,28 @@ export function replayAcquisitionLedger(
         remapped.set(source.entryId, witness.entryId);
         continue;
       }
-      if (shouldOmit(source)) continue;
+      if (shouldOmit(source)) {
+        const representatives = source.parentEntryIds.flatMap((parentId) => {
+          const mapped = remapped.get(parentId);
+          return mapped === undefined ? [] : [mapped];
+        });
+        if (representatives.length === 0) throw new TypeError("replay-omitted-parent-missing");
+        remapped.set(source.entryId, representatives.at(-1) as string);
+        continue;
+      }
       const parents: string[] = [];
       for (const parentId of source.parentEntryIds) {
-        const mapped = remapped.get(parentId);
-        if (mapped !== undefined) {
-          parents.push(mapped);
-          continue;
-        }
         const parent = originalById.get(parentId);
         if (
           source.facts.kind === "artifact.committed" &&
           source.facts.acquisitionMode === "live" &&
           parent?.facts.kind === "request.succeeded"
         ) {
+          continue;
+        }
+        const mapped = remapped.get(parentId);
+        if (mapped !== undefined) {
+          if (!parents.includes(mapped)) parents.push(mapped);
           continue;
         }
         throw new TypeError("replay-parent-missing");
@@ -119,25 +140,26 @@ export function replayAcquisitionLedger(
       ) {
         const basisEntryId = clockDeclarations.get(basisId);
         if (basisEntryId === undefined) throw new TypeError("replay-clock-basis-missing");
-        replayed.push(
-          createObservationLedgerEntry({
-            schemaVersion: 1,
-            executionId,
-            parentEntryIds: sortIds([basisEntryId, prior.entryId, entry.entryId]),
-            clock: entry.clock,
-            facts: Object.freeze({
-              kind: "clock.regression" as const,
-              priorEntryId: prior.entryId,
-              regressingEntryId: entry.entryId,
-              priorWallTimeMs: prior.clock.wallTimeMs,
-              currentWallTimeMs: entry.clock.wallTimeMs,
-              monotonicOrderPreserved:
-                prior.clock.monotonicTimeUs !== null &&
-                entry.clock.monotonicTimeUs !== null &&
-                entry.clock.monotonicTimeUs > prior.clock.monotonicTimeUs,
-            }),
+        const witness = createObservationLedgerEntry({
+          schemaVersion: 1,
+          executionId,
+          parentEntryIds: sortIds([basisEntryId, prior.entryId, entry.entryId]),
+          clock: entry.clock,
+          facts: Object.freeze({
+            kind: "clock.regression" as const,
+            priorEntryId: prior.entryId,
+            regressingEntryId: entry.entryId,
+            priorWallTimeMs: prior.clock.wallTimeMs,
+            currentWallTimeMs: entry.clock.wallTimeMs,
+            monotonicOrderPreserved:
+              prior.clock.monotonicTimeUs !== null &&
+              entry.clock.monotonicTimeUs !== null &&
+              entry.clock.monotonicTimeUs > prior.clock.monotonicTimeUs,
           }),
-        );
+        });
+        replayed.push(witness);
+        lastWallEntry.set(basisId, witness);
+        continue;
       }
       lastWallEntry.set(basisId, entry);
     }

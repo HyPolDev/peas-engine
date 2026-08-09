@@ -45,8 +45,9 @@ import type {
 } from "../src/artifacts/artifact-store.js";
 import { ManualClock } from "../src/core/clock.js";
 import { canonicalHash } from "../src/core/hash.js";
-import type { JsonValue } from "../src/core/json.js";
+import { canonicalJson, type JsonValue } from "../src/core/json.js";
 import { VaultWriterLease } from "../src/adapters/artifacts/writer-lease.js";
+import { createSqliteArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/sqlite-journal.js";
 
 const migrations = loadMigrations(join(process.cwd(), "migrations"));
 const artifactWorkerPath = join(process.cwd(), "test", "fixtures", "artifact-vault-worker.mjs");
@@ -1164,6 +1165,109 @@ test("hard kill after install intent converges from durable intent without fabri
       ).count,
       1n,
     );
+  } finally {
+    await recovered.close();
+    database.close();
+  }
+});
+
+test("a hard-killed install intent cannot resurrect content after a durable digest denial", async (context) => {
+  const { root, databasePath } = processFixture(context, "denied-install-intent-kill");
+  const child = forkObservedWorker(artifactWorkerPath, [
+    databasePath,
+    root,
+    "1800000000000",
+    "content-sync",
+  ]);
+  await waitForWorkerMessage(child, "staged");
+  child.send({ type: "resume" });
+  const checkpoint = await waitForWorkerMessage(child, "checkpoint");
+  assert.equal(checkpoint["checkpoint"], "content-sync");
+  child.kill("SIGKILL");
+  await waitForWorkerExit(child);
+
+  const digest = createHash("sha256").update("cross-process-stale").digest("hex");
+  const database = openSqliteDatabase(databasePath, migrations);
+  createSqliteArtifactRetentionJournal(database);
+  const policy = database
+    .prepare("SELECT policy_id FROM market_retention_policies ORDER BY policy_id LIMIT 1")
+    .get() as { policy_id: string };
+  const stop = {
+    stopEventId: `rse1_${"d".repeat(64)}`,
+    policyId: policy.policy_id,
+    providerLane: "alpaca",
+    providerId: "synthetic-denied-provider",
+    effectiveAtMs: 1_800_000_030_000,
+    deadlineMs: 1_800_000_060_000,
+    reason: "owner-revocation",
+  } as const;
+  const stopJson = canonicalJson(stop as unknown as JsonValue);
+  database
+    .prepare(`INSERT INTO market_retention_stop_events (
+      stop_event_id, policy_id, provider_lane, provider_id, effective_at_ms, deadline_ms,
+      reason, stop_json, stop_hash
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(
+      stop.stopEventId,
+      stop.policyId,
+      stop.providerLane,
+      stop.providerId,
+      stop.effectiveAtMs,
+      stop.deadlineMs,
+      stop.reason,
+      stopJson,
+      canonicalHash("peas/retention-stop-test/v1", stop as unknown as JsonValue),
+    );
+  database
+    .prepare(
+      "INSERT INTO market_retention_digest_denials (stop_event_id, artifact_digest) VALUES (?, ?)",
+    )
+    .run(stop.stopEventId, digest);
+  const recovered = await DurableArtifactStore.open({
+    repository: new SqliteArtifactRepository(database),
+    clock: new ManualClock(1_800_000_030_001),
+    config: vaultConfig(root),
+  });
+  try {
+    await assert.rejects(() => recovered.reconcile(), /denied by retention policy/u);
+    const cursor = (
+      database
+        .prepare("SELECT cursor_token FROM artifact_reconciliation_state WHERE singleton = 1")
+        .get() as { cursor_token: string }
+    ).cursor_token;
+    let report = await recovered.reconcile({ cursor });
+    while (report.continuationCursor !== null) {
+      report = await recovered.reconcile({ cursor: report.continuationCursor });
+    }
+    await assert.rejects(() => recovered.stat(digest), /Artifact use is denied/u);
+    assert.equal(
+      (database.prepare("SELECT count(*) count FROM artifact_blobs").get() as { count: bigint })
+        .count,
+      0n,
+    );
+    assert.equal(
+      (
+        database.prepare("SELECT count(*) count FROM artifact_observations").get() as {
+          count: bigint;
+        }
+      ).count,
+      0n,
+    );
+    const contentPath = join(
+      artifactRuntimePaths(root).content,
+      digest.slice(0, 2),
+      digest.slice(2, 4),
+      digest,
+    );
+    assert.equal(existsSync(contentPath), false);
+    assert.equal(readdirSync(join(root, "artifacts", "staging")).length, 0);
+    const outcome = database
+      .prepare("SELECT outcome, reason_code FROM artifact_retrieval_outcomes WHERE attempt_id = ?")
+      .get(persistedRetrievalAttemptId("cross-process-stale")) as {
+      outcome: string;
+      reason_code: string;
+    };
+    assert.deepEqual(outcome, { outcome: "failed", reason_code: "retention-denied" });
   } finally {
     await recovered.close();
     database.close();

@@ -11,6 +11,7 @@ import Database from "better-sqlite3";
 import type { ClientRequest } from "node:http";
 import { createServer, request as dispatchLocalRequest } from "node:https";
 import { canonicalJson, type JsonValue } from "../src/core/json.js";
+import { createObservationLedgerEntry } from "../src/providers/observation-ledger.js";
 
 import {
   ALPACA_KEY_ID_ENV,
@@ -22,9 +23,11 @@ import {
   createTestNativeCredentialIsolatedAlpacaTransport,
   assertTestNativeAlpacaTransportReleased,
   createTestCredentialIsolatedAlpacaTransport,
+  discardCredentialPreflightPermit,
   openSqliteDurableCredentialAuthorizationBoundary,
   ownedLiveCredentialAcquisitionJournal,
   openTestSqliteDurableCredentialAuthorizationBoundary,
+  ownedCredentialAttemptStateEvidence,
   planCredentialAttemptAdmission,
   prepareOwnedWorkflowJournalLinks,
   provisionSqliteDurableCredentialAuthorityRuntime,
@@ -42,6 +45,10 @@ import { MARKET_ACQUISITION_LIMITS } from "../src/adapters/market-acquisition/co
 import { buildAlpacaTransportRequest } from "../src/adapters/market-acquisition/alpaca/request.js";
 import { AlpacaDeadlineElapsed } from "../src/adapters/market-acquisition/alpaca/deadline.js";
 import { appendTestAcquisitionWorkflowEvidence } from "../src/adapters/market-acquisition/journal.js";
+import {
+  validateExactWorkflowLedgerCoverage,
+  validateJournalLedgerBindings,
+} from "../src/adapters/market-acquisition/artifact-integration.js";
 import {
   MemoryAcquisitionJournal,
   createMemoryAcquisitionJournal,
@@ -351,6 +358,7 @@ test("spoofed NODE_TEST_CONTEXT cannot mint any test root or credential transpor
       () => c.createTestNativeCredentialIsolatedAlpacaTransport(driver),
       () => c.assertTestNativeAlpacaTransportReleased({}),
       () => c.createTestDurableCredentialAuthorizationBoundary({}, {}),
+      () => c.createTestAlpacaArtifactCommitAuthority({}, "rat1_" + "0".repeat(64), 0),
       () => c.openTestSqliteDurableCredentialAuthorizationBoundary("ignored", [], {}),
       () => c.provisionSqliteDurableCredentialAuthorityRuntime([]),
       () => a.createMemoryAcquisitionJournal({}),
@@ -689,9 +697,12 @@ test("live credential admission has one canonical non-shardable protected durabl
     /credential-authority-provisioning-layout-not-empty/u,
   );
   const authority = openSqliteDurableCredentialAuthorizationBoundary(migrations, plan);
-  await authority.establish(fixture.request);
+  const evidence = await authority.establish(fixture.request);
+  const permit = authorizeCredentialLoad(evidence);
+  const attemptState = ownedCredentialAttemptStateEvidence(permit);
   const liveJournal = await ownedLiveCredentialAcquisitionJournal(authority, plan);
   const seeded = await liveJournal.load(fixture.request.marketAcquisitionJournalId);
+  const seededLedger = await liveJournal.loadLedgerEntries();
   assert.deepEqual(
     seeded.map((entry) => entry.checkpointKind),
     ["acquisition-declared", "request-started"],
@@ -699,6 +710,39 @@ test("live credential admission has one canonical non-shardable protected durabl
   assert.equal(
     await liveJournal.isWorkflowProducedJournalEntry(seeded[0]?.journalEntryHash ?? ""),
     true,
+  );
+  assert.doesNotThrow(() => validateExactWorkflowLedgerCoverage(seeded, seededLedger));
+  const startedStage = seededLedger.find((entry) => entry.facts.kind === "request.started");
+  const clockStage = seededLedger.find((entry) => entry.facts.kind === "clock-basis.declared");
+  assert.ok(startedStage);
+  assert.ok(clockStage);
+  assert.equal(startedStage.facts.kind, "request.started");
+  assert.notEqual(startedStage.clock.clockBasisId, null);
+  assert.notEqual(startedStage.clock.monotonicTimeUs, null);
+  const clockBasisId = startedStage.clock.clockBasisId as string;
+  const monotonicTimeUs = startedStage.clock.monotonicTimeUs as number;
+  const unrelatedSuccess = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: startedStage.executionId,
+    parentEntryIds: [clockStage.entryId, startedStage.entryId].sort(),
+    clock: {
+      clockBasisId,
+      wallTimeMs: (startedStage.clock.wallTimeMs ?? 0) + 1,
+      monotonicTimeUs: monotonicTimeUs + 1,
+    },
+    facts: {
+      kind: "request.succeeded",
+      acquisitionObservationId: startedStage.facts.acquisitionObservationId,
+      safeResponseMetadataHash: createHash("sha256")
+        .update("synthetic-unreferenced-response")
+        .digest("hex"),
+    },
+  });
+  const overCoveredLedger = [...seededLedger, unrelatedSuccess];
+  assert.doesNotThrow(() => validateJournalLedgerBindings(seeded, overCoveredLedger));
+  assert.throws(
+    () => validateExactWorkflowLedgerCoverage(seeded, overCoveredLedger),
+    /acquisition-workflow-ledger-coverage-invalid/u,
   );
   assert.equal(
     await liveJournal.isWorkflowProducedJournalEntry(seeded[1]?.journalEntryHash ?? ""),
@@ -742,6 +786,36 @@ test("live credential admission has one canonical non-shardable protected durabl
     },
   });
   assert.equal(restarted.snapshot.currentState, "dispatch-ready");
+  await restarted.applyAcquisitionEvent({
+    kind: "credentials-loaded",
+    proof: {
+      requestIdentityHash: initial.requestIdentityHash,
+      acquisitionConfigurationHash: initial.acquisitionConfigurationHash,
+      marketAcquisitionJournalId: initial.marketAcquisitionJournalId,
+      runSessionNonce: initial.runSessionNonce,
+      nowMonotonicMs: attemptState.admittedAtMs,
+      resourcesSettled: true,
+    },
+  });
+  await restarted.applyAcquisitionEvent({
+    kind: "dispatch-started",
+    proof: {
+      requestIdentityHash: initial.requestIdentityHash,
+      acquisitionConfigurationHash: initial.acquisitionConfigurationHash,
+      marketAcquisitionJournalId: initial.marketAcquisitionJournalId,
+      runSessionNonce: initial.runSessionNonce,
+      nowMonotonicMs: attemptState.admittedAtMs,
+      resourcesSettled: true,
+    },
+    deadlineProof: {
+      acquisitionDeclaredMonotonicMs: initial.acquisitionDeclaredMonotonicMs,
+      attemptStartedMonotonicMs: attemptState.admittedAtMs,
+      nowMonotonicMs: attemptState.admittedAtMs,
+    },
+    entitlementQuotaLimit: MARKET_ACQUISITION_LIMITS.rateAttempts,
+  });
+  assert.equal(restarted.snapshot.retrievalAttemptId, attemptState.retrievalAttemptId);
+  discardCredentialPreflightPermit(permit);
   assert.throws(
     () => openSqliteDatabase(authorityPath, migrations),
     /protected-sqlite-database-path/u,

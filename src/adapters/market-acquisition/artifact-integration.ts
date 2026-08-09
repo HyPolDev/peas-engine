@@ -470,6 +470,50 @@ export function validateJournalLedgerBindings(
   }
 }
 
+export function validateExactWorkflowLedgerCoverage(
+  journal: readonly JournalEntry[],
+  ledger: readonly ObservationLedgerEntryV1[],
+): void {
+  const ledgerById = new Map(ledger.map((entry) => [entry.entryId, entry]));
+  const coveredLedgerIds = new Set(
+    journal.flatMap((entry) => [
+      ...(entry.stageLedgerFactId === null ? [] : [entry.stageLedgerFactId]),
+      ...entry.causalParentFactIds,
+    ]),
+  );
+  let coverageChanged = true;
+  while (coverageChanged) {
+    coverageChanged = false;
+    for (const entryId of [...coveredLedgerIds]) {
+      const entry = ledgerById.get(entryId);
+      if (entry === undefined) throw new TypeError("acquisition-workflow-ledger-coverage-invalid");
+      for (const parentId of entry.parentEntryIds) {
+        if (!coveredLedgerIds.has(parentId)) {
+          coveredLedgerIds.add(parentId);
+          coverageChanged = true;
+        }
+      }
+    }
+    for (const entry of ledger) {
+      if (
+        entry.facts.kind === "clock.regression" &&
+        coveredLedgerIds.has(entry.facts.priorEntryId) &&
+        coveredLedgerIds.has(entry.facts.regressingEntryId) &&
+        !coveredLedgerIds.has(entry.entryId)
+      ) {
+        coveredLedgerIds.add(entry.entryId);
+        coverageChanged = true;
+      }
+    }
+  }
+  if (
+    coveredLedgerIds.size !== ledger.length ||
+    ledger.some((entry) => !coveredLedgerIds.has(entry.entryId))
+  ) {
+    throw new TypeError("acquisition-workflow-ledger-coverage-invalid");
+  }
+}
+
 export async function loadWorkflowProducedAcquisitionEvidence(
   journal: AcquisitionJournal,
   journalId: string,
@@ -554,6 +598,7 @@ export async function persistVerifiedAcquisitionWorkflowEvidence(
   validateJournalEntries(journalEntries, expectedIdentity);
   const ledgerEntries = validateObservationLedgerBundle(ledgerInput);
   validateJournalLedgerBindings(journalEntries, ledgerEntries);
+  validateExactWorkflowLedgerCoverage(journalEntries, ledgerEntries);
   const currentJournal = await journal.load(journalId);
   const currentLedger = await journal.loadLedgerEntries();
   if (

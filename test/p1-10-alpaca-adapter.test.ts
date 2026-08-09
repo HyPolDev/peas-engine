@@ -26,7 +26,7 @@ import {
   createTestAlpacaArtifactCommitSink,
 } from "../src/adapters/market-acquisition/alpaca/retained-sink.js";
 import { createOwnedAlpacaDeadlineScheduler } from "../src/adapters/market-acquisition/alpaca/deadline.js";
-import { openSqliteDatabase } from "../src/adapters/sqlite/database.js";
+import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
 import {
   MarketAcquisitionLedger,
   decideAcquisitionRestart,
@@ -40,7 +40,11 @@ import {
 } from "../src/adapters/market-acquisition/contracts.js";
 import { validateMarketAcquisitionConfiguration } from "../src/adapters/market-acquisition/configuration.js";
 import type { AlpacaAuthorizationHeaders } from "../src/adapters/market-acquisition/credentials.js";
-import { createTestCredentialIsolatedAlpacaTransport } from "../src/adapters/market-acquisition/credentials.js";
+import {
+  createTestCredentialIsolatedAlpacaTransport,
+  openSqliteDurableCredentialAuthorizationBoundary,
+  provisionSqliteDurableCredentialAuthorityRuntime,
+} from "../src/adapters/market-acquisition/credentials.js";
 import {
   ALPACA_ROUTE_REGISTRY,
   ZERO_SPEND_POLICY_ID,
@@ -78,6 +82,7 @@ import { createMemoryArtifactRetentionJournal } from "../src/adapters/market-acq
 import {
   AcquisitionStateMachine,
   createInitialAcquisitionSnapshot,
+  openOwnedAcquisitionStateMachine,
   type AcquisitionEventProof,
   type AcquisitionMachineSnapshot,
   type AcquisitionTransitionPlan,
@@ -1063,6 +1068,59 @@ test("frozen quotes, trades, and bars compile exact GET route and closed query p
     );
   }
   assert.equal(unexpectedNetworkCalls, 0);
+});
+
+test("the production attempt boundary durably drives the exact claimed attempt through page verification", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "peas-p1-10-live-attempt-"));
+  const previousRoot = process.env["PEAS_RUNTIME_ROOT"];
+  let authorization: ReturnType<typeof openSqliteDurableCredentialAuthorizationBoundary> | null =
+    null;
+  t.after(() => {
+    authorization?.close();
+    if (previousRoot === undefined) delete process.env["PEAS_RUNTIME_ROOT"];
+    else process.env["PEAS_RUNTIME_ROOT"] = previousRoot;
+    rmSync(root, { recursive: true, force: true });
+  });
+  process.env["PEAS_RUNTIME_ROOT"] = root;
+  const plan = validatedPlan();
+  const migrations = loadMigrations(join(process.cwd(), "migrations"));
+  provisionSqliteDurableCredentialAuthorityRuntime(migrations);
+  authorization = openSqliteDurableCredentialAuthorizationBoundary(migrations, plan);
+  const fixture = await credentialAuthorizationFixture(plan);
+  const counters = counts();
+  const transportDouble = new TransportDouble(
+    counters,
+    response(new BodyDouble(counters, [Uint8Array.from([1, 2, 3])]), { contentLength: 3 }),
+  );
+  const boundary = new AlpacaProductionAttemptBoundary(
+    {
+      read(name) {
+        return name.endsWith("KEY_ID") ? "synthetic-key" : "synthetic-secret";
+      },
+    },
+    authorization,
+  );
+  const result = await boundary.execute({
+    plan,
+    credentialAuthorization: fixture.request,
+    page: firstPage(),
+    transport: createTestCredentialIsolatedAlpacaTransport({
+      dispatch: (request) => transportDouble.dispatch(request),
+      abort: () => transportDouble.abort(),
+      settle: () => transportDouble.settle(),
+    }),
+    artifactSink: createRetentionOwnedAlpacaPageSink(
+      createTestAlpacaArtifactCommitSink(new SinkDouble(counters)),
+      adapterRetention(),
+    ),
+    deadlineScheduler: new TimerDouble().scheduler,
+  });
+  assert.equal(result.ok, true);
+  const restarted = openOwnedAcquisitionStateMachine(authorization).snapshot;
+  assert.equal(restarted.currentState, "page-verified");
+  assert.match(restarted.retrievalAttemptId ?? "", /^rat1_[0-9a-f]{64}$/u);
+  assert.equal(restarted.budgets.attempts, 1);
+  assert.equal(counters.transport, 1);
 });
 
 test("caller and test-double sinks cannot attest atomic artifact ownership", async () => {

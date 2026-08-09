@@ -90,6 +90,15 @@ export type RetentionCheckpoint = Readonly<{
   completedAtMs: number;
 }>;
 
+export type RetentionReceiptRevalidation = Readonly<{
+  revalidationId: string;
+  planId: string;
+  sequence: number;
+  predecessorReceiptId: string;
+  receipt: RetentionReceipt;
+  recordedAtMs: number;
+}>;
+
 export type ErasureCopyKind = "content" | "staging" | "snapshot" | "quarantine";
 
 export type ErasureResult = Readonly<{
@@ -129,6 +138,8 @@ export interface ArtifactRetentionJournal {
   hasTombstone(digest: string): boolean;
   recordReceipt(receipt: RetentionReceipt): void;
   getReceiptForPlan(planId: string): RetentionReceipt | undefined;
+  recordReceiptRevalidation(revalidation: RetentionReceiptRevalidation): void;
+  receiptRevalidationsForPlan(planId: string): readonly RetentionReceiptRevalidation[];
   recordCheckpoint(checkpoint: RetentionCheckpoint): void;
   getCheckpoint(planId: string): RetentionCheckpoint | undefined;
 }
