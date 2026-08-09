@@ -480,9 +480,13 @@ export class DurableArtifactStore implements ArtifactStore {
       await this.#checkpoint("content-sync");
       if (
         this.#retentionAdmissionClosed ||
-        this.#repository.retentionProviderUseDenied(attemptDraft.provider)
+        this.#repository.retentionProviderUseDenied(attemptDraft.provider) ||
+        this.#repository.retentionDigestUseDenied(digest)
       ) {
         await rm(finalPath, { force: true });
+        await rm(stagePath, { force: true });
+        await syncDirectory(dirname(finalPath));
+        await syncDirectory(dirname(stagePath));
         throw new ArtifactVaultError(
           "artifact-integrity-failure",
           "Artifact acquisition was stopped by retention policy",

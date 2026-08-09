@@ -24,20 +24,9 @@ function sortIds(values: readonly string[]): readonly string[] {
   );
 }
 
-function replayFacts(
-  facts: ObservationLedgerFactsV1,
-  remapped: ReadonlyMap<string, string>,
-): ObservationLedgerFactsV1 {
+function replayFacts(facts: ObservationLedgerFactsV1): ObservationLedgerFactsV1 {
   if (facts.kind === "artifact.committed") {
     return Object.freeze({ ...facts, acquisitionMode: "replay" });
-  }
-  if (facts.kind === "clock.regression") {
-    const priorEntryId = remapped.get(facts.priorEntryId);
-    const regressingEntryId = remapped.get(facts.regressingEntryId);
-    if (priorEntryId === undefined || regressingEntryId === undefined) {
-      throw new TypeError("replay-clock-regression-parent-missing");
-    }
-    return Object.freeze({ ...facts, priorEntryId, regressingEntryId });
   }
   return facts;
 }
@@ -71,9 +60,24 @@ export function replayAcquisitionLedger(
   const originalById = new Map(validated.map((entry) => [entry.entryId, entry]));
   const remapped = new Map<string, string>();
   const replayed: ObservationLedgerEntryV1[] = [];
+  const clockDeclarations = new Map<string, string>();
+  const lastWallEntry = new Map<string, ObservationLedgerEntryV1>();
 
   for (let offset = 0; offset < validated.length; offset += pageSize) {
     for (const source of validated.slice(offset, offset + pageSize)) {
+      if (source.facts.kind === "clock.regression") {
+        const regressing = remapped.get(source.facts.regressingEntryId);
+        const prior = remapped.get(source.facts.priorEntryId);
+        const witness = replayed.find(
+          (entry) =>
+            entry.facts.kind === "clock.regression" &&
+            entry.facts.regressingEntryId === regressing &&
+            entry.facts.priorEntryId === prior,
+        );
+        if (witness === undefined) throw new TypeError("replay-clock-regression-witness-missing");
+        remapped.set(source.entryId, witness.entryId);
+        continue;
+      }
       if (shouldOmit(source)) continue;
       const parents: string[] = [];
       for (const parentId of source.parentEntryIds) {
@@ -97,12 +101,45 @@ export function replayAcquisitionLedger(
         executionId,
         parentEntryIds: sortIds(parents),
         clock: source.clock,
-        facts: replayFacts(source.facts, remapped),
+        facts: replayFacts(source.facts),
       });
-      const prospective = [...replayed, entry];
-      validateObservationLedgerBundle(prospective);
       replayed.push(entry);
       remapped.set(source.entryId, entry.entryId);
+      if (entry.facts.kind === "clock-basis.declared") {
+        clockDeclarations.set(entry.facts.clockBasis.clockBasisId, entry.entryId);
+        continue;
+      }
+      const basisId = entry.clock.clockBasisId;
+      if (basisId === null || entry.clock.wallTimeMs === null) continue;
+      const prior = lastWallEntry.get(basisId);
+      if (
+        prior !== undefined &&
+        prior.clock.wallTimeMs !== null &&
+        entry.clock.wallTimeMs < prior.clock.wallTimeMs
+      ) {
+        const basisEntryId = clockDeclarations.get(basisId);
+        if (basisEntryId === undefined) throw new TypeError("replay-clock-basis-missing");
+        replayed.push(
+          createObservationLedgerEntry({
+            schemaVersion: 1,
+            executionId,
+            parentEntryIds: sortIds([basisEntryId, prior.entryId, entry.entryId]),
+            clock: entry.clock,
+            facts: Object.freeze({
+              kind: "clock.regression" as const,
+              priorEntryId: prior.entryId,
+              regressingEntryId: entry.entryId,
+              priorWallTimeMs: prior.clock.wallTimeMs,
+              currentWallTimeMs: entry.clock.wallTimeMs,
+              monotonicOrderPreserved:
+                prior.clock.monotonicTimeUs !== null &&
+                entry.clock.monotonicTimeUs !== null &&
+                entry.clock.monotonicTimeUs > prior.clock.monotonicTimeUs,
+            }),
+          }),
+        );
+      }
+      lastWallEntry.set(basisId, entry);
     }
   }
   return validateObservationLedgerBundle(replayed);

@@ -3,6 +3,10 @@ import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { isProxy } from "node:util/types";
 import { P1_10_TEST_AUTHORITY } from "../../../internal-test-authority.js";
+import { assertValidatedMarketAcquisitionConfiguration } from "../configuration.js";
+import type { ValidatedMarketAcquisitionConfiguration } from "../contracts.js";
+import { ALPACA_ROUTE_REGISTRY } from "../identity.js";
+import { ALPACA_RETENTION_POLICY_ID } from "../private-artifact-policy.js";
 
 import type {
   StoreArtifactRequest,
@@ -32,15 +36,18 @@ import type {
 const retentionOwnedSinks = new WeakSet<object>();
 const ownedArtifactCommitSinks = new WeakSet<object>();
 const artifactCommitSinkRoots = new WeakMap<object, object>();
-const preparedArtifactCommits = new WeakSet<object>();
+type PreparedArtifactCommitBinding<T> = Readonly<{
+  prepared: AlpacaPreparedArtifactCommit<T>;
+  runtimeIdentity?: object;
+  dispose(): void;
+}>;
+const preparedArtifactCommits = new WeakMap<object, PreparedArtifactCommitBinding<unknown>>();
 const RETENTION_SINK_CONSTRUCTION_AUTHORITY = Object.freeze({});
 
 type AlpacaDurableSinkInput = Readonly<{
   request: Omit<StoreArtifactRequest, "entityBytes">;
-  ownership: Omit<
-    RetentionOwnership,
-    "ownershipId" | "artifactObservationId" | "artifactDigest" | "artifactSizeBytes"
-  >;
+  plan: ValidatedMarketAcquisitionConfiguration;
+  retention: Pick<RetentionOwnership, "derivedIds" | "trustedCaptureMs" | "expiresAtMs">;
 }>;
 
 class DurableAlpacaArtifactCommitSink implements AlpacaArtifactCommitSink<StoreArtifactResult> {
@@ -51,7 +58,22 @@ class DurableAlpacaArtifactCommitSink implements AlpacaArtifactCommitSink<StoreA
 
   constructor(store: DurableArtifactStore, input: AlpacaDurableSinkInput) {
     this.#store = store;
-    this.#input = input;
+    assertValidatedMarketAcquisitionConfiguration(input.plan);
+    if (
+      input.plan.route !== ALPACA_ROUTE_REGISTRY[input.plan.kind] ||
+      input.request.attempt.provider !== "alpaca"
+    ) {
+      throw new TypeError("alpaca-artifact-request-authority-invalid");
+    }
+    this.#input = Object.freeze({
+      request: input.request,
+      plan: input.plan,
+      retention: Object.freeze({
+        derivedIds: Object.freeze([...input.retention.derivedIds]),
+        trustedCaptureMs: input.retention.trustedCaptureMs,
+        expiresAtMs: input.retention.expiresAtMs,
+      }),
+    });
   }
 
   async write(bytes: Uint8Array): Promise<void> {
@@ -72,7 +94,13 @@ class DurableAlpacaArtifactCommitSink implements AlpacaArtifactCommitSink<StoreA
       validateHttpResponseMetadata(this.#input.request.response),
     );
     const ownership = Object.freeze({
-      ...this.#input.ownership,
+      policyId: ALPACA_RETENTION_POLICY_ID,
+      providerLane: "alpaca" as const,
+      providerId: this.#input.plan.route.providerId,
+      datasetId: this.#input.plan.route.datasetId,
+      feedId: this.#input.plan.route.feedId,
+      endpointChannelId: this.#input.plan.route.endpointChannelId,
+      ...this.#input.retention,
       artifactObservationId: observationId,
       artifactDigest: digest,
       artifactSizeBytes: snapshot.byteLength,
@@ -99,7 +127,17 @@ class DurableAlpacaArtifactCommitSink implements AlpacaArtifactCommitSink<StoreA
         }
       },
     });
-    preparedArtifactCommits.add(prepared);
+    const runtimeIdentity = artifactCommitSinkRoots.get(this);
+    preparedArtifactCommits.set(
+      prepared,
+      Object.freeze({
+        prepared,
+        ...(runtimeIdentity === undefined ? {} : { runtimeIdentity }),
+        dispose(): void {
+          snapshot.fill(0);
+        },
+      }),
+    );
     return prepared;
   }
 
@@ -136,11 +174,26 @@ export function createTestAlpacaArtifactCommitSink<T>(
     write: sink.write.bind(sink),
     async prepareVerifiedCommit() {
       const source = await sink.prepareVerifiedCommit();
+      const existingBinding = preparedArtifactCommits.get(source);
+      const sourceBinding: PreparedArtifactCommitBinding<T> =
+        existingBinding === undefined
+          ? Object.freeze({ prepared: source, dispose(): void {} })
+          : (existingBinding as PreparedArtifactCommitBinding<T>);
+      preparedArtifactCommits.delete(source);
       const prepared = Object.freeze({
         ownership: source.ownership,
         commit: source.commit,
       });
-      preparedArtifactCommits.add(prepared);
+      preparedArtifactCommits.set(
+        prepared,
+        Object.freeze({
+          prepared,
+          ...(sourceBinding.runtimeIdentity === undefined
+            ? {}
+            : { runtimeIdentity: sourceBinding.runtimeIdentity }),
+          dispose: sourceBinding.dispose,
+        }),
+      );
       return prepared;
     },
     abort: sink.abort.bind(sink),
@@ -157,14 +210,32 @@ function assertOwnedArtifactCommitSink(value: AlpacaArtifactCommitSink<unknown>)
   }
 }
 
-export function consumePreparedAlpacaArtifactCommit<T>(
+function takePreparedAlpacaArtifactCommit<T>(
   value: AlpacaPreparedArtifactCommit<T>,
-): AlpacaPreparedArtifactCommit<T> {
-  if (!preparedArtifactCommits.has(value as object) || isProxy(value as object)) {
+): PreparedArtifactCommitBinding<T> {
+  const binding = preparedArtifactCommits.get(value as object) as
+    | PreparedArtifactCommitBinding<T>
+    | undefined;
+  if (binding === undefined || isProxy(value as object)) {
     throw new TypeError("owned-alpaca-prepared-commit-required");
   }
   preparedArtifactCommits.delete(value as object);
-  return value;
+  return binding;
+}
+
+export function consumePreparedAlpacaArtifactCommit<T>(
+  value: AlpacaPreparedArtifactCommit<T>,
+  expectedRuntimeIdentity?: object,
+): PreparedArtifactCommitBinding<T> {
+  const binding = takePreparedAlpacaArtifactCommit(value);
+  if (
+    expectedRuntimeIdentity !== undefined &&
+    binding.runtimeIdentity !== expectedRuntimeIdentity
+  ) {
+    binding.dispose();
+    throw new TypeError("retention-runtime-root-mismatch");
+  }
+  return binding;
 }
 
 /**

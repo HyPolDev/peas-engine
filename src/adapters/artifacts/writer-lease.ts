@@ -118,10 +118,58 @@ export class VaultWriterLease {
         try {
           const record = JSON.parse(await readFile(options.path, "utf8")) as LeaseRecord;
           if (!Number.isSafeInteger(record.expiresAtMs) || record.expiresAtMs <= nowMs) {
-            const stale = `${options.path}.${randomUUID()}.expired`;
-            await rename(options.path, stale);
-            await rm(stale, { force: true });
-            continue;
+            await options.faultBoundary?.("lease-stale-record-read");
+            let generation: number | undefined;
+            try {
+              // The durable fence is the takeover linearization point. Claim it before touching the
+              // stale file so a concurrent SQLite-first renewal cannot lose its healthy lease.
+              generation = options.repository.claimWriter(ownerToken, nowMs, options.durationMs);
+              await options.faultBoundary?.("lease-sqlite-claim");
+            } catch (error) {
+              if (!(error instanceof Error && error.message.includes("fence is held"))) throw error;
+            }
+            if (generation !== undefined) {
+              try {
+                const current = JSON.parse(await readFile(options.path, "utf8")) as LeaseRecord;
+                if (
+                  current.ownerToken !== record.ownerToken ||
+                  current.generation !== record.generation ||
+                  current.expiresAtMs !== record.expiresAtMs
+                ) {
+                  throw new Error("Vault writer lease changed before fenced takeover");
+                }
+                const stale = `${options.path}.${randomUUID()}.expired`;
+                await rename(options.path, stale);
+                await rm(stale, { force: true });
+                const handle = await open(options.path, "wx", 0o600);
+                try {
+                  await handle.writeFile(
+                    JSON.stringify({
+                      pid: process.pid,
+                      ownerToken,
+                      generation,
+                      expiresAtMs: nowMs + options.durationMs,
+                    } satisfies LeaseRecord),
+                  );
+                  await handle.sync();
+                } finally {
+                  await handle.close();
+                }
+                await options.faultBoundary?.("lease-file-installation");
+                const lease = new VaultWriterLease({
+                  ...options,
+                  ownerToken,
+                  generation,
+                  faultBoundary: options.faultBoundary ?? NOOP_FAULT_BOUNDARY,
+                });
+                await options.faultBoundary?.("lease-record-sync");
+                return lease;
+              } catch (error) {
+                options.repository.releaseWriter(ownerToken, generation);
+                if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+                throw error;
+              }
+            }
           }
         } catch (readError) {
           if ((readError as NodeJS.ErrnoException).code === "ENOENT") continue;

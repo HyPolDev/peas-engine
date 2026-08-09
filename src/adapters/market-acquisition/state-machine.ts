@@ -28,6 +28,7 @@ import { P1_10_TEST_AUTHORITY } from "../../internal-test-authority.js";
 import type { DurableCredentialAuthorizationBoundary } from "./credentials.js";
 import {
   assertOwnedAcquisitionStateSnapshot,
+  loadOwnedAcquisitionStateSnapshot,
   persistOwnedAcquisitionTransition,
 } from "./credentials.js";
 
@@ -201,8 +202,8 @@ export type PersistTransitionPlan = (
 ) => Promise<void>;
 const ownedStatePersistence = new WeakSet<object>();
 export type OwnedAcquisitionTransitionBinding = Readonly<{
-  plan: AcquisitionTransitionPlan;
-  event: AcquisitionEvent;
+  planJson: string;
+  eventJson: string;
 }>;
 const transitionReceipts = new WeakMap<object, OwnedAcquisitionTransitionBinding>();
 
@@ -277,6 +278,16 @@ const CHECKPOINT_FOR_EVENT: Partial<
   "normalization-quarantined": "quarantined",
   "selection-quarantined": "quarantined",
 };
+
+function checkpointForEvent(
+  snapshot: AcquisitionMachineSnapshot,
+  event: AcquisitionEvent,
+): JournalCheckpointKind | null {
+  if (event.kind === "preflight-approved") {
+    return snapshot.pageOrdinal === 0 && snapshot.budgets.attempts === 0 ? "request-started" : null;
+  }
+  return CHECKPOINT_FOR_EVENT[event.kind] ?? null;
+}
 
 function requireSafeInteger(value: number, minimum: number, maximum: number, name: string): void {
   if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
@@ -741,16 +752,18 @@ export class AcquisitionStateMachine {
    */
   async applyAcquisitionEvent(event: AcquisitionEvent): Promise<AcquisitionTransitionPlan> {
     const before = this.#snapshot;
-    const next = deriveNext(before, event);
+    const eventJson = canonicalJson(event as unknown as JsonValue);
+    const eventSnapshot = JSON.parse(eventJson) as AcquisitionEvent;
+    const next = deriveNext(before, eventSnapshot);
     validateSnapshot(next);
     const plan = Object.freeze({
-      eventKind: event.kind,
+      eventKind: eventSnapshot.kind,
       fromState: before.currentState,
       toState: next.currentState,
-      checkpointKind: CHECKPOINT_FOR_EVENT[event.kind] ?? null,
+      checkpointKind: checkpointForEvent(before, eventSnapshot),
       next,
     });
-    await this.#persist(plan, event);
+    await this.#persist(plan, eventSnapshot);
     this.#snapshot = next;
     return plan;
   }
@@ -764,14 +777,26 @@ export function createOwnedAcquisitionStateMachine(
   assertOwnedAcquisitionStateSnapshot(authorization, snapshot);
   const persist: PersistTransitionPlan = async (plan, event) => {
     if (event === undefined) throw new TypeError("owned-acquisition-event-required");
+    const planJson = canonicalJson(plan as unknown as JsonValue);
+    const eventJson = canonicalJson(event as unknown as JsonValue);
     const receipt = Object.freeze({ kind: "owned-acquisition-transition-receipt" as const });
-    transitionReceipts.set(receipt, Object.freeze({ plan, event }));
+    transitionReceipts.set(receipt, Object.freeze({ planJson, eventJson }));
     await persistOwnedAcquisitionTransition(authorization, receipt);
   };
   ownedStatePersistence.add(persist);
   const machine = new AcquisitionStateMachine(snapshot, persist);
   Object.freeze(machine);
   return machine;
+}
+
+/** Cold-restart production constructor; no caller-supplied checkpoint bytes are accepted. */
+export function openOwnedAcquisitionStateMachine(
+  authorization: DurableCredentialAuthorizationBoundary,
+): AcquisitionStateMachine {
+  return createOwnedAcquisitionStateMachine(
+    authorization,
+    loadOwnedAcquisitionStateSnapshot(authorization),
+  );
 }
 
 export function consumeOwnedAcquisitionTransitionReceipt(

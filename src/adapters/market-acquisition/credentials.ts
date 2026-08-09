@@ -27,7 +27,16 @@ import {
 } from "./journal.js";
 import { deriveAcquisitionObservationId } from "../../providers/observation-ledger.js";
 import { safeAcquisitionError, type SafeAcquisitionError } from "./redaction.js";
-import type { ArtifactRetentionJournal } from "./retention/contracts.js";
+import type {
+  ArtifactRetentionController,
+  ArtifactRetentionJournal,
+  RetentionOperationLease,
+} from "./retention/contracts.js";
+import {
+  assertOwnedArtifactRetentionController,
+  ownedArtifactRetentionControllerRuntimeIdentity,
+} from "./retention/controller.js";
+import { retentionRuntimeIdentity } from "./retention/runtime-identity.js";
 import type {
   AlpacaTransport,
   AlpacaBodyRead,
@@ -112,8 +121,15 @@ type PermitBinding = Readonly<{
   attemptBudgetMs: number;
   attemptAdmittedAtMs: number;
   credentialUseDeadlineMs: number;
+  nowMs(): number;
+  assertRetentionAllowed(): void;
+  retentionController?: ArtifactRetentionController;
   request?: AlpacaTransportRequest;
 }>;
+type CredentialAdmissionBinding = Omit<
+  PermitBinding,
+  "assertRetentionAllowed" | "retentionController" | "request"
+>;
 
 type AuthorizationLeaseState = {
   keyId: string | undefined;
@@ -136,6 +152,8 @@ const credentialIsolatedTransports = new WeakSet<object>();
 const credentialAuthorizationBoundaries = new WeakSet<object>();
 const productionCredentialDatabases = new WeakMap<object, readonly SqliteDatabase[]>();
 const productionCredentialPlans = new WeakMap<object, ValidatedMarketAcquisitionConfiguration>();
+const productionCredentialRetentionControllers = new WeakMap<object, ArtifactRetentionController>();
+const productionCredentialNowProviders = new WeakMap<object, () => number>();
 const ownedLiveCredentialDatabases = new WeakSet<object>();
 const ownedLiveAcquisitionJournals = new WeakSet<object>();
 const ownedLiveJournalBoundaries = new WeakMap<object, DurableCredentialAuthorizationBoundary>();
@@ -306,10 +324,24 @@ export class DurableCredentialAuthorizationBoundary {
     }
     if (this.#productionStore !== undefined) {
       const binding = await this.#productionStore.admit(input);
+      const retentionController = productionCredentialRetentionControllers.get(this);
       const evidence = Object.freeze({
         kind: "p1-10-durable-credential-evidence" as const,
       });
-      establishedEvidence.set(evidence, binding);
+      establishedEvidence.set(
+        evidence,
+        Object.freeze({
+          ...binding,
+          assertRetentionAllowed: () => {
+            if (
+              this.#retentionJournal.providerUseDenied("alpaca", input.journalIdentity.providerId)
+            ) {
+              throw new TypeError("credential-retention-denied");
+            }
+          },
+          ...(retentionController === undefined ? {} : { retentionController }),
+        }),
+      );
       return evidence;
     }
     if (this.#journal === undefined) throw new TypeError("credential-journal-unavailable");
@@ -373,6 +405,7 @@ export class DurableCredentialAuthorizationBoundary {
     }
     const evidence = Object.freeze({ kind: "p1-10-durable-credential-evidence" as const });
     const attemptAdmittedAtMs = trustedSystemNowMs();
+    const retentionController = productionCredentialRetentionControllers.get(this);
     establishedEvidence.set(
       evidence,
       Object.freeze({
@@ -382,6 +415,15 @@ export class DurableCredentialAuthorizationBoundary {
         attemptBudgetMs: MARKET_ACQUISITION_LIMITS.attemptDeadlineMs,
         attemptAdmittedAtMs,
         credentialUseDeadlineMs: attemptAdmittedAtMs + MARKET_ACQUISITION_LIMITS.attemptDeadlineMs,
+        nowMs: trustedSystemNowMs,
+        assertRetentionAllowed: () => {
+          if (
+            this.#retentionJournal.providerUseDenied("alpaca", input.journalIdentity.providerId)
+          ) {
+            throw new TypeError("credential-retention-denied");
+          }
+        },
+        ...(retentionController === undefined ? {} : { retentionController }),
       }),
     );
     return evidence;
@@ -393,6 +435,8 @@ export class DurableCredentialAuthorizationBoundary {
     if (databases === undefined) throw new TypeError("production-credential-root-required");
     productionCredentialDatabases.delete(this);
     productionCredentialPlans.delete(this);
+    productionCredentialRetentionControllers.delete(this);
+    productionCredentialNowProviders.delete(this);
     for (const database of databases) database.close();
   }
 }
@@ -575,7 +619,7 @@ function deriveRequestStartedWorkflow(
 }
 
 type ProductionCredentialStore = Readonly<{
-  admit(input: CredentialAuthorizationRequest): Promise<PermitBinding>;
+  admit(input: CredentialAuthorizationRequest): Promise<CredentialAdmissionBinding>;
 }>;
 
 type AttemptClaimRow = Readonly<{
@@ -844,7 +888,7 @@ export function planCredentialAttemptAdmission(
     }
   }
   if (
-    (input.acquisitionStartedMs === null) !== (input.lastAttemptStartedMs === null) ||
+    (input.acquisitionStartedMs === null && input.lastAttemptStartedMs !== null) ||
     (input.acquisitionStartedMs !== null &&
       (!Number.isSafeInteger(input.acquisitionStartedMs) || input.acquisitionStartedMs < 0)) ||
     (input.lastAttemptStartedMs !== null &&
@@ -888,6 +932,7 @@ function productionCredentialStore(
   authorityNamespace: string,
   runtimeRoot: string,
   rootPlan: ValidatedMarketAcquisitionConfiguration,
+  nowProvider: () => number = trustedSystemNowMs,
 ): ProductionCredentialStore {
   const acquisitionId = `maa1_${canonicalHash("peas/market-acquisition-owned-admission/v1", {
     requestIdentityHash: rootPlan.requestIdentityHash,
@@ -895,6 +940,10 @@ function productionCredentialStore(
     trustedRequestStartedAtNs: rootPlan.trustedRequestStartedAtNs.toString(),
     clockSampleId: rootPlan.trustedClockEvidence.currentSample.sampleId,
   })}`;
+  const durableAcquisitionStartedMs = Number(rootPlan.trustedRequestStartedAtNs / 1_000_000n);
+  if (!Number.isSafeInteger(durableAcquisitionStartedMs) || durableAcquisitionStartedMs < 0) {
+    throw new TypeError("credential-durable-declaration-time-invalid");
+  }
   let durableHighWatermark = assertCredentialAuthorityAnchorState(
     database,
     authorityNamespace,
@@ -905,8 +954,11 @@ function productionCredentialStore(
       if (input.plan !== rootPlan) {
         throw new TypeError("credential-production-plan-mismatch");
       }
-      const nowMs = trustedSystemNowMs();
+      const nowMs = nowProvider();
       if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
+        throw new CredentialAdmissionDenied("clock-regression");
+      }
+      if (nowMs < durableAcquisitionStartedMs) {
         throw new CredentialAdmissionDenied("clock-regression");
       }
       return database
@@ -937,7 +989,9 @@ function productionCredentialStore(
             throw new TypeError("credential-admission-state-invalid");
           }
           const acquisitionStartedMs =
-            claims.length === 0 ? nowMs : Number(claims[0]?.acquisition_started_ms);
+            claims.length === 0
+              ? durableAcquisitionStartedMs
+              : Number(claims[0]?.acquisition_started_ms);
           const lastAttemptStartedMs =
             claims.length === 0 ? acquisitionStartedMs : Number(claims.at(-1)?.attempt_started_ms);
           const rolling = database
@@ -953,7 +1007,7 @@ function productionCredentialStore(
           }
           const admission = planCredentialAttemptAdmission({
             nowMs,
-            acquisitionStartedMs: claims.length === 0 ? null : acquisitionStartedMs,
+            acquisitionStartedMs,
             lastAttemptStartedMs: claims.length === 0 ? null : lastAttemptStartedMs,
             attemptsStarted: claims.length,
             rollingProjectAttempts: Number(rolling.count),
@@ -1036,6 +1090,7 @@ function productionCredentialStore(
             attemptBudgetMs,
             attemptAdmittedAtMs: nowMs,
             credentialUseDeadlineMs: nowMs + attemptBudgetMs,
+            nowMs: nowProvider,
           });
         })
         .immediate();
@@ -1066,7 +1121,14 @@ function openCredentialAuthorizationBoundaryAtPath(
       anchorExisted ? "open-existing" : "provision-empty",
     );
     const retention = createSqliteArtifactRetentionJournal(database);
-    const store = productionCredentialStore(database, authorityNamespace, runtimeRoot, plan);
+    const fixtureNowMs = Number(plan.trustedRequestStartedAtNs / 1_000_000n) + 1;
+    const store = productionCredentialStore(
+      database,
+      authorityNamespace,
+      runtimeRoot,
+      plan,
+      () => fixtureNowMs,
+    );
     const boundary = new DurableCredentialAuthorizationBoundary(
       undefined,
       retention,
@@ -1077,6 +1139,7 @@ function openCredentialAuthorizationBoundaryAtPath(
     Object.freeze(boundary);
     productionCredentialDatabases.set(boundary, Object.freeze([database]));
     productionCredentialPlans.set(boundary, plan);
+    productionCredentialNowProviders.set(boundary, () => fixtureNowMs);
     return boundary;
   } catch (error) {
     database.close();
@@ -1155,7 +1218,17 @@ function openLiveCredentialAuthorizationBoundaryAtPath(
       "open-existing",
     );
     retentionDatabase = openLiveCredentialDatabase(retentionFilename, migrations, "WAL");
-    const store = productionCredentialStore(database, authorityNamespace, runtimeRoot, plan);
+    const liveNowProvider =
+      P1_10_TEST_AUTHORITY === undefined
+        ? trustedSystemNowMs
+        : () => Number(plan.trustedRequestStartedAtNs / 1_000_000n) + 1;
+    const store = productionCredentialStore(
+      database,
+      authorityNamespace,
+      runtimeRoot,
+      plan,
+      liveNowProvider,
+    );
     const boundary = new DurableCredentialAuthorizationBoundary(
       undefined,
       new LiveCredentialRetentionGuard(retentionDatabase),
@@ -1166,6 +1239,7 @@ function openLiveCredentialAuthorizationBoundaryAtPath(
     Object.freeze(boundary);
     productionCredentialDatabases.set(boundary, Object.freeze([database, retentionDatabase]));
     productionCredentialPlans.set(boundary, plan);
+    productionCredentialNowProviders.set(boundary, liveNowProvider);
     return boundary;
   } catch (error) {
     retentionDatabase?.close();
@@ -1181,6 +1255,7 @@ function openLiveCredentialAuthorizationBoundaryAtPath(
 export function openSqliteDurableCredentialAuthorizationBoundary(
   migrations: readonly Migration[],
   plan: ValidatedMarketAcquisitionConfiguration,
+  retentionController?: ArtifactRetentionController,
 ): DurableCredentialAuthorizationBoundary {
   validatePlan(plan);
   assertLiveCredentialMigrations(migrations);
@@ -1188,6 +1263,15 @@ export function openSqliteDurableCredentialAuthorizationBoundary(
     throw new TypeError("live-credential-authorization-root-already-opened");
   }
   const runtime = artifactRuntimePaths(configuredPeasRuntimeRoot());
+  if (retentionController !== undefined) {
+    assertOwnedArtifactRetentionController(retentionController);
+    if (
+      ownedArtifactRetentionControllerRuntimeIdentity(retentionController) !==
+      retentionRuntimeIdentity(runtime.runtimeRoot)
+    ) {
+      throw new TypeError("credential-retention-runtime-root-mismatch");
+    }
+  }
   const authority = liveCredentialAuthorityPaths(runtime.databaseDirectory);
   const boundary = openLiveCredentialAuthorizationBoundaryAtPath(
     authority.database,
@@ -1200,6 +1284,9 @@ export function openSqliteDurableCredentialAuthorizationBoundary(
   protectSqliteDatabasePath(authority.database);
   protectSqliteDatabasePath(authority.anchor);
   liveCredentialBoundaryOpened = true;
+  if (retentionController !== undefined) {
+    productionCredentialRetentionControllers.set(boundary, retentionController);
+  }
   return boundary;
 }
 
@@ -1296,7 +1383,7 @@ function stateTransitionRows(
   checkpoint_kind: string | null;
   next_snapshot_json: string;
 }>[] {
-  return database
+  const rows = database
     .prepare(`SELECT transition_sequence, transition_hash, event_kind, event_json,
         from_state, to_state, checkpoint_kind, next_snapshot_json
       FROM market_acquisition_owned_state_transitions
@@ -1311,6 +1398,90 @@ function stateTransitionRows(
     checkpoint_kind: string | null;
     next_snapshot_json: string;
   }>[];
+  for (const [index, row] of rows.entries()) {
+    const event = JSON.parse(row.event_json) as import("./state-machine.js").AcquisitionEvent;
+    const next = JSON.parse(row.next_snapshot_json) as AcquisitionMachineSnapshot;
+    if (
+      row.transition_sequence !== BigInt(index) ||
+      event.kind !== row.event_kind ||
+      next.currentState !== row.to_state ||
+      row.transition_hash !==
+        canonicalHash("peas/owned-acquisition-state-transition/v1", {
+          sequence: index,
+          eventKind: row.event_kind,
+          fromState: row.from_state,
+          toState: row.to_state,
+          checkpointKind: row.checkpoint_kind,
+          event,
+          next,
+        } as unknown as JsonValue)
+    ) {
+      throw new TypeError("owned-acquisition-state-transition-evidence-invalid");
+    }
+  }
+  return rows;
+}
+
+function ownedInitialAcquisitionSnapshot(
+  plan: ValidatedMarketAcquisitionConfiguration,
+  database: SqliteDatabase,
+): AcquisitionMachineSnapshot {
+  const row = database
+    .prepare(`SELECT claim.acquisition_started_ms, request.journal_json
+      FROM market_acquisition_owned_attempt_claims AS claim
+      JOIN market_acquisition_owned_request_started AS request
+        ON request.workflow_id = claim.workflow_id
+      WHERE claim.request_identity_hash = ? AND claim.attempt_ordinal = 0`)
+    .get(plan.requestIdentityHash) as
+    | { acquisition_started_ms: bigint; journal_json: string }
+    | undefined;
+  if (row === undefined) throw new TypeError("owned-acquisition-state-root-missing");
+  const journal = JSON.parse(row.journal_json) as import("./journal.js").JournalEntry[];
+  validateJournalEntries(journal, exactJournalIdentity(plan));
+  const declared = journal[0];
+  if (declared === undefined || declared.checkpointKind !== "acquisition-declared") {
+    throw new TypeError("owned-acquisition-state-root-invalid");
+  }
+  const acquisitionDeclaredMonotonicMs = Number(row.acquisition_started_ms);
+  if (!Number.isSafeInteger(acquisitionDeclaredMonotonicMs) || acquisitionDeclaredMonotonicMs < 0) {
+    throw new TypeError("owned-acquisition-state-root-invalid");
+  }
+  return Object.freeze({
+    schemaVersion: 1,
+    requestIdentityHash: plan.requestIdentityHash,
+    acquisitionConfigurationHash: plan.acquisitionConfigurationHash,
+    marketAcquisitionJournalId: declared.marketAcquisitionJournalId,
+    runSessionNonce: declared.runSessionNonce,
+    currentState: "declared",
+    laneDisabled: false,
+    terminalReason: null,
+    pageOrdinal: 0,
+    pageAttemptsStarted: 0,
+    logicalPageIdentityHash: deriveLogicalPageIdentityHash({
+      requestIdentityHash: plan.requestIdentityHash,
+      pageOrdinal: 0,
+      currentTokenHash: NO_TOKEN_HASH,
+    }),
+    attemptOrdinal: null,
+    attemptId: null,
+    retrievalAttemptId: null,
+    currentTokenHash: NO_TOKEN_HASH,
+    currentContinuationBindingHash: null,
+    consumedTokenHashes: Object.freeze([]),
+    pageChainHash: GENESIS_HASH,
+    continuationAuthority: null,
+    budgets: Object.freeze({
+      successfulPages: 0,
+      verifiedBytes: 0,
+      records: 0,
+      normalizedFacts: 0,
+      attempts: 0,
+    }),
+    quotaWindowEvidence: Object.freeze([]),
+    acquisitionDeclaredMonotonicMs,
+    lastMonotonicMs: acquisitionDeclaredMonotonicMs,
+    pendingRetryDelayMs: null,
+  });
 }
 
 export function assertOwnedAcquisitionStateSnapshot(
@@ -1337,12 +1508,32 @@ export function assertOwnedAcquisitionStateSnapshot(
   }
   const latest = rows.at(-1);
   if (latest === undefined) {
-    if (snapshot.currentState !== "declared") {
+    if (
+      canonicalJson(snapshot as unknown as JsonValue) !==
+      canonicalJson(ownedInitialAcquisitionSnapshot(plan, database) as unknown as JsonValue)
+    ) {
       throw new TypeError("owned-acquisition-state-restart-invalid");
     }
   } else if (latest.next_snapshot_json !== canonicalJson(snapshot as unknown as JsonValue)) {
     throw new TypeError("owned-acquisition-state-restart-invalid");
   }
+}
+
+export function loadOwnedAcquisitionStateSnapshot(
+  boundary: DurableCredentialAuthorizationBoundary,
+): AcquisitionMachineSnapshot {
+  assertOwnedDurableCredentialAuthorizationBoundary(boundary);
+  const plan = productionCredentialPlans.get(boundary);
+  const database = productionCredentialDatabases.get(boundary)?.[0];
+  if (plan === undefined || database === undefined) {
+    throw new TypeError("production-credential-root-required");
+  }
+  const initial = ownedInitialAcquisitionSnapshot(plan, database);
+  const rows = stateTransitionRows(database, initial.marketAcquisitionJournalId);
+  const latest = rows.at(-1);
+  return latest === undefined
+    ? initial
+    : (JSON.parse(latest.next_snapshot_json) as AcquisitionMachineSnapshot);
 }
 
 export async function persistOwnedAcquisitionTransition(
@@ -1352,7 +1543,8 @@ export async function persistOwnedAcquisitionTransition(
   assertOwnedDurableCredentialAuthorizationBoundary(boundary);
   const { consumeOwnedAcquisitionTransitionReceipt } = await import("./state-machine.js");
   const binding = consumeOwnedAcquisitionTransitionReceipt(receipt);
-  const transition: AcquisitionTransitionPlan = binding.plan;
+  const transition = JSON.parse(binding.planJson) as AcquisitionTransitionPlan;
+  const event = JSON.parse(binding.eventJson) as import("./state-machine.js").AcquisitionEvent;
   const plan = productionCredentialPlans.get(boundary);
   const database = productionCredentialDatabases.get(boundary)?.[0];
   if (plan === undefined || database === undefined) {
@@ -1363,6 +1555,17 @@ export async function persistOwnedAcquisitionTransition(
     transition.next.acquisitionConfigurationHash !== plan.acquisitionConfigurationHash
   ) {
     throw new TypeError("owned-acquisition-state-identity-invalid");
+  }
+  const initial = ownedInitialAcquisitionSnapshot(plan, database);
+  const trustedNow = (productionCredentialNowProviders.get(boundary) ?? trustedSystemNowMs)();
+  if (
+    transition.next.acquisitionDeclaredMonotonicMs !== initial.acquisitionDeclaredMonotonicMs ||
+    event.proof.nowMonotonicMs < initial.acquisitionDeclaredMonotonicMs ||
+    event.proof.nowMonotonicMs > trustedNow ||
+    trustedNow - initial.acquisitionDeclaredMonotonicMs >=
+      MARKET_ACQUISITION_LIMITS.acquisitionDeadlineMs
+  ) {
+    throw new TypeError("owned-acquisition-deadline-invalid");
   }
   database
     .transaction(() => {
@@ -1375,13 +1578,13 @@ export async function persistOwnedAcquisitionTransition(
         throw new TypeError("owned-acquisition-state-transition-conflict");
       }
       const nextJson = canonicalJson(transition.next as unknown as JsonValue);
-      const eventJson = canonicalJson(binding.event as unknown as JsonValue);
       const transitionHash = canonicalHash("peas/owned-acquisition-state-transition/v1", {
         sequence: rows.length,
         eventKind: transition.eventKind,
         fromState: transition.fromState,
         toState: transition.toState,
         checkpointKind: transition.checkpointKind,
+        event,
         next: transition.next,
       } as unknown as JsonValue);
       database
@@ -1396,7 +1599,7 @@ export async function persistOwnedAcquisitionTransition(
           plan.requestIdentityHash,
           plan.acquisitionConfigurationHash,
           transition.eventKind,
-          eventJson,
+          binding.eventJson,
           transition.fromState,
           transition.toState,
           transition.checkpointKind,
@@ -1415,13 +1618,26 @@ function assertCheckpointMatchesTransition(
 ): void {
   const snapshot = JSON.parse(row.next_snapshot_json) as AcquisitionMachineSnapshot;
   const event = JSON.parse(row.event_json) as import("./state-machine.js").AcquisitionEvent;
+  const terminalState = ["completed", "stopped", "failed-clean", "quarantined"].includes(
+    snapshot.currentState,
+  )
+    ? snapshot.currentState
+    : null;
   if (
     row.checkpoint_kind !== entry.checkpointKind ||
     row.event_kind !== event.kind ||
     snapshot.requestIdentityHash !== entry.requestIdentityHash ||
     snapshot.acquisitionConfigurationHash !== entry.acquisitionConfigurationHash ||
     snapshot.marketAcquisitionJournalId !== entry.marketAcquisitionJournalId ||
+    event.proof.requestIdentityHash !== entry.requestIdentityHash ||
+    event.proof.acquisitionConfigurationHash !== entry.acquisitionConfigurationHash ||
+    event.proof.marketAcquisitionJournalId !== entry.marketAcquisitionJournalId ||
+    event.proof.runSessionNonce !== entry.runSessionNonce ||
     snapshot.pageOrdinal !== entry.pageOrdinal ||
+    snapshot.logicalPageIdentityHash !== entry.logicalPageIdentityHash ||
+    snapshot.attemptId !== entry.attemptId ||
+    snapshot.retrievalAttemptId !== entry.retrievalAttemptId ||
+    (snapshot.attemptOrdinal ?? entry.attemptOrdinal) !== entry.attemptOrdinal ||
     snapshot.currentTokenHash !== entry.currentTokenHash ||
     snapshot.currentContinuationBindingHash !== entry.currentContinuationBindingHash ||
     snapshot.pageChainHash !== entry.pageChainHash ||
@@ -1430,6 +1646,11 @@ function assertCheckpointMatchesTransition(
     snapshot.budgets.records !== entry.cumulativeRecords ||
     snapshot.budgets.normalizedFacts !== entry.cumulativeNormalizedFacts ||
     snapshot.budgets.attempts !== entry.cumulativeAttempts ||
+    terminalState !== entry.terminalState ||
+    entry.incomplete !== (terminalState === null) ||
+    (terminalState !== null &&
+      terminalState !== "completed" &&
+      snapshot.terminalReason !== entry.terminalReasonCode) ||
     canonicalJson(snapshot.quotaWindowEvidence as unknown as JsonValue) !==
       canonicalJson(entry.quotaWindowEvidence as unknown as JsonValue)
   ) {
@@ -1446,7 +1667,17 @@ function assertCheckpointMatchesTransition(
       page.artifactDigest !== entry.artifactDigest ||
       page.artifactSizeBytes !== entry.artifactSizeBytes ||
       page.artifactObservationHash !== entry.artifactObservationHash ||
+      page.artifactContentId !== entry.artifactContentId ||
+      page.rawArtifactId !== entry.rawArtifactId ||
+      page.marketAcquisitionId !== entry.marketAcquisitionId ||
+      page.logicalPageIdentityHash !== entry.logicalPageIdentityHash ||
+      page.currentTokenHash !== entry.currentTokenHash ||
       page.pageRecordCount !== entry.pageRecordCount ||
+      page.cumulativeSuccessfulPages !== entry.cumulativeSuccessfulPages ||
+      page.cumulativeVerifiedBytes !== entry.cumulativeVerifiedBytes ||
+      page.cumulativeRecords !== entry.cumulativeRecords ||
+      page.cumulativeNormalizedFacts !== entry.cumulativeNormalizedFacts ||
+      page.cumulativeAttempts !== entry.cumulativeAttempts ||
       nextTokenHash !== entry.nextTokenHash
     ) {
       throw new TypeError("owned-workflow-page-transition-mismatch");
@@ -1464,6 +1695,21 @@ export function prepareOwnedWorkflowJournalLinks(
     boundary === undefined ? undefined : productionCredentialDatabases.get(boundary)?.[0];
   if (database === undefined) throw new TypeError("production-credential-root-required");
   const rows = stateTransitionRows(database, entries[0]?.marketAcquisitionJournalId ?? "");
+  const claims = database
+    .prepare(`SELECT retrieval_attempt_id, acquisition_observation_id
+      FROM market_acquisition_owned_attempt_claims`)
+    .all() as Array<{ retrieval_attempt_id: string; acquisition_observation_id: string }>;
+  const observationsByAttempt = new Map(
+    claims.map((claim) => [claim.retrieval_attempt_id, claim.acquisition_observation_id]),
+  );
+  if (
+    entries.some(
+      (entry) =>
+        observationsByAttempt.get(entry.retrievalAttemptId) !== entry.acquisitionObservationId,
+    )
+  ) {
+    throw new TypeError("owned-workflow-attempt-provenance-mismatch");
+  }
   const linked = new Set(
     (
       database
@@ -1616,13 +1862,21 @@ export function openTestSqliteDurableCredentialAuthorizationBoundary(
 export function createTestDurableCredentialAuthorizationBoundary(
   journal: AcquisitionJournal,
   retentionJournal: ArtifactRetentionJournal,
+  retentionController?: ArtifactRetentionController,
 ): DurableCredentialAuthorizationBoundary {
   if (P1_10_TEST_AUTHORITY === undefined) {
     throw new TypeError("test-credential-authorization-composition-unavailable");
   }
   assertOwnedAcquisitionJournal(journal);
   assertOwnedRetentionJournal(retentionJournal);
-  return constructCredentialAuthorizationBoundary(journal, retentionJournal);
+  if (retentionController !== undefined) {
+    assertOwnedArtifactRetentionController(retentionController);
+  }
+  const boundary = constructCredentialAuthorizationBoundary(journal, retentionJournal);
+  if (retentionController !== undefined) {
+    productionCredentialRetentionControllers.set(boundary, retentionController);
+  }
+  return boundary;
 }
 
 export function assertOwnedDurableCredentialAuthorizationBoundary(
@@ -1674,7 +1928,7 @@ export function discardCredentialPreflightPermit(permit: CredentialPreflightPerm
 export function remainingCredentialAttemptBudgetMs(permit: CredentialPreflightPermit): number {
   const binding = issuedPermits.get(permit);
   if (binding === undefined) throw new TypeError("credential-capability-invalid");
-  const nowMs = trustedSystemNowMs();
+  const nowMs = binding.nowMs();
   if (!Number.isSafeInteger(nowMs) || nowMs < binding.attemptAdmittedAtMs) {
     throw new CredentialAdmissionDenied("clock-regression");
   }
@@ -1731,7 +1985,7 @@ export async function withAlpacaAuthorization<T>(
   ) {
     throw new TypeError("alpaca-dispatch-destination-invalid");
   }
-  const credentialUseNowMs = trustedSystemNowMs();
+  const credentialUseNowMs = binding.nowMs();
   if (
     !Number.isSafeInteger(credentialUseNowMs) ||
     credentialUseNowMs < binding.attemptAdmittedAtMs ||
@@ -1743,11 +1997,26 @@ export async function withAlpacaAuthorization<T>(
   let secretKey: unknown;
   let capability: AlpacaDispatchCapability | undefined;
   let authorization: AuthorizationLeaseState | undefined;
+  let retentionOperation: RetentionOperationLease | undefined;
   try {
+    if (binding.retentionController === undefined) {
+      if (P1_10_TEST_AUTHORITY === undefined) {
+        throw new TypeError("credential-retention-controller-required");
+      }
+    } else {
+      retentionOperation = binding.retentionController.beginUse();
+    }
+    const assertRetentionAllowed = (): void => {
+      retentionOperation?.assertAllowed();
+      binding.assertRetentionAllowed();
+    };
+    assertRetentionAllowed();
     deadlineGuard.assertRemaining();
     keyId = source.read(ALPACA_KEY_ID_ENV);
+    assertRetentionAllowed();
     deadlineGuard.assertRemaining();
     secretKey = source.read(ALPACA_SECRET_KEY_ENV);
+    assertRetentionAllowed();
     deadlineGuard.assertRemaining();
     if (
       typeof keyId !== "string" ||
@@ -1760,7 +2029,14 @@ export async function withAlpacaAuthorization<T>(
     capability = Object.freeze({ kind: "p1-10-alpaca-dispatch-capability" as const });
     issuedDispatchCapabilities.set(
       capability,
-      Object.freeze({ ...binding, authorization, request, url, deadline: deadlineGuard }),
+      Object.freeze({
+        ...binding,
+        authorization,
+        request,
+        url,
+        deadline: deadlineGuard,
+        assertRetentionAllowed,
+      }),
     );
     return { ok: true, value: await operation(capability) };
   } catch (error) {
@@ -1771,6 +2047,7 @@ export async function withAlpacaAuthorization<T>(
     if (authorization !== undefined) revokeAuthorization(authorization);
     keyId = undefined;
     secretKey = undefined;
+    retentionOperation?.release();
   }
 }
 
@@ -1780,6 +2057,7 @@ function resolveAlpacaDispatchCapability(capability: AlpacaDispatchCapability): 
   request: AlpacaTransportRequest;
   url: URL;
   assertRemaining(): void;
+  assertRetentionAllowed(): void;
 }> {
   const binding = issuedDispatchCapabilities.get(capability);
   if (binding === undefined) {
@@ -1792,6 +2070,7 @@ function resolveAlpacaDispatchCapability(capability: AlpacaDispatchCapability): 
     request: binding.request,
     url: binding.url,
     assertRemaining: () => binding.deadline.assertRemaining(),
+    assertRetentionAllowed: binding.assertRetentionAllowed,
   });
 }
 
@@ -1829,6 +2108,7 @@ export function createTestCredentialIsolatedAlpacaTransport(
       const lease = resolveAlpacaDispatchCapability(authorization);
       const { headers } = lease;
       lease.assertRemaining();
+      lease.assertRetentionAllowed();
       if (
         !Object.isFrozen(headers) ||
         Object.keys(headers).length !== 2 ||
@@ -1839,6 +2119,7 @@ export function createTestCredentialIsolatedAlpacaTransport(
       }
       try {
         lease.assertRemaining();
+        lease.assertRetentionAllowed();
         return await dispatch(lease.request, headers);
       } finally {
         revokeAuthorization(lease.state);
@@ -1963,6 +2244,7 @@ function constructNativeCredentialIsolatedAlpacaTransport(
       let authorizationHeaders: Readonly<Record<string, string>> | undefined;
       try {
         lease.assertRemaining();
+        lease.assertRetentionAllowed();
         authorizationHeaders = Object.freeze({
           "APCA-API-KEY-ID": activeAuthorizationValue(lease.state.keyId, lease.state.active),
           "APCA-API-SECRET-KEY": activeAuthorizationValue(
@@ -1972,6 +2254,7 @@ function constructNativeCredentialIsolatedAlpacaTransport(
         });
         const dispatched = new Promise<IncomingMessage>((resolve, reject) => {
           lease.assertRemaining();
+          lease.assertRetentionAllowed();
           const physical = requestFunction(lease.url, {
             method: "GET",
             headers: authorizationHeaders as Readonly<Record<string, string>>,

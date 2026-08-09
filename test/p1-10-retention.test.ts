@@ -76,6 +76,7 @@ import {
 } from "../src/adapters/market-reference/recorded-market-loader.js";
 import { checkedRecordedMarketFixtureAuthority } from "./market-reference-scenario.js";
 import { recordedFixtureArtifactStore } from "./recorded-fixture-artifact-store.js";
+import { validatedRepairPlan } from "./p1-10-repair-fixtures.js";
 
 const migrations = loadMigrations(join(process.cwd(), "migrations"));
 const hardKillWorker = join(process.cwd(), "test", "fixtures", "p1-10-retention-worker.mjs");
@@ -438,6 +439,19 @@ test("ownership registered during or after a provider stop is atomically denied 
   assert.equal(journal.digestUseDenied(thirdDigest), true);
 });
 
+test("a valid zero-ownership stop durably denies the provider before any later registration", async () => {
+  const journal = createMemoryArtifactRetentionJournal();
+  const artifacts = new SyntheticArtifactBoundary();
+  artifacts.present.clear();
+  const worker = controller(journal, artifacts, () => stop().effectiveAtMs);
+  const receipt = await worker.enforceStop(stop());
+  assert.deepEqual(receipt.artifactDigests, []);
+  assert.equal(receipt.attemptCount, 0);
+  assert.equal(journal.providerUseDenied("alpaca", providerId), true);
+  assert.throws(() => worker.registerOwnership(ownership()), isSafeAcquisitionError);
+  assert.equal(journal.digestUseDenied(digest), true);
+});
+
 test("a retention lease issued before stop cannot admit later wire or derived use", async () => {
   const journal = createMemoryArtifactRetentionJournal();
   const artifacts = new SyntheticArtifactBoundary();
@@ -596,9 +610,9 @@ test("existing receipts revalidate absence and physical attempt counts use uniqu
   assert.equal(journal.attemptsFor(receipt.planId, digest).length, 2);
   artifacts.present.add(digest);
   const recovery = await worker.enforceStop(stop());
-  assert.notEqual(recovery.planId, receipt.planId);
+  assert.equal(recovery.planId, receipt.planId);
   assert.equal(recovery.attemptCount, 1);
-  assert.equal(journal.attemptsFor(recovery.planId, digest).length, 2);
+  assert.equal(journal.attemptsFor(recovery.planId, digest).length, 4);
   assert.equal(artifacts.present.has(digest), false);
   assert.equal((await worker.enforceStop(stop())).receiptId, receipt.receiptId);
 });
@@ -715,7 +729,6 @@ test("owned retention brands reject structural objects, subclasses, and proxies"
         createArtifactRetentionController({
           journal: hostileJournal,
           artifacts: {} as never,
-          nowMs: () => captureMs,
         }),
       /owned-sqlite-retention-journal-required/u,
     );
@@ -860,7 +873,7 @@ test("production reconciliation gates link, sync, removal, and repository mutati
       await writeFile(join(paths.staging, "unowned-synthetic.part"), unownedStageBytes);
       const journal = createSqliteArtifactRetentionJournal(database);
       const boundary = await VaultArtifactRetentionBoundary.open({ store, runtimeRoot: root });
-      const worker = createArtifactRetentionController({
+      const worker = createTestArtifactRetentionController({
         journal,
         artifacts: boundary,
         nowMs: () => stop().effectiveAtMs,
@@ -1149,7 +1162,7 @@ test("the production byte-bound sink registers the actual bare observation id an
   });
   const journal = createSqliteArtifactRetentionJournal(database);
   const vault = await VaultArtifactRetentionBoundary.open({ store, runtimeRoot: root });
-  const controller = createArtifactRetentionController({
+  const controller = createTestArtifactRetentionController({
     journal,
     artifacts: vault,
     nowMs: () => stop().effectiveAtMs,
@@ -1157,14 +1170,17 @@ test("the production byte-bound sink registers the actual bare observation id an
   const artifact = artifactRequest("owned-byte-bound-sink", Readable.from([]));
   const { entityBytes: _discarded, ...request } = artifact;
   const retention = ownership({ derivedIds: [] });
-  const {
-    artifactObservationId: _observation,
-    artifactDigest: _digest,
-    artifactSizeBytes: _size,
-    ...ownedRetention
-  } = retention;
+  const plan = validatedRepairPlan("quotes");
   const sink = createRetentionOwnedAlpacaPageSink(
-    createDurableAlpacaArtifactCommitSink(store, { request, ownership: ownedRetention }),
+    createDurableAlpacaArtifactCommitSink(store, {
+      request,
+      plan,
+      retention: {
+        derivedIds: retention.derivedIds,
+        trustedCaptureMs: retention.trustedCaptureMs,
+        expiresAtMs: retention.expiresAtMs,
+      },
+    }),
     controller,
   );
   await sink.write(syntheticBytes);
@@ -1174,9 +1190,85 @@ test("the production byte-bound sink registers the actual bare observation id an
   const registered = journal.ownershipForDigest(digest);
   assert.equal(registered.length, 1);
   assert.equal(registered[0]?.artifactObservationId, result.observation.observationId);
-  const receipt = await controller.enforceStop(stop());
+  assert.equal(registered[0]?.providerLane, "alpaca");
+  assert.equal(registered[0]?.providerId, plan.route.providerId);
+  assert.equal(registered[0]?.datasetId, plan.route.datasetId);
+  const receipt = await controller.enforceStop(stop({ providerId: plan.route.providerId }));
   assert.equal(receipt.outcome, "verified-erased");
   assert.equal(await vault.verifyDigestCopiesAbsent(digest), true);
+  await assert.rejects(
+    () =>
+      store.store(
+        artifactRequest(
+          "cross-provider-tombstone-reacquisition",
+          Readable.from([syntheticBytes]),
+          "fmp",
+        ),
+      ),
+    /retention|denied/u,
+  );
+  assert.equal(await vault.verifyDigestCopiesAbsent(digest), true);
+});
+
+test("a prepared commit cannot cross durable runtime roots and leaves no installed bytes", async (context) => {
+  const roots = await Promise.all([
+    mkdtemp(join(tmpdir(), "peas-p1-10-prepared-root-a-")),
+    mkdtemp(join(tmpdir(), "peas-p1-10-prepared-root-b-")),
+  ]);
+  const opened = [] as Array<{
+    root: string;
+    database: ReturnType<typeof openSqliteDatabase>;
+    store: DurableArtifactStore;
+    controller: DefaultArtifactRetentionController;
+  }>;
+  for (const root of roots) {
+    const paths = artifactRuntimePaths(root);
+    await mkdir(paths.databaseDirectory, { recursive: true });
+    const database = openSqliteDatabase(paths.databasePath, migrations);
+    const store = await DurableArtifactStore.open({
+      repository: new SqliteArtifactRepository(database),
+      clock: new ManualClock(captureMs),
+      config: vaultConfig(root),
+    });
+    const journal = createSqliteArtifactRetentionJournal(database);
+    const vault = await VaultArtifactRetentionBoundary.open({ store, runtimeRoot: root });
+    const retention = createTestArtifactRetentionController({
+      journal,
+      artifacts: vault,
+      nowMs: () => captureMs,
+    });
+    opened.push({ root, database, store, controller: retention });
+  }
+  context.after(async () => {
+    for (const member of opened) {
+      await member.store.close();
+      if (member.database.open) member.database.close();
+      await rm(member.root, { recursive: true, force: true });
+    }
+  });
+  const source = opened[0] as (typeof opened)[number];
+  const foreign = opened[1] as (typeof opened)[number];
+  const artifact = artifactRequest("prepared-root-mismatch", Readable.from([]));
+  const { entityBytes: _discarded, ...request } = artifact;
+  const plan = validatedRepairPlan("quotes");
+  const sink = createRetentionOwnedAlpacaPageSink(
+    createDurableAlpacaArtifactCommitSink(source.store, {
+      request,
+      plan,
+      retention: {
+        derivedIds: [],
+        trustedCaptureMs: captureMs,
+        expiresAtMs: retentionExpiryMs(ALPACA_PRIVATE_ARTIFACT_POLICY, captureMs, null),
+      },
+    }),
+    foreign.controller,
+  );
+  await sink.write(syntheticBytes);
+  await assert.rejects(
+    () => sink.completeVerifyAndRegisterOwnership(),
+    /retention-runtime-root-mismatch/u,
+  );
+  assert.equal(await source.store.stat(digest), undefined);
 });
 
 test("separate live controllers over one durable store share the stop barrier", async (context) => {
@@ -1198,12 +1290,12 @@ test("separate live controllers over one durable store share the stop barrier", 
   const journal = createSqliteArtifactRetentionJournal(database);
   const boundaryA = await VaultArtifactRetentionBoundary.open({ store, runtimeRoot: root });
   const boundaryB = await VaultArtifactRetentionBoundary.open({ store, runtimeRoot: root });
-  const controllerA = createArtifactRetentionController({
+  const controllerA = createTestArtifactRetentionController({
     journal,
     artifacts: boundaryA,
     nowMs: () => stop().effectiveAtMs,
   });
-  const controllerB = createArtifactRetentionController({
+  const controllerB = createTestArtifactRetentionController({
     journal,
     artifacts: boundaryB,
     nowMs: () => stop().effectiveAtMs,
@@ -1325,7 +1417,7 @@ test("process hard-kill at every retention boundary converges without resurrecti
         store: recoveredStore,
         runtimeRoot: root,
       });
-      const resumed = createArtifactRetentionController({
+      const resumed = createTestArtifactRetentionController({
         journal,
         artifacts: boundary,
         nowMs: () => stop().effectiveAtMs,
@@ -1429,7 +1521,7 @@ test("retention settlement cannot pass a queued pre-stop writer or admit its lat
     runtimeRoot: root,
     settlementTimeoutMs: 10_000,
   });
-  const worker = createArtifactRetentionController({
+  const worker = createTestArtifactRetentionController({
     journal,
     artifacts: boundary,
     nowMs: () => stop().effectiveAtMs,

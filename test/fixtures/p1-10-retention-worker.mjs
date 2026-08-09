@@ -1,7 +1,7 @@
 import { join } from "node:path";
 
 import { openSqliteDatabase, loadMigrations } from "../../dist/src/adapters/sqlite/database.js";
-import { createArtifactRetentionController } from "../../dist/src/adapters/market-acquisition/retention/controller.js";
+import { createTestArtifactRetentionController } from "../../dist/src/adapters/market-acquisition/retention/controller.js";
 import { createSqliteArtifactRetentionJournal } from "../../dist/src/adapters/market-acquisition/retention/sqlite-journal.js";
 import { VaultArtifactRetentionBoundary } from "../../dist/src/adapters/market-acquisition/retention/vault-boundary.js";
 import { DurableArtifactStore } from "../../dist/src/adapters/artifacts/durable-artifact-store.js";
@@ -42,7 +42,7 @@ const boundary = await VaultArtifactRetentionBoundary.open({
   store,
   runtimeRoot,
 });
-const controller = createArtifactRetentionController({
+const controller = createTestArtifactRetentionController({
   journal,
   artifacts: boundary,
   nowMs: () => effectiveAtMs,

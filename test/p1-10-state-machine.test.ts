@@ -37,6 +37,7 @@ import {
   ACQUISITION_STATES,
   ACQUISITION_TRANSITIONS,
   AcquisitionStateMachine,
+  type AcquisitionEvent,
   type AcquisitionEventProof,
   type AcquisitionMachineSnapshot,
   createInitialAcquisitionSnapshot,
@@ -169,6 +170,43 @@ function currentPageChainInput(machine: AcquisitionStateMachine, sizeBytes = 13)
     cumulativeAttempts: snapshot.budgets.attempts,
   } as const;
 }
+
+test("event and transition evidence are synchronously snapshotted before durable await", async () => {
+  const initial = createInitialAcquisitionSnapshot({
+    requestIdentityHash: "1".repeat(64),
+    acquisitionConfigurationHash: "2".repeat(64),
+    marketAcquisitionJournalId: hex("async-event-snapshot"),
+    runSessionNonce: "async-event-snapshot-run",
+    acquisitionDeclaredMonotonicMs: 0,
+  });
+  let release!: () => void;
+  let entered!: () => void;
+  const paused = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const persistenceEntered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let persistedEvent: AcquisitionEvent | undefined;
+  const machine = new AcquisitionStateMachine(initial, async (_plan, event) => {
+    persistedEvent = event;
+    entered();
+    await paused;
+  });
+  const event = {
+    kind: "begin-preflight" as const,
+    proof: { ...proof(machine, 0) },
+  };
+  const pending = machine.applyAcquisitionEvent(event);
+  await persistenceEntered;
+  event.proof.requestIdentityHash = "f".repeat(64);
+  event.proof.runSessionNonce = "mutated-after-call";
+  release();
+  await pending;
+  assert.equal(persistedEvent?.proof.requestIdentityHash, initial.requestIdentityHash);
+  assert.equal(persistedEvent?.proof.runSessionNonce, initial.runSessionNonce);
+  assert.equal(machine.snapshot.currentState, "preflighting");
+});
 
 test("the accepted state vocabulary and transition graph are exact and closed", () => {
   assert.equal(ACQUISITION_STATES.length, 20);
@@ -419,10 +457,11 @@ test("retry keeps a logical page stable and creates a fresh physical attempt", a
       monotonicOrderValid: true,
     },
   });
-  await machine.applyAcquisitionEvent({
+  const retryPreflight = await machine.applyAcquisitionEvent({
     kind: "preflight-approved",
     proof: proof(machine, 2_100),
   });
+  assert.equal(retryPreflight.checkpointKind, null);
   await machine.applyAcquisitionEvent({
     kind: "credentials-loaded",
     proof: proof(machine, 2_100),

@@ -22,6 +22,7 @@ import {
   parseAlpacaWireTimestamp,
   resolveAlpacaHistoricalChain,
   type AlpacaWireEndpointKind,
+  type AlpacaWirePageAdmission,
   type AlpacaWireParseContext,
 } from "../src/adapters/market-acquisition/alpaca/wire.js";
 import {
@@ -1331,6 +1332,48 @@ test("canonical trade u wins before every later semantic value without getter or
   }
   assert.equal(vectors, 27);
   assert.equal(outcomes.size, 1);
+});
+
+test("correction-terminal chain resolution is invariant to the page partition", async () => {
+  const fixture = valid.cases.find((entry) => entry.caseId === "wire-trades-terminal-grouped");
+  assert.ok(fixture);
+  const correction = structuredClone(firstItem(fixture.wire, "trades"));
+  correction["u"] = "corrected";
+  const normal = structuredClone(correction);
+  delete normal["u"];
+  const page = async (
+    items: PlainRecord[],
+    token: string | null,
+    ordinal: number,
+  ): Promise<AlpacaWirePageAdmission> =>
+    authenticatedAdmission(
+      "trades",
+      { trades: { PEASLIL: items }, next_page_token: token },
+      {
+        ...context,
+        marketAcquisitionId: `maq1_${String(ordinal + 3).repeat(64)}`,
+        rawArtifactId: `mar1_${String(ordinal + 6).repeat(64)}`,
+      },
+    );
+  const unpartitioned = await page([normal, correction], null, 0);
+  const first = await page([normal], "p1-10-synthetic-correction-page-2", 1);
+  const terminal = await page([correction], null, 2);
+  const direct = resolveAlpacaHistoricalChain(
+    "trades",
+    [unpartitioned],
+    completeChainProof([unpartitioned]),
+  );
+  const partitioned = resolveAlpacaHistoricalChain(
+    "trades",
+    [first, terminal],
+    completeChainProof([first, terminal]),
+  );
+  assert.equal(
+    canonicalJson(direct as unknown as JsonValue),
+    canonicalJson(partitioned as unknown as JsonValue),
+  );
+  assert.equal(direct.terminalReason, "correction-unsupported");
+  assert.deepEqual(direct.records, []);
 });
 
 test("wire parse snapshots are zeroed even when authority validation throws", () => {

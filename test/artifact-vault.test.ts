@@ -717,6 +717,63 @@ test("expired takeover fences a still-live stale writer before install and SQLit
   assert.equal(committed.observation.attemptId, persistedRetrievalAttemptId("winner"));
 });
 
+test("a contender cannot rename a stale snapshot after the live owner renews its SQLite fence", async (context) => {
+  const root = mkdtempSync(join(tmpdir(), "peas-artifact-lease-renew-race-"));
+  const paths = artifactRuntimePaths(root);
+  mkdirSync(paths.databaseDirectory);
+  mkdirSync(paths.locks, { recursive: true });
+  const database = openSqliteDatabase(paths.databasePath, migrations);
+  const repository = new SqliteArtifactRepository(database);
+  const clock = new ManualClock(1_800_000_000_000);
+  const path = join(paths.locks, "writer.lock");
+  const owner = await VaultWriterLease.acquire({
+    path,
+    behavior: "fail",
+    waitMs: 0,
+    durationMs: 10,
+    renewalMs: 60_000,
+    repository,
+    clock,
+  });
+  context.after(async () => {
+    await owner.release();
+    if (database.open) database.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+  const original = readFileSync(path, "utf8");
+  clock.advanceBy(10);
+  let resume!: () => void;
+  let reached!: () => void;
+  const paused = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const staleRead = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  const contender = VaultWriterLease.acquire({
+    path,
+    behavior: "fail",
+    waitMs: 0,
+    durationMs: 10,
+    renewalMs: 60_000,
+    repository,
+    clock,
+    faultBoundary: async (checkpoint) => {
+      if (checkpoint !== "lease-stale-record-read") return;
+      reached();
+      await paused;
+    },
+  });
+  await staleRead;
+  await owner.renewAndAssert();
+  const renewed = readFileSync(path, "utf8");
+  assert.notEqual(renewed, original);
+  resume();
+  await assert.rejects(() => contender, /writer lease is held/u);
+  assert.equal(readFileSync(path, "utf8"), renewed);
+  await owner.renewAndAssert();
+});
+
 test("same-owner heartbeat and foreground renewal coalesce around slow lease I/O", async (context) => {
   const root = mkdtempSync(join(tmpdir(), "peas-artifact-lease-coalesce-"));
   const paths = artifactRuntimePaths(root);
@@ -1036,8 +1093,13 @@ test("hard-killed staged writer leaves only recoverable evidence for fenced reco
       0n,
     );
     assert.equal(readdirSync(join(root, "artifacts", "staging")).length, 1);
-    const report = await recovered.reconcile();
-    assert.equal(report.expiredStages, 1);
+    let report = await recovered.reconcile();
+    let expiredStages = report.expiredStages;
+    while (report.continuationCursor !== null) {
+      report = await recovered.reconcile({ cursor: report.continuationCursor });
+      expiredStages += report.expiredStages;
+    }
+    assert.equal(expiredStages, 1);
     assert.equal(
       (
         database

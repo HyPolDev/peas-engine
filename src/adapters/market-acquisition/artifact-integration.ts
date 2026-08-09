@@ -427,6 +427,46 @@ export function validateJournalLedgerBindings(
     ) {
       throw new TypeError("journal-ledger-direct-parent-invalid");
     }
+    const facts = stage.facts;
+    const kindValid =
+      (checkpoint.checkpointKind === "acquisition-declared" &&
+        facts.kind === "acquisition.declared" &&
+        facts.acquisitionObservationId === checkpoint.acquisitionObservationId &&
+        facts.retrievalAttemptId === checkpoint.retrievalAttemptId &&
+        facts.sanitizedRequestIdentityHash === checkpoint.requestIdentityHash &&
+        facts.provider === "alpaca") ||
+      (checkpoint.checkpointKind === "request-started" &&
+        facts.kind === "request.started" &&
+        facts.acquisitionObservationId === checkpoint.acquisitionObservationId) ||
+      (checkpoint.checkpointKind === "attempt-started" &&
+        facts.kind === "request.started" &&
+        facts.acquisitionObservationId === checkpoint.acquisitionObservationId) ||
+      (checkpoint.checkpointKind === "request-succeeded" &&
+        facts.kind === "request.succeeded" &&
+        facts.acquisitionObservationId === checkpoint.acquisitionObservationId) ||
+      (checkpoint.checkpointKind === "artifact-committed" &&
+        facts.kind === "artifact.committed" &&
+        facts.acquisitionObservationId === checkpoint.acquisitionObservationId &&
+        facts.vaultObservationId === checkpoint.artifactObservationId &&
+        facts.artifactDigest === checkpoint.artifactDigest &&
+        facts.sizeBytes === checkpoint.artifactSizeBytes &&
+        facts.vaultObservationHash === checkpoint.artifactObservationHash) ||
+      (checkpoint.checkpointKind === "artifact-verified" &&
+        facts.kind === "artifact.verified" &&
+        facts.acquisitionObservationId === checkpoint.acquisitionObservationId &&
+        facts.vaultObservationId === checkpoint.artifactObservationId &&
+        facts.artifactDigest === checkpoint.artifactDigest &&
+        facts.metadataSizeBytes === checkpoint.artifactSizeBytes) ||
+      (["chain-complete", "normalization-started"].includes(checkpoint.checkpointKind) &&
+        facts.kind === "artifact.verified") ||
+      (["normalization-complete", "selection-started"].includes(checkpoint.checkpointKind) &&
+        ["normalization.emitted", "normalization.ignored", "normalization.quarantined"].includes(
+          facts.kind,
+        )) ||
+      (checkpoint.checkpointKind === "completed" && facts.kind === "selection.recorded") ||
+      (["stopped", "failed-clean", "quarantined"].includes(checkpoint.checkpointKind) &&
+        ["failure.recorded", "normalization.quarantined"].includes(facts.kind));
+    if (!kindValid) throw new TypeError("journal-ledger-stage-semantic-invalid");
   }
 }
 
@@ -492,35 +532,47 @@ export async function persistVerifiedAcquisitionWorkflowEvidence(
     ledgerEntries: readonly ObservationLedgerEntryV1[];
   }>,
 ): Promise<void> {
-  assertOwnedAcquisitionJournal(input.journal);
-  assertRetentionEnforcedArtifactStore(input.artifactStore);
+  const journal = input.journal;
+  const artifactStore = input.artifactStore;
+  const journalId = input.journalId;
+  const expectedIdentity = JSON.parse(
+    canonicalJson(input.expectedIdentity as unknown as JsonValue),
+  ) as JournalIdentityInput;
+  const journalEntries = input.journalEntries.map(
+    (entry) => JSON.parse(canonicalJson(entry as unknown as JsonValue)) as JournalEntry,
+  );
+  const ledgerInput = input.ledgerEntries.map(
+    (entry) => JSON.parse(canonicalJson(entry as unknown as JsonValue)) as ObservationLedgerEntryV1,
+  );
+  assertOwnedAcquisitionJournal(journal);
+  assertRetentionEnforcedArtifactStore(artifactStore);
   const { assertOwnedLiveCredentialAcquisitionJournal } = await import("./credentials.js");
-  assertOwnedLiveCredentialAcquisitionJournal(input.journal);
-  if (input.journalId !== deriveMarketAcquisitionJournalId(input.expectedIdentity)) {
+  assertOwnedLiveCredentialAcquisitionJournal(journal);
+  if (journalId !== deriveMarketAcquisitionJournalId(expectedIdentity)) {
     throw new TypeError("journal-identity-invalid");
   }
-  validateJournalEntries(input.journalEntries, input.expectedIdentity);
-  const ledgerEntries = validateObservationLedgerBundle(input.ledgerEntries);
-  validateJournalLedgerBindings(input.journalEntries, ledgerEntries);
-  const currentJournal = await input.journal.load(input.journalId);
-  const currentLedger = await input.journal.loadLedgerEntries();
+  validateJournalEntries(journalEntries, expectedIdentity);
+  const ledgerEntries = validateObservationLedgerBundle(ledgerInput);
+  validateJournalLedgerBindings(journalEntries, ledgerEntries);
+  const currentJournal = await journal.load(journalId);
+  const currentLedger = await journal.loadLedgerEntries();
   if (
     currentJournal.length < 2 ||
-    currentJournal.length > input.journalEntries.length ||
+    currentJournal.length > journalEntries.length ||
     currentLedger.length > ledgerEntries.length ||
-    canonicalJson(input.journalEntries.slice(0, currentJournal.length) as unknown as JsonValue) !==
+    canonicalJson(journalEntries.slice(0, currentJournal.length) as unknown as JsonValue) !==
       canonicalJson(currentJournal as unknown as JsonValue) ||
     canonicalJson(ledgerEntries.slice(0, currentLedger.length) as unknown as JsonValue) !==
       canonicalJson(currentLedger as unknown as JsonValue)
   ) {
     throw new TypeError("acquisition-workflow-prefix-conflict");
   }
-  const suffix = input.journalEntries.slice(currentJournal.length);
+  const suffix = journalEntries.slice(currentJournal.length);
   const { isOwnedLiveWorkflowJournalEntryTrusted, prepareOwnedWorkflowJournalLinks } = await import(
     "./credentials.js"
   );
   const pending = currentJournal.filter(
-    (entry) => !isOwnedLiveWorkflowJournalEntryTrusted(input.journal, entry),
+    (entry) => !isOwnedLiveWorkflowJournalEntryTrusted(journal, entry),
   );
   const extension = [...pending, ...suffix];
   if (
@@ -539,7 +591,7 @@ export async function persistVerifiedAcquisitionWorkflowEvidence(
   ) {
     throw new TypeError("acquisition-workflow-extension-invalid");
   }
-  const links = prepareOwnedWorkflowJournalLinks(input.journal, extension);
+  const links = prepareOwnedWorkflowJournalLinks(journal, extension);
   for (const entry of extension) {
     const expected = artifactExpectation(entry);
     if (
@@ -555,19 +607,19 @@ export async function persistVerifiedAcquisitionWorkflowEvidence(
       ].includes(entry.checkpointKind)
     ) {
       if (expected === null) throw new TypeError("journal-artifact-tuple-required");
-      await verifyCommittedArtifact(input.artifactStore, expected);
+      await verifyCommittedArtifact(artifactStore, expected);
     }
   }
   const receipt = Object.freeze({ kind: "verified-acquisition-workflow-receipt" as const });
   verifiedWorkflowReceipts.set(receipt, {
-    journal: input.journal,
+    journal,
     ledgerEntries,
     journalEntries: Object.freeze(suffix),
   });
   const { persistVerifiedAcquisitionWorkflowReceipt } = await import("./journal.js");
   await persistVerifiedAcquisitionWorkflowReceipt(receipt);
   const { commitOwnedWorkflowJournalLinks } = await import("./credentials.js");
-  commitOwnedWorkflowJournalLinks(input.journal, links);
+  commitOwnedWorkflowJournalLinks(journal, links);
 }
 
 export function consumeVerifiedAcquisitionWorkflowReceipt(

@@ -4,6 +4,7 @@
     { "name": "lease-file-installation", "medium": "filesystem" },
     { "name": "lease-sqlite-claim", "medium": "sqlite" },
     { "name": "lease-record-sync", "medium": "filesystem" },
+    { "name": "lease-stale-record-read", "medium": "filesystem" },
     { "name": "lease-sqlite-renewal", "medium": "sqlite" },
     { "name": "lease-file-renewal", "medium": "filesystem" },
     { "name": "vault-directory-created:*", "medium": "filesystem" },

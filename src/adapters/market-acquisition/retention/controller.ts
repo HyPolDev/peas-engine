@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { performance } from "node:perf_hooks";
 import { isProxy } from "node:util/types";
 import { P1_10_TEST_AUTHORITY } from "../../../internal-test-authority.js";
 
@@ -55,6 +56,10 @@ const POLICY_ID = /^[a-z0-9][a-z0-9-]{0,127}$/u;
 const ownedRetentionControllers = new WeakSet<object>();
 const retentionControllerRoots = new WeakMap<object, object>();
 const CONTROLLER_CONSTRUCTION_AUTHORITY = Object.freeze({});
+const trustedTimeOriginMs = performance.timeOrigin;
+const trustedMonotonicNowMs = performance.now.bind(performance);
+const trustedRetentionNowMs = (): number =>
+  Math.trunc(trustedTimeOriginMs + trustedMonotonicNowMs());
 type RetentionCoordinator = {
   admissionClosed: boolean;
   pendingStops: number;
@@ -214,43 +219,53 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
     preparedOrInput: AlpacaPreparedArtifactCommit<T> | Omit<RetentionOwnership, "ownershipId">,
     testCommit?: () => Promise<T>,
   ): Promise<T> {
-    const prepared =
+    const preparedBinding =
       testCommit === undefined
-        ? consumePreparedAlpacaArtifactCommit(preparedOrInput as AlpacaPreparedArtifactCommit<T>)
+        ? consumePreparedAlpacaArtifactCommit(
+            preparedOrInput as AlpacaPreparedArtifactCommit<T>,
+            retentionControllerRoots.get(this),
+          )
         : P1_10_TEST_AUTHORITY === undefined
           ? (() => {
               throw new TypeError("retention-owned-mutation-required");
             })()
           : Object.freeze({
-              ownership: preparedOrInput as Omit<RetentionOwnership, "ownershipId">,
-              commit: testCommit,
+              prepared: Object.freeze({
+                ownership: preparedOrInput as Omit<RetentionOwnership, "ownershipId">,
+                commit: testCommit,
+              }),
+              dispose(): void {},
             });
-    const input = prepared.ownership;
-    const commit = prepared.commit;
-    this.#validateOwnership(input);
-    const operation = this.beginUse();
-    let committed = false;
     try {
-      this.#registerOwnership(input);
-      const artifact = await commit();
-      committed = true;
-      operation.assertAllowed();
-      this.#assertArtifactUseAllowed(input.artifactDigest);
-      return artifact;
-    } catch (error) {
-      if (committed) {
-        try {
-          await this.#artifacts.eraseDigestCopies(input.artifactDigest);
-          if (!(await this.#artifacts.verifyDigestCopiesAbsent(input.artifactDigest))) {
-            throw new Error("retention-commit-rollback-unprovable");
+      const input = preparedBinding.prepared.ownership;
+      const commit = preparedBinding.prepared.commit;
+      this.#validateOwnership(input);
+      const operation = this.beginUse();
+      let committed = false;
+      try {
+        this.#registerOwnership(input);
+        const artifact = await commit();
+        committed = true;
+        operation.assertAllowed();
+        this.#assertArtifactUseAllowed(input.artifactDigest);
+        return artifact;
+      } catch (error) {
+        if (committed) {
+          try {
+            await this.#artifacts.eraseDigestCopies(input.artifactDigest);
+            if (!(await this.#artifacts.verifyDigestCopiesAbsent(input.artifactDigest))) {
+              throw new Error("retention-commit-rollback-unprovable");
+            }
+          } catch {
+            throw safeAcquisitionError("retention-erasure-unprovable", "retention-erase");
           }
-        } catch {
-          throw safeAcquisitionError("retention-erasure-unprovable", "retention-erase");
         }
+        throw error;
+      } finally {
+        operation.release();
       }
-      throw error;
     } finally {
-      operation.release();
+      preparedBinding.dispose();
     }
   }
 
@@ -298,12 +313,6 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
       stopEventId: deriveRetentionStopEventId(input),
     };
     const initialOwnership = this.#journal.listOwnership(input.providerLane, input.providerId);
-    if (initialOwnership.length === 0)
-      throw safeAcquisitionError("retention-stop-required", "retention-stop", {
-        detailKind: "retention-count",
-        counter: "artifact-count",
-        value: 0,
-      });
     this.#coordinator.pendingStops += 1;
     this.#coordinator.admissionClosed = true;
     for (const handler of [...this.#coordinator.operationStopHandlers]) {
@@ -377,7 +386,7 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
     } as const;
     const planId = deriveRetentionPlanId(planBody);
     const planWithoutHash = { ...planBody, planId };
-    let plan: RetentionErasurePlan = {
+    const plan: RetentionErasurePlan = {
       ...planWithoutHash,
       planHash: deriveRetentionPlanHash(planWithoutHash),
     };
@@ -397,23 +406,8 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
         await this.#ensureCheckpoint(plan, priorReceipt);
         return priorReceipt;
       } catch {
-        const recoveryBody = {
-          ...planBody,
-          predecessorReceiptId: priorReceipt.receiptId,
-        } as const;
-        const recoveryPlanId = deriveRetentionPlanId(recoveryBody);
-        const recoveryWithoutHash = { ...recoveryBody, planId: recoveryPlanId };
-        plan = {
-          ...recoveryWithoutHash,
-          planHash: deriveRetentionPlanHash(recoveryWithoutHash),
-        };
-        this.#journal.recordPlan(plan);
-        const recoveredPlan = this.#journal.getPlan(plan.planId);
-        if (
-          recoveredPlan === undefined ||
-          recomputeRetentionPlanHash(recoveredPlan) !== plan.planHash
-        )
-          throw safeAcquisitionError("retention-erasure-unprovable", "retention-plan");
+        // Reappearance is repaired under the immutable original plan. A successor plan would reuse
+        // the same unique stop event and diverge between memory and SQLite journals.
       }
     }
 
@@ -491,6 +485,11 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
       return this.#enforceStop(input, stop);
     }
     await this.#faultBoundary("retention-erasure-verified");
+
+    if (priorReceipt !== undefined) {
+      await this.#ensureCheckpoint(plan, priorReceipt);
+      return priorReceipt;
+    }
 
     const receiptBody = {
       planId: plan.planId,
@@ -701,7 +700,6 @@ function constructOwnedArtifactRetentionController(
 export function createArtifactRetentionController(dependencies: {
   journal: ArtifactRetentionJournal;
   artifacts: RetentionArtifactBoundary;
-  nowMs: () => number;
   faultBoundary?: RetentionFaultBoundary;
 }): DefaultArtifactRetentionController {
   assertOwnedSqliteRetentionJournal(dependencies.journal);
@@ -712,7 +710,7 @@ export function createArtifactRetentionController(dependencies: {
     throw new TypeError("retention-runtime-root-mismatch");
   }
   return constructOwnedArtifactRetentionController(
-    dependencies,
+    { ...dependencies, nowMs: trustedRetentionNowMs },
     ownedVaultRetentionCoordinatorRoot(dependencies.artifacts),
     vaultIdentity,
   );
@@ -729,7 +727,26 @@ export function createTestArtifactRetentionController(dependencies: {
     throw new TypeError("test-retention-composition-unavailable");
   }
   assertOwnedRetentionJournal(dependencies.journal);
-  return constructOwnedArtifactRetentionController(dependencies);
+  try {
+    assertOwnedSqliteRetentionJournal(dependencies.journal);
+  } catch {
+    return constructOwnedArtifactRetentionController(dependencies);
+  }
+  try {
+    assertOwnedVaultArtifactRetentionBoundary(dependencies.artifacts);
+  } catch {
+    return constructOwnedArtifactRetentionController(dependencies);
+  }
+  const journalIdentity = ownedSqliteRetentionJournalRuntimeIdentity(dependencies.journal);
+  const vaultIdentity = ownedVaultRetentionRuntimeIdentity(dependencies.artifacts);
+  if (journalIdentity !== vaultIdentity) {
+    throw new TypeError("retention-runtime-root-mismatch");
+  }
+  return constructOwnedArtifactRetentionController(
+    dependencies,
+    ownedVaultRetentionCoordinatorRoot(dependencies.artifacts),
+    vaultIdentity,
+  );
 }
 
 export function assertOwnedArtifactRetentionController(value: ArtifactRetentionController): void {

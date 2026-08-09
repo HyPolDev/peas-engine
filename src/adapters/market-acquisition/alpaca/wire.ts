@@ -1445,9 +1445,15 @@ function resolveDurablyAuthenticatedAlpacaHistoricalChain(
     ? "correction-unsupported"
     : null;
   if (terminalReason !== null || endpointKind !== "bars") {
+    const terminalQuarantines =
+      terminalReason === null
+        ? quarantines
+        : admissions
+            .filter((entry) => entry.terminalReason === terminalReason)
+            .flatMap((entry) => entry.quarantines);
     return Object.freeze({
       records: Object.freeze([]),
-      quarantines: Object.freeze(quarantines),
+      quarantines: Object.freeze(terminalQuarantines),
       terminalReason,
       barObservationCount: 0,
     });

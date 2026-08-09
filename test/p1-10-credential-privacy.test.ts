@@ -35,8 +35,8 @@ import {
   type RuntimeSecretSource,
 } from "../src/adapters/market-acquisition/credentials.js";
 import {
-  createInitialAcquisitionSnapshot,
   createOwnedAcquisitionStateMachine,
+  openOwnedAcquisitionStateMachine,
 } from "../src/adapters/market-acquisition/state-machine.js";
 import { MARKET_ACQUISITION_LIMITS } from "../src/adapters/market-acquisition/contracts.js";
 import { buildAlpacaTransportRequest } from "../src/adapters/market-acquisition/alpaca/request.js";
@@ -49,6 +49,8 @@ import {
 import { createSqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
 import { MemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
 import { createSqliteArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/sqlite-journal.js";
+import { createTestArtifactRetentionController } from "../src/adapters/market-acquisition/retention/controller.js";
+import type { RetentionArtifactBoundary } from "../src/adapters/market-acquisition/retention/contracts.js";
 import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
 import { createSqliteAlpacaWireSemanticEvidenceStore } from "../src/adapters/market-acquisition/alpaca/wire-semantic-evidence.js";
 import { SqliteArtifactRepository } from "../src/adapters/artifacts/sqlite-artifact-repository.js";
@@ -220,6 +222,91 @@ test("Alpaca credentials load only into an immutable dispatch capability", async
   );
   const credentials = await import("../src/adapters/market-acquisition/credentials.js");
   assert.equal("resolveAlpacaDispatchCapability" in credentials, false);
+});
+
+test("a retention stop admitted during credential scope prevents later physical dispatch", async () => {
+  const plan = validatedRepairPlan();
+  const fixture = await credentialAuthorizationFixture(plan);
+  const effectiveAtMs = 1_700_000_000_000;
+  const artifacts: RetentionArtifactBoundary = {
+    async settleActiveReadersAndWriters() {
+      return true;
+    },
+    async eraseDigestCopies(artifactDigest) {
+      return {
+        artifactDigest,
+        erasedCopies: { content: 0, staging: 0, snapshot: 0, quarantine: 0 },
+        alreadyAbsent: true,
+      };
+    },
+    async verifyDigestCopiesAbsent() {
+      return true;
+    },
+  };
+  const retention = createTestArtifactRetentionController({
+    journal: fixture.retentionJournal,
+    artifacts,
+    nowMs: () => effectiveAtMs,
+  });
+  const authorization = createTestDurableCredentialAuthorizationBoundary(
+    fixture.journal,
+    fixture.retentionJournal,
+    retention,
+  );
+  const permit = authorizeCredentialLoad(await authorization.establish(fixture.request));
+  const requestLease = buildAlpacaTransportRequest(
+    plan,
+    { kind: "first-page", pageOrdinal: 0 },
+    new AbortController().signal,
+  );
+  let entered!: () => void;
+  let resume!: () => void;
+  const operationEntered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const paused = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  let dispatches = 0;
+  const transport = createTestCredentialIsolatedAlpacaTransport({
+    async dispatch() {
+      dispatches += 1;
+      return {} as never;
+    },
+    async abort() {},
+    async settle() {},
+  });
+  const pending = withAlpacaAuthorization(
+    permit,
+    {
+      read(name) {
+        return name === ALPACA_KEY_ID_ENV ? "synthetic-key-id" : "synthetic-secret";
+      },
+    },
+    requestLease.request,
+    async (capability) => {
+      entered();
+      await paused;
+      await transport.dispatch(capability);
+      return "unexpected-dispatch";
+    },
+  );
+  await operationEntered;
+  const stopping = retention.enforceStop({
+    policyId: "p1-10-alpaca-private-retention-v1",
+    providerLane: "alpaca",
+    providerId: plan.route.providerId,
+    effectiveAtMs,
+    deadlineMs: effectiveAtMs + 30 * 86_400_000,
+    reason: "owner-revocation",
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  resume();
+  const result = await pending;
+  requestLease.release();
+  assert.equal(result.ok, false);
+  assert.equal(dispatches, 0);
+  assert.equal((await stopping).outcome, "verified-erased");
 });
 
 test("spoofed NODE_TEST_CONTEXT cannot mint any test root or credential transport", () => {
@@ -621,14 +708,16 @@ test("live credential admission has one canonical non-shardable protected durabl
     () => prepareOwnedWorkflowJournalLinks(liveJournal, [seeded[1] as (typeof seeded)[number]]),
     /owned-workflow-transition-missing/u,
   );
-  const initial = createInitialAcquisitionSnapshot({
-    requestIdentityHash: plan.requestIdentityHash,
-    acquisitionConfigurationHash: plan.acquisitionConfigurationHash,
-    marketAcquisitionJournalId: fixture.request.marketAcquisitionJournalId,
-    runSessionNonce: "owned-production-state-run-v1",
-    acquisitionDeclaredMonotonicMs: 0,
-  });
-  const machine = createOwnedAcquisitionStateMachine(authority, initial);
+  const machine = openOwnedAcquisitionStateMachine(authority);
+  const initial = machine.snapshot;
+  assert.throws(
+    () =>
+      createOwnedAcquisitionStateMachine(authority, {
+        ...initial,
+        lastMonotonicMs: initial.lastMonotonicMs + 1,
+      }),
+    /owned-acquisition-state-restart-invalid/u,
+  );
   await machine.applyAcquisitionEvent({
     kind: "begin-preflight",
     proof: {
@@ -636,11 +725,11 @@ test("live credential admission has one canonical non-shardable protected durabl
       acquisitionConfigurationHash: initial.acquisitionConfigurationHash,
       marketAcquisitionJournalId: initial.marketAcquisitionJournalId,
       runSessionNonce: initial.runSessionNonce,
-      nowMonotonicMs: 0,
+      nowMonotonicMs: initial.acquisitionDeclaredMonotonicMs,
       resourcesSettled: true,
     },
   });
-  const restarted = createOwnedAcquisitionStateMachine(authority, machine.snapshot);
+  const restarted = openOwnedAcquisitionStateMachine(authority);
   await restarted.applyAcquisitionEvent({
     kind: "preflight-approved",
     proof: {
@@ -648,7 +737,7 @@ test("live credential admission has one canonical non-shardable protected durabl
       acquisitionConfigurationHash: initial.acquisitionConfigurationHash,
       marketAcquisitionJournalId: initial.marketAcquisitionJournalId,
       runSessionNonce: initial.runSessionNonce,
-      nowMonotonicMs: 0,
+      nowMonotonicMs: initial.acquisitionDeclaredMonotonicMs,
       resourcesSettled: true,
     },
   });

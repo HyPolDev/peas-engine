@@ -7,6 +7,7 @@ import type { ArtifactStore } from "../src/artifacts/artifact-store.js";
 import { canonicalHash } from "../src/core/hash.js";
 import {
   createIssuerMapping,
+  createClockBasis,
   createObservationLedgerEntry,
   deriveAcquisitionObservationId,
   deriveMarketReferenceJoinKey,
@@ -535,4 +536,74 @@ test("verified replay snapshots the complete expectation tuple before the first 
   mutable.artifactDigest = hash("substituted-after-call");
   await pending;
   assert.equal(fixture.readCalls(), 1);
+});
+
+test("replay remaps a valid clock-regression witness without prefix rejection at every page size", () => {
+  const basis = createClockBasis({
+    wallClock: "recorded-fixture",
+    synchronization: "not-applicable",
+    maximumErrorMs: null,
+    monotonicClock: "process-monotonic-us",
+    monotonicSessionId: "p1-10-replay-regression-session",
+  });
+  const basisEntry = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: "p1-10-replay-regression-source",
+    parentEntryIds: [],
+    clock: { clockBasisId: null, wallTimeMs: null, monotonicTimeUs: null },
+    facts: { kind: "clock-basis.declared", clockBasis: basis },
+  });
+  const declaration = (label: string, wallTimeMs: number, monotonicTimeUs: number) => {
+    const retrievalAttemptId = `rat1_${hash(`regression-${label}`)}`;
+    const acquisitionObservationId = deriveAcquisitionObservationId({
+      provider: "alpaca",
+      retrievalAttemptId,
+      sanitizedRequestIdentityHash: requestIdentityHash,
+      routeLabel: "alpaca-v2-historical-quotes",
+    });
+    return createObservationLedgerEntry({
+      schemaVersion: 1,
+      executionId: "p1-10-replay-regression-source",
+      parentEntryIds: [basisEntry.entryId],
+      clock: { clockBasisId: basis.clockBasisId, wallTimeMs, monotonicTimeUs },
+      facts: {
+        kind: "acquisition.declared",
+        acquisitionObservationId,
+        provider: "alpaca",
+        retrievalAttemptId,
+        sanitizedRequestIdentityHash: requestIdentityHash,
+        routeLabel: "alpaca-v2-historical-quotes",
+      },
+    });
+  };
+  const prior = declaration("prior", 200, 1);
+  const regressing = declaration("regressing", 100, 2);
+  const witness = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: "p1-10-replay-regression-source",
+    parentEntryIds: [basisEntry.entryId, prior.entryId, regressing.entryId].sort(),
+    clock: regressing.clock,
+    facts: {
+      kind: "clock.regression",
+      priorEntryId: prior.entryId,
+      regressingEntryId: regressing.entryId,
+      priorWallTimeMs: 200,
+      currentWallTimeMs: 100,
+      monotonicOrderPreserved: true,
+    },
+  });
+  const original = validateObservationLedgerBundle([basisEntry, prior, regressing, witness]);
+  for (let pageSize = 1; pageSize <= original.length; pageSize += 1) {
+    const replayed = replayAcquisitionLedger(
+      original,
+      `p1-10-regression-replay-${pageSize}`,
+      pageSize,
+    );
+    const replayWitness = replayed.find((entry) => entry.facts.kind === "clock.regression");
+    assert.ok(replayWitness?.facts.kind === "clock.regression");
+    assert.equal(replayWitness.facts.priorWallTimeMs, 200);
+    assert.equal(replayWitness.facts.currentWallTimeMs, 100);
+    assert.ok(replayWitness.parentEntryIds.includes(replayWitness.facts.priorEntryId));
+    assert.ok(replayWitness.parentEntryIds.includes(replayWitness.facts.regressingEntryId));
+  }
 });
