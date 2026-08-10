@@ -47,14 +47,36 @@ test("the frozen local-validation manifest compiles deterministically with 200+ 
   assert.equal(result.count, 216);
   assert.match(result.digest, /^[0-9a-f]{64}$/u);
   const manifest = JSON.parse(readFileSync("config/local-validation/manifest.v1.json", "utf8")) as {
-    cases: Array<{ id: string; fixture: { sha256: string } }>;
+    cases: Array<{
+      id: string;
+      expectedTerminalDisposition: string;
+      fixture: { sha256: string };
+    }>;
     durableCheckpointPrefixes: string[];
     hardKillPoints: string[];
+    restartBindings: Array<{ prefixes: string[] }>;
+    hardKillBindings: Array<{ points: string[] }>;
+    permutationBindings: Array<{ vectors: Record<string, unknown> }>;
   };
   assert.equal(new Set(manifest.cases.map(({ id }) => id)).size, 216);
   assert.ok(manifest.cases.every(({ fixture }) => /^[0-9a-f]{64}$/u.test(fixture.sha256)));
-  assert.equal(manifest.durableCheckpointPrefixes.length, 20);
+  assert.ok(
+    manifest.cases.every(
+      ({ expectedTerminalDisposition }) =>
+        expectedTerminalDisposition === "executable-assertions-passed",
+    ),
+  );
+  assert.equal(manifest.durableCheckpointPrefixes.length, 22);
   assert.equal(manifest.hardKillPoints.length, 52);
+  assert.deepEqual(
+    [...new Set(manifest.restartBindings.flatMap(({ prefixes }) => prefixes))].sort(),
+    [...manifest.durableCheckpointPrefixes].sort(),
+  );
+  assert.deepEqual(
+    [...new Set(manifest.hardKillBindings.flatMap(({ points }) => points))].sort(),
+    [...manifest.hardKillPoints].sort(),
+  );
+  assert.ok(manifest.permutationBindings.length >= 4);
 });
 
 test("gate locking rejects overlap and recovers only a dead expired owner", () => {
@@ -106,6 +128,15 @@ test("concurrent stale-lock recoverers cannot unlink a newly acquired live claim
       outcomes.filter(({ stderr }) => /local-validation-gate-overlap/u.test(stderr)).length,
       1,
     );
+    assert.equal(existsSync(lockPath), false);
+    writeFileSync(
+      lockPath,
+      canonicalBytes({ schemaVersion: 1, pid: 2_147_483_647, createdAtMs: 1 }),
+      "utf8",
+    );
+    const forced = runProbe(["lock-forced-interleaving", lockPath]);
+    assert.equal(forced.status, 0, forced.stderr);
+    assert.equal(forced.stdout.trim(), "replacement-preserved");
     assert.equal(existsSync(lockPath), false);
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -280,7 +311,24 @@ test("memory and SQLite probes reconcile restarts, resources, orphans and exact 
       ),
     );
     assert.deepEqual(new Set(Object.values(result.effects)), new Set([0]));
-    assert.deepEqual(new Set(Object.values(result.cleanup)), new Set([0]));
+    for (const name of [
+      "orphanProcesses",
+      "extraHandles",
+      "workers",
+      "leases",
+      "sqliteFences",
+      "activeRetentionOperations",
+    ])
+      assert.equal(result.cleanup[name], 0, name);
+    assert.ok((result.cleanup["cleanupLatencyMs"] ?? -1) >= 0);
+
+    const credentialEffect = runProbe(["execute-credential-effect", directory]);
+    assert.notEqual(credentialEffect.status, 0);
+    assert.match(credentialEffect.stderr, /effects-ceiling-exceeded:/u);
+
+    const residue = runProbe(["execute-residue", directory]);
+    assert.notEqual(residue.status, 0);
+    assert.match(residue.stderr, /runtime-durable-residue-detected/u);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -293,7 +341,9 @@ test("approved hard-kill points terminate owned processes and recover all case v
     assert.equal(child.status, 0, child.stderr);
     const result = JSON.parse(child.stdout) as {
       status: string;
-      executableHardKillCaseCount: number;
+      boundSelectorCount: number;
+      executionCount: number;
+      pointClaims: string[];
       results: Array<{
         exitCode: number;
         testName: string;
@@ -302,7 +352,9 @@ test("approved hard-kill points terminate owned processes and recover all case v
       }>;
     };
     assert.equal(result.status, "passed");
-    assert.equal(result.executableHardKillCaseCount, 1);
+    assert.equal(result.boundSelectorCount, 1);
+    assert.equal(result.executionCount, 1);
+    assert.equal(result.pointClaims.length, 1);
     assert.ok(
       result.results.every(
         ({ exitCode, testName, auditedProcessCount, boundaryAuditSha256 }) =>

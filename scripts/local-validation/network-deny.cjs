@@ -13,11 +13,17 @@ const path = require("node:path");
 const fs = require("node:fs");
 
 let attempts = 0;
+let outboundTransportAttempts = 0;
+let deniedOutboundTransportAttempts = 0;
 const deniedBySurface = Object.create(null);
 const deniedSurfaces = [];
 const deny = (surface) => {
   const blocked = () => {
     attempts += 1;
+    if (!surface.startsWith("child_process.")) {
+      outboundTransportAttempts += 1;
+      deniedOutboundTransportAttempts += 1;
+    }
     deniedBySurface[surface] = (deniedBySurface[surface] ?? 0) + 1;
     const error = new Error(`peas-outbound-network-denied:${surface}`);
     error.code = "PEAS_NETWORK_DENIED";
@@ -94,6 +100,9 @@ globalThis.__PEAS_NETWORK_DENIAL__ = Object.freeze({
   childDenialInherited,
   deniedSurfaces: Object.freeze([...deniedSurfaces]),
   attempts: () => attempts,
+  outboundTransportAttempts: () => outboundTransportAttempts,
+  deniedOutboundTransportAttempts: () => deniedOutboundTransportAttempts,
+  successfulOutboundTransports: () => outboundTransportAttempts - deniedOutboundTransportAttempts,
 });
 
 const auditPath = process.env.PEAS_NETWORK_DENIAL_AUDIT_PATH;
@@ -109,9 +118,12 @@ if (auditPath) {
         pid: process.pid,
         ppid: process.ppid,
         childDenialInherited,
-        successfulOutboundTransports: 0,
+        outboundTransportAttempts,
+        deniedOutboundTransportAttempts,
+        successfulOutboundTransports: outboundTransportAttempts - deniedOutboundTransportAttempts,
         deniedBySurface,
         resourceUsage: usage,
+        memoryUsage: process.memoryUsage(),
         activeHandleKinds: handles.map((handle) => handle?.constructor?.name ?? "Unknown"),
       })}\n`,
       "utf8",

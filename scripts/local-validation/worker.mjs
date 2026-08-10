@@ -20,6 +20,7 @@ if (denialProbe !== "blocked") throw new Error("outbound-network-denial-probe-fa
 const firstBoot = provisionValidationRuntime(input.runtimeRoot, input.identity);
 const result = executeSyntheticMatrix(input.runtimeRoot, input.manifest, {
   ...(input.limit === null ? {} : { limit: input.limit }),
+  credentialPresentCount: credentialProof.present.length,
 });
 mkdirSync(dirname(input.outputPath), { recursive: true });
 writeFileSync(
@@ -30,7 +31,11 @@ writeFileSync(
     effectsProof: {
       credentialAndAccountAbsence: credentialProof,
       effectsAllowed: false,
-      successfulOutboundTransports: 0,
+      successfulOutboundTransports:
+        globalThis.__PEAS_NETWORK_DENIAL__.successfulOutboundTransports(),
+      outboundTransportAttempts: globalThis.__PEAS_NETWORK_DENIAL__.outboundTransportAttempts(),
+      deniedOutboundTransportAttempts:
+        globalThis.__PEAS_NETWORK_DENIAL__.deniedOutboundTransportAttempts(),
       deniedOutboundAttempts: globalThis.__PEAS_NETWORK_DENIAL__.attempts(),
       executableSourcesProviderFree: input.manifest.cases.every(
         ({ executable }) =>

@@ -6,26 +6,28 @@
   "orderPermutations": ["canonical", "reverse", "seeded-shuffle"],
   "pageSizes": [1, 2, 7, 10000],
   "durableCheckpointPrefixes": [
-    "layout-validated",
-    "authority-anchored",
-    "acquisition-declared",
-    "request-started",
-    "attempt-started",
-    "page-artifact-committed",
-    "page-proof-verified",
-    "page-ledger-committed",
-    "normalization-committed",
-    "derived-lineage-registered",
-    "ownership-registered",
-    "provider-denial-committed",
-    "tombstone-committed",
-    "erasure-attempt-committed",
-    "erasure-receipt-committed",
-    "receipt-revalidated",
-    "reconciliation-plan-committed",
-    "quarantine-action-committed",
-    "reconciliation-receipt-committed",
-    "terminal-committed"
+    "acquisition.declared",
+    "request.started",
+    "request.succeeded",
+    "artifact.committed",
+    "artifact.verified",
+    "checkpoint.advanced",
+    "chain.complete",
+    "normalization.started",
+    "normalization.emitted",
+    "selection.started",
+    "selection.recorded",
+    "failure.recorded",
+    "retention-stop-denials-committed",
+    "retention-plan-committed",
+    "retention-resources-settled",
+    "retention-erasure-attempt-started",
+    "retention-physical-erasure-complete",
+    "retention-tombstone-committed",
+    "retention-erasure-verified",
+    "retention-receipt-committed-reread",
+    "retention-checkpoint-committed-reread",
+    "retention-revalidation-committed-reread"
   ],
   "hardKillPoints": [
     "lease-file-installation",
@@ -81,6 +83,200 @@
     "sqlite-lease-transaction",
     "sqlite-completion-transaction"
   ],
+  "executableBindings": {
+    "restart": [
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state",
+        "prefixes": [
+          "acquisition.declared",
+          "request.started",
+          "request.succeeded",
+          "artifact.committed",
+          "artifact.verified",
+          "checkpoint.advanced",
+          "chain.complete",
+          "normalization.started",
+          "normalization.emitted",
+          "selection.started",
+          "selection.recorded"
+        ]
+      },
+      {
+        "sourcePath": "test/p1-10-wire-translation-contract.test.ts",
+        "testName": "every journal load independently rejects incomplete and terminal checkpoint mutation",
+        "prefixes": ["failure.recorded"]
+      },
+      {
+        "sourcePath": "test/p1-10-retention.test.ts",
+        "testName": "process hard-kill at every retention boundary converges without resurrection",
+        "prefixes": [
+          "retention-stop-denials-committed",
+          "retention-plan-committed",
+          "retention-resources-settled",
+          "retention-erasure-attempt-started",
+          "retention-physical-erasure-complete",
+          "retention-tombstone-committed",
+          "retention-erasure-verified",
+          "retention-receipt-committed-reread",
+          "retention-checkpoint-committed-reread",
+          "retention-revalidation-committed-reread"
+        ]
+      },
+      {
+        "sourcePath": "test/p1-10-retention.test.ts",
+        "testName": "receipt revalidation is memory/SQLite equivalent across every recovery prefix and restart",
+        "prefixes": [
+          "retention-plan-committed",
+          "retention-resources-settled",
+          "retention-erasure-attempt-started",
+          "retention-physical-erasure-complete",
+          "retention-erasure-verified",
+          "retention-revalidation-committed-reread"
+        ]
+      }
+    ],
+    "hardKill": [
+      {
+        "sourcePath": "test/artifact-vault.test.ts",
+        "testName": "store and lease hard-kill boundary matrix converges with exact evidence",
+        "supportsPointFilter": true,
+        "points": [
+          "lease-file-installation",
+          "lease-sqlite-claim",
+          "lease-record-sync",
+          "vault-directory-created:root",
+          "vault-directory-created:content",
+          "vault-directory-created:staging",
+          "vault-directory-created:snapshots",
+          "vault-directory-created:quarantine",
+          "vault-directory-created:locks",
+          "lease-sqlite-renewal",
+          "lease-file-renewal",
+          "attempt-commit",
+          "stage-create",
+          "stage-sync-close",
+          "install-intent-commit",
+          "content-link",
+          "content-sync",
+          "content-installed-transition",
+          "success-intent-transaction",
+          "stage-removal",
+          "stage-cleaned-transition",
+          "failure-abort-transaction"
+        ]
+      },
+      {
+        "sourcePath": "test/artifact-vault.test.ts",
+        "testName": "reconciliation hard-kill boundary matrix replays one deterministic action",
+        "supportsPointFilter": true,
+        "points": [
+          "reconciliation-call-opened",
+          "reconciliation-action-plan-commit",
+          "quarantine-link",
+          "quarantine-sync",
+          "quarantine-source-removal",
+          "quarantine-source-removed",
+          "quarantine-source-directory-sync",
+          "quarantine-target-hash",
+          "reconciliation-action-application-commit",
+          "reconciliation-call-receipt-commit",
+          "reconciliation-terminal-receipt-commit"
+        ]
+      },
+      {
+        "sourcePath": "test/artifact-vault.test.ts",
+        "testName": "verified-read hard-kill boundaries leave only recoverable snapshots",
+        "supportsPointFilter": true,
+        "points": [
+          "snapshot-create",
+          "snapshot-sync",
+          "snapshot-verification-complete",
+          "snapshot-removal"
+        ]
+      },
+      {
+        "sourcePath": "test/p1-10-retention.test.ts",
+        "testName": "process hard-kill at every retention boundary converges without resurrection",
+        "supportsPointFilter": false,
+        "points": [
+          "retention-stop-denials-committed",
+          "retention-plan-committed",
+          "retention-resources-settled",
+          "retention-erasure-attempt-started",
+          "retention-physical-erasure-complete",
+          "retention-tombstone-committed",
+          "retention-erasure-verified",
+          "retention-receipt-committed-reread",
+          "retention-checkpoint-committed-reread",
+          "retention-revalidation-committed-reread"
+        ]
+      },
+      {
+        "sourcePath": "test/sqlite-crash-recovery.test.ts",
+        "testName": "hard kills roll back append, commit, migration, lease, and completion transactions",
+        "supportsPointFilter": false,
+        "points": [
+          "sqlite-append-transaction",
+          "sqlite-processing-commit-transaction",
+          "sqlite-migration-transaction",
+          "sqlite-lease-transaction",
+          "sqlite-completion-transaction"
+        ]
+      }
+    ],
+    "permutations": [
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "abstract replay is invariant at page sizes 1, 2, 7, and 10,000",
+        "vectors": { "pageSizes": [1, 2, 7, 10000] }
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state",
+        "vectors": {
+          "backends": ["memory", "sqlite"],
+          "pageSizes": [1, 2, 7, 10000],
+          "directions": ["asc", "desc"],
+          "inputOrders": ["amber-cobalt-fern", "fern-amber-cobalt", "cobalt-fern-amber"]
+        }
+      },
+      {
+        "sourcePath": "test/market-reference-integration.test.ts",
+        "testName": "arrival order and duplicate redelivery cannot change a selected reference",
+        "vectors": {
+          "duplicate": ["original", "identical-redelivery"],
+          "orders": ["forward", "reverse"]
+        }
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "redelivery, mutation, and correction semantics preserve observations or quarantine",
+        "vectors": {
+          "duplicate": ["identical", "conflicting"],
+          "correction": ["supported", "unsupported"]
+        }
+      },
+      {
+        "sourcePath": "test/p1-10-wire-translation-contract.test.ts",
+        "testName": "identical bar redelivery deduplicates; conflicting same-key bytes quarantine in every order",
+        "vectors": {
+          "duplicate": ["identical", "conflicting"],
+          "orders": ["forward", "reverse"],
+          "terminal": ["deduplicated", "quarantined"]
+        }
+      },
+      {
+        "sourcePath": "test/p1-10-wire-translation-contract.test.ts",
+        "testName": "canonical output is invariant across page sizes, restart prefixes, property order, and backends",
+        "vectors": {
+          "pageSizes": [1, 2, 7, 10000],
+          "backends": ["memory", "sqlite"],
+          "propertyOrders": ["canonical", "reverse"]
+        }
+      }
+    ]
+  },
   "resourceCeilings": {
     "processingCpuMs": 15000,
     "diagnosticWallMs": 120000,

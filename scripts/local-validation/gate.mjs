@@ -87,10 +87,19 @@ async function run() {
         ? await executeHardKillMatrix(workspace, manifest)
         : {
             status: "not-executed-in-integration-probe",
-            executableHardKillCaseCount: 0,
+            boundSelectorCount: 0,
+            executionCount: 0,
+            pointClaims: [],
           };
     const zeroEffects = Object.values(result.effects).every((value) => value === 0);
-    const zeroCleanup = Object.values(result.cleanup).every((value) => value === 0);
+    const zeroCleanup = [
+      "orphanProcesses",
+      "extraHandles",
+      "workers",
+      "leases",
+      "sqliteFences",
+      "activeRetentionOperations",
+    ].every((name) => result.cleanup[name] === 0);
     const passed =
       result.status === "passed" &&
       zeroEffects &&
@@ -99,13 +108,19 @@ async function run() {
         (result.executedCaseCount === manifest.caseCount &&
           result.executionCount === manifest.caseCount * manifest.orderPermutations.length &&
           result.orderPermutationCount === manifest.orderPermutations.length &&
+          canonicalBytes(result.restartClaims) ===
+            canonicalBytes([...manifest.durableCheckpointPrefixes].sort()) &&
+          result.executedPermutationBindingCount ===
+            new Set(manifest.permutationBindings.map(({ caseId }) => caseId)).size &&
           result.productionResourceProofs.length > 0 &&
           result.resourceBoundaryResults.length === Object.keys(manifest.resourceCeilings).length &&
           result.resourceBoundaryResults.every(
             ({ exactAccepted, oneOverRejected }) => exactAccepted && oneOverRejected,
           ) &&
           hardKill.status === "passed" &&
-          hardKill.executableHardKillCaseCount === manifest.executableCoverage.hardKill.length));
+          hardKill.boundSelectorCount === manifest.hardKillBindings.length &&
+          canonicalBytes(hardKill.pointClaims) ===
+            canonicalBytes([...manifest.hardKillPoints].sort())));
     const decision =
       mode === "corpus" ? (passed ? "LOCAL_TEST_GO" : "LOCAL_TEST_NO_GO") : passed ? "GO" : "NO_GO";
     const report = {

@@ -28,24 +28,24 @@ self-tests and named provider suites, extracts literal `node:test` identities, p
 durability/equivalence/resource/effects cases, and freezes exactly 216 selectors. Each case contains:
 
 - a unique case ID and identity SHA-256;
-- category and expected terminal disposition;
+- source-module category and the observed terminal disposition `executable-assertions-passed`;
 - exact TypeScript source path, compiled JavaScript path, test name and anchored regex selector;
 - source-file SHA-256, byte size and media type;
 - a deterministic per-case seed.
 
-The five categories are `accepted-behavior`, `accepted-idempotence-or-revision`, `quarantine`,
-`retention-erasure`, and `fail-closed-rejection`. Dispositions are `accepted`,
-`accepted-deduplicated`, `accepted-corrected`, `terminal-quarantined`, `terminal-erased`, and
-`terminal-denied`. They are derived deterministically from the executable test identity; the test's
-production assertions remain authoritative.
+Categories identify the owning executable source module. The automation does not infer business
+outcomes from test-name substrings. A case earns `executable-assertions-passed` only after the exact
+digest-bound selector exits zero with exactly one selected test passing; the production assertions
+inside that selector remain authoritative.
 
 `executableCoverage` names the exact case IDs that execute memory/SQLite equivalence, restart and
 recovery, hard kills, page sizes, duplicate delivery, corrections/revisions, terminal behavior,
 reconciliation, exact/one-over resource bounds, ownership, erasure/tombstones and quarantine.
-Manifest verification rejects an empty required coverage class or fewer than three physical
-hard-kill test identities. The order permutations are canonical, reverse, and SHA-256 seeded; page
-sizes are 1, 2, 7, and 10,000. The durable prefixes and approved hard-kill points are immutable
-manifest inputs. The runner does not manufacture expected PEAS rows or multiply coverage claims.
+Separate restart, hard-kill and permutation bindings freeze each source digest, selector and exact
+vector. Verification requires the bound restart-prefix union and hard-kill-point union to equal
+their immutable matrix inputs. The order permutations are canonical, reverse, and SHA-256 seeded;
+bound page sizes are 1, 2, 7, and 10,000. The runner records claims only after the bound production
+selector passes; it does not manufacture expected PEAS rows or multiply coverage claims.
 
 `npm run manifest:local-validation` recompiles the manifest, compares its exact canonical bytes,
 verifies the adjacent digest, enforces 216 unique identities, re-hashes every source fixture and
@@ -58,9 +58,10 @@ Corpus and evidence commands require `PEAS_LOCAL_VALIDATION_CANDIDATE_SHA` and
 the exact package lock, Node/npm constraints and actual versions, SQLite version, ordered migration
 inventory and hashes, OS/release/architecture, timezone and monotonic/diagnostic clock basis.
 
-Every run atomically acquires an exclusive `wx` gate lock. A stale owner is recovered by atomically
-renaming the observed stale inode to a unique quarantine name before retrying, so concurrent
-recoverers cannot unlink a new live claim. Malformed, live, or unexpired locks fail closed.
+Every run acquires an exclusive hard-link claim with an unguessable owner token. Stale recovery first
+owns a fixed sibling recovery mutex, re-reads and byte-compares the stale claim, then renames it to a
+unique quarantine name before retrying. Release unlinks only a claim carrying the caller's token.
+Malformed, changed, live, unexpired or concurrently recovered locks fail closed.
 
 The gate creates one temporary `PEAS_RUNTIME_ROOT` containing `sqlite/`, `artifacts/{sha256,staging,
 snapshots,quarantine,locks}/`, and `evidence/`. It is removed only after child settlement.
@@ -75,9 +76,10 @@ A deliberate `.invalid` probe must produce `PEAS_NETWORK_DENIED` before case exe
 
 The parent and worker reject all enumerated credential/account variables. Executable source paths
 are provider-suite-free, `PEAS_EFFECTS_ALLOWED=false`, and production effect-policy tests are part of
-the frozen corpus. Successful network, provider, credential, account, broker, order, portfolio,
+the frozen corpus. Attempted and denied transports are counted at every installed surface and
+successful transport is their measured difference. Successful network, provider, credential, account, broker, order, portfolio,
 position, fill, spending and financial-effect totals must all be exactly zero. Denied attempts are
-reported separately and do not count as activity.
+reported separately and do not count as activity. Injected credential presence must be rejected.
 
 ## Execution, restarts, hard kills and resources
 
@@ -89,17 +91,21 @@ memory/SQLite, pagination, duplicate, correction, restart-prefix, reconciliation
 ownership, erasure, quarantine, physical-copy and integrity assertions identified by
 `executableCoverage`.
 
-The hard-kill gate executes the frozen hard-kill test selectors. Those tests spawn and terminate
-owned worker processes at their real durable checkpoints and prove recovery. The automation reports
-only executed selector identities and transcript hashes; it never substitutes serialized objects or
-multiplies one kill by the corpus size.
+The hard-kill gate executes every point-filterable bound selector once per exact approved point and
+executes the two bound all-points production matrices for retention and SQLite transactions. Those
+tests spawn and terminate owned worker processes at real durable checkpoints and prove recovery. The
+executed point-claim union must equal all 52 immutable points; source, child-audit and transcript
+hashes are reported.
 
-CPU, diagnostic wall time, RSS, heap, runtime storage and handle classes are sampled from the runner.
-Child PIDs are checked after settlement. Exact/one-over bound proof identities come from the executed
+CPU, diagnostic wall time, RSS, heap, runtime storage and handle classes are sampled from the runner
+and child audits. Child PIDs are checked after settlement. Remaining runtime files are inventoried;
+SQLite files receive an integrity check and lease, fence and active-retention tables are counted,
+while owned lock paths are counted independently. Exact/one-over bound proof identities come from the executed
 production tests. In addition, every automation ceiling is passed at its exact maximum and invoked
 again at maximum plus one through the same `enforceResourceCeilings` decision function; the latter
 must throw that ceiling's exact rejection. At the terminal decision there must be zero
-orphan child PIDs, extra workers, leases, SQLite fences and active retention operations. A failed
+orphan child PIDs, extra workers, leases, SQLite fences and active retention operations. Injected
+durable residue must be rejected. A failed
 production assertion, ceiling, cleanup, integrity or effects check is `LOCAL_TEST_NO_GO`.
 
 ## Evidence and decision

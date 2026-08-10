@@ -102,44 +102,44 @@ export function compileManifest(matrix) {
   const requiredCapability =
     /(?:hard.kill|memory.*SQLite|SQLite.*memory|every durable checkpoint|every recovery prefix|page size|page-size|input order|arrival order|duplicate|redeliver|correction|revision|retention|erasure|tombstone|ownership|quarantin|orphan|resource|lease|fence|cleanup|effect policy|credential ordering|ceiling|one-over)/iu;
   const smoke = sorted.filter(({ sourcePath }) => sourcePath === "test/acceptance.test.ts");
+  const requiredBindingKeys = new Set(
+    Object.values(matrix.executableBindings)
+      .flat()
+      .map(({ sourcePath, testName }) => `${sourcePath}\0${testName}`),
+  );
+  const bound = sorted.filter((entry) =>
+    requiredBindingKeys.has(`${entry.sourcePath}\0${entry.testName}`),
+  );
+  if (bound.length !== requiredBindingKeys.size) {
+    throw new Error("local-validation-binding-source-missing");
+  }
   const priority = sorted.filter(
     ({ sourcePath, testName }) =>
-      sourcePath !== "test/acceptance.test.ts" && requiredCapability.test(testName),
+      sourcePath !== "test/acceptance.test.ts" &&
+      !requiredBindingKeys.has(`${sourcePath}\0${testName}`) &&
+      requiredCapability.test(testName),
   );
   const priorityKeys = new Set(priority.map((entry) => `${entry.sourcePath}\0${entry.testName}`));
-  for (const entry of smoke) priorityKeys.add(`${entry.sourcePath}\0${entry.testName}`);
+  for (const entry of [...smoke, ...bound])
+    priorityKeys.add(`${entry.sourcePath}\0${entry.testName}`);
   const selected = [
     ...smoke,
+    ...bound,
     ...priority,
     ...sorted.filter((entry) => !priorityKeys.has(`${entry.sourcePath}\0${entry.testName}`)),
   ].slice(0, 216);
   if (selected.length !== 216) throw new Error("local-validation-executable-case-count-invalid");
-  const dispositionFor = (name) => {
-    if (/quarantin/u.test(name)) return "terminal-quarantined";
-    if (/(?:eras|delet|expir)/u.test(name)) return "terminal-erased";
-    if (/(?:den(?:y|ie)|reject|refus|fail.closed|invalid)/u.test(name)) return "terminal-denied";
-    if (/(?:duplicat|dedup|redeliver)/u.test(name)) return "accepted-deduplicated";
-    if (/(?:correct|revision|supersed)/u.test(name)) return "accepted-corrected";
-    return "accepted";
-  };
   const cases = selected.map((entry, index) => {
     const preimage = `${matrix.seed}:${entry.sourcePath}:${entry.testName}`;
-    const expectedTerminalDisposition = dispositionFor(entry.testName.toLowerCase());
-    const category =
-      expectedTerminalDisposition === "accepted"
-        ? "accepted-behavior"
-        : expectedTerminalDisposition.startsWith("accepted-")
-          ? "accepted-idempotence-or-revision"
-          : expectedTerminalDisposition === "terminal-quarantined"
-            ? "quarantine"
-            : expectedTerminalDisposition === "terminal-erased"
-              ? "retention-erasure"
-              : "fail-closed-rejection";
+    const category = entry.sourcePath
+      .replace(/^test\//u, "")
+      .replace(/\.test\.ts$/u, "")
+      .replace(/[^a-z0-9]+/giu, "-");
     return {
       id: `lv-v1-${String(index + 1).padStart(3, "0")}-${sha256(preimage).slice(0, 16)}`,
       identitySha256: sha256(`case:${preimage}`),
       category,
-      expectedTerminalDisposition,
+      expectedTerminalDisposition: "executable-assertions-passed",
       fixture: {
         identity: `${entry.sourcePath}#${entry.testName}`,
         sha256: entry.sourceSha256,
@@ -157,6 +157,19 @@ export function compileManifest(matrix) {
   });
   const selectors = (pattern) =>
     cases.filter(({ executable }) => pattern.test(executable.testName)).map(({ id }) => id);
+  const bind = (binding) => {
+    const caseEntry = cases.find(
+      ({ executable }) =>
+        executable.sourcePath === binding.sourcePath && executable.testName === binding.testName,
+    );
+    if (caseEntry === undefined) {
+      throw new Error(`local-validation-binding-selector-missing:${binding.testName}`);
+    }
+    return { ...binding, caseId: caseEntry.id, sourceSha256: caseEntry.fixture.sha256 };
+  };
+  const restartBindings = matrix.executableBindings.restart.map(bind);
+  const hardKillBindings = matrix.executableBindings.hardKill.map(bind);
+  const permutationBindings = matrix.executableBindings.permutations.map(bind);
   return {
     schemaVersion: 1,
     manifestId: matrix.manifestId,
@@ -178,8 +191,8 @@ export function compileManifest(matrix) {
     pageSizes: matrix.pageSizes,
     executableCoverage: {
       memorySqlite: selectors(/memory.*SQLite|SQLite.*memory/iu),
-      restart: selectors(/restart|recovery prefix|checkpoint/iu),
-      hardKill: selectors(/hard.kill/iu),
+      restart: [...new Set(restartBindings.map(({ caseId }) => caseId))],
+      hardKill: [...new Set(hardKillBindings.map(({ caseId }) => caseId))],
       pageSize: selectors(/page.size|pagination/iu),
       duplicate: selectors(/duplicat|dedup|redeliver/iu),
       correction: selectors(/correct|revision|supersed/iu),
@@ -190,6 +203,9 @@ export function compileManifest(matrix) {
       erasureTombstone: selectors(/eras|tombstone|retention/iu),
       quarantine: selectors(/quarantin/iu),
     },
+    restartBindings,
+    hardKillBindings,
+    permutationBindings,
     durableCheckpointPrefixes: matrix.durableCheckpointPrefixes,
     hardKillPoints: matrix.hardKillPoints,
     resourceCeilings: matrix.resourceCeilings,
@@ -226,6 +242,34 @@ export function verifyFrozenManifest(cwd = process.cwd()) {
   ) {
     throw new Error("local-validation-executable-coverage-incomplete");
   }
+  const exactSet = (values) => [...new Set(values)].sort();
+  const boundRestartPrefixes = exactSet(
+    manifest.restartBindings.flatMap(({ prefixes }) => prefixes),
+  );
+  const boundHardKillPoints = exactSet(manifest.hardKillBindings.flatMap(({ points }) => points));
+  if (
+    canonicalBytes(boundRestartPrefixes) !==
+      canonicalBytes(exactSet(manifest.durableCheckpointPrefixes)) ||
+    canonicalBytes(boundHardKillPoints) !== canonicalBytes(exactSet(manifest.hardKillPoints)) ||
+    manifest.permutationBindings.length < 4
+  ) {
+    throw new Error("local-validation-executable-binding-incomplete");
+  }
+  for (const binding of [
+    ...manifest.restartBindings,
+    ...manifest.hardKillBindings,
+    ...manifest.permutationBindings,
+  ]) {
+    const caseEntry = manifest.cases.find(({ id }) => id === binding.caseId);
+    if (
+      caseEntry === undefined ||
+      caseEntry.fixture.sha256 !== binding.sourceSha256 ||
+      caseEntry.executable.sourcePath !== binding.sourcePath ||
+      caseEntry.executable.testName !== binding.testName
+    ) {
+      throw new Error("local-validation-executable-binding-drift");
+    }
+  }
   return Object.freeze({ manifest, digest });
 }
 
@@ -242,14 +286,21 @@ function processExists(pid) {
 export function acquireGateLock(lockPath, options = {}) {
   const nowMs = options.nowMs ?? Date.now();
   const staleAfterMs = options.staleAfterMs ?? 6 * 60 * 60 * 1000;
+  const recoveryMutexPath = `${lockPath}.recovery`;
+  if (options.recoveryOwner !== true && existsSync(recoveryMutexPath)) {
+    throw new Error("local-validation-gate-recovery-overlap");
+  }
   mkdirSync(dirname(lockPath), { recursive: true });
-  const claimPath = `${lockPath}.claim.${process.pid}.${sha256(`${nowMs}:${Math.random()}`).slice(0, 12)}`;
+  const ownerToken = sha256(`${process.pid}:${nowMs}:${Math.random()}`);
+  const claimPath = `${lockPath}.claim.${process.pid}.${ownerToken.slice(0, 12)}`;
+  const claim = {
+    schemaVersion: 1,
+    pid: process.pid,
+    createdAtMs: nowMs,
+    ownerToken,
+  };
   try {
-    writeFileSync(
-      claimPath,
-      canonicalBytes({ schemaVersion: 1, pid: process.pid, createdAtMs: nowMs }),
-      { encoding: "utf8", flag: "wx" },
-    );
+    writeFileSync(claimPath, canonicalBytes(claim), { encoding: "utf8", flag: "wx" });
     try {
       linkSync(claimPath, lockPath);
     } finally {
@@ -267,20 +318,26 @@ export function acquireGateLock(lockPath, options = {}) {
     if (processExists(existing.pid) || nowMs - existing.createdAtMs <= staleAfterMs) {
       throw new Error("local-validation-gate-overlap");
     }
-    // Atomically move the exact stale inode out of the claim path. A competing
-    // recoverer can then only observe ENOENT or a newly created live lock; it
-    // can never unlink that new owner's claim.
-    const recoveryPath = `${lockPath}.stale.${process.pid}.${sha256(`${nowMs}:${Math.random()}`).slice(0, 12)}`;
+    options.onStaleObserved?.(existing);
     try {
-      renameSync(lockPath, recoveryPath);
-    } catch (renameError) {
-      if (renameError?.code === "ENOENT") return acquireGateLock(lockPath, options);
-      throw renameError;
+      mkdirSync(recoveryMutexPath);
+    } catch (mutexError) {
+      if (mutexError?.code === "EEXIST") {
+        throw new Error("local-validation-gate-recovery-overlap");
+      }
+      throw mutexError;
     }
+    const recoveryPath = `${lockPath}.stale.${process.pid}.${ownerToken.slice(0, 12)}`;
     try {
-      return acquireGateLock(lockPath, options);
+      const current = readJson(lockPath);
+      if (canonicalBytes(current) !== canonicalBytes(existing)) {
+        throw new Error("local-validation-gate-lock-changed-during-recovery");
+      }
+      renameSync(lockPath, recoveryPath);
+      return acquireGateLock(lockPath, { ...options, recoveryOwner: true });
     } finally {
       rmSync(recoveryPath, { force: true });
+      rmSync(recoveryMutexPath, { recursive: true, force: true });
     }
   }
   let released = false;
@@ -288,6 +345,10 @@ export function acquireGateLock(lockPath, options = {}) {
     release() {
       if (released) return;
       released = true;
+      const current = readJson(lockPath);
+      if (current.ownerToken !== ownerToken) {
+        throw new Error("local-validation-gate-release-owner-mismatch");
+      }
       rmSync(lockPath, { force: true });
     },
   });

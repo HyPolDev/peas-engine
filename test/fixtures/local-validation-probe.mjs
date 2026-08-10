@@ -59,6 +59,23 @@ if (operation === "manifest") {
   process.stdout.write("acquired\n");
   await new Promise((resolve) => setTimeout(resolve, 1_500));
   lock.release();
+} else if (operation === "lock-forced-interleaving") {
+  let replacement;
+  try {
+    acquireGateLock(argument, {
+      nowMs: 30_000_000,
+      staleAfterMs: 1,
+      onStaleObserved() {
+        replacement = acquireGateLock(argument, { nowMs: 30_000_001, staleAfterMs: 1 });
+      },
+    });
+    throw new Error("forced-interleaving-unexpectedly-acquired");
+  } catch (error) {
+    if (!/local-validation-gate-lock-changed-during-recovery/u.test(String(error))) throw error;
+  }
+  if (replacement === undefined) throw new Error("forced-interleaving-replacement-missing");
+  replacement.release();
+  process.stdout.write("replacement-preserved\n");
 } else if (operation === "runtime") {
   const root = argument;
   const identity = repositoryIdentity();
@@ -85,14 +102,31 @@ if (operation === "manifest") {
   provisionValidationRuntime(root, repositoryIdentity());
   const result = executeSyntheticMatrix(root, manifest, { limit: 2 });
   process.stdout.write(`${JSON.stringify(result)}\n`);
+} else if (operation === "execute-credential-effect") {
+  const root = argument;
+  const { manifest } = verifyFrozenManifest();
+  provisionValidationRuntime(root, repositoryIdentity());
+  executeSyntheticMatrix(root, manifest, { limit: 1, credentialPresentCount: 1 });
+} else if (operation === "execute-residue") {
+  const root = argument;
+  const { manifest } = verifyFrozenManifest();
+  provisionValidationRuntime(root, repositoryIdentity());
+  executeSyntheticMatrix(root, manifest, {
+    limit: 1,
+    beforeResidueInspection(caseRoot) {
+      const lockDirectory = join(caseRoot, "injected", "locks");
+      mkdirSync(lockDirectory, { recursive: true });
+      writeFileSync(join(lockDirectory, "leaked.lock"), "leak", "utf8");
+    },
+  });
 } else if (operation === "hard-kill") {
   const { manifest } = verifyFrozenManifest();
-  const hardKillCases = manifest.cases.filter(({ executable }) =>
-    /hard.kill/iu.test(executable.testName),
-  );
+  const binding = manifest.hardKillBindings[0];
+  const point = binding.points[0];
   const result = await executeHardKillMatrix(argument, {
     ...manifest,
-    cases: hardKillCases.slice(0, 1),
+    hardKillPoints: [point],
+    hardKillBindings: [{ ...binding, points: [point] }],
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);
 } else if (operation === "read") {
