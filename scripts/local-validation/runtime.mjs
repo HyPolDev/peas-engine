@@ -117,6 +117,41 @@ function seededOrder(cases, seed) {
   );
 }
 
+export function enforceResourceCeilings(resources, ceilings) {
+  for (const [name, maximum] of Object.entries(ceilings)) {
+    if (!Number.isFinite(resources[name]) || resources[name] < 0) {
+      throw new Error(`resource-measurement-invalid:${name}`);
+    }
+    if (resources[name] > maximum) throw new Error(`resource-ceiling-exceeded:${name}`);
+  }
+}
+
+export function executeResourceBoundaryVectors(ceilings) {
+  const baseline = Object.fromEntries(Object.keys(ceilings).map((name) => [name, 0]));
+  return Object.entries(ceilings).map(([name, maximum]) => {
+    const exact = { ...baseline, [name]: maximum };
+    enforceResourceCeilings(exact, ceilings);
+    const oneOver = { ...baseline, [name]: maximum + 1 };
+    let rejection = null;
+    try {
+      enforceResourceCeilings(oneOver, ceilings);
+    } catch (error) {
+      rejection = error instanceof Error ? error.message : String(error);
+    }
+    if (rejection !== `resource-ceiling-exceeded:${name}`) {
+      throw new Error(`resource-one-over-not-rejected:${name}`);
+    }
+    return {
+      name,
+      exactAccepted: true,
+      exactValue: maximum,
+      oneOverRejected: true,
+      oneOverValue: maximum + 1,
+      rejection,
+    };
+  });
+}
+
 function runExecutableCase(caseEntry, runtimeRoot, preload, order) {
   if (!existsSync(caseEntry.executable.compiledPath)) {
     throw new Error(`compiled-case-missing:${caseEntry.executable.compiledPath}`);
@@ -243,10 +278,9 @@ export function executeSyntheticMatrix(runtimeRoot, manifest, options = {}) {
     activeRetentionOperations: 0,
     cleanupLatencyMs: 0,
   };
-  for (const [name, maximum] of Object.entries(manifest.resourceCeilings)) {
-    if (resources[name] > maximum) throw new Error(`resource-ceiling-exceeded:${name}`);
-  }
-  const oneOverProofs = executions.filter(({ testName }) =>
+  enforceResourceCeilings(resources, manifest.resourceCeilings);
+  const resourceBoundaryResults = executeResourceBoundaryVectors(manifest.resourceCeilings);
+  const productionResourceProofs = executions.filter(({ testName }) =>
     /(?:ceiling|one-over|bound)/iu.test(testName),
   );
   const effects = Object.fromEntries(
@@ -262,7 +296,8 @@ export function executeSyntheticMatrix(runtimeRoot, manifest, options = {}) {
     executableProofSha256: sha256(canonicalBytes(executions)),
     totalDiagnosticWallMs: Math.ceil(performance.now() - startedWall),
     resources,
-    resourceOneOverProofs: oneOverProofs,
+    productionResourceProofs,
+    resourceBoundaryResults,
     effects,
     cleanup: {
       orphanProcesses: orphanPids.length,

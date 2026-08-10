@@ -54,6 +54,11 @@ if (operation === "manifest") {
   const lock = acquireGateLock(argument, { nowMs: 30_000_000, staleAfterMs: 1 });
   lock.release();
   process.stdout.write("recovered\n");
+} else if (operation === "lock-recover-hold") {
+  const lock = acquireGateLock(argument, { nowMs: 30_000_000, staleAfterMs: 1 });
+  process.stdout.write("acquired\n");
+  await new Promise((resolve) => setTimeout(resolve, 1_500));
+  lock.release();
 } else if (operation === "runtime") {
   const root = argument;
   const identity = repositoryIdentity();

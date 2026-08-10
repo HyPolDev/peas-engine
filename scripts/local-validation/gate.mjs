@@ -99,7 +99,11 @@ async function run() {
         (result.executedCaseCount === manifest.caseCount &&
           result.executionCount === manifest.caseCount * manifest.orderPermutations.length &&
           result.orderPermutationCount === manifest.orderPermutations.length &&
-          result.resourceOneOverProofs.length > 0 &&
+          result.productionResourceProofs.length > 0 &&
+          result.resourceBoundaryResults.length === Object.keys(manifest.resourceCeilings).length &&
+          result.resourceBoundaryResults.every(
+            ({ exactAccepted, oneOverRejected }) => exactAccepted && oneOverRejected,
+          ) &&
           hardKill.status === "passed" &&
           hardKill.executableHardKillCaseCount === manifest.executableCoverage.hardKill.length));
     const decision =

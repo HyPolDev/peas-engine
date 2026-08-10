@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -69,6 +69,44 @@ test("gate locking rejects overlap and recovers only a dead expired owner", () =
     assert.equal(stale.status, 0, stale.stderr);
     assert.equal(stale.stdout.trim(), "recovered");
     assert.equal(existsSync(path), false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("concurrent stale-lock recoverers cannot unlink a newly acquired live claim", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "peas-lv-lock-race-"));
+  const lockPath = join(directory, "gate.lock");
+  try {
+    writeFileSync(
+      lockPath,
+      canonicalBytes({ schemaVersion: 1, pid: 2_147_483_647, createdAtMs: 1 }),
+      "utf8",
+    );
+    const run = () =>
+      new Promise<{ code: number | null; stdout: string; stderr: string }>((resolvePromise) => {
+        const child = spawn(process.execPath, [probe, "lock-recover-hold", lockPath], {
+          cwd: process.cwd(),
+          windowsHide: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let stdout = "";
+        let stderr = "";
+        child.stdout.setEncoding("utf8").on("data", (chunk) => {
+          stdout += chunk;
+        });
+        child.stderr.setEncoding("utf8").on("data", (chunk) => {
+          stderr += chunk;
+        });
+        child.once("exit", (code) => resolvePromise({ code, stdout, stderr }));
+      });
+    const outcomes = await Promise.all([run(), run()]);
+    assert.equal(outcomes.filter(({ code }) => code === 0).length, 1);
+    assert.equal(
+      outcomes.filter(({ stderr }) => /local-validation-gate-overlap/u.test(stderr)).length,
+      1,
+    );
+    assert.equal(existsSync(lockPath), false);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -151,6 +189,33 @@ test("network denial is mandatory and blocks outbound APIs before cases", () => 
     );
     assert.notEqual(escaped.status, 0);
     assert.match(escaped.stderr, /peas-outbound-network-denied/u);
+    const surfaces = spawnSync(
+      process.execPath,
+      [
+        "--require",
+        preload,
+        "-e",
+        "console.log(JSON.stringify(globalThis.__PEAS_NETWORK_DENIAL__.deniedSurfaces))",
+      ],
+      { cwd: process.cwd(), encoding: "utf8", windowsHide: true },
+    );
+    assert.equal(surfaces.status, 0, surfaces.stderr);
+    const deniedSurfaces = JSON.parse(surfaces.stdout) as string[];
+    for (const required of [
+      "net.Socket.connect",
+      "tls.connect",
+      "http.request",
+      "https.request",
+      "http2.connect",
+      "dgram.createSocket",
+      "dns.lookup",
+      "dns.promises.resolve",
+      "fetch",
+      "WebSocket",
+      "child_process.exec",
+      "child_process.execSync",
+    ])
+      assert.ok(deniedSurfaces.includes(required), required);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -191,6 +256,11 @@ test("memory and SQLite probes reconcile restarts, resources, orphans and exact 
       executedCaseCount: number;
       executionCount: number;
       executableProofSha256: string;
+      resourceBoundaryResults: Array<{
+        exactAccepted: boolean;
+        oneOverRejected: boolean;
+        rejection: string;
+      }>;
       effects: Record<string, number>;
       cleanup: Record<string, number>;
       caseResults: Array<{ exitCode: number; sourcePath: string; testName: string }>;
@@ -201,6 +271,13 @@ test("memory and SQLite probes reconcile restarts, resources, orphans and exact 
     assert.ok(result.caseResults.every(({ exitCode }) => exitCode === 0));
     assert.ok(
       result.caseResults.every(({ sourcePath }) => sourcePath === "test/acceptance.test.ts"),
+    );
+    assert.equal(result.resourceBoundaryResults.length, 14);
+    assert.ok(
+      result.resourceBoundaryResults.every(
+        ({ exactAccepted, oneOverRejected, rejection }) =>
+          exactAccepted && oneOverRejected && /^resource-ceiling-exceeded:/u.test(rejection),
+      ),
     );
     assert.deepEqual(new Set(Object.values(result.effects)), new Set([0]));
     assert.deepEqual(new Set(Object.values(result.cleanup)), new Set([0]));
@@ -217,13 +294,22 @@ test("approved hard-kill points terminate owned processes and recover all case v
     const result = JSON.parse(child.stdout) as {
       status: string;
       executableHardKillCaseCount: number;
-      results: Array<{ exitCode: number; testName: string }>;
+      results: Array<{
+        exitCode: number;
+        testName: string;
+        auditedProcessCount: number;
+        boundaryAuditSha256: string;
+      }>;
     };
     assert.equal(result.status, "passed");
     assert.equal(result.executableHardKillCaseCount, 1);
     assert.ok(
       result.results.every(
-        ({ exitCode, testName }) => exitCode === 0 && /hard.kill/iu.test(testName),
+        ({ exitCode, testName, auditedProcessCount, boundaryAuditSha256 }) =>
+          exitCode === 0 &&
+          /hard.kill/iu.test(testName) &&
+          auditedProcessCount > 1 &&
+          /^[0-9a-f]{64}$/u.test(boundaryAuditSha256),
       ),
     );
   } finally {

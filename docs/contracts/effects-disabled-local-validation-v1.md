@@ -96,7 +96,9 @@ multiplies one kill by the corpus size.
 
 CPU, diagnostic wall time, RSS, heap, runtime storage and handle classes are sampled from the runner.
 Child PIDs are checked after settlement. Exact/one-over bound proof identities come from the executed
-production tests rather than constructed pass records. At the terminal decision there must be zero
+production tests. In addition, every automation ceiling is passed at its exact maximum and invoked
+again at maximum plus one through the same `enforceResourceCeilings` decision function; the latter
+must throw that ceiling's exact rejection. At the terminal decision there must be zero
 orphan child PIDs, extra workers, leases, SQLite fences and active retention operations. A failed
 production assertion, ceiling, cleanup, integrity or effects check is `LOCAL_TEST_NO_GO`.
 
