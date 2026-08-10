@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "project": "PEAS Engine",
-  "lastReviewed": "2026-07-30",
+  "lastReviewed": "2026-08-10",
   "operatingModel": {
     "execution": "GitHub Issues/Projects",
     "specification": "Repository docs, ADRs, fixtures, and evidence",
@@ -11,8 +11,8 @@
   "current": {
     "stage": "P1",
     "status": "in-progress",
-    "branch": "dev/pr-2f-p1-10-historical-sip-acquisition",
-    "codeBaselineCommit": "1061d0171b24d957214dbdeaf19d39b9f0e2fa6a",
+    "branch": "main",
+    "codeBaselineCommit": "e1d9c1a1cab6f9c1b974fac79b9c6c6ab4af6b3a",
     "planningBaselineCommit": "c51758a1058b86730e19185b98fcd448d9ff533a",
     "pr2cAuditPublicationCommit": "aaabdb416368aa349872bc5f1d6621362f6f3cde",
     "readinessIntegrationCommit": "e42300a42743143db4979d7103a31e9957c48b58",
@@ -21,8 +21,8 @@
     "pr2dPublishedHead": "fb150828c0fe5e1272c246f1889be02aab8b0d90",
     "pr2dMergeCommit": "ebe959324e48faf73c325a97ed9200bd6c76c9a6",
     "release": "v0.2.0-kernel-rc.2",
-    "focus": "Freeze and independently audit the authorized offline PR 2F historical SIP acquisition implementation against the immutable merged PR 2E contract",
-    "nextGate": "Freeze one clean PR 2F candidate, rerun complete exact-SHA offline local and hosted Ubuntu/Windows/scale gates, then obtain independent detached implementation review",
+    "focus": "P1-10 is complete and merged; prepare the next separately authorized P1-03/P1-04 source-capture and calendar gate without starting implementation",
+    "nextGate": "Human authorization must freeze the bounded P1-03/P1-04 read-only source and calendar scope; those dependencies then require their own implementation evidence and independent acceptance before P1-06 may begin",
     "estimatedWorkSessionsToP2Collection": 9,
     "elapsedTimeExclusions": [
       "Human and provider response time for P1-09",
@@ -274,24 +274,30 @@
         {
           "id": "P1-10",
           "title": "Delayed historical market-reference adapter",
-          "status": "in-progress",
-          "preparationStatus": "pr-2f-prefreeze-local-gates-green",
+          "status": "done",
+          "preparationStatus": "pr-2f-complete-merged",
           "authorization": "P1-09 COMPLETE; exact PR 2E timing-repair candidate f16ea4fcec1eda1126e9a3e446c77b76ddf15678 received external CONTRACT_GO and FINAL_PREMERGE_GO and was merged as bda45d8ef8f97c35dec614f79e5e3ca81a7bfe93; the owner authorized resumption of the preserved offline PR 2F implementation and the exact frozen retention architecture only; provider calls, witnesses, FMP transport, spending, P1-06, P2, outcomes, financial effects, and contract broadening remain unauthorized",
-          "contractCandidate": "accepted-base@038fb381963cd822d2e7f81e55d45d26f1d2c9e5; rejected-amendment@add3bc99862eaa2998b3dee0bbc0004b4b5f1e23; recurring-p0-rejected-amendment@1bdfe46947be842655bc630556163fc2c24f342e; wire-recurrence-closed-but-timing-gate-no-go@8f21b13b7d3ad837b89d715b625cc8db0dea6a1d; accepted-timing-repair@f16ea4fcec1eda1126e9a3e446c77b76ddf15678; merged@bda45d8ef8f97c35dec614f79e5e3ca81a7bfe93",
-          "contractReview": "ACCEPTED_BASE_GO; AMENDMENT_ADD3BC_CONTRACT_NO_GO; AMENDMENT_1BDFE469_CONTRACT_NO_GO_SAME_MATERIAL_FINDING_RECURRENCE; AMENDMENT_8F21B13B_WIRE_CLOSED_CONTRACT_NO_GO_TIMING_GATE_NOT_REPRODUCIBLE; AMENDMENT_F16EA4FC_CONTRACT_GO; FINAL_PREMERGE_GO; PR_2E_MERGED",
+          "contractCandidate": "accepted-base@038fb381963cd822d2e7f81e55d45d26f1d2c9e5; rejected-amendment@add3bc99862eaa2998b3dee0bbc0004b4b5f1e23; recurring-p0-rejected-amendment@1bdfe46947be842655bc630556163fc2c24f342e; wire-recurrence-closed-but-timing-gate-no-go@8f21b13b7d3ad837b89d715b625cc8db0dea6a1d; accepted-timing-repair@f16ea4fcec1eda1126e9a3e446c77b76ddf15678; pr-2e-merged@bda45d8ef8f97c35dec614f79e5e3ca81a7bfe93; pr-2f-final@d513da9b98c77f662929e2b792abca8d828841bb; pr-2f-merged@e1d9c1a1cab6f9c1b974fac79b9c6c6ab4af6b3a",
+          "contractReview": "ACCEPTED_BASE_GO; AMENDMENT_ADD3BC_CONTRACT_NO_GO; AMENDMENT_1BDFE469_CONTRACT_NO_GO_SAME_MATERIAL_FINDING_RECURRENCE; AMENDMENT_8F21B13B_WIRE_CLOSED_CONTRACT_NO_GO_TIMING_GATE_NOT_REPRODUCIBLE; AMENDMENT_F16EA4FC_CONTRACT_GO; PR_2E_FINAL_PREMERGE_GO; PR_2E_MERGED; PR_2F_REJECTED_CANDIDATES_PRESERVED; PR_2F_D513_INTERNAL_CONTRACT_GO; PR_2F_D513_EXTERNAL_CONTRACT_GO; PR_2F_D513_FINAL_PREMERGE_GO; PR_2F_MERGED",
           "contractReviewDocument": "external-audit-task@019f9dbb-d604-75c2-9447-18044f9b5c91",
           "pr2eFinalCandidate": "f16ea4fcec1eda1126e9a3e446c77b76ddf15678",
           "pr2eFinalTree": "f2fb2b35adb0a22265eaefc2dc6309fa2e4fb3b7",
           "pr2eMergeCommit": "bda45d8ef8f97c35dec614f79e5e3ca81a7bfe93",
-          "implementationResumeStatus": "authorized-offline-implementation-complete-prefreeze-gates-green",
-          "implementationBranch": "dev/pr-2f-p1-10-historical-sip-acquisition",
+          "implementationResumeStatus": "complete-merged",
+          "implementationBranch": "codex/p1-boundary-repair",
           "implementationCheckpoint": "da6bc096215ca8e4047fcac10fec3c1357589a91",
           "implementationCheckpointTree": "faa4d7bdaeb7c87c14b62aba9a51d9054fa1d825",
-          "pr2fCurrentStatus": "Merged PR 2E authority was integrated at 420b40a65dd2cec45e8bbeff726b800c8d9b0e5e with only the two authorized coordinator conflicts resolved. The offline PR 2F implementation and original-synthetic tests are complete; focused, complete test/coverage, format, lint, typecheck, build, mutation, hard-kill, reconciliation, memory/SQLite restart/every-prefix, and scale-10k pre-freeze evidence is green. Exact candidate freeze, clean same-SHA reruns, hosted evidence, and independent detached review remain pending.",
-          "repairStatus": "The accepted ADR-0009 clock-parent repair is preserved at 038fb381963cd822d2e7f81e55d45d26f1d2c9e5. External review of first amendment add3bc99862eaa2998b3dee0bbc0004b4b5f1e23 returned CONTRACT_NO_GO for non-immediate u handling and hostile-container traversal. Repaired candidate 1bdfe46947be842655bc630556163fc2c24f342e preserved all accepted bytes and passed local/hosted gates, but external re-review returned CONTRACT_NO_GO with SAME_MATERIAL_FINDING_RECURRENCE because group traversal depended on JSON insertion order and runChain modeled/encoded the whole semantic page before the u scan. Candidate 8f21b13b7d3ad837b89d715b625cc8db0dea6a1d closed that wire recurrence: independent audit reproduced focused 27/27, combined 53/53, and the complete 27-vector / 162-run memory-SQLite restart matrix with no wire finding. Its immutable final decision remained CONTRACT_NO_GO solely because the unrelated legacy 300-cluster wall-clock assertion failed two complete Windows coverage runs at 19,998 ms and 15,204 ms despite isolated and hosted passes. The owner authorized one timing-only repair that retains the exact 15,000 ms processing-work bound as deterministic process CPU time and exposes wall elapsed time / host-delay sensitivity diagnostically. Complete new-candidate local/hosted evidence and one fresh exact-SHA external review remain pending. A repeated timing failure or broader authority need stops work. Stopped PR 2F remains preserved at da6bc096215ca8e4047fcac10fec3c1357589a91 plus six untracked Lane E files until amendment merge and renewed Phase B direction",
+          "pr2fFinalCandidate": "d513da9b98c77f662929e2b792abca8d828841bb",
+          "pr2fFinalTree": "bc067d9ea3b7cc4edb6f7647560acd14307863a8",
+          "pr2fPullRequest": 9,
+          "pr2fHostedRun": 31350658054,
+          "pr2fMergeCommit": "e1d9c1a1cab6f9c1b974fac79b9c6c6ab4af6b3a",
+          "pr2fMergeTree": "bc067d9ea3b7cc4edb6f7647560acd14307863a8",
+          "pr2fCurrentStatus": "Complete. Exact candidate d513da9b98c77f662929e2b792abca8d828841bb, tree bc067d9ea3b7cc4edb6f7647560acd14307863a8, passed the complete unchanged offline package, same-SHA hosted Ubuntu, Windows, 10k, 100k, and reconciliation gates in run 31350658054, detached internal and external CONTRACT_GO, exact identity verification, and FINAL_PREMERGE_GO. Pull request #9 merged as e1d9c1a1cab6f9c1b974fac79b9c6c6ab4af6b3a with the reviewed tree unchanged.",
+          "repairStatus": "The accepted ADR-0009 clock-parent repair is preserved at 038fb381963cd822d2e7f81e55d45d26f1d2c9e5. External review of first amendment add3bc99862eaa2998b3dee0bbc0004b4b5f1e23 returned CONTRACT_NO_GO for non-immediate u handling and hostile-container traversal. Repaired candidate 1bdfe46947be842655bc630556163fc2c24f342e preserved all accepted bytes and passed local/hosted gates, but external re-review returned CONTRACT_NO_GO with SAME_MATERIAL_FINDING_RECURRENCE because group traversal depended on JSON insertion order and runChain modeled/encoded the whole semantic page before the u scan. Candidate 8f21b13b7d3ad837b89d715b625cc8db0dea6a1d closed that wire recurrence: independent audit reproduced focused 27/27, combined 53/53, and the complete 27-vector / 162-run memory-SQLite restart matrix with no wire finding. Its immutable final decision remained CONTRACT_NO_GO solely because the unrelated legacy 300-cluster wall-clock assertion failed two complete Windows coverage runs at 19,998 ms and 15,204 ms despite isolated and hosted passes. The owner authorized one timing-only repair that retains the exact 15,000 ms processing-work bound as deterministic process CPU time and exposes wall elapsed time / host-delay sensitivity diagnostically. The subsequent pending/stopped statements are preserved history and are superseded operationally by final PR 2F candidate d513da9b98c77f662929e2b792abca8d828841bb and verified merge e1d9c1a1cab6f9c1b974fac79b9c6c6ab4af6b3a.",
           "owner": "agent",
           "dependsOn": ["P1-08", "P1-09"],
-          "blocker": "PR 2F needs completion of the authorized offline implementation, complete exact-SHA local and hosted gates, independent implementation GO, final pre-merge identity verification, and merge",
+          "blocker": null,
           "contractBlocker": null,
           "preparationScope": "Agents may prepare the file-ownership map, accepted-contract mapping, synthetic and recorded acceptance vectors, bounded retry/quota/restart plan, secret-redaction tests, and pre-implementation audit without credentials, provider calls, live transport, or provider bytes.",
           "acceptance": "A bounded no-new-spend adapter stores private raw artifacts, verifies reads, normalizes market facts, deterministically selects references around the PR 2C observation anchor, and emits marketReferenceJoinKey or a stable missing reason while paid-plan activation is disabled.",
@@ -359,7 +365,20 @@
             "external-contract-go@f16ea4fcec1eda1126e9a3e446c77b76ddf15678",
             "final-premerge-go@f16ea4fcec1eda1126e9a3e446c77b76ddf15678",
             "pr-2e-merge@bda45d8ef8f97c35dec614f79e5e3ca81a7bfe93",
-            "pr-2f-resumed@da6bc096215ca8e4047fcac10fec3c1357589a91"
+            "pr-2f-resumed@da6bc096215ca8e4047fcac10fec3c1357589a91",
+            "pr-2f-contract-no-go@666dcd1b99bf49599d5865561c1e9b6b5c0b0ae5",
+            "pr-2f-contract-no-go@9488b1f198f5f45b531f0132aa02298e225da545",
+            "pr-2f-contract-no-go@eb8deea372c7f115074966ea5bf80c471ceea697",
+            "pr-2f-contract-no-go@f3bb708dfdc8faaa025c90978c808e79fae19e43",
+            "pr-2f-contract-no-go@5f339fc642827e48e7f54d91b59088a921b6f7a2",
+            "pr-2f-contract-no-go@ecb9929d8237df8bc81fe4df854b549b0ae6d0eb",
+            "pr-2f-final-candidate@d513da9b98c77f662929e2b792abca8d828841bb",
+            "pr-2f-final-tree@bc067d9ea3b7cc4edb6f7647560acd14307863a8",
+            "pr-2f-hosted-run@31350658054",
+            "pr-2f-internal-contract-go@d513da9b98c77f662929e2b792abca8d828841bb",
+            "pr-2f-external-contract-go@d513da9b98c77f662929e2b792abca8d828841bb",
+            "pr-2f-final-premerge-go@d513da9b98c77f662929e2b792abca8d828841bb",
+            "pr-2f-merge@e1d9c1a1cab6f9c1b974fac79b9c6c6ab4af6b3a"
           ]
         },
         {
@@ -368,9 +387,12 @@
           "status": "blocked",
           "owner": "integration-owner",
           "dependsOn": ["P1-03", "P1-04", "P1-05", "P1-10"],
-          "blocker": "Requires independently accepted PR 2E and PR 2F exact-SHA evidence, authorized and proven retention enforcement, green same-SHA Linux/Windows and 10k evidence, and independent completion of P1-03/P1-04",
+          "blocker": "PR 2E and PR 2F exact-SHA evidence, retention enforcement, and same-SHA Ubuntu/Windows/10k/100k gates are complete. P1-06 remains blocked until P1-03/P1-04 receive separately frozen authority, complete their own implementation and independent acceptance, and the readiness drill is explicitly authorized.",
           "acceptance": "A sustained read-only dry run survives restart, reconciliation, missed-window backfill, provider corrections, and clock regression; exports complete telemetry; recomputes identical frozen market references in memory and SQLite; respects quotas; records stable missing reasons; and creates zero dispatchable financial effects.",
-          "evidence": []
+          "evidence": [
+            "pr-2f-final-candidate@d513da9b98c77f662929e2b792abca8d828841bb",
+            "pr-2f-merge@e1d9c1a1cab6f9c1b974fac79b9c6c6ab4af6b3a"
+          ]
         }
       ]
     },

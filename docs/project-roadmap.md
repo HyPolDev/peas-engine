@@ -68,6 +68,16 @@ Do not maintain task state independently in Linear, Notion, and GitHub.
   `36dcf92b465fc5708614718b4312631fb5dbf544`, recorded in
   [`docs/audit/p1-09-final-go.md`](audit/p1-09-final-go.md). P1-10 is ready strictly within the
   frozen boundary; P2 remains blocked behind P1-10 and P1-06.
+- P1-10 is complete. Offline repair candidate
+  `d513da9b98c77f662929e2b792abca8d828841bb`, tree
+  `bc067d9ea3b7cc4edb6f7647560acd14307863a8`, passed the complete unchanged local package and
+  same-SHA hosted Ubuntu, Windows, 10k, 100k, and reconciliation gates in
+  [run `31350658054`](https://github.com/HyPolDev/peas-engine/actions/runs/31350658054). Detached
+  internal and external review returned `CONTRACT_GO`, final review returned
+  `FINAL_PREMERGE_GO`, and pull request
+  [`#9`](https://github.com/HyPolDev/peas-engine/pull/9) merged as
+  `e1d9c1a1cab6f9c1b974fac79b9c6c6ab4af6b3a` with the reviewed tree unchanged. All rejected
+  candidates and their `CONTRACT_NO_GO` decisions remain historical evidence.
 - PR 2D merged as pull request
   [`#6`](https://github.com/HyPolDev/peas-engine/pull/6) at
   `ebe959324e48faf73c325a97ed9200bd6c76c9a6`. Exact published head
@@ -223,6 +233,26 @@ preserved PR 2F checkpoint `da6bc096215ca8e4047fcac10fec3c1357589a91`, tree
 does not authorize provider calls, credentials or account inspection, FMP transport, spending,
 P1-06, P2, outcomes, financial effects, or any contract expansion.
 
+PR 2F is now complete and merged. Its finding-only lifecycle preserved rejected candidates
+`666dcd1b99bf49599d5865561c1e9b6b5c0b0ae5`,
+`9488b1f198f5f45b531f0132aa02298e225da545`,
+`eb8deea372c7f115074966ea5bf80c471ceea697`,
+`f3bb708dfdc8faaa025c90978c808e79fae19e43`,
+`5f339fc642827e48e7f54d91b59088a921b6f7a2`, and
+`ecb9929d8237df8bc81fe4df854b549b0ae6d0eb` as immutable `CONTRACT_NO_GO` history. The final exact
+candidate `d513da9b98c77f662929e2b792abca8d828841bb`, tree
+`bc067d9ea3b7cc4edb6f7647560acd14307863a8`, passed all unchanged local and hosted gates, detached
+internal and external `CONTRACT_GO`, and `FINAL_PREMERGE_GO`. Pull request #9 merged as
+`e1d9c1a1cab6f9c1b974fac79b9c6c6ab4af6b3a`; its merge tree is byte-identical to the reviewed
+candidate. No provider, account, credential, spending, or financial-effect call was made during
+the repair.
+
+The next project decision gate is separate from this completed repair: the human owner must freeze
+and authorize the exact bounded P1-03/P1-04 read-only source-capture and calendar scope. Those tasks
+must then produce their own implementation, restart, provenance, and independent acceptance
+evidence. Only after P1-03 and P1-04 are independently complete may a separately authorized P1-06
+readiness drill begin. P2 remains blocked until P1-06 receives an independent readiness `GO`.
+
 ### Post-PR 2D next actions
 
 PR 2D is complete and merged. The active critical path is now P1-09 -> P1-10 -> P1-06 -> P2. Work
@@ -234,8 +264,8 @@ must follow the order below; parallel preparation does not waive a gate.
 | 2     | Independently audit the frozen P1-09 authorization             | Integration owner plus fresh independent reviewer | Complete                                                                                           | Exact candidate `36dcf92b...` received `GO`; P1-09 is complete                                                                                                                                                                                    |
 | 3     | Prepare PR 2E, the P1-10 contract package                      | Agents with non-overlapping ownership             | Complete and merged at `bda45d8e...`                                                               | Exact candidate `f16ea4f...`, tree `f2fb2b35...`, passed complete local/hosted gates, external `CONTRACT_GO`, and `FINAL_PREMERGE_GO`; accepted contract and audit bytes are immutable in PR 2F                                                   |
 | 4     | Resolve the retention architecture authorization gate          | Human owner                                       | Complete for the exact frozen architecture                                                         | Preserve the owner-authorized maintenance port, additive migration, controlled vault-root erasure, tombstone/use-denial semantics, and exact retention sequence; no scope expansion                                                               |
-| 5     | Implement PR 2F against merged PR 2E                           | Current sole PR 2F implementation owner           | Implementation complete; pre-freeze local gates green                                              | Freeze one clean exact candidate, rerun complete same-SHA local/hosted gates, obtain independent detached implementation `GO`, complete the final pre-merge verification, and merge; no provider call, FMP transport, fallback, or paid-plan path |
-| 6     | Complete live read-only source capture and calendar prewarming | Non-overlapping source and calendar owners        | Only where provider/account authorization is already explicit; market-data portions wait for P1-10 | Bounded SEC/FMP/issuer-IR capture as authorized, issuer allowlist, schedule provenance, restart/backfill evidence, and no dispatchable financial effects                                                                                          |
+| 5     | Implement PR 2F against merged PR 2E                           | Current sole PR 2F implementation owner           | Complete and merged as PR #9 at `e1d9c1a...`                                                        | Exact candidate `d513da9...`, tree `bc067d9...`, passed unchanged local and hosted gates, internal/external `CONTRACT_GO`, and `FINAL_PREMERGE_GO`; reviewed bytes merged unchanged                                                             |
+| 6     | Complete live read-only source capture and calendar prewarming | Non-overlapping source and calendar owners        | Blocked pending a separately frozen human authorization for the exact P1-03/P1-04 scope             | Bounded SEC/FMP/issuer-IR capture as authorized, issuer allowlist, schedule provenance, restart/backfill evidence, independent acceptance, and no dispatchable financial effects                                                               |
 | 7     | Run P1-06 integrated readiness drill                           | Integration owner plus fresh auditor              | After P1-03, P1-04, P1-05, and P1-10 are independently complete                                    | Same-SHA Linux/Windows and 10k evidence; complete synthetic matrix; retention enforcement; restart/replay and memory/SQLite equivalence; binary readiness `GO`                                                                                    |
 | 8     | Collect and freeze P2                                          | Collection agents, then research owner            | Blocked until P1-06 independent `GO`                                                               | Exactly the prospectively frozen 180-cluster cohort, fixed denominators, immutable dataset manifest, code/config/entitlement identities, and completeness report before conclusions                                                               |
 | 9     | Execute the event-validation analysis                          | Research owner plus independent reviewer          | Blocked until the dataset freeze                                                                   | Reproducible frozen-metric report and binary decision on whether the evidence justifies any later data, model, or market-access investment                                                                                                        |
@@ -278,10 +308,10 @@ frozen cohort calendar.
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
 | 1. P1-09 evidence intake and decision inventory  | Complete                                                                                                                                       | Human owner froze the source decision and accepted residual interpretation risk                                          | Owner authorization and opaque private-evidence digest are recorded                                              |
 | 2. P1-09 snapshot independent audit              | Complete                                                                                                                                       | All identities and authorization boundaries independently reproduced                                                     | `GO` for exact candidate `36dcf92b...`; P1-09 closed                                                             |
-| 3. P1-10 recorded/offline implementation package | Freeze file ownership, adapter boundary, bounded acquisition state machine, retry/quota rules, secret-redaction policy, and acceptance vectors | Loader, replay, and fault-injection test owners prepare synthetic harnesses                                              | Independent contract/pre-implementation `GO`; still no live provider access                                      |
-| 4. P1-10 approved acquisition implementation     | Implement the exact approved feed and private raw-artifact capture path                                                                        | Separate owners implement transport, entitlement preflight, and bounded pagination/retry logic without overlapping files | Focused tests prove no unapproved feed, fallback, spend, credential echo, or partial trusted output              |
-| 5. P1-10 integration, restart, and final audit   | Connect verified artifacts to the merged PR 2D normalization/selection boundary                                                                | Memory/SQLite, restart, correction, page-size, quota, and provider-unavailability testing run concurrently               | Full evidence as authorized, exact-SHA CI, and independent implementation `GO`                                   |
-| 6. P1-03/P1-04 source and calendar completion    | Complete authorized SEC/FMP/issuer-IR capture and calendar prewarming                                                                          | Source owners work independently while the calendar owner freezes allowlist and schedule provenance                      | Bounded capture, missed-window backfill, deterministic normalization, and schedule/restart evidence              |
+| 3. P1-10 recorded/offline implementation package | Complete                                                                                                                                       | Original-synthetic loader, replay, fault-injection, and restart harnesses preserved                                       | Accepted PR 2E contract and immutable finding history                                                            |
+| 4. P1-10 approved acquisition implementation     | Complete                                                                                                                                       | Finding-only repairs preserved every prior closure and restriction                                                       | No unapproved feed, fallback, spend, credential echo, or partial trusted output                                  |
+| 5. P1-10 integration, restart, and final audit   | Complete and merged as PR #9                                                                                                                    | Exact-SHA local/hosted evidence plus detached internal, external, and final review                                        | Candidate `d513da9...` merged byte-identically as `e1d9c1a...`                                                   |
+| 6. P1-03/P1-04 source and calendar completion    | Await a separately frozen human authorization, then complete only that approved scope                                                          | Source and calendar owners may prepare no live work before the decision gate                                             | Bounded capture, missed-window backfill, deterministic normalization, restart evidence, and independent `GO`     |
 | 7. P1-06 drill preparation and rehearsal         | Assemble one deployment candidate and rehearse restart, reconciliation, outage, correction, and clock-regression procedures entirely read-only | Evidence owner prepares completeness, quota, replay, and zero-effects reports                                            | Exact drill candidate, frozen configuration, selected scheduled window, and preflight `GO`                       |
 | 8. P1-06 scheduled-window execution              | Observe one complete eligible window and exercise controlled recovery cases                                                                    | Independent observer records deviations without changing thresholds or acceptance criteria                               | Complete window evidence, stable missing reasons, verified raw artifacts, and memory/SQLite replay equality      |
 | 9. P1-06 final audit and P2 launch package       | Independently audit the drill and freeze collection deployment/configuration                                                                   | Collection and dataset-freeze owners rehearse the 180-cluster manifest with synthetic identities                         | Binary readiness `GO`, P2 runbook, monitoring/stop rules, private-storage plan, and collection authorization     |
