@@ -1,11 +1,10 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  closeSync,
   existsSync,
   lstatSync,
+  linkSync,
   mkdirSync,
-  openSync,
   renameSync,
   readFileSync,
   readdirSync,
@@ -244,14 +243,20 @@ export function acquireGateLock(lockPath, options = {}) {
   const nowMs = options.nowMs ?? Date.now();
   const staleAfterMs = options.staleAfterMs ?? 6 * 60 * 60 * 1000;
   mkdirSync(dirname(lockPath), { recursive: true });
+  const claimPath = `${lockPath}.claim.${process.pid}.${sha256(`${nowMs}:${Math.random()}`).slice(0, 12)}`;
   try {
-    const descriptor = openSync(lockPath, "wx");
     writeFileSync(
-      descriptor,
+      claimPath,
       canonicalBytes({ schemaVersion: 1, pid: process.pid, createdAtMs: nowMs }),
+      { encoding: "utf8", flag: "wx" },
     );
-    closeSync(descriptor);
+    try {
+      linkSync(claimPath, lockPath);
+    } finally {
+      rmSync(claimPath, { force: true });
+    }
   } catch (error) {
+    rmSync(claimPath, { force: true });
     if (error?.code !== "EEXIST") throw error;
     let existing;
     try {
