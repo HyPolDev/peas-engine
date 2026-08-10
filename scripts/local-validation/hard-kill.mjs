@@ -26,6 +26,9 @@ function executeBinding(workspace, manifest, binding, point) {
   }
   const caseEnvironment = { ...process.env };
   delete caseEnvironment.NODE_TEST_CONTEXT;
+  // Process-kill contracts deliberately refuse V8 coverage instrumentation.
+  // A coverage parent must not turn an owned hard-kill execution into a skip.
+  delete caseEnvironment.NODE_V8_COVERAGE;
   const executionId = `${caseEntry.id}-${sha256(point ?? "all-points").slice(0, 12)}`;
   const auditPath = join(workspace, `${executionId}.hard-kill-boundary-audit.jsonl`);
   rmSync(auditPath, { force: true });
