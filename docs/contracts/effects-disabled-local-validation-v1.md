@@ -175,6 +175,8 @@ PEAS_LOCAL_VALIDATION_CANDIDATE_TREE=<exact frozen tree>
 the integration probe, formatting, lint, typecheck, build, unchanged unit/integration/restart tests,
 coverage, reconciliation, mutation, hard-kill, scale, and the unmodified `npm run check`. It stores
 the exact command, exit code, signal, elapsed time and complete stdout/stderr transcript. The bundle
+uses a 60-minute diagnostic wrapper timeout per repository command; this does not alter any PEAS CPU,
+resource, deadline, cleanup, or correctness assertion inside that command. The bundle
 also contains platform identity, candidate identity, input/migration digests, effects totals, a
 complete regular-file inventory, per-file sizes and hashes, an inventory hash and root bundle hash.
 `evidence:verify` recalculates all hashes and rejects missing, added, changed, linked or non-regular

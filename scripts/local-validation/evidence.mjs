@@ -73,7 +73,7 @@ function bundle() {
           PEAS_LOCAL_VALIDATION_CANDIDATE_SHA: identity.sha,
           PEAS_LOCAL_VALIDATION_CANDIDATE_TREE: identity.tree,
         },
-        timeout: 30 * 60 * 1000,
+        timeout: 60 * 60 * 1000,
         maxBuffer: 64 * 1024 * 1024,
       });
       const transcriptPath = `commands/${name}.log`;
