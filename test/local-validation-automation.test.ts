@@ -54,7 +54,7 @@ test("the frozen local-validation manifest compiles deterministically with 200+ 
   assert.equal(new Set(manifest.cases.map(({ id }) => id)).size, 216);
   assert.ok(manifest.cases.every(({ fixture }) => /^[0-9a-f]{64}$/u.test(fixture.sha256)));
   assert.equal(manifest.durableCheckpointPrefixes.length, 20);
-  assert.equal(manifest.hardKillPoints.length, 12);
+  assert.equal(manifest.hardKillPoints.length, 52);
 });
 
 test("gate locking rejects overlap and recovers only a dead expired owner", () => {
