@@ -1,3 +1,4 @@
+import { P1_10_TEST_AUTHORITY } from "../../../internal-test-authority.js";
 import { canonicalJson } from "../../../core/json.js";
 import type {
   ArtifactRetentionJournal,
@@ -7,9 +8,12 @@ import type {
   RetentionOwnership,
   RetentionProviderLane,
   RetentionReceipt,
+  RetentionReceiptRevalidation,
   RetentionStopEvent,
   RetentionTombstone,
 } from "./contracts.js";
+
+const ownedMemoryRetentionJournals = new WeakSet<object>();
 
 function replayEqual(label: string, existing: unknown, next: unknown): void {
   if (canonicalJson(existing as never) !== canonicalJson(next as never))
@@ -18,6 +22,7 @@ function replayEqual(label: string, existing: unknown, next: unknown): void {
 
 export class MemoryArtifactRetentionJournal implements ArtifactRetentionJournal {
   readonly #ownership = new Map<string, RetentionOwnership>();
+  readonly #derivedOwnership = new Map<string, Set<string>>();
   readonly #stops = new Map<string, RetentionStopEvent>();
   readonly #providerDenials = new Set<string>();
   readonly #digestDenials = new Set<string>();
@@ -26,19 +31,65 @@ export class MemoryArtifactRetentionJournal implements ArtifactRetentionJournal 
   readonly #attempts = new Map<string, RetentionErasureAttempt>();
   readonly #tombstones = new Map<string, RetentionTombstone>();
   readonly #receipts = new Map<string, RetentionReceipt>();
+  readonly #receiptRevalidations = new Map<string, RetentionReceiptRevalidation>();
+  readonly #revalidationCheckpoints = new Map<string, RetentionCheckpoint>();
   readonly #checkpoints = new Map<string, RetentionCheckpoint>();
 
-  registerOwnership(value: RetentionOwnership): void {
+  registerOwnershipAndApplyActiveStop(value: RetentionOwnership): boolean {
     const existing = this.#ownership.get(value.ownershipId);
     if (existing !== undefined) replayEqual("Ownership", existing, value);
     else this.#ownership.set(value.ownershipId, structuredClone(value));
+    const lineage = this.#derivedOwnership.get(value.ownershipId) ?? new Set<string>();
+    for (const derivedId of value.derivedIds) lineage.add(derivedId);
+    this.#derivedOwnership.set(value.ownershipId, lineage);
+    const denied = this.providerUseDenied(value.providerLane, value.providerId);
+    if (denied) {
+      this.#digestDenials.add(value.artifactDigest);
+      for (const derivedId of value.derivedIds) this.#derivedDenials.add(derivedId);
+    }
+    return !denied;
+  }
+
+  registerDerivedLineageAndApplyActiveStop(
+    ownershipId: string,
+    derivedIds: readonly string[],
+  ): boolean {
+    const ownership = this.#ownership.get(ownershipId);
+    if (ownership === undefined) throw new Error("Retention ownership is missing");
+    const lineage = this.#derivedOwnership.get(ownershipId) ?? new Set<string>();
+    for (const derivedId of derivedIds) lineage.add(derivedId);
+    this.#derivedOwnership.set(ownershipId, lineage);
+    const denied = this.providerUseDenied(ownership.providerLane, ownership.providerId);
+    if (denied) for (const derivedId of derivedIds) this.#derivedDenials.add(derivedId);
+    return !denied;
+  }
+
+  #withDerived(value: RetentionOwnership): RetentionOwnership {
+    return {
+      ...structuredClone(value),
+      derivedIds: [...(this.#derivedOwnership.get(value.ownershipId) ?? [])].sort(),
+    };
   }
 
   listOwnership(lane: RetentionProviderLane, providerId: string): readonly RetentionOwnership[] {
     return [...this.#ownership.values()]
       .filter((value) => value.providerLane === lane && value.providerId === providerId)
       .sort((left, right) => left.ownershipId.localeCompare(right.ownershipId))
-      .map((value) => structuredClone(value));
+      .map((value) => this.#withDerived(value));
+  }
+
+  ownershipForDigest(digest: string): readonly RetentionOwnership[] {
+    return [...this.#ownership.values()]
+      .filter((value) => value.artifactDigest === digest)
+      .sort((left, right) => left.ownershipId.localeCompare(right.ownershipId))
+      .map((value) => this.#withDerived(value));
+  }
+
+  ownershipForDerivedId(derivedId: string): readonly RetentionOwnership[] {
+    return [...this.#ownership.values()]
+      .filter((value) => this.#derivedOwnership.get(value.ownershipId)?.has(derivedId) === true)
+      .sort((left, right) => left.ownershipId.localeCompare(right.ownershipId))
+      .map((value) => this.#withDerived(value));
   }
 
   recordStopAndDenials(stop: RetentionStopEvent, derivedIds: readonly string[]): void {
@@ -54,6 +105,12 @@ export class MemoryArtifactRetentionJournal implements ArtifactRetentionJournal 
   providerUseDenied(lane: RetentionProviderLane, providerId: string): boolean {
     return this.#providerDenials.has(`${lane}:${providerId}`);
   }
+  reconciliationUseDenied(trustedNowMs: number): boolean {
+    return (
+      this.#providerDenials.size > 0 ||
+      [...this.#ownership.values()].some((ownership) => trustedNowMs >= ownership.expiresAtMs)
+    );
+  }
   digestUseDenied(digest: string): boolean {
     return this.#digestDenials.has(digest) || this.#tombstones.has(digest);
   }
@@ -68,6 +125,10 @@ export class MemoryArtifactRetentionJournal implements ArtifactRetentionJournal 
   }
   getPlan(planId: string): RetentionErasurePlan | undefined {
     const value = this.#plans.get(planId);
+    return value === undefined ? undefined : structuredClone(value);
+  }
+  getPlanForStop(stopEventId: string): RetentionErasurePlan | undefined {
+    const value = [...this.#plans.values()].find((plan) => plan.stopEventId === stopEventId);
     return value === undefined ? undefined : structuredClone(value);
   }
 
@@ -102,6 +163,85 @@ export class MemoryArtifactRetentionJournal implements ArtifactRetentionJournal 
     return value === undefined ? undefined : structuredClone(value);
   }
 
+  recordReceiptRevalidation(value: RetentionReceiptRevalidation): void {
+    const existing = this.#receiptRevalidations.get(value.revalidationId);
+    if (existing !== undefined) {
+      replayEqual("Receipt revalidation", existing, value);
+      return;
+    }
+    const sameSequence = [...this.#receiptRevalidations.values()].find(
+      (member) => member.planId === value.planId && member.sequence === value.sequence,
+    );
+    if (sameSequence !== undefined) {
+      throw new Error("Receipt revalidation conflicts with immutable retention evidence");
+    }
+    if (
+      [...this.#receiptRevalidations.values()].some(
+        (member) => member.receipt.receiptId === value.receipt.receiptId,
+      )
+    ) {
+      throw new Error("Receipt revalidation conflicts with immutable retention evidence");
+    }
+    this.#receiptRevalidations.set(value.revalidationId, structuredClone(value));
+  }
+  receiptRevalidationsForPlan(planId: string): readonly RetentionReceiptRevalidation[] {
+    return [...this.#receiptRevalidations.values()]
+      .filter((value) => value.planId === planId)
+      .sort((left, right) => left.sequence - right.sequence)
+      .map((value) => structuredClone(value));
+  }
+
+  recordReceiptRevalidationAndCheckpoint(
+    value: RetentionReceiptRevalidation,
+    checkpoint: RetentionCheckpoint,
+  ): void {
+    if (
+      checkpoint.planId !== value.planId ||
+      checkpoint.receiptId !== value.receipt.receiptId ||
+      checkpoint.sequence !== value.sequence ||
+      checkpoint.completedAtMs !== value.receipt.completedAtMs
+    ) {
+      throw new Error(
+        "Receipt revalidation checkpoint conflicts with immutable retention evidence",
+      );
+    }
+    const existingRevalidation = this.#receiptRevalidations.get(value.revalidationId);
+    if (existingRevalidation !== undefined) {
+      replayEqual("Receipt revalidation", existingRevalidation, value);
+    } else if (
+      [...this.#receiptRevalidations.values()].some(
+        (member) =>
+          (member.planId === value.planId && member.sequence === value.sequence) ||
+          member.receipt.receiptId === value.receipt.receiptId,
+      )
+    ) {
+      throw new Error("Receipt revalidation conflicts with immutable retention evidence");
+    }
+    const existingCheckpoint = this.#revalidationCheckpoints.get(checkpoint.checkpointId);
+    if (existingCheckpoint !== undefined) {
+      replayEqual("Revalidation checkpoint", existingCheckpoint, checkpoint);
+    } else if (
+      [...this.#revalidationCheckpoints.values()].some(
+        (member) =>
+          (member.planId === checkpoint.planId && member.sequence === checkpoint.sequence) ||
+          member.receiptId === checkpoint.receiptId,
+      )
+    ) {
+      throw new Error("Revalidation checkpoint conflicts with immutable retention evidence");
+    }
+    if (existingRevalidation === undefined)
+      this.#receiptRevalidations.set(value.revalidationId, structuredClone(value));
+    if (existingCheckpoint === undefined)
+      this.#revalidationCheckpoints.set(checkpoint.checkpointId, structuredClone(checkpoint));
+  }
+
+  revalidationCheckpointsForPlan(planId: string): readonly RetentionCheckpoint[] {
+    return [...this.#revalidationCheckpoints.values()]
+      .filter((value) => value.planId === planId)
+      .sort((left, right) => left.sequence - right.sequence)
+      .map((value) => structuredClone(value));
+  }
+
   recordCheckpoint(value: RetentionCheckpoint): void {
     const existing = this.#checkpoints.get(value.planId);
     if (existing !== undefined) replayEqual("Checkpoint", existing, value);
@@ -111,4 +251,25 @@ export class MemoryArtifactRetentionJournal implements ArtifactRetentionJournal 
     const value = this.#checkpoints.get(planId);
     return value === undefined ? undefined : structuredClone(value);
   }
+}
+
+export function createMemoryArtifactRetentionJournal(): MemoryArtifactRetentionJournal {
+  if (P1_10_TEST_AUTHORITY === undefined) {
+    throw new TypeError("test-memory-retention-journal-unavailable");
+  }
+  const journal = new MemoryArtifactRetentionJournal();
+  ownedMemoryRetentionJournals.add(journal);
+  Object.freeze(journal);
+  return journal;
+}
+
+Object.freeze(MemoryArtifactRetentionJournal.prototype);
+
+export function isOwnedMemoryArtifactRetentionJournal(value: object): boolean {
+  return (
+    ownedMemoryRetentionJournals.has(value) &&
+    Object.getPrototypeOf(value) === MemoryArtifactRetentionJournal.prototype &&
+    Object.isFrozen(value) &&
+    Reflect.ownKeys(value).length === 0
+  );
 }

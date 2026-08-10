@@ -1,7 +1,6 @@
 import { Buffer } from "node:buffer";
 import { types as utilityTypes } from "node:util";
 
-import { snapshotExactNormalizerInput } from "../../../providers/normalizer-input.js";
 import {
   ACCEPTED_PR_2E_CANDIDATE_SHA,
   AUTHORIZATION_MODE,
@@ -9,7 +8,6 @@ import {
   ROUTE_POLICY_VERSION,
   type ValidatedMarketAcquisitionConfiguration,
 } from "../contracts.js";
-import type { AlpacaAuthorizationHeaders } from "../credentials.js";
 import {
   deriveMarketAcquisitionConfigurationIdentity,
   deriveMarketAcquisitionRequestIdentity,
@@ -17,6 +15,7 @@ import {
   ZERO_SPEND_POLICY_ID,
 } from "../identity.js";
 import { validateContinuationAuthority } from "../journal.js";
+import { assertValidatedMarketAcquisitionConfiguration } from "../configuration.js";
 import type {
   AlpacaPageAuthority,
   AlpacaQueryPair,
@@ -26,13 +25,27 @@ import type {
 } from "./contracts.js";
 
 const HASH = /^[0-9a-f]{64}$/u;
-const AUTHORIZATION_HEADER_KEYS = Object.freeze(["APCA-API-KEY-ID", "APCA-API-SECRET-KEY"]);
-
+const ownedRequests = new WeakMap<
+  object,
+  Readonly<{
+    method: "GET";
+    origin: string;
+    path: string;
+    redirect: "error";
+    endpointChannelId: string;
+    requestIdentityHash: string;
+    plan: ValidatedMarketAcquisitionConfiguration;
+    pageOrdinal: number;
+    query: readonly (readonly [string, string])[];
+    signal: AbortSignal;
+  }>
+>();
 function invalid(): never {
   throw new TypeError("alpaca-request-authority-invalid");
 }
 
 function validatePlan(plan: ValidatedMarketAcquisitionConfiguration): void {
+  assertValidatedMarketAcquisitionConfiguration(plan);
   if (
     plan === null ||
     typeof plan !== "object" ||
@@ -105,26 +118,6 @@ function validatePlan(plan: ValidatedMarketAcquisitionConfiguration): void {
   ) {
     invalid();
   }
-}
-
-function validateAuthorizationHeaders(
-  value: AlpacaAuthorizationHeaders,
-): AlpacaAuthorizationHeaders {
-  let snapshot: Readonly<Record<string, unknown>>;
-  try {
-    snapshot = snapshotExactNormalizerInput(value, AUTHORIZATION_HEADER_KEYS);
-  } catch {
-    return invalid();
-  }
-  if (
-    typeof snapshot["APCA-API-KEY-ID"] !== "string" ||
-    snapshot["APCA-API-KEY-ID"].length === 0 ||
-    typeof snapshot["APCA-API-SECRET-KEY"] !== "string" ||
-    snapshot["APCA-API-SECRET-KEY"].length === 0
-  ) {
-    return invalid();
-  }
-  return value;
 }
 
 function validateHashList(values: readonly string[]): ReadonlySet<string> {
@@ -202,12 +195,10 @@ function queryFor(
 export function buildAlpacaTransportRequest(
   plan: ValidatedMarketAcquisitionConfiguration,
   page: AlpacaPageAuthority,
-  authorizationHeaders: AlpacaAuthorizationHeaders,
   signal: AbortSignal,
 ): AlpacaTransportRequestLease {
   validatePlan(plan);
   if (!(signal instanceof AbortSignal) || signal.aborted) invalid();
-  const headers = validateAuthorizationHeaders(authorizationHeaders);
   const queryLease = queryFor(plan, page);
   const request: AlpacaTransportRequest = Object.freeze({
     method: "GET",
@@ -218,10 +209,62 @@ export function buildAlpacaTransportRequest(
     requestIdentityHash: plan.requestIdentityHash,
     pageOrdinal: page.pageOrdinal,
     query: queryLease.pairs,
-    authorizationHeaders: headers,
     signal,
   });
-  return Object.freeze({ request, release: queryLease.release });
+  ownedRequests.set(
+    request,
+    Object.freeze({
+      method: request.method,
+      origin: request.origin,
+      path: request.path,
+      redirect: request.redirect,
+      endpointChannelId: request.endpointChannelId,
+      requestIdentityHash: request.requestIdentityHash,
+      plan,
+      pageOrdinal: request.pageOrdinal,
+      query: Object.freeze(
+        request.query.map(([name, value]) => Object.freeze([name, value] as const)),
+      ),
+      signal: request.signal,
+    }),
+  );
+  let released = false;
+  return Object.freeze({
+    request,
+    release(): void {
+      if (released) return;
+      released = true;
+      queryLease.release();
+    },
+  });
+}
+
+export function assertOwnedAlpacaTransportRequest(
+  value: AlpacaTransportRequest,
+  expectedPlan?: ValidatedMarketAcquisitionConfiguration,
+): void {
+  const snapshot = ownedRequests.get(value);
+  if (
+    snapshot === undefined ||
+    utilityTypes.isProxy(value) ||
+    !Object.isFrozen(value) ||
+    value.method !== snapshot.method ||
+    value.origin !== snapshot.origin ||
+    value.path !== snapshot.path ||
+    value.redirect !== snapshot.redirect ||
+    value.endpointChannelId !== snapshot.endpointChannelId ||
+    value.requestIdentityHash !== snapshot.requestIdentityHash ||
+    (expectedPlan !== undefined && snapshot.plan !== expectedPlan) ||
+    value.pageOrdinal !== snapshot.pageOrdinal ||
+    value.signal !== snapshot.signal ||
+    value.query.length !== snapshot.query.length ||
+    value.query.some(
+      ([name, member], index) =>
+        name !== snapshot.query[index]?.[0] || member !== snapshot.query[index]?.[1],
+    )
+  ) {
+    invalid();
+  }
 }
 
 export const ALPACA_REQUEST_ROUTE_POLICY = ROUTE_POLICY_VERSION;

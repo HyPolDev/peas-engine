@@ -23,6 +23,8 @@ export class VaultWriterLease {
   readonly #faultBoundary: (checkpoint: string) => void | Promise<void>;
   readonly #heartbeat: NodeJS.Timeout;
   #held = true;
+  #closing = false;
+  #renewal: Promise<void> | null = null;
 
   private constructor(options: {
     path: string;
@@ -83,6 +85,19 @@ export class VaultWriterLease {
           await options.faultBoundary?.("lease-sqlite-claim");
         } catch (error) {
           await rm(options.path, { force: true });
+          if (error instanceof Error && error.message.includes("fence is held")) {
+            if (options.behavior === "fail" || Date.now() >= deadline) {
+              throw new ArtifactVaultError(
+                "writer-lease-unavailable",
+                "Vault writer lease is held by another process",
+                { cause: error },
+              );
+            }
+            await new Promise((resolve) =>
+              setTimeout(resolve, Math.min(50, Math.max(1, deadline - Date.now()))),
+            );
+            continue;
+          }
           throw error;
         }
         const lease = new VaultWriterLease({
@@ -103,10 +118,58 @@ export class VaultWriterLease {
         try {
           const record = JSON.parse(await readFile(options.path, "utf8")) as LeaseRecord;
           if (!Number.isSafeInteger(record.expiresAtMs) || record.expiresAtMs <= nowMs) {
-            const stale = `${options.path}.${randomUUID()}.expired`;
-            await rename(options.path, stale);
-            await rm(stale, { force: true });
-            continue;
+            await options.faultBoundary?.("lease-stale-record-read");
+            let generation: number | undefined;
+            try {
+              // The durable fence is the takeover linearization point. Claim it before touching the
+              // stale file so a concurrent SQLite-first renewal cannot lose its healthy lease.
+              generation = options.repository.claimWriter(ownerToken, nowMs, options.durationMs);
+              await options.faultBoundary?.("lease-sqlite-claim");
+            } catch (error) {
+              if (!(error instanceof Error && error.message.includes("fence is held"))) throw error;
+            }
+            if (generation !== undefined) {
+              try {
+                const current = JSON.parse(await readFile(options.path, "utf8")) as LeaseRecord;
+                if (
+                  current.ownerToken !== record.ownerToken ||
+                  current.generation !== record.generation ||
+                  current.expiresAtMs !== record.expiresAtMs
+                ) {
+                  throw new Error("Vault writer lease changed before fenced takeover");
+                }
+                const stale = `${options.path}.${randomUUID()}.expired`;
+                await rename(options.path, stale);
+                await rm(stale, { force: true });
+                const handle = await open(options.path, "wx", 0o600);
+                try {
+                  await handle.writeFile(
+                    JSON.stringify({
+                      pid: process.pid,
+                      ownerToken,
+                      generation,
+                      expiresAtMs: nowMs + options.durationMs,
+                    } satisfies LeaseRecord),
+                  );
+                  await handle.sync();
+                } finally {
+                  await handle.close();
+                }
+                await options.faultBoundary?.("lease-file-installation");
+                const lease = new VaultWriterLease({
+                  ...options,
+                  ownerToken,
+                  generation,
+                  faultBoundary: options.faultBoundary ?? NOOP_FAULT_BOUNDARY,
+                });
+                await options.faultBoundary?.("lease-record-sync");
+                return lease;
+              } catch (error) {
+                options.repository.releaseWriter(ownerToken, generation);
+                if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+                throw error;
+              }
+            }
           }
         } catch (readError) {
           if ((readError as NodeJS.ErrnoException).code === "ENOENT") continue;
@@ -137,8 +200,26 @@ export class VaultWriterLease {
   }
 
   async renewAndAssert(): Promise<void> {
-    if (!this.#held)
+    if (!this.#held || this.#closing)
       throw new ArtifactVaultError("writer-lease-unavailable", "Vault writer lease was lost");
+    const active = this.#renewal;
+    if (active !== null) return await active;
+    let resolveRenewal!: () => void;
+    let rejectRenewal!: (error: unknown) => void;
+    const renewal = new Promise<void>((resolve, reject) => {
+      resolveRenewal = resolve;
+      rejectRenewal = reject;
+    });
+    this.#renewal = renewal;
+    void this.#performRenewal().then(resolveRenewal, rejectRenewal);
+    try {
+      await renewal;
+    } finally {
+      if (this.#renewal === renewal) this.#renewal = null;
+    }
+  }
+
+  async #performRenewal(): Promise<void> {
     const nowMs = this.#clock.nowMs();
     try {
       this.#repository.renewWriter(this.#ownerToken, this.#generation, nowMs, this.#durationMs);
@@ -182,15 +263,37 @@ export class VaultWriterLease {
   }
 
   async release(): Promise<void> {
-    if (!this.#held) return;
-    this.#held = false;
+    if (!this.#held || this.#closing) return;
+    this.#closing = true;
     clearInterval(this.#heartbeat);
     try {
+      await this.#renewal;
+    } catch {
+      // The in-flight renewal already marked the lease lost.
+    }
+    if (!this.#held) return;
+    try {
+      if (!this.#repository.releaseWriter(this.#ownerToken, this.#generation)) {
+        this.#held = false;
+        throw new ArtifactVaultError(
+          "writer-lease-unavailable",
+          "Vault writer lease was replaced before release",
+        );
+      }
       const record = JSON.parse(await readFile(this.#path, "utf8")) as LeaseRecord;
-      if (record.ownerToken === this.#ownerToken && record.generation === this.#generation)
+      if (record.ownerToken === this.#ownerToken && record.generation === this.#generation) {
         await rm(this.#path, { force: true });
+      }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (
+        (error as NodeJS.ErrnoException).code !== "ENOENT" &&
+        !(error instanceof TypeError && error.message.includes("database connection is not open"))
+      ) {
+        throw error;
+      }
+    } finally {
+      this.#held = false;
+      this.#closing = false;
     }
   }
 }

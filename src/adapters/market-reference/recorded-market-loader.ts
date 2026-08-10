@@ -1,11 +1,15 @@
 import { createHash } from "node:crypto";
 import type { Readable } from "node:stream";
 
-import type {
-  ArtifactObservation,
-  ArtifactStore,
-  VerifiedArtifactRead,
-} from "../../artifacts/artifact-store.js";
+import type { ArtifactObservation, VerifiedArtifactRead } from "../../artifacts/artifact-store.js";
+import {
+  type RetentionEnforcedArtifactStore,
+  assertRetentionEnforcedArtifactStore,
+  assertRetentionUseLease,
+  beginRetentionUse,
+  registerRetentionDerivedLineage,
+  type RetentionUseLease,
+} from "../market-acquisition/retention/artifact-access.js";
 import { canonicalHash } from "../../core/hash.js";
 import {
   assertJsonWithinLimits,
@@ -1018,11 +1022,12 @@ function parseRecords(bytes: Uint8Array, sourceProfileId: string): readonly Json
 }
 
 export async function loadRecordedMarketArtifacts(
-  store: ArtifactStore,
+  store: RetentionEnforcedArtifactStore,
   value: RecordedMarketArtifactManifestV1,
 ): Promise<RecordedMarketLoaderResultV1> {
   let manifest: RecordedMarketArtifactManifestV1;
   try {
+    assertRetentionEnforcedArtifactStore(store);
     manifest = detachManifest(value);
   } catch (error) {
     return freeze({
@@ -1030,6 +1035,11 @@ export async function loadRecordedMarketArtifacts(
       reason: loaderReason(error),
       members: [],
     });
+  }
+  try {
+    store.createUseLease(manifest.retrievedMembers.map((member) => member.artifactDigest));
+  } catch (error) {
+    return freeze({ status: "rejected", reason: loaderReason(error), members: [] });
   }
 
   const lookedUpObservations: (ArtifactObservation | undefined)[] = [];
@@ -2753,8 +2763,11 @@ function compareEvaluation(
 export function normalizeVerifiedRecordedMarketFixture(
   value: RecordedMarketFixtureManifestV1,
   members: readonly VerifiedRecordedMarketMemberV1[],
+  retentionLease: RetentionUseLease,
 ): readonly NormalizedMarketFactV1[] {
   const manifest = validateRecordedMarketFixtureManifest(value);
+  const artifactDigests = members.map((member) => member.artifactDigest);
+  assertRetentionUseLease(retentionLease, artifactDigests);
   const normalizedFacts = normalizeRecordedMarketRecords(typedRecords(manifest, members));
   validateRecordAndFactCardinalityBounds(
     members.map((member) => ({
@@ -2765,6 +2778,11 @@ export function normalizeVerifiedRecordedMarketFixture(
     normalizedFacts,
   );
   compareFactExpectations(manifest.parsedFactExpectations, normalizedFacts, manifest);
+  const derivedIds = normalizedFacts.flatMap((fact) =>
+    [fact.marketFactId, fact.normalizedMarketFactId].filter((id): id is string => id !== null),
+  );
+  if (derivedIds.length > 0) registerRetentionDerivedLineage(retentionLease, derivedIds);
+  assertRetentionUseLease(retentionLease, artifactDigests, derivedIds);
   return Object.freeze(normalizedFacts);
 }
 
@@ -2775,8 +2793,16 @@ export function normalizeVerifiedRecordedMarketFixture(
 export function evaluateRecordedMarketFixtureSelections(
   value: RecordedMarketFixtureManifestV1,
   normalizedFacts: readonly NormalizedMarketFactV1[],
+  retentionLease: RetentionUseLease,
 ): readonly MarketReferenceResultV1[] {
   const manifest = validateRecordedMarketFixtureManifest(value);
+  assertRetentionUseLease(
+    retentionLease,
+    manifest.retrievedMembers.map((member) => member.artifactDigest),
+    normalizedFacts.flatMap((fact) =>
+      [fact.marketFactId, fact.normalizedMarketFactId].filter((id): id is string => id !== null),
+    ),
+  );
   if (manifest.selectionRequests.length !== manifest.expectedEvaluations.length) {
     throw new LoaderFailure(inputInvalid());
   }
@@ -3578,8 +3604,16 @@ export async function evaluateRecordedLoaderCatalog(
   value: RecordedMarketFixtureManifestV1,
   _members: readonly VerifiedRecordedMarketMemberV1[],
   normalizedFacts: readonly NormalizedMarketFactV1[],
+  retentionLease: RetentionUseLease,
 ): Promise<readonly RecordedLoaderCatalogOutcomeV1[]> {
   const manifest = validateRecordedMarketFixtureManifest(value);
+  assertRetentionUseLease(
+    retentionLease,
+    manifest.retrievedMembers.map((member) => member.artifactDigest),
+    normalizedFacts.flatMap((fact) =>
+      [fact.marketFactId, fact.normalizedMarketFactId].filter((id): id is string => id !== null),
+    ),
+  );
   const baseRequest = coreSelectionRequest(manifest.selectionRequests[0] as JsonObject, manifest);
   const operationEvidence = catalogOperationEvidence(normalizedFacts, manifest);
   const outcomes: RecordedLoaderCatalogOutcomeV1[] = [];
@@ -3633,7 +3667,20 @@ export async function evaluateRecordedLoaderCatalog(
     }
     outcomes.push(outcome);
   }
-  const structuredGateRows = await recordedLoaderStructuredGateEvidence();
+  const catalogOperation = beginRetentionUse(
+    retentionLease,
+    manifest.retrievedMembers.map((member) => member.artifactDigest),
+    normalizedFacts.flatMap((fact) =>
+      [fact.marketFactId, fact.normalizedMarketFactId].filter((id): id is string => id !== null),
+    ),
+  );
+  let structuredGateRows: readonly JsonObject[];
+  try {
+    structuredGateRows = await recordedLoaderStructuredGateEvidence();
+    catalogOperation.assertAllowed();
+  } finally {
+    catalogOperation.release();
+  }
   const structuredGate = (caseId: string): JsonObject => {
     const row = structuredGateRows.find((candidate) => candidate["caseId"] === caseId);
     if (row === undefined) throw new LoaderFailure(inputInvalid());
@@ -3813,10 +3860,11 @@ export async function evaluateRecordedLoaderCatalog(
 }
 
 export async function loadRecordedMarketFixture(
-  store: ArtifactStore,
+  store: RetentionEnforcedArtifactStore,
   value: RecordedMarketFixtureManifestV1,
 ): Promise<RecordedMarketFixtureResultV1> {
   try {
+    assertRetentionEnforcedArtifactStore(store);
     const manifest = validateRecordedMarketFixtureManifest(value);
     const loaded = await loadRecordedMarketArtifacts(
       store,
@@ -3832,12 +3880,24 @@ export async function loadRecordedMarketFixture(
         catalogOutcomes: [],
       });
     }
-    const normalizedFacts = normalizeVerifiedRecordedMarketFixture(manifest, loaded.members);
-    const evaluations = evaluateRecordedMarketFixtureSelections(manifest, normalizedFacts);
+    const retentionLease = store.createUseLease(
+      manifest.retrievedMembers.map((member) => member.artifactDigest),
+    );
+    const normalizedFacts = normalizeVerifiedRecordedMarketFixture(
+      manifest,
+      loaded.members,
+      retentionLease,
+    );
+    const evaluations = evaluateRecordedMarketFixtureSelections(
+      manifest,
+      normalizedFacts,
+      retentionLease,
+    );
     const catalogOutcomes = await evaluateRecordedLoaderCatalog(
       manifest,
       loaded.members,
       normalizedFacts,
+      retentionLease,
     );
     return Object.freeze({
       status: "verified",

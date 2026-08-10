@@ -1,27 +1,41 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import type { ArtifactStore } from "../src/artifacts/artifact-store.js";
+import type { ArtifactStore, ArtifactVaultConfig } from "../src/artifacts/artifact-store.js";
+import { ManualClock } from "../src/core/clock.js";
 import { canonicalHash } from "../src/core/hash.js";
 import { canonicalJson, type JsonValue } from "../src/core/json.js";
-import { executeAlpacaAttempt } from "../src/adapters/market-acquisition/alpaca/adapter.js";
+import { AlpacaProductionAttemptBoundary } from "../src/adapters/market-acquisition/alpaca/adapter.js";
 import type {
   AlpacaAttemptResource,
   AlpacaBodyRead,
-  AlpacaDeadlineHandle,
   AlpacaDeadlineScheduler,
   AlpacaPageAuthority,
   AlpacaResponseBody,
   AlpacaTransport,
   AlpacaTransportRequest,
   AlpacaTransportResponse,
-  AlpacaVerifiedPageSink,
+  AlpacaArtifactCommitSink,
 } from "../src/adapters/market-acquisition/alpaca/contracts.js";
-import { openSqliteDatabase } from "../src/adapters/sqlite/database.js";
-import { decideAcquisitionRestart } from "../src/adapters/market-acquisition/artifact-integration.js";
+import {
+  RetentionOwnedAlpacaPageSink,
+  createRetentionOwnedAlpacaPageSink,
+  createDurableAlpacaArtifactCommitSink,
+  createTestAlpacaArtifactCommitSink,
+} from "../src/adapters/market-acquisition/alpaca/retained-sink.js";
+import { createOwnedAlpacaDeadlineScheduler } from "../src/adapters/market-acquisition/alpaca/deadline.js";
+import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
+import { DurableArtifactStore } from "../src/adapters/artifacts/durable-artifact-store.js";
+import { artifactRuntimePaths } from "../src/adapters/artifacts/runtime-root.js";
+import { SqliteArtifactRepository } from "../src/adapters/artifacts/sqlite-artifact-repository.js";
+import {
+  MarketAcquisitionLedger,
+  decideAcquisitionRestart,
+} from "../src/adapters/market-acquisition/artifact-integration.js";
 import {
   ACCEPTED_PR_2E_CANDIDATE_SHA,
   MARKET_ACQUISITION_LIMITS,
@@ -31,6 +45,13 @@ import {
 } from "../src/adapters/market-acquisition/contracts.js";
 import { validateMarketAcquisitionConfiguration } from "../src/adapters/market-acquisition/configuration.js";
 import type { AlpacaAuthorizationHeaders } from "../src/adapters/market-acquisition/credentials.js";
+import {
+  createTestCredentialIsolatedAlpacaTransport,
+  openTestSqliteDurableCredentialAuthorizationBoundary,
+  openSqliteDurableCredentialAuthorizationBoundary,
+  ownedLiveCredentialAcquisitionJournal,
+  provisionSqliteDurableCredentialAuthorityRuntime,
+} from "../src/adapters/market-acquisition/credentials.js";
 import {
   ALPACA_ROUTE_REGISTRY,
   ZERO_SPEND_POLICY_ID,
@@ -43,24 +64,44 @@ import {
   derivePrivateTokenHash,
   NO_TOKEN_HASH,
   createJournalEntry,
+  appendTestAcquisitionWorkflowEvidence,
   type AcquisitionJournal,
   type JournalCheckpointBody,
 } from "../src/adapters/market-acquisition/journal.js";
-import { MemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
+import { createMemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
 import {
   MAX_ATTEMPTS_PER_ACQUISITION,
   MAX_ATTEMPTS_PER_PAGE,
   decideRetry,
   type RetryFailure,
 } from "../src/adapters/market-acquisition/retry.js";
-import { SqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
+import { createSqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
+import {
+  deriveAcquisitionObservationId,
+  type ObservationLedgerEntryV1,
+} from "../src/providers/observation-ledger.js";
+import {
+  type DefaultArtifactRetentionController,
+  createArtifactRetentionController,
+  createTestArtifactRetentionController,
+} from "../src/adapters/market-acquisition/retention/controller.js";
+import type { RetentionArtifactBoundary } from "../src/adapters/market-acquisition/retention/contracts.js";
+import { createMemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
+import { createSqliteArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/sqlite-journal.js";
+import { VaultArtifactRetentionBoundary } from "../src/adapters/market-acquisition/retention/vault-boundary.js";
 import {
   AcquisitionStateMachine,
   createInitialAcquisitionSnapshot,
+  openOwnedAcquisitionStateMachine,
   type AcquisitionEventProof,
   type AcquisitionMachineSnapshot,
   type AcquisitionTransitionPlan,
 } from "../src/adapters/market-acquisition/state-machine.js";
+import {
+  ALLOW_ALL_RETENTION,
+  credentialAuthorizationFixture,
+  retentionGuardedArtifactStore,
+} from "./p1-10-repair-fixtures.js";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 let unexpectedNetworkCalls = 0;
@@ -86,6 +127,75 @@ const HEADERS: AlpacaAuthorizationHeaders = Object.freeze({
   "APCA-API-KEY-ID": "x",
   "APCA-API-SECRET-KEY": "y",
 });
+
+function adapterRetention(): DefaultArtifactRetentionController {
+  const artifacts: RetentionArtifactBoundary = {
+    async settleActiveReadersAndWriters() {
+      return true;
+    },
+    async eraseDigestCopies(artifactDigest) {
+      return {
+        artifactDigest,
+        erasedCopies: { content: 0, staging: 0, snapshot: 0, quarantine: 0 },
+        alreadyAbsent: true,
+      };
+    },
+    async verifyDigestCopiesAbsent() {
+      return true;
+    },
+  };
+  return createTestArtifactRetentionController({
+    journal: createMemoryArtifactRetentionJournal(),
+    artifacts,
+    nowMs: () => 0,
+  });
+}
+
+async function executeAlpacaAttempt<T>(
+  input: Readonly<{
+    plan: ValidatedMarketAcquisitionConfiguration;
+    page: AlpacaPageAuthority;
+    authorizationHeaders: AlpacaAuthorizationHeaders;
+    transport: Readonly<{
+      dispatch(request: AlpacaTransportRequest): Promise<AlpacaTransportResponse>;
+      abort(): Promise<void>;
+      settle(): Promise<void>;
+    }>;
+    artifactSink: AlpacaArtifactCommitSink<T>;
+    deadlineScheduler: AlpacaDeadlineScheduler | TimerDouble;
+  }>,
+) {
+  assert.equal(Object.isFrozen(input.authorizationHeaders), true);
+  const credentialFixture = await credentialAuthorizationFixture(input.plan);
+  const boundary = new AlpacaProductionAttemptBoundary(
+    {
+      read(name) {
+        return name.endsWith("KEY_ID")
+          ? input.authorizationHeaders["APCA-API-KEY-ID"]
+          : input.authorizationHeaders["APCA-API-SECRET-KEY"];
+      },
+    },
+    credentialFixture.authorization,
+  );
+  return boundary.execute({
+    plan: input.plan,
+    credentialAuthorization: credentialFixture.request,
+    page: input.page,
+    transport: createTestCredentialIsolatedAlpacaTransport({
+      dispatch: (request) => input.transport.dispatch(request),
+      abort: () => input.transport.abort(),
+      settle: () => input.transport.settle(),
+    }),
+    artifactSink: createRetentionOwnedAlpacaPageSink(
+      createTestAlpacaArtifactCommitSink(input.artifactSink),
+      adapterRetention(),
+    ),
+    deadlineScheduler:
+      input.deadlineScheduler instanceof TimerDouble
+        ? input.deadlineScheduler.scheduler
+        : input.deadlineScheduler,
+  });
+}
 
 function timestamp(epochNs: bigint): string {
   const milliseconds = epochNs / 1_000_000n;
@@ -178,6 +288,42 @@ function validatedPlan(
   return result.value;
 }
 
+function validatedCalendarPlan(): ValidatedMarketAcquisitionConfiguration {
+  const queryEndNs = 1_999_030_000_000_000_000n;
+  const requestStartedNs = queryEndNs + 900_000_000_000n;
+  const input = configuration("quotes", queryEndNs);
+  const clock = input.trustedClockEvidence as NonNullable<
+    MarketAcquisitionConfigurationInput["trustedClockEvidence"]
+  > & { priorSample: Record<string, unknown>; currentSample: Record<string, unknown> };
+  const validated = validateMarketAcquisitionConfiguration({
+    ...input,
+    trustedClockEvidence: {
+      ...clock,
+      priorSample: { ...clock.priorSample, wallNs: requestStartedNs - 1n },
+      currentSample: { ...clock.currentSample, wallNs: requestStartedNs },
+    },
+  });
+  assert.equal(validated.ok, true);
+  if (!validated.ok) throw new Error("calendar-authorized plan must validate");
+  return validated.value;
+}
+
+function productionVaultConfig(runtimeRoot: string): ArtifactVaultConfig {
+  return {
+    runtimeRootMode: "ci-temporary",
+    runtimeRoot,
+    maxArtifactBytes: MARKET_ACQUISITION_LIMITS.rawArtifactBytes,
+    maxVaultBytes: MARKET_ACQUISITION_LIMITS.rawArtifactBytes * 2,
+    maxConcurrentWrites: 1,
+    streamHighWaterMarkBytes: 17,
+    stageExpiryMs: 1_000,
+    writerLeaseBehavior: "fail",
+    writerLeaseWaitMs: 0,
+    writerLeaseDurationMs: 30_000,
+    writerLeaseRenewalMs: 10_000,
+  };
+}
+
 type ResourceCounts = {
   abort: number;
   destroy: number;
@@ -257,8 +403,9 @@ class BodyDouble extends ResourceDouble implements AlpacaResponseBody {
   }
 }
 
-class SinkDouble extends ResourceDouble implements AlpacaVerifiedPageSink<string> {
+class SinkDouble extends ResourceDouble implements AlpacaArtifactCommitSink<string> {
   bytes = 0;
+  readonly #hash = createHash("sha256");
   constructor(
     counters: ResourceCounts,
     private readonly failWrite = false,
@@ -270,41 +417,109 @@ class SinkDouble extends ResourceDouble implements AlpacaVerifiedPageSink<string
     this.counters.write += 1;
     if (this.failWrite) throw new Error("synthetic sink failure");
     this.bytes += bytes.byteLength;
+    this.#hash.update(bytes);
   }
-  async completeAndVerify(): Promise<string> {
-    this.counters.complete += 1;
-    return `verified:${this.bytes}`;
+  async prepareVerifiedCommit() {
+    const bytes = this.bytes;
+    return Object.freeze({
+      ownership: Object.freeze({
+        policyId: "p1-10-alpaca-private-retention-v1",
+        providerLane: "alpaca" as const,
+        providerId: `mpv1_${"1".repeat(64)}`,
+        datasetId: `mds1_${"2".repeat(64)}`,
+        feedId: `mfd1_${"3".repeat(64)}`,
+        endpointChannelId: `mec1_${"4".repeat(64)}`,
+        artifactObservationId: `mao1_${"5".repeat(64)}`,
+        artifactDigest: this.#hash.digest("hex"),
+        artifactSizeBytes: bytes,
+        derivedIds: [],
+        trustedCaptureMs: 0,
+        expiresAtMs: 1,
+      }),
+      commit: async () => {
+        this.counters.complete += 1;
+        return `verified:${bytes}`;
+      },
+    });
   }
 }
 
-class TimerDouble implements AlpacaDeadlineScheduler {
+const neverSettles = (): Promise<void> => new Promise<void>(() => {});
+
+class PendingCleanupResource extends ResourceDouble {
+  override abort(): Promise<void> {
+    this.counters.abort += 1;
+    return neverSettles();
+  }
+  override destroy(): Promise<void> {
+    this.counters.destroy += 1;
+    return neverSettles();
+  }
+  override settle(): Promise<void> {
+    this.counters.settle += 1;
+    return neverSettles();
+  }
+}
+
+class PendingCleanupBody extends BodyDouble {
+  override abort(): Promise<void> {
+    this.counters.abort += 1;
+    return neverSettles();
+  }
+  override destroy(): Promise<void> {
+    this.counters.destroy += 1;
+    return neverSettles();
+  }
+  override settle(): Promise<void> {
+    this.counters.settle += 1;
+    return neverSettles();
+  }
+}
+
+class PendingCleanupSink extends SinkDouble {
+  override abort(): Promise<void> {
+    this.counters.abort += 1;
+    return neverSettles();
+  }
+  override destroy(): Promise<void> {
+    this.counters.destroy += 1;
+    return neverSettles();
+  }
+  override settle(): Promise<void> {
+    this.counters.settle += 1;
+    return neverSettles();
+  }
+}
+
+class TimerDouble {
   #expire: (() => void) | null = null;
+  readonly scheduler: AlpacaDeadlineScheduler;
   cancelled = 0;
   settled = 0;
   armedWith: number | null = null;
-  constructor(private readonly failSettle = false) {}
-  arm(delayMs: 30_000): AlpacaDeadlineHandle {
-    this.armedWith = delayMs;
-    const expired = new Promise<void>((resolve) => {
-      this.#expire = resolve;
-    });
-    return {
-      expired,
-      cancel: () => {
+  constructor(private readonly failSettle = false) {
+    this.scheduler = createOwnedAlpacaDeadlineScheduler({
+      armed: ({ delayMs, expireNow }) => {
+        this.armedWith = delayMs;
+        this.#expire = expireNow;
+      },
+      cancelled: () => {
         this.cancelled += 1;
       },
-      settle: async () => {
+      settled: () => {
         this.settled += 1;
         if (this.failSettle) throw new Error("synthetic timer settle failure");
       },
-    };
+    });
   }
   expire(): void {
     this.#expire?.();
   }
 }
 
-class TransportDouble implements AlpacaTransport {
+class CancelDependentTimer extends TimerDouble {}
+
+class TransportDouble {
   request: AlpacaTransportRequest | null = null;
   constructor(
     private readonly counters: ResourceCounts,
@@ -326,7 +541,7 @@ class TransportDouble implements AlpacaTransport {
   }
 }
 
-class HangingTransport implements AlpacaTransport {
+class HangingTransport {
   #reject: ((reason: unknown) => void) | null = null;
   constructor(private readonly counters: ResourceCounts) {}
   async dispatch(request: AlpacaTransportRequest): Promise<AlpacaTransportResponse> {
@@ -343,6 +558,27 @@ class HangingTransport implements AlpacaTransport {
   }
   async settle(): Promise<void> {
     this.counters.settle += 1;
+  }
+}
+
+class PendingCleanupTransport {
+  request: AlpacaTransportRequest | null = null;
+  constructor(
+    private readonly counters: ResourceCounts,
+    private readonly value: AlpacaTransportResponse,
+  ) {}
+  async dispatch(request: AlpacaTransportRequest): Promise<AlpacaTransportResponse> {
+    this.counters.transport += 1;
+    this.request = request;
+    return this.value;
+  }
+  abort(): Promise<void> {
+    this.counters.abort += 1;
+    return neverSettles();
+  }
+  settle(): Promise<void> {
+    this.counters.settle += 1;
+    return neverSettles();
   }
 }
 
@@ -494,16 +730,31 @@ function eventProof(
   };
 }
 
+function retryRetrievalAttemptId(): string {
+  return `rat1_${canonicalHash("peas/p1-10-adapter-retry-test/v1", {
+    member: "pending-attempt",
+  })}`;
+}
+
+function retryAcquisitionObservationId(plan: ValidatedMarketAcquisitionConfiguration): string {
+  return deriveAcquisitionObservationId({
+    provider: "alpaca",
+    retrievalAttemptId: retryRetrievalAttemptId(),
+    sanitizedRequestIdentityHash: plan.requestIdentityHash,
+    routeLabel: plan.route.safeRouteLabel,
+  });
+}
+
 function checkpointBody(
   snapshot: AcquisitionMachineSnapshot,
   plan: ValidatedMarketAcquisitionConfiguration,
+  stage: ObservationLedgerEntryV1 | null = null,
+  clockDeclarationId: string | null = null,
 ): JournalCheckpointBody {
   return {
     schemaVersion: 1,
     runSessionNonce: snapshot.runSessionNonce,
-    acquisitionObservationId: canonicalHash("peas/p1-10-adapter-retry-test/v1", {
-      member: "acquisition-observation",
-    }),
+    acquisitionObservationId: retryAcquisitionObservationId(plan),
     marketAcquisitionId: `maq1_${canonicalHash("peas/p1-10-adapter-retry-test/v1", {
       member: "market-acquisition",
     })}`,
@@ -526,9 +777,7 @@ function checkpointBody(
     attemptId:
       snapshot.attemptId ??
       `mat1_${canonicalHash("peas/p1-10-adapter-retry-test/v1", { member: "pending-attempt" })}`,
-    retrievalAttemptId:
-      snapshot.retrievalAttemptId ??
-      `rat1_${canonicalHash("peas/p1-10-adapter-retry-test/v1", { member: "pending-attempt" })}`,
+    retrievalAttemptId: snapshot.retrievalAttemptId ?? retryRetrievalAttemptId(),
     attemptOrdinal: snapshot.attemptOrdinal ?? 0,
     artifactObservationId: null,
     artifactDigest: null,
@@ -536,8 +785,9 @@ function checkpointBody(
     artifactObservationHash: null,
     artifactContentId: null,
     rawArtifactId: null,
-    stageLedgerFactId: null,
-    causalParentFactIds: [],
+    stageLedgerFactId: stage?.entryId ?? null,
+    causalParentFactIds:
+      stage === null ? [] : stage.parentEntryIds.filter((parent) => parent !== clockDeclarationId),
     pageRecordCount: null,
     pageNormalizedFactCount: null,
     pageChainHash: snapshot.pageChainHash,
@@ -554,22 +804,76 @@ function checkpointBody(
   };
 }
 
+type RetryWorkflowEvidence = Readonly<{
+  ledger: readonly ObservationLedgerEntryV1[];
+  clockDeclarationId: string;
+  acquisitionDeclared: ObservationLedgerEntryV1;
+  requestStarted: ObservationLedgerEntryV1;
+}>;
+
+function retryWorkflowEvidence(
+  plan: ValidatedMarketAcquisitionConfiguration,
+): RetryWorkflowEvidence {
+  const ledger = new MarketAcquisitionLedger("p1-10-adapter-retry-ledger-v1", {
+    wallClock: "system-utc",
+    synchronization: "verified-bound",
+    maximumErrorMs: 0,
+    monotonicClock: "process-monotonic-us",
+    monotonicSessionId: "p1-10-adapter-retry-session-v1",
+  });
+  const stamp = (offset: number) => ({
+    clockBasisId: ledger.clockBasis.clockBasisId,
+    wallTimeMs: 1_000 + offset,
+    monotonicTimeUs: 10_000 + offset,
+  });
+  const acquisitionObservationId = retryAcquisitionObservationId(plan);
+  const acquisitionDeclared = ledger.declareAcquisition(
+    {
+      kind: "acquisition.declared",
+      acquisitionObservationId,
+      provider: "alpaca",
+      retrievalAttemptId: retryRetrievalAttemptId(),
+      sanitizedRequestIdentityHash: plan.requestIdentityHash,
+      routeLabel: plan.route.safeRouteLabel,
+    },
+    stamp(0),
+  );
+  const requestStarted = ledger.requestStarted(
+    acquisitionDeclared,
+    { kind: "request.started", acquisitionObservationId },
+    stamp(1),
+  );
+  return Object.freeze({
+    ledger: ledger.entries,
+    clockDeclarationId: ledger.clockDeclaration.entryId,
+    acquisitionDeclared,
+    requestStarted,
+  });
+}
+
 async function persistPlan(
   journal: AcquisitionJournal,
   journalId: string,
   plan: ValidatedMarketAcquisitionConfiguration,
   transition: AcquisitionTransitionPlan,
+  workflow: RetryWorkflowEvidence,
 ): Promise<void> {
   if (transition.checkpointKind === null) return;
   const rows = await journal.load(journalId);
-  await journal.append(
+  const stage =
+    transition.checkpointKind === "acquisition-declared"
+      ? workflow.acquisitionDeclared
+      : transition.checkpointKind === "request-started"
+        ? workflow.requestStarted
+        : null;
+  await appendTestAcquisitionWorkflowEvidence(journal, workflow.ledger, [
     createJournalEntry(
       rows.at(-1) ?? null,
       journalId,
       transition.checkpointKind,
-      checkpointBody(transition.next, plan),
+      checkpointBody(transition.next, plan, stage, workflow.clockDeclarationId),
     ),
-  );
+  ]);
 }
 
 async function driveCleanFailureToRetryBoundary(
@@ -586,8 +890,9 @@ async function driveCleanFailureToRetryBoundary(
     runSessionNonce: "offline-adapter-retry-session-v1",
     acquisitionDeclaredMonotonicMs: 0,
   });
+  const workflow = retryWorkflowEvidence(plan);
   const machine = new AcquisitionStateMachine(initial, (transition) =>
-    persistPlan(journal, journalId, plan, transition),
+    persistPlan(journal, journalId, plan, transition, workflow),
   );
   await machine.applyAcquisitionEvent({
     kind: "begin-preflight",
@@ -691,7 +996,6 @@ test("every unproved partial-body cleanup category remains terminal", async () =
     "sink-settle",
     "transport-abort",
     "transport-settle",
-    "timer-settle",
   ] as const satisfies readonly Exclude<CleanupFailureKind, null>[];
   for (const failureKind of ["transport", "timeout"] as const) {
     for (const cleanupFailure of cleanupFailures) {
@@ -711,10 +1015,10 @@ test("clean adapter retry has byte-identical memory and SQLite restart boundarie
   const projections: string[] = [];
   for (const failureKind of ["transport", "timeout"] as const) {
     const identity = journalIdentity(plan);
-    const memory = new MemoryAcquisitionJournal(identity);
+    const memory = createMemoryAcquisitionJournal(identity);
     const memoryBoundary = await driveCleanFailureToRetryBoundary(failureKind, memory, plan);
     const memoryRows = await memory.load(memoryBoundary.journalId);
-    assert.equal(memoryRows.length, 2);
+    assert.equal(memoryRows.length, 3);
     const beforeRestart = canonicalJson(memoryRows as unknown as JsonValue);
     assert.deepEqual(
       await decideAcquisitionRestart({
@@ -722,7 +1026,7 @@ test("clean adapter retry has byte-identical memory and SQLite restart boundarie
         journalId: memoryBoundary.journalId,
         expectedIdentity: memoryBoundary.identity,
         expectedConfigurationHash: plan.acquisitionConfigurationHash,
-        artifactStore: {} as ArtifactStore,
+        artifactStore: retentionGuardedArtifactStore({} as ArtifactStore, []),
       }),
       { kind: "fresh-attempt", pageOrdinal: 0, transportAllowed: true },
     );
@@ -735,21 +1039,21 @@ test("clean adapter retry has byte-identical memory and SQLite restart boundarie
     t.after(() => rmSync(directory, { recursive: true, force: true }));
     const filename = join(directory, "journal.sqlite");
     let database = openSqliteDatabase(filename, []);
-    let sqlite = new SqliteAcquisitionJournal(database, identity);
+    let sqlite = createSqliteAcquisitionJournal(database, identity);
     const sqliteBoundary = await driveCleanFailureToRetryBoundary(failureKind, sqlite, plan);
     const sqliteRows = await sqlite.load(sqliteBoundary.journalId);
     assert.equal(canonicalJson(sqliteRows as unknown as JsonValue), beforeRestart);
     database.close();
 
     database = openSqliteDatabase(filename, []);
-    sqlite = new SqliteAcquisitionJournal(database, identity);
+    sqlite = createSqliteAcquisitionJournal(database, identity);
     assert.deepEqual(
       await decideAcquisitionRestart({
         journal: sqlite,
         journalId: sqliteBoundary.journalId,
         expectedIdentity: sqliteBoundary.identity,
         expectedConfigurationHash: plan.acquisitionConfigurationHash,
-        artifactStore: {} as ArtifactStore,
+        artifactStore: retentionGuardedArtifactStore({} as ArtifactStore, []),
       }),
       { kind: "fresh-attempt", pageOrdinal: 0, transportAllowed: true },
     );
@@ -801,9 +1105,376 @@ test("frozen quotes, trades, and bars compile exact GET route and closed query p
     );
     assert.equal(transport.request?.query.find(([field]) => field === "feed")?.[1], "sip");
     assert.equal(transport.request?.query.find(([field]) => field === "sort")?.[1], "asc");
-    assert.equal(timer.armedWith, 30_000);
+    assert.equal("authorizationHeaders" in (transport.request ?? {}), false);
+    assert.equal(JSON.stringify(transport.request).includes("APCA-API"), false);
+    assert.ok(
+      timer.armedWith !== null &&
+        timer.armedWith >= 1 &&
+        timer.armedWith <= MARKET_ACQUISITION_LIMITS.attemptDeadlineMs,
+    );
   }
   assert.equal(unexpectedNetworkCalls, 0);
+});
+
+test("the production attempt boundary durably drives the exact claimed attempt through page verification", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "peas-p1-10-live-attempt-"));
+  const previousRoot = process.env["PEAS_RUNTIME_ROOT"];
+  let authorization: ReturnType<typeof openSqliteDurableCredentialAuthorizationBoundary> | null =
+    null;
+  t.after(() => {
+    authorization?.close();
+    if (previousRoot === undefined) delete process.env["PEAS_RUNTIME_ROOT"];
+    else process.env["PEAS_RUNTIME_ROOT"] = previousRoot;
+    rmSync(root, { recursive: true, force: true });
+  });
+  process.env["PEAS_RUNTIME_ROOT"] = root;
+  const plan = validatedPlan();
+  const migrations = loadMigrations(join(process.cwd(), "migrations"));
+  provisionSqliteDurableCredentialAuthorityRuntime(migrations);
+  authorization = openSqliteDurableCredentialAuthorizationBoundary(migrations, plan);
+  const fixture = await credentialAuthorizationFixture(plan);
+  const counters = counts();
+  const transportDouble = new TransportDouble(
+    counters,
+    response(new BodyDouble(counters, [Uint8Array.from([1, 2, 3])]), { contentLength: 3 }),
+  );
+  const boundary = new AlpacaProductionAttemptBoundary(
+    {
+      read(name) {
+        return name.endsWith("KEY_ID") ? "synthetic-key" : "synthetic-secret";
+      },
+    },
+    authorization,
+  );
+  const result = await boundary.execute({
+    plan,
+    credentialAuthorization: fixture.request,
+    page: firstPage(),
+    transport: createTestCredentialIsolatedAlpacaTransport({
+      dispatch: (request) => transportDouble.dispatch(request),
+      abort: () => transportDouble.abort(),
+      settle: () => transportDouble.settle(),
+    }),
+    artifactSink: createRetentionOwnedAlpacaPageSink(
+      createTestAlpacaArtifactCommitSink(new SinkDouble(counters)),
+      adapterRetention(),
+    ),
+    deadlineScheduler: new TimerDouble().scheduler,
+  });
+  assert.equal(result.ok, true);
+  const restarted = openOwnedAcquisitionStateMachine(authorization).snapshot;
+  assert.equal(restarted.currentState, "page-verified");
+  assert.match(restarted.retrievalAttemptId ?? "", /^rat1_[0-9a-f]{64}$/u);
+  assert.equal(restarted.budgets.attempts, 1);
+  assert.equal(counters.transport, 1);
+});
+
+test("the owned durable sink composes verified bytes through a terminal page checkpoint", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "peas-p1-10-owned-page-composer-"));
+  const previousRoot = process.env["PEAS_RUNTIME_ROOT"];
+  let authorization: ReturnType<typeof openSqliteDurableCredentialAuthorizationBoundary> | null =
+    null;
+  let store: DurableArtifactStore | null = null;
+  let database: ReturnType<typeof openSqliteDatabase> | null = null;
+  t.after(async () => {
+    authorization?.close();
+    await store?.close();
+    if (database?.open) database.close();
+    if (previousRoot === undefined) delete process.env["PEAS_RUNTIME_ROOT"];
+    else process.env["PEAS_RUNTIME_ROOT"] = previousRoot;
+    rmSync(root, { recursive: true, force: true });
+  });
+  process.env["PEAS_RUNTIME_ROOT"] = root;
+  const plan = validatedCalendarPlan();
+  const migrations = loadMigrations(join(process.cwd(), "migrations"));
+  const paths = artifactRuntimePaths(root);
+  mkdirSync(paths.databaseDirectory, { recursive: true });
+  database = openSqliteDatabase(paths.databasePath, migrations);
+  store = await DurableArtifactStore.open({
+    repository: new SqliteArtifactRepository(database),
+    clock: new ManualClock(Number(plan.trustedRequestStartedAtNs / 1_000_000n) + 1),
+    config: productionVaultConfig(root),
+  });
+  const retentionJournal = createSqliteArtifactRetentionJournal(database);
+  const vault = await VaultArtifactRetentionBoundary.open({ store, runtimeRoot: root });
+  const retention = createArtifactRetentionController({
+    journal: retentionJournal,
+    artifacts: vault,
+  });
+  authorization = openTestSqliteDurableCredentialAuthorizationBoundary(
+    join(paths.databaseDirectory, "owned-page-credential.sqlite"),
+    migrations,
+    plan,
+  );
+  const fixture = await credentialAuthorizationFixture(plan);
+  const wireBytes = Buffer.from(
+    JSON.stringify({
+      quotes: {
+        QA: [
+          {
+            t: timestamp(plan.queryStartNs + 1n),
+            bx: "PX",
+            bp: 17.125,
+            bs: 3,
+            ap: 17.875,
+            as: 5,
+            ax: "QX",
+            c: ["Q1"],
+            z: "A",
+          },
+        ],
+      },
+      next_page_token: null,
+    }),
+    "utf8",
+  );
+  const counters = counts();
+  const transportDouble = new TransportDouble(
+    counters,
+    response(new BodyDouble(counters, [wireBytes]), { contentLength: wireBytes.byteLength }),
+  );
+  const responseMetadata = {
+    statusCode: 200,
+    etag: null,
+    lastModified: null,
+    mediaType: "application/json",
+    contentEncoding: null,
+    declaredContentLength: wireBytes.byteLength,
+    transportDecoded: true as const,
+  };
+  const sink = createRetentionOwnedAlpacaPageSink(
+    createDurableAlpacaArtifactCommitSink(store, {
+      request: { response: responseMetadata },
+      plan,
+      retention: { derivedIds: [] },
+    }),
+    retention,
+  );
+  const boundary = new AlpacaProductionAttemptBoundary(
+    {
+      read(name) {
+        return name.endsWith("KEY_ID") ? "synthetic-key" : "synthetic-secret";
+      },
+    },
+    authorization,
+  );
+  const result = await boundary.execute({
+    plan,
+    credentialAuthorization: fixture.request,
+    page: firstPage(),
+    transport: createTestCredentialIsolatedAlpacaTransport({
+      dispatch: (request) => transportDouble.dispatch(request),
+      abort: () => transportDouble.abort(),
+      settle: () => transportDouble.settle(),
+    }),
+    artifactSink: sink,
+    deadlineScheduler: new TimerDouble().scheduler,
+  });
+  assert.equal(result.ok, true);
+  const restarted = openOwnedAcquisitionStateMachine(authorization).snapshot;
+  assert.equal(restarted.currentState, "chain-complete");
+  assert.equal(restarted.budgets.successfulPages, 1);
+  const journal = await ownedLiveCredentialAcquisitionJournal(authorization, plan);
+  const journalId = deriveMarketAcquisitionJournalId({
+    schemaVersion: 1,
+    requestIdentityHash: plan.requestIdentityHash,
+    providerId: plan.route.providerId,
+    datasetId: plan.route.datasetId,
+    feedId: plan.route.feedId,
+    endpointChannelId: plan.route.endpointChannelId,
+  });
+  assert.equal((await journal.load(journalId)).at(-1)?.checkpointKind, "chain-complete");
+  assert.equal(counters.transport, 1);
+  assert.equal(unexpectedNetworkCalls, 0);
+});
+
+test("owned continuation survives SQLite restart and ignores caller token authority", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "peas-p1-10-owned-continuation-"));
+  const previousRoot = process.env["PEAS_RUNTIME_ROOT"];
+  let authorization: ReturnType<typeof openSqliteDurableCredentialAuthorizationBoundary> | null =
+    null;
+  let store: DurableArtifactStore | null = null;
+  let database: ReturnType<typeof openSqliteDatabase> | null = null;
+  t.after(async () => {
+    authorization?.close();
+    await store?.close();
+    if (database?.open) database.close();
+    if (previousRoot === undefined) delete process.env["PEAS_RUNTIME_ROOT"];
+    else process.env["PEAS_RUNTIME_ROOT"] = previousRoot;
+    rmSync(root, { recursive: true, force: true });
+  });
+  process.env["PEAS_RUNTIME_ROOT"] = root;
+  const plan = validatedCalendarPlan();
+  const migrations = loadMigrations(join(process.cwd(), "migrations"));
+  const paths = artifactRuntimePaths(root);
+  mkdirSync(paths.databaseDirectory, { recursive: true });
+  database = openSqliteDatabase(paths.databasePath, migrations);
+  store = await DurableArtifactStore.open({
+    repository: new SqliteArtifactRepository(database),
+    clock: new ManualClock(Number(plan.trustedRequestStartedAtNs / 1_000_000n) + 1),
+    config: productionVaultConfig(root),
+  });
+  const retention = createArtifactRetentionController({
+    journal: createSqliteArtifactRetentionJournal(database),
+    artifacts: await VaultArtifactRetentionBoundary.open({ store, runtimeRoot: root }),
+  });
+  const credentialPath = join(paths.databaseDirectory, "owned-continuation-credential.sqlite");
+  authorization = openTestSqliteDurableCredentialAuthorizationBoundary(
+    credentialPath,
+    migrations,
+    plan,
+  );
+  const fixture = await credentialAuthorizationFixture(plan);
+  const pageBytes = (symbol: string, nextPageToken: string | null) =>
+    Buffer.from(
+      JSON.stringify({
+        quotes: {
+          [symbol]: [
+            {
+              t: timestamp(plan.queryStartNs + BigInt(symbol === "QA" ? 1 : 2)),
+              bx: "PX",
+              bp: 17.125,
+              bs: 3,
+              ap: 17.875,
+              as: 5,
+              ax: "QX",
+              c: ["Q1"],
+              z: "A",
+            },
+          ],
+        },
+        next_page_token: nextPageToken,
+      }),
+      "utf8",
+    );
+  const executePage = async (bytes: Buffer, suppliedPage: AlpacaPageAuthority) => {
+    if (authorization === null || store === null) throw new Error("owned fixture closed");
+    const counters = counts();
+    const transport = new TransportDouble(
+      counters,
+      response(new BodyDouble(counters, [bytes]), { contentLength: bytes.byteLength }),
+    );
+    let dispatchedPageOrdinal: number | null = null;
+    let dispatchedPageToken: string | null = null;
+    const responseMetadata = {
+      statusCode: 200,
+      etag: null,
+      lastModified: null,
+      mediaType: "application/json",
+      contentEncoding: null,
+      declaredContentLength: bytes.byteLength,
+      transportDecoded: true as const,
+    };
+    const boundary = new AlpacaProductionAttemptBoundary(
+      {
+        read(name) {
+          return name.endsWith("KEY_ID") ? "synthetic-key" : "synthetic-secret";
+        },
+      },
+      authorization,
+    );
+    const result = await boundary.execute({
+      plan,
+      credentialAuthorization: fixture.request,
+      page: suppliedPage,
+      transport: createTestCredentialIsolatedAlpacaTransport({
+        dispatch: (request) => {
+          dispatchedPageOrdinal = request.pageOrdinal;
+          dispatchedPageToken = request.query.find(([key]) => key === "page_token")?.[1] ?? null;
+          return transport.dispatch(request);
+        },
+        abort: () => transport.abort(),
+        settle: () => transport.settle(),
+      }),
+      artifactSink: createRetentionOwnedAlpacaPageSink(
+        createDurableAlpacaArtifactCommitSink(store, {
+          request: { response: responseMetadata },
+          plan,
+          retention: { derivedIds: [] },
+        }),
+        retention,
+      ),
+      deadlineScheduler: new TimerDouble().scheduler,
+    });
+    return { result, transport, counters, dispatchedPageOrdinal, dispatchedPageToken };
+  };
+
+  const first = await executePage(pageBytes("QA", "owned-next-token"), firstPage());
+  assert.equal(first.result.ok, true);
+  assert.equal(
+    openOwnedAcquisitionStateMachine(authorization).snapshot.currentState,
+    "checkpointing",
+  );
+  authorization.close();
+  authorization = null;
+  authorization = openTestSqliteDurableCredentialAuthorizationBoundary(
+    credentialPath,
+    migrations,
+    plan,
+  );
+  // A caller-supplied first-page authority cannot replace the private durable continuation.
+  const second = await executePage(pageBytes("QB", null), firstPage());
+  assert.equal(second.result.ok, true, JSON.stringify(second.result));
+  assert.equal(second.dispatchedPageOrdinal, 1);
+  assert.equal(second.dispatchedPageToken, "owned-next-token");
+  const restarted = openOwnedAcquisitionStateMachine(authorization).snapshot;
+  assert.equal(restarted.currentState, "chain-complete");
+  assert.equal(restarted.budgets.successfulPages, 2);
+  assert.equal(restarted.budgets.records, 2);
+  const journal = await ownedLiveCredentialAcquisitionJournal(authorization, plan);
+  const entries = await journal.load(restarted.marketAcquisitionJournalId);
+  assert.deepEqual(
+    entries
+      .filter((entry) => entry.checkpointKind === "page-checkpointed")
+      .map((entry) => entry.pageOrdinal),
+    [0, 1],
+  );
+  assert.equal(entries.at(-1)?.checkpointKind, "chain-complete");
+  assert.equal(first.counters.transport + second.counters.transport, 2);
+  assert.equal(unexpectedNetworkCalls, 0);
+});
+
+test("caller and test-double sinks cannot attest atomic artifact ownership", async () => {
+  const plan = validatedPlan();
+  assert.throws(
+    () => new RetentionOwnedAlpacaPageSink(new SinkDouble(counts()), ALLOW_ALL_RETENTION),
+    /owned-alpaca-artifact-commit-sink-required/u,
+  );
+  assert.throws(
+    () =>
+      new RetentionOwnedAlpacaPageSink(
+        createTestAlpacaArtifactCommitSink(new SinkDouble(counts())),
+        ALLOW_ALL_RETENTION,
+      ),
+    /owned-artifact-retention-controller-required/u,
+  );
+  const credentialFixture = await credentialAuthorizationFixture(plan);
+  let credentialReads = 0;
+  const boundary = new AlpacaProductionAttemptBoundary(
+    {
+      read() {
+        credentialReads += 1;
+        return "unreachable";
+      },
+    },
+    credentialFixture.authorization,
+  );
+  const counters = counts();
+  const result = await boundary.execute({
+    plan,
+    credentialAuthorization: credentialFixture.request,
+    page: firstPage(),
+    transport: new TransportDouble(
+      counters,
+      response(new BodyDouble(counters, [])),
+    ) as unknown as AlpacaTransport,
+    artifactSink: new SinkDouble(counters) as never,
+    deadlineScheduler: new TimerDouble().scheduler,
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.error.reasonCode, "configuration-invalid");
+  assert.equal(credentialReads, 0);
+  assert.equal(counters.transport, 0);
 });
 
 test("15-minute equality dispatches and one nanosecond newer stops before transport", async () => {
@@ -840,6 +1511,104 @@ test("forged validated plans and unauthorized first-page continuation reject wit
     assert.equal(counters.transport, 0);
     assert.equal(counters.write, 0);
   }
+});
+
+test("all non-secret request, scheduler, and transport rejection precedes credential claim", async () => {
+  const plan = validatedPlan();
+  const invalidContinuation = {
+    ...continuationPage(plan),
+    currentTokenHash: "0".repeat(64),
+  } as AlpacaPageAuthority;
+  for (const rejection of ["continuation", "scheduler", "scheduler-handle", "transport"] as const) {
+    const fixture = await credentialAuthorizationFixture(plan);
+    const counters = counts();
+    let credentialReads = 0;
+    const rawTransport = new TransportDouble(counters, response(new BodyDouble(counters, [])));
+    const isolatedTransport = createTestCredentialIsolatedAlpacaTransport({
+      dispatch: (request) => rawTransport.dispatch(request),
+      abort: () => rawTransport.abort(),
+      settle: () => rawTransport.settle(),
+    });
+    const boundary = new AlpacaProductionAttemptBoundary(
+      {
+        read() {
+          credentialReads += 1;
+          return "must-not-be-read";
+        },
+      },
+      fixture.authorization,
+    );
+    const result = await boundary.execute({
+      plan,
+      credentialAuthorization: fixture.request,
+      page: rejection === "continuation" ? invalidContinuation : firstPage(),
+      transport:
+        rejection === "transport"
+          ? (rawTransport as unknown as AlpacaTransport)
+          : isolatedTransport,
+      artifactSink: createRetentionOwnedAlpacaPageSink(
+        createTestAlpacaArtifactCommitSink(new SinkDouble(counters)),
+        adapterRetention(),
+      ),
+      deadlineScheduler:
+        rejection === "scheduler"
+          ? ({ arm: null } as unknown as AlpacaDeadlineScheduler)
+          : rejection === "scheduler-handle"
+            ? ({ arm: () => Object.freeze({}) } as unknown as AlpacaDeadlineScheduler)
+            : new TimerDouble().scheduler,
+    });
+    assert.equal(result.ok, false, rejection);
+    assert.equal(credentialReads, 0, rejection);
+    assert.equal(counters.transport, 0, rejection);
+    const journal = await fixture.journal.load(fixture.request.marketAcquisitionJournalId);
+    assert.equal(journal.at(-1)?.checkpointKind, "request-started", rejection);
+  }
+});
+
+test("a hostile retained transport request contains no plaintext credential surface", async () => {
+  const plan = validatedPlan();
+  const fixture = await credentialAuthorizationFixture(plan);
+  const counters = counts();
+  let retained: AlpacaTransportRequest | null = null;
+  const rawTransport = new TransportDouble(counters, response(new BodyDouble(counters, [])));
+  const transport = createTestCredentialIsolatedAlpacaTransport({
+    async dispatch(request) {
+      retained = request;
+      return rawTransport.dispatch(request);
+    },
+    abort: () => rawTransport.abort(),
+    settle: () => rawTransport.settle(),
+  });
+  let reads = 0;
+  const boundary = new AlpacaProductionAttemptBoundary(
+    {
+      read(name) {
+        reads += 1;
+        return name.endsWith("KEY_ID") ? "hostile-key-sentinel" : "hostile-secret-sentinel";
+      },
+    },
+    fixture.authorization,
+  );
+  const result = await boundary.execute({
+    plan,
+    credentialAuthorization: fixture.request,
+    page: firstPage(),
+    transport,
+    artifactSink: createRetentionOwnedAlpacaPageSink(
+      createTestAlpacaArtifactCommitSink(new SinkDouble(counters)),
+      adapterRetention(),
+    ),
+    deadlineScheduler: new TimerDouble().scheduler,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(reads, 2);
+  assert.ok(retained !== null);
+  assert.equal("authorizationHeaders" in retained, false);
+  assert.equal(
+    JSON.stringify(retained).includes("hostile-key-sentinel") ||
+      JSON.stringify(retained).includes("hostile-secret-sentinel"),
+    false,
+  );
 });
 
 test("verified continuation binding adds one opaque page field and substitutions reject", async () => {
@@ -1071,4 +1840,86 @@ test("successful verified-page completion settles every resource before return",
   const snapshot = { ...counters };
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(counters, snapshot);
+});
+
+test("timer cancellation precedes settlement on success, failure, and deadline paths", async () => {
+  const successCounters = counts();
+  const successTimer = new CancelDependentTimer();
+  const success = await executeAlpacaAttempt({
+    plan: validatedPlan(),
+    page: firstPage(),
+    authorizationHeaders: HEADERS,
+    transport: new TransportDouble(successCounters, response(new BodyDouble(successCounters, []))),
+    artifactSink: new SinkDouble(successCounters),
+    deadlineScheduler: successTimer,
+  });
+  assert.equal(success.ok, true);
+  assert.deepEqual([successTimer.cancelled, successTimer.settled], [1, 1]);
+
+  const failureCounters = counts();
+  const failureTimer = new CancelDependentTimer();
+  const failure = await executeAlpacaAttempt({
+    plan: validatedPlan(),
+    page: firstPage(),
+    authorizationHeaders: HEADERS,
+    transport: new TransportDouble(
+      failureCounters,
+      response(new BodyDouble(failureCounters, []), { status: 500 }),
+    ),
+    artifactSink: new SinkDouble(failureCounters),
+    deadlineScheduler: failureTimer,
+  });
+  assert.equal(failure.ok, false);
+  if (!failure.ok) assert.equal(failure.resourcesSettled, true);
+  assert.deepEqual([failureTimer.cancelled, failureTimer.settled], [1, 1]);
+
+  const deadlineCounters = counts();
+  const deadlineTimer = new CancelDependentTimer();
+  const pending = executeAlpacaAttempt({
+    plan: validatedPlan(),
+    page: firstPage(),
+    authorizationHeaders: HEADERS,
+    transport: new HangingTransport(deadlineCounters),
+    artifactSink: new SinkDouble(deadlineCounters),
+    deadlineScheduler: deadlineTimer,
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  deadlineTimer.expire();
+  const deadline = await pending;
+  assert.equal(deadline.ok, false);
+  if (!deadline.ok) assert.equal(deadline.resourcesSettled, true);
+  assert.deepEqual([deadlineTimer.cancelled, deadlineTimer.settled], [1, 1]);
+});
+
+test("pending-forever body, sibling, sink, transport, abort, and destroy cannot exceed the absolute attempt deadline", async () => {
+  for (const component of ["body", "sibling", "sink", "transport"] as const) {
+    const counters = counts();
+    const timer = new TimerDouble();
+    const body =
+      component === "body" ? new PendingCleanupBody(counters, []) : new BodyDouble(counters, []);
+    const sibling =
+      component === "sibling" ? new PendingCleanupResource(counters) : new ResourceDouble(counters);
+    const value = response(body, {
+      status: 500,
+      siblingResources: [sibling],
+    });
+    const transport =
+      component === "transport"
+        ? new PendingCleanupTransport(counters, value)
+        : new TransportDouble(counters, value);
+    const sink = component === "sink" ? new PendingCleanupSink(counters) : new SinkDouble(counters);
+    const pending = executeAlpacaAttempt({
+      plan: validatedPlan(),
+      page: firstPage(),
+      authorizationHeaders: HEADERS,
+      transport,
+      artifactSink: sink,
+      deadlineScheduler: timer,
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    timer.expire();
+    const result = await pending;
+    assert.equal(result.ok, false, component);
+    if (!result.ok) assert.equal(result.resourcesSettled, false, component);
+  }
 });

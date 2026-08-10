@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 
 import { canonicalJson, type JsonValue } from "../src/core/json.js";
@@ -36,6 +37,7 @@ import {
   ACQUISITION_STATES,
   ACQUISITION_TRANSITIONS,
   AcquisitionStateMachine,
+  type AcquisitionEvent,
   type AcquisitionEventProof,
   type AcquisitionMachineSnapshot,
   createInitialAcquisitionSnapshot,
@@ -58,6 +60,67 @@ function initialSnapshot(): AcquisitionMachineSnapshot {
     acquisitionDeclaredMonotonicMs: 0,
   });
 }
+
+test("production artifacts reject no-op persistence, arbitrary wire roots, and prototype mutation", () => {
+  const script = `
+    import { AcquisitionStateMachine, createInitialAcquisitionSnapshot, openOwnedAcquisitionStateMachine } from './dist/production/src/adapters/market-acquisition/state-machine.js';
+    import { openSqliteDurableAlpacaWireAdmissionBoundary, DurableAlpacaWireAdmissionBoundary, resolveAlpacaHistoricalChain } from './dist/production/src/adapters/market-acquisition/alpaca/wire.js';
+    import { openSqliteDurableAlpacaWireSemanticEvidenceBoundary, DurableAlpacaWireSemanticEvidenceBoundary } from './dist/production/src/adapters/market-acquisition/alpaca/wire-semantic-evidence.js';
+    import { DurableCredentialAuthorizationBoundary } from './dist/production/src/adapters/market-acquisition/credentials.js';
+    import { openSqliteDatabase } from './dist/production/src/adapters/sqlite/database.js';
+    import { createSqliteAcquisitionJournal } from './dist/production/src/adapters/market-acquisition/sqlite-journal.js';
+    import { decideAcquisitionRestart, persistVerifiedAcquisitionWorkflowEvidence } from './dist/production/src/adapters/market-acquisition/artifact-integration.js';
+    const snapshot = createInitialAcquisitionSnapshot({
+      requestIdentityHash: '1'.repeat(64), acquisitionConfigurationHash: '2'.repeat(64),
+      marketAcquisitionJournalId: '3'.repeat(64), runSessionNonce: 'offline-owned-run',
+      acquisitionDeclaredMonotonicMs: 0,
+    });
+    const outcomes = [];
+    try { new AcquisitionStateMachine(snapshot, async () => {}); outcomes.push('noop-accepted'); }
+    catch (error) { outcomes.push(error.message); }
+    try { openOwnedAcquisitionStateMachine({}); outcomes.push('owned-state-opened'); }
+    catch (error) { outcomes.push(error.message); }
+    try { await persistVerifiedAcquisitionWorkflowEvidence({}); outcomes.push('workflow-arrays-accepted'); }
+    catch (error) { outcomes.push(error.message); }
+    try { openSqliteDurableAlpacaWireAdmissionBoundary('caller.sqlite', [], {}, {}); outcomes.push('wire-root-accepted'); }
+    catch (error) { outcomes.push(error.message); }
+    try { openSqliteDurableAlpacaWireSemanticEvidenceBoundary('caller.sqlite', [], {}, {}); outcomes.push('semantic-root-accepted'); }
+    catch (error) { outcomes.push(error.message); }
+    const database = openSqliteDatabase(':memory:', []);
+    const journal = createSqliteAcquisitionJournal(database, { schemaVersion: 1, requestIdentityHash: '1'.repeat(64), providerId: 'mpv1_' + '2'.repeat(64), datasetId: 'mds1_' + '3'.repeat(64), feedId: 'mfd1_' + '4'.repeat(64), endpointChannelId: 'mec1_' + '5'.repeat(64) });
+    try { await journal.claimAttemptStarted('6'.repeat(64), {}); outcomes.push('claim-accepted'); }
+    catch (error) { outcomes.push(error.message); }
+    try { resolveAlpacaHistoricalChain('bars', [], { journal: [], expectedIdentity: {} }); outcomes.push('structural-chain-accepted'); }
+    catch (error) { outcomes.push(error.code ?? error.message); }
+    try { await decideAcquisitionRestart({ journal: {}, journalId: '1'.repeat(64), expectedIdentity: {}, expectedConfigurationHash: '2'.repeat(64), artifactStore: {} }); outcomes.push('structural-restart-accepted'); }
+    catch (error) { outcomes.push(error.message); }
+    database.close();
+    for (const prototype of [AcquisitionStateMachine.prototype, DurableAlpacaWireAdmissionBoundary.prototype, DurableAlpacaWireSemanticEvidenceBoundary.prototype, DurableCredentialAuthorizationBoundary.prototype]) {
+      try { Object.defineProperty(prototype, 'forged', { value() {} }); outcomes.push('prototype-mutable'); }
+      catch { outcomes.push(Object.isFrozen(prototype) ? 'prototype-frozen' : 'prototype-not-frozen'); }
+    }
+    process.stdout.write(JSON.stringify(outcomes));
+  `;
+  const child = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  });
+  assert.equal(child.status, 0, child.stderr);
+  assert.deepEqual(JSON.parse(child.stdout), [
+    "owned-acquisition-durable-persistence-required",
+    "owned-acquisition-state-test-composition-unavailable",
+    "verified-workflow-test-composition-unavailable",
+    "arbitrary-wire-admission-root-unavailable",
+    "arbitrary-wire-semantic-root-unavailable",
+    "owned-attempt-claim-required",
+    "page-chain-incomplete",
+    "owned-acquisition-journal-required",
+    "prototype-frozen",
+    "prototype-frozen",
+    "prototype-frozen",
+    "prototype-frozen",
+  ]);
+});
 
 function proof(
   machine: AcquisitionStateMachine,
@@ -113,6 +176,43 @@ function currentPageChainInput(machine: AcquisitionStateMachine, sizeBytes = 13)
     cumulativeAttempts: snapshot.budgets.attempts,
   } as const;
 }
+
+test("event and transition evidence are synchronously snapshotted before durable await", async () => {
+  const initial = createInitialAcquisitionSnapshot({
+    requestIdentityHash: "1".repeat(64),
+    acquisitionConfigurationHash: "2".repeat(64),
+    marketAcquisitionJournalId: hex("async-event-snapshot"),
+    runSessionNonce: "async-event-snapshot-run",
+    acquisitionDeclaredMonotonicMs: 0,
+  });
+  let release!: () => void;
+  let entered!: () => void;
+  const paused = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const persistenceEntered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let persistedEvent: AcquisitionEvent | undefined;
+  const machine = new AcquisitionStateMachine(initial, async (_plan, event) => {
+    persistedEvent = event;
+    entered();
+    await paused;
+  });
+  const event = {
+    kind: "begin-preflight" as const,
+    proof: { ...proof(machine, 0) },
+  };
+  const pending = machine.applyAcquisitionEvent(event);
+  await persistenceEntered;
+  event.proof.requestIdentityHash = "f".repeat(64);
+  event.proof.runSessionNonce = "mutated-after-call";
+  release();
+  await pending;
+  assert.equal(persistedEvent?.proof.requestIdentityHash, initial.requestIdentityHash);
+  assert.equal(persistedEvent?.proof.runSessionNonce, initial.runSessionNonce);
+  assert.equal(machine.snapshot.currentState, "preflighting");
+});
 
 test("the accepted state vocabulary and transition graph are exact and closed", () => {
   assert.equal(ACQUISITION_STATES.length, 20);
@@ -203,7 +303,11 @@ test("the integrated reducer completes one page and persists each plan before mu
 });
 
 test("rejected evidence and failed durable append are byte-atomic", async () => {
-  const machine = new AcquisitionStateMachine(initialSnapshot());
+  assert.throws(
+    () => new AcquisitionStateMachine(initialSnapshot(), undefined as never),
+    /durable-persistence-required/u,
+  );
+  const machine = new AcquisitionStateMachine(initialSnapshot(), async () => {});
   const before = canonicalJson(machine.snapshot as unknown as JsonValue);
   await assert.rejects(
     () =>
@@ -321,7 +425,7 @@ test("retry policy is closed across status, Retry-After, identity, and budget ca
 });
 
 test("retry keeps a logical page stable and creates a fresh physical attempt", async () => {
-  const machine = new AcquisitionStateMachine(initialSnapshot());
+  const machine = new AcquisitionStateMachine(initialSnapshot(), async () => {});
   await advanceToActive(machine);
   const logicalPage = machine.snapshot.logicalPageIdentityHash;
   const firstAttempt = machine.snapshot.attemptId;
@@ -359,10 +463,11 @@ test("retry keeps a logical page stable and creates a fresh physical attempt", a
       monotonicOrderValid: true,
     },
   });
-  await machine.applyAcquisitionEvent({
+  const retryPreflight = await machine.applyAcquisitionEvent({
     kind: "preflight-approved",
     proof: proof(machine, 2_100),
   });
+  assert.equal(retryPreflight.checkpointKind, null);
   await machine.applyAcquisitionEvent({
     kind: "credentials-loaded",
     proof: proof(machine, 2_100),
@@ -380,6 +485,24 @@ test("retry keeps a logical page stable and creates a fresh physical attempt", a
   assert.equal(machine.snapshot.logicalPageIdentityHash, logicalPage);
   assert.notEqual(machine.snapshot.attemptId, firstAttempt);
   assert.equal(machine.snapshot.attemptOrdinal, 1);
+});
+
+test("production retry transition refuses to wait when a full next attempt cannot fit", async () => {
+  const machine = new AcquisitionStateMachine(initialSnapshot(), async () => {});
+  await advanceToActive(machine);
+  await assert.rejects(
+    () =>
+      machine.applyAcquisitionEvent({
+        kind: "retry-cleanup-complete",
+        proof: proof(machine, ACQUISITION_DEADLINE_MS - ATTEMPT_DEADLINE_MS + 1),
+        context: {
+          failure: { kind: "pre-response-transport" },
+          pageAttemptsStarted: 1,
+          acquisitionAttemptsStarted: 1,
+        },
+      }),
+    /retry-acquisition-deadline/u,
+  );
 });
 
 test("rolling quota and deadline proofs preserve exact boundaries", () => {

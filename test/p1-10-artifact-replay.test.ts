@@ -7,6 +7,7 @@ import type { ArtifactStore } from "../src/artifacts/artifact-store.js";
 import { canonicalHash } from "../src/core/hash.js";
 import {
   createIssuerMapping,
+  createClockBasis,
   createObservationLedgerEntry,
   deriveAcquisitionObservationId,
   deriveMarketReferenceJoinKey,
@@ -26,6 +27,7 @@ import {
   MarketAcquisitionLedger,
   verifyCommittedArtifact,
 } from "../src/adapters/market-acquisition/artifact-integration.js";
+import { retentionGuardedArtifactStore } from "./p1-10-repair-fixtures.js";
 import {
   canonicalReplayProjection,
   replayAcquisitionLedger,
@@ -47,7 +49,9 @@ const acquisitionObservationId = deriveAcquisitionObservationId({
   routeLabel: "alpaca-v2-historical-quotes",
 });
 
-function artifactStoreDouble(): Readonly<{ store: ArtifactStore; readCalls: () => number }> {
+function artifactStoreDouble(
+  provider = "alpaca",
+): Readonly<{ store: ArtifactStore; readCalls: () => number }> {
   let reads = 0;
   const request = {
     method: "GET",
@@ -58,7 +62,7 @@ function artifactStoreDouble(): Readonly<{ store: ArtifactStore; readCalls: () =
   };
   const attempt = {
     attemptId: retrievalAttemptId,
-    provider: "alpaca",
+    provider,
     recordId: "synthetic-record",
     revisionId: "synthetic-revision",
     startedAtMs: 1_000,
@@ -70,7 +74,7 @@ function artifactStoreDouble(): Readonly<{ store: ArtifactStore; readCalls: () =
     observationId: artifactObservationId,
     attemptId: retrievalAttemptId,
     artifactDigest: digest,
-    provider: "alpaca",
+    provider,
     recordId: "synthetic-record",
     revisionId: "synthetic-revision",
     retrievedAtMs: 1_001,
@@ -314,7 +318,10 @@ function buildLiveLedger(): readonly ObservationLedgerEntryV1[] {
 
 test("artifact verification reconciles attempt, observation, metadata, digest, and consumed bytes", async () => {
   const fixture = artifactStoreDouble();
-  const verified = await verifyCommittedArtifact(fixture.store, {
+  const guarded = retentionGuardedArtifactStore(fixture.store, [
+    { artifactDigest: digest, artifactSizeBytes: bytes.byteLength, artifactObservationId },
+  ]);
+  const verified = await verifyCommittedArtifact(guarded, {
     artifactObservationId,
     artifactDigest: digest,
     artifactSizeBytes: bytes.byteLength,
@@ -327,16 +334,49 @@ test("artifact verification reconciles attempt, observation, metadata, digest, a
   assert.equal(fixture.readCalls(), 1);
   await assert.rejects(
     () =>
-      verifyCommittedArtifact(fixture.store, {
+      verifyCommittedArtifact(guarded, {
         artifactObservationId,
         artifactDigest: digest,
         artifactSizeBytes: bytes.byteLength + 1,
         artifactObservationHash,
         retrievalAttemptId,
         requestIdentityHash,
+        provider: "alpaca",
       }),
     /artifact-metadata-mismatch/u,
   );
+  await assert.rejects(
+    () =>
+      verifyCommittedArtifact(fixture.store as never, {
+        artifactObservationId,
+        artifactDigest: digest,
+        artifactSizeBytes: bytes.byteLength,
+        artifactObservationHash,
+        retrievalAttemptId,
+        requestIdentityHash,
+        provider: "alpaca",
+      }),
+    /retention-enforced-store-required/u,
+  );
+
+  const substitutedProvider = artifactStoreDouble("fmp");
+  const substitutedProviderGuard = retentionGuardedArtifactStore(substitutedProvider.store, [
+    { artifactDigest: digest, artifactSizeBytes: bytes.byteLength, artifactObservationId },
+  ]);
+  await assert.rejects(
+    () =>
+      verifyCommittedArtifact(substitutedProviderGuard, {
+        artifactObservationId,
+        artifactDigest: digest,
+        artifactSizeBytes: bytes.byteLength,
+        artifactObservationHash,
+        retrievalAttemptId,
+        requestIdentityHash,
+        provider: "alpaca",
+      }),
+    /artifact-observation-mismatch/u,
+  );
+  assert.equal(substitutedProvider.readCalls(), 0);
 });
 
 test("live ledger uses genuine ADR-0009 entries and a distinct matching clock parent", () => {
@@ -399,8 +439,11 @@ test("replay is page-size invariant, omits request facts, and re-verifies artifa
   });
   assert.equal(new Set(projections).size, 1);
   const fixture = artifactStoreDouble();
+  const guarded = retentionGuardedArtifactStore(fixture.store, [
+    { artifactDigest: digest, artifactSizeBytes: bytes.byteLength, artifactObservationId },
+  ]);
   await replayVerifiedAcquisition({
-    artifactStore: fixture.store,
+    artifactStore: guarded,
     artifacts: [
       {
         artifactObservationId,
@@ -409,6 +452,7 @@ test("replay is page-size invariant, omits request facts, and re-verifies artifa
         artifactObservationHash,
         retrievalAttemptId,
         requestIdentityHash,
+        provider: "alpaca",
       },
       {
         artifactObservationId,
@@ -417,6 +461,7 @@ test("replay is page-size invariant, omits request facts, and re-verifies artifa
         artifactObservationHash,
         retrievalAttemptId,
         requestIdentityHash,
+        provider: "alpaca",
       },
     ],
     ledger: live,
@@ -424,6 +469,41 @@ test("replay is page-size invariant, omits request facts, and re-verifies artifa
     pageSize: 2,
   });
   assert.equal(fixture.readCalls(), 1, "physical duplicate is reverified once per replay");
+});
+
+test("verified replay and cold restart reject a durable provider substitution", async () => {
+  const ledger = buildLiveLedger();
+  const expectation = {
+    artifactObservationId,
+    artifactDigest: digest,
+    artifactSizeBytes: bytes.byteLength,
+    artifactObservationHash,
+    retrievalAttemptId,
+    requestIdentityHash,
+    provider: "alpaca",
+  } as const;
+
+  for (const executionId of [
+    "p1-10-provider-substitution-direct-replay-v1",
+    "p1-10-provider-substitution-cold-restart-v1",
+  ]) {
+    const restartedStore = artifactStoreDouble("fmp");
+    const restartedGuard = retentionGuardedArtifactStore(restartedStore.store, [
+      { artifactDigest: digest, artifactSizeBytes: bytes.byteLength, artifactObservationId },
+    ]);
+    await assert.rejects(
+      () =>
+        replayVerifiedAcquisition({
+          artifactStore: restartedGuard,
+          artifacts: [expectation],
+          ledger,
+          executionId,
+          pageSize: 2,
+        }),
+      /artifact-observation-mismatch/u,
+    );
+    assert.equal(restartedStore.readCalls(), 0);
+  }
 });
 
 test("duplicate and conflicting delivery classification is order-independent", () => {
@@ -443,5 +523,350 @@ test("duplicate and conflicting delivery classification is order-independent", (
       kind: "conflict-quarantined",
       digests: [first, second].sort(),
     });
+  }
+});
+
+test("verified replay requires exact complete ledger-to-artifact coverage and conflicting duplicates reject", async () => {
+  const ledger = buildLiveLedger();
+  const fixture = artifactStoreDouble();
+  const guarded = retentionGuardedArtifactStore(fixture.store, [
+    { artifactDigest: digest, artifactSizeBytes: bytes.byteLength, artifactObservationId },
+  ]);
+  const expected = {
+    artifactObservationId,
+    artifactDigest: digest,
+    artifactSizeBytes: bytes.byteLength,
+    artifactObservationHash,
+    retrievalAttemptId,
+    requestIdentityHash,
+    provider: "alpaca",
+  } as const;
+  const replay = (artifacts: readonly (typeof expected)[]) =>
+    replayVerifiedAcquisition({
+      artifactStore: guarded,
+      artifacts,
+      ledger,
+      executionId: `p1-10-exact-coverage-${artifacts.length}`,
+      pageSize: 2,
+    });
+  await assert.rejects(() => replay([]), /replay-artifact-coverage-mismatch/u);
+  await assert.rejects(
+    () =>
+      replay([expected, { ...expected, artifactObservationId: hash("unexpected-observation") }]),
+    /artifact-expectation-invalid|replay-artifact-coverage-mismatch|non-JSON undefined/u,
+  );
+  await assert.rejects(
+    () => replay([expected, { ...expected, provider: "substituted" } as never]),
+    /replay-artifact-expectation-conflict/u,
+  );
+  await assert.rejects(
+    () => replay([{ ...expected, artifactObservationHash: undefined } as never]),
+    /artifact-expectation-invalid|replay-artifact-coverage-mismatch|non-JSON undefined/u,
+  );
+  assert.equal(fixture.readCalls(), 0);
+});
+
+test("verified replay snapshots the complete expectation tuple before the first await", async () => {
+  const ledger = buildLiveLedger();
+  const fixture = artifactStoreDouble();
+  const guarded = retentionGuardedArtifactStore(fixture.store, [
+    { artifactDigest: digest, artifactSizeBytes: bytes.byteLength, artifactObservationId },
+  ]);
+  const mutable = {
+    artifactObservationId,
+    artifactDigest: digest,
+    artifactSizeBytes: bytes.byteLength,
+    artifactObservationHash,
+    retrievalAttemptId,
+    requestIdentityHash,
+    provider: "alpaca",
+  };
+  const pending = replayVerifiedAcquisition({
+    artifactStore: guarded,
+    artifacts: [mutable],
+    ledger,
+    executionId: "p1-10-replay-expectation-snapshot-v1",
+    pageSize: 2,
+  });
+  mutable.provider = "substituted-after-call";
+  mutable.artifactDigest = hash("substituted-after-call");
+  await pending;
+  assert.equal(fixture.readCalls(), 1);
+});
+
+test("replay remaps a valid clock-regression witness without prefix rejection at every page size", () => {
+  const basis = createClockBasis({
+    wallClock: "recorded-fixture",
+    synchronization: "not-applicable",
+    maximumErrorMs: null,
+    monotonicClock: "process-monotonic-us",
+    monotonicSessionId: "p1-10-replay-regression-session",
+  });
+  const basisEntry = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: "p1-10-replay-regression-source",
+    parentEntryIds: [],
+    clock: { clockBasisId: null, wallTimeMs: null, monotonicTimeUs: null },
+    facts: { kind: "clock-basis.declared", clockBasis: basis },
+  });
+  const declaration = (label: string, wallTimeMs: number, monotonicTimeUs: number) => {
+    const retrievalAttemptId = `rat1_${hash(`regression-${label}`)}`;
+    const acquisitionObservationId = deriveAcquisitionObservationId({
+      provider: "alpaca",
+      retrievalAttemptId,
+      sanitizedRequestIdentityHash: requestIdentityHash,
+      routeLabel: "alpaca-v2-historical-quotes",
+    });
+    return createObservationLedgerEntry({
+      schemaVersion: 1,
+      executionId: "p1-10-replay-regression-source",
+      parentEntryIds: [basisEntry.entryId],
+      clock: { clockBasisId: basis.clockBasisId, wallTimeMs, monotonicTimeUs },
+      facts: {
+        kind: "acquisition.declared",
+        acquisitionObservationId,
+        provider: "alpaca",
+        retrievalAttemptId,
+        sanitizedRequestIdentityHash: requestIdentityHash,
+        routeLabel: "alpaca-v2-historical-quotes",
+      },
+    });
+  };
+  const prior = declaration("prior", 200, 1);
+  const regressing = declaration("regressing", 100, 2);
+  const witness = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId: "p1-10-replay-regression-source",
+    parentEntryIds: [basisEntry.entryId, prior.entryId, regressing.entryId].sort(),
+    clock: regressing.clock,
+    facts: {
+      kind: "clock.regression",
+      priorEntryId: prior.entryId,
+      regressingEntryId: regressing.entryId,
+      priorWallTimeMs: 200,
+      currentWallTimeMs: 100,
+      monotonicOrderPreserved: true,
+    },
+  });
+  const original = validateObservationLedgerBundle([basisEntry, prior, regressing, witness]);
+  for (let pageSize = 1; pageSize <= original.length; pageSize += 1) {
+    const replayed = replayAcquisitionLedger(
+      original,
+      `p1-10-regression-replay-${pageSize}`,
+      pageSize,
+    );
+    const replayWitness = replayed.find((entry) => entry.facts.kind === "clock.regression");
+    assert.ok(replayWitness?.facts.kind === "clock.regression");
+    assert.equal(replayWitness.facts.priorWallTimeMs, 200);
+    assert.equal(replayWitness.facts.currentWallTimeMs, 100);
+    assert.ok(replayWitness.parentEntryIds.includes(replayWitness.facts.priorEntryId));
+    assert.ok(replayWitness.parentEntryIds.includes(replayWitness.facts.regressingEntryId));
+  }
+});
+
+test("replay chains consecutive clock regressions through each synthesized witness", () => {
+  const basis = createClockBasis({
+    wallClock: "recorded-fixture",
+    synchronization: "not-applicable",
+    maximumErrorMs: null,
+    monotonicClock: "process-monotonic-us",
+    monotonicSessionId: "p1-10-replay-consecutive-regression-session",
+  });
+  const executionId = "p1-10-replay-consecutive-regression-source";
+  const basisEntry = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId,
+    parentEntryIds: [],
+    clock: { clockBasisId: null, wallTimeMs: null, monotonicTimeUs: null },
+    facts: { kind: "clock-basis.declared", clockBasis: basis },
+  });
+  const declaration = (label: string, wallTimeMs: number, monotonicTimeUs: number) => {
+    const retrievalAttemptId = `rat1_${hash(`consecutive-${label}`)}`;
+    const acquisitionObservationId = deriveAcquisitionObservationId({
+      provider: "alpaca",
+      retrievalAttemptId,
+      sanitizedRequestIdentityHash: requestIdentityHash,
+      routeLabel: "alpaca-v2-historical-quotes",
+    });
+    return createObservationLedgerEntry({
+      schemaVersion: 1,
+      executionId,
+      parentEntryIds: [basisEntry.entryId],
+      clock: { clockBasisId: basis.clockBasisId, wallTimeMs, monotonicTimeUs },
+      facts: {
+        kind: "acquisition.declared",
+        acquisitionObservationId,
+        provider: "alpaca",
+        retrievalAttemptId,
+        sanitizedRequestIdentityHash: requestIdentityHash,
+        routeLabel: "alpaca-v2-historical-quotes",
+      },
+    });
+  };
+  const first = declaration("first", 300, 1);
+  const second = declaration("second", 200, 2);
+  const firstWitness = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId,
+    parentEntryIds: [basisEntry.entryId, first.entryId, second.entryId].sort(),
+    clock: second.clock,
+    facts: {
+      kind: "clock.regression",
+      priorEntryId: first.entryId,
+      regressingEntryId: second.entryId,
+      priorWallTimeMs: 300,
+      currentWallTimeMs: 200,
+      monotonicOrderPreserved: true,
+    },
+  });
+  const third = declaration("third", 100, 3);
+  const secondWitness = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId,
+    parentEntryIds: [basisEntry.entryId, firstWitness.entryId, third.entryId].sort(),
+    clock: third.clock,
+    facts: {
+      kind: "clock.regression",
+      priorEntryId: firstWitness.entryId,
+      regressingEntryId: third.entryId,
+      priorWallTimeMs: 200,
+      currentWallTimeMs: 100,
+      monotonicOrderPreserved: true,
+    },
+  });
+  const original = validateObservationLedgerBundle([
+    basisEntry,
+    first,
+    second,
+    firstWitness,
+    third,
+    secondWitness,
+  ]);
+  for (let pageSize = 1; pageSize <= original.length; pageSize += 1) {
+    const replayed = replayAcquisitionLedger(original, `p1-10-consecutive-${pageSize}`, pageSize);
+    const witnesses = replayed.filter((entry) => entry.facts.kind === "clock.regression");
+    assert.equal(witnesses.length, 2);
+    assert.deepEqual(
+      witnesses.map((entry) =>
+        entry.facts.kind === "clock.regression"
+          ? [entry.facts.priorWallTimeMs, entry.facts.currentWallTimeMs]
+          : null,
+      ),
+      [
+        [300, 200],
+        [200, 100],
+      ],
+    );
+  }
+});
+
+test("replay remaps a regression endpoint that is intentionally omitted", () => {
+  const basis = createClockBasis({
+    wallClock: "recorded-fixture",
+    synchronization: "not-applicable",
+    maximumErrorMs: null,
+    monotonicClock: "process-monotonic-us",
+    monotonicSessionId: "p1-10-replay-omitted-regression-session",
+  });
+  const executionId = "p1-10-replay-omitted-regression-source";
+  const basisEntry = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId,
+    parentEntryIds: [],
+    clock: { clockBasisId: null, wallTimeMs: null, monotonicTimeUs: null },
+    facts: { kind: "clock-basis.declared", clockBasis: basis },
+  });
+  const retrievalAttemptId = `rat1_${hash("omitted-regression-attempt")}`;
+  const acquisitionObservationId = deriveAcquisitionObservationId({
+    provider: "alpaca",
+    retrievalAttemptId,
+    sanitizedRequestIdentityHash: requestIdentityHash,
+    routeLabel: "alpaca-v2-historical-quotes",
+  });
+  const declaration = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId,
+    parentEntryIds: [basisEntry.entryId],
+    clock: { clockBasisId: basis.clockBasisId, wallTimeMs: 300, monotonicTimeUs: 1 },
+    facts: {
+      kind: "acquisition.declared",
+      acquisitionObservationId,
+      provider: "alpaca",
+      retrievalAttemptId,
+      sanitizedRequestIdentityHash: requestIdentityHash,
+      routeLabel: "alpaca-v2-historical-quotes",
+    },
+  });
+  const requestStarted = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId,
+    parentEntryIds: [basisEntry.entryId, declaration.entryId].sort(),
+    clock: { clockBasisId: basis.clockBasisId, wallTimeMs: 200, monotonicTimeUs: 2 },
+    facts: { kind: "request.started", acquisitionObservationId },
+  });
+  const witness = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId,
+    parentEntryIds: [basisEntry.entryId, declaration.entryId, requestStarted.entryId].sort(),
+    clock: requestStarted.clock,
+    facts: {
+      kind: "clock.regression",
+      priorEntryId: declaration.entryId,
+      regressingEntryId: requestStarted.entryId,
+      priorWallTimeMs: 300,
+      currentWallTimeMs: 200,
+      monotonicOrderPreserved: true,
+    },
+  });
+  const nextRetrievalAttemptId = `rat1_${hash("post-omission-regression-attempt")}`;
+  const nextObservationId = deriveAcquisitionObservationId({
+    provider: "alpaca",
+    retrievalAttemptId: nextRetrievalAttemptId,
+    sanitizedRequestIdentityHash: requestIdentityHash,
+    routeLabel: "alpaca-v2-historical-quotes",
+  });
+  const nextDeclaration = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId,
+    parentEntryIds: [basisEntry.entryId],
+    clock: { clockBasisId: basis.clockBasisId, wallTimeMs: 100, monotonicTimeUs: 3 },
+    facts: {
+      kind: "acquisition.declared",
+      acquisitionObservationId: nextObservationId,
+      provider: "alpaca",
+      retrievalAttemptId: nextRetrievalAttemptId,
+      sanitizedRequestIdentityHash: requestIdentityHash,
+      routeLabel: "alpaca-v2-historical-quotes",
+    },
+  });
+  const downstreamWitness = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId,
+    parentEntryIds: [basisEntry.entryId, witness.entryId, nextDeclaration.entryId].sort(),
+    clock: nextDeclaration.clock,
+    facts: {
+      kind: "clock.regression",
+      priorEntryId: witness.entryId,
+      regressingEntryId: nextDeclaration.entryId,
+      priorWallTimeMs: 200,
+      currentWallTimeMs: 100,
+      monotonicOrderPreserved: true,
+    },
+  });
+  const original = validateObservationLedgerBundle([
+    basisEntry,
+    declaration,
+    requestStarted,
+    witness,
+    nextDeclaration,
+    downstreamWitness,
+  ]);
+  for (let pageSize = 1; pageSize <= original.length; pageSize += 1) {
+    const replayed = replayAcquisitionLedger(original, `p1-10-omitted-${pageSize}`, pageSize);
+    assert.equal(
+      replayed.some((entry) => entry.facts.kind === "request.started"),
+      false,
+    );
+    assert.equal(replayed.filter((entry) => entry.facts.kind === "clock.regression").length, 1);
   }
 });

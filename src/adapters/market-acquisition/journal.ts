@@ -2,6 +2,10 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 
 import { canonicalJson, type JsonValue } from "../../core/json.js";
+import type { ObservationLedgerEntryV1 } from "../../providers/observation-ledger.js";
+import { isProxy } from "node:util/types";
+
+import { P1_10_TEST_AUTHORITY } from "../../internal-test-authority.js";
 import { AUTHORIZATION_MODE, MARKET_ACQUISITION_LIMITS } from "./contracts.js";
 
 export const JOURNAL_SCHEMA_VERSION = 1 as const;
@@ -11,6 +15,7 @@ export const GENESIS_HASH = "genesis";
 
 export const JOURNAL_CHECKPOINT_KINDS = Object.freeze([
   "acquisition-declared",
+  "request-started",
   "attempt-started",
   "request-succeeded",
   "artifact-committed",
@@ -550,6 +555,165 @@ function validateCheckpointSemantics(entry: JournalEntry): void {
   assertSortedUnique(entry.causalParentFactIds, "causal-parent-facts");
 }
 
+const ARTIFACT_FIELDS = Object.freeze([
+  "artifactObservationId",
+  "artifactDigest",
+  "artifactSizeBytes",
+  "artifactObservationHash",
+  "artifactContentId",
+  "rawArtifactId",
+] as const);
+
+const ARTIFACT_REQUIRED = new Set<JournalCheckpointKind>([
+  "artifact-committed",
+  "artifact-verified",
+  "page-checkpointed",
+  "chain-complete",
+  "normalization-started",
+  "normalization-complete",
+  "selection-started",
+  "completed",
+]);
+
+const NONTERMINAL_TRANSITIONS: Readonly<
+  Record<JournalCheckpointKind, readonly JournalCheckpointKind[]>
+> = Object.freeze({
+  "acquisition-declared": ["request-started", "stopped", "failed-clean", "quarantined"],
+  "request-started": ["attempt-started", "stopped", "failed-clean", "quarantined"],
+  "attempt-started": [
+    "attempt-started",
+    "request-succeeded",
+    "stopped",
+    "failed-clean",
+    "quarantined",
+  ],
+  "request-succeeded": [
+    "attempt-started",
+    "artifact-committed",
+    "stopped",
+    "failed-clean",
+    "quarantined",
+  ],
+  "artifact-committed": ["artifact-verified", "stopped", "failed-clean", "quarantined"],
+  "artifact-verified": ["page-checkpointed", "stopped", "failed-clean", "quarantined"],
+  "page-checkpointed": ["attempt-started", "chain-complete", "stopped", "failed-clean"],
+  "chain-complete": ["normalization-started", "stopped", "failed-clean", "quarantined"],
+  "normalization-started": ["normalization-complete", "stopped", "failed-clean", "quarantined"],
+  "normalization-complete": ["selection-started", "stopped", "failed-clean", "quarantined"],
+  "selection-started": ["completed", "stopped", "failed-clean", "quarantined"],
+  completed: [],
+  stopped: [],
+  "failed-clean": [],
+  quarantined: [],
+});
+
+function artifactTuple(entry: JournalEntry): readonly unknown[] | null {
+  const values = ARTIFACT_FIELDS.map((field) => entry[field]);
+  const present = values.map((value) => value !== null);
+  if (present.some(Boolean) && !present.every(Boolean)) {
+    throw new TypeError("journal-artifact-tuple-partial");
+  }
+  return present.every(Boolean) ? values : null;
+}
+
+function pinnedArtifactTuple(entry: JournalEntry): readonly unknown[] | null {
+  const tuple = artifactTuple(entry);
+  return tuple === null
+    ? null
+    : [
+        entry.acquisitionObservationId,
+        entry.marketAcquisitionId,
+        entry.requestIdentityHash,
+        entry.providerId,
+        entry.attemptId,
+        entry.retrievalAttemptId,
+        entry.attemptOrdinal,
+        ...tuple,
+      ];
+}
+
+function validateCheckpointTransition(previous: JournalEntry | null, entry: JournalEntry): void {
+  const tuple = artifactTuple(entry);
+  if (ARTIFACT_REQUIRED.has(entry.checkpointKind) && tuple === null) {
+    throw new TypeError("journal-artifact-tuple-required");
+  }
+  if (
+    ["acquisition-declared", "request-started", "attempt-started", "request-succeeded"].includes(
+      entry.checkpointKind,
+    ) &&
+    tuple !== null
+  ) {
+    throw new TypeError("journal-artifact-tuple-premature");
+  }
+  if (previous === null) {
+    if (entry.checkpointKind !== "acquisition-declared" || entry.pageOrdinal !== 0) {
+      throw new TypeError("journal-initial-checkpoint-invalid");
+    }
+    return;
+  }
+  if (!NONTERMINAL_TRANSITIONS[previous.checkpointKind].includes(entry.checkpointKind)) {
+    throw new TypeError("journal-checkpoint-transition-invalid");
+  }
+  const afterPage = previous.checkpointKind === "page-checkpointed";
+  const advancesPage = afterPage && entry.checkpointKind === "attempt-started";
+  if (entry.pageOrdinal !== previous.pageOrdinal + (advancesPage ? 1 : 0)) {
+    throw new TypeError("journal-page-transition-invalid");
+  }
+  if (advancesPage) {
+    if (
+      previous.nextTokenHash === null ||
+      previous.nextTokenHash === TERMINAL_TOKEN_HASH ||
+      previous.nextContinuationBindingHash === null ||
+      entry.currentTokenHash !== previous.nextTokenHash ||
+      entry.currentContinuationBindingHash !== previous.nextContinuationBindingHash
+    ) {
+      throw new TypeError("journal-continuation-transition-invalid");
+    }
+  }
+  if (entry.checkpointKind === "chain-complete") {
+    if (
+      previous.checkpointKind !== "page-checkpointed" ||
+      previous.nextTokenHash !== TERMINAL_TOKEN_HASH
+    ) {
+      throw new TypeError("journal-chain-completion-invalid");
+    }
+  }
+  if (
+    previous.pageOrdinal === entry.pageOrdinal &&
+    pinnedArtifactTuple(previous) !== null &&
+    pinnedArtifactTuple(entry) !== null &&
+    canonicalJson(pinnedArtifactTuple(previous) as JsonValue) !==
+      canonicalJson(pinnedArtifactTuple(entry) as JsonValue)
+  ) {
+    throw new TypeError("journal-artifact-tuple-conflict");
+  }
+  if (
+    [
+      "acquisition-declared",
+      "request-started",
+      "attempt-started",
+      "request-succeeded",
+      "artifact-committed",
+      "artifact-verified",
+    ].includes(entry.checkpointKind)
+  ) {
+    if (
+      entry.nextTokenHash !== null ||
+      entry.nextResumableTokenMaterial !== null ||
+      entry.nextContinuationBindingHash !== null
+    ) {
+      throw new TypeError("journal-next-token-premature");
+    }
+  } else if (
+    entry.checkpointKind === "page-checkpointed" &&
+    (entry.nextTokenHash === null ||
+      (entry.nextTokenHash === TERMINAL_TOKEN_HASH) !==
+        (entry.nextResumableTokenMaterial === null && entry.nextContinuationBindingHash === null))
+  ) {
+    throw new TypeError("journal-next-token-fields-invalid");
+  }
+}
+
 export function validateJournalEntries(
   entries: readonly JournalEntry[],
   expectedIdentity: JournalIdentityInput,
@@ -563,6 +727,7 @@ export function validateJournalEntries(
   let previousRecords = 0;
   let previousFacts = 0;
   let previousAttempts = 0;
+  const consumedContinuationTokens = new Set<string>();
   for (const entry of entries) {
     assertExactKeys(entry, ENTRY_KEYS, "journal-entry");
     canonicalJson(entry as unknown as JsonValue);
@@ -595,6 +760,13 @@ export function validateJournalEntries(
     }
     if (terminalSeen) throw new TypeError("journal-after-terminal");
     validateCheckpointSemantics(entry);
+    if (entry.pageOrdinal > 0 && entry.checkpointKind === "attempt-started") {
+      if (consumedContinuationTokens.has(entry.currentTokenHash)) {
+        throw new TypeError("journal-continuation-token-loop");
+      }
+      consumedContinuationTokens.add(entry.currentTokenHash);
+    }
+    validateCheckpointTransition(previous, entry);
     terminalSeen = entry.terminalState !== null;
     previousPages = entry.cumulativeSuccessfulPages;
     previousBytes = entry.cumulativeVerifiedBytes;
@@ -607,7 +779,107 @@ export function validateJournalEntries(
 
 export interface AcquisitionJournal {
   load(marketAcquisitionJournalId: string): Promise<readonly JournalEntry[]>;
-  append(entry: JournalEntry): Promise<void>;
+  append(entry: JournalEntry, workflowAuthority?: object): Promise<void>;
+  /** Atomically consumes one exact request-started checkpoint with its attempt-started claim. */
+  claimAttemptStarted(expectedRequestStartedHash: string, entry: JournalEntry): Promise<boolean>;
+  appendLedgerEntries(
+    entries: readonly ObservationLedgerEntryV1[],
+    workflowAuthority?: object,
+  ): Promise<void>;
+  loadLedgerEntries(): Promise<readonly ObservationLedgerEntryV1[]>;
+  isWorkflowProducedJournalEntry(journalEntryHash: string): Promise<boolean>;
+  isWorkflowProducedLedgerEntry(entryId: string): Promise<boolean>;
+}
+
+const ACQUISITION_WORKFLOW_PRODUCER_AUTHORITY = Object.freeze({});
+const ownedAcquisitionWorkflowProducers = new WeakSet<object>();
+const ACQUISITION_WORKFLOW_PRODUCER_CONSTRUCTION_AUTHORITY = Object.freeze({});
+
+export function assertAcquisitionWorkflowProducerAuthority(value: object | undefined): void {
+  if (value !== ACQUISITION_WORKFLOW_PRODUCER_AUTHORITY) {
+    throw new TypeError("owned-acquisition-workflow-producer-required");
+  }
+}
+
+/** Sole production writer for durable acquisition journal and ledger facts. */
+class DurableAcquisitionWorkflowProducer {
+  readonly #journal: AcquisitionJournal;
+
+  constructor(journal: AcquisitionJournal, constructionAuthority?: object) {
+    this.#journal = journal;
+    if (constructionAuthority === ACQUISITION_WORKFLOW_PRODUCER_CONSTRUCTION_AUTHORITY) {
+      ownedAcquisitionWorkflowProducers.add(this);
+    }
+    Object.freeze(this);
+  }
+
+  async persist(
+    ledgerEntries: readonly ObservationLedgerEntryV1[],
+    journalEntries: readonly JournalEntry[],
+  ): Promise<void> {
+    if (
+      !ownedAcquisitionWorkflowProducers.has(this) ||
+      isProxy(this) ||
+      Object.getPrototypeOf(this) !== DurableAcquisitionWorkflowProducer.prototype ||
+      !Object.isFrozen(this) ||
+      Reflect.ownKeys(this).length !== 0
+    ) {
+      throw new TypeError("owned-acquisition-workflow-producer-required");
+    }
+    if (ledgerEntries.length > 0) {
+      await this.#journal.appendLedgerEntries(
+        ledgerEntries,
+        ACQUISITION_WORKFLOW_PRODUCER_AUTHORITY,
+      );
+    }
+    for (const entry of journalEntries) {
+      await this.#journal.append(entry, ACQUISITION_WORKFLOW_PRODUCER_AUTHORITY);
+    }
+  }
+}
+
+/** Consumes a credential-rooted first-attempt seed without exporting its write authority. */
+export async function persistOwnedCredentialWorkflowSeed(seed: object): Promise<void> {
+  const { consumeOwnedCredentialWorkflowSeed } = await import("./credentials.js");
+  const binding = consumeOwnedCredentialWorkflowSeed(seed);
+  await new DurableAcquisitionWorkflowProducer(
+    binding.journal,
+    ACQUISITION_WORKFLOW_PRODUCER_CONSTRUCTION_AUTHORITY,
+  ).persist(binding.ledgerEntries, binding.journalEntries);
+}
+
+/** Consumes a one-shot artifact-verified workflow extension receipt. */
+export async function persistVerifiedAcquisitionWorkflowReceipt(receipt: object): Promise<void> {
+  const { consumeVerifiedAcquisitionWorkflowReceipt } = await import("./artifact-integration.js");
+  const binding = consumeVerifiedAcquisitionWorkflowReceipt(receipt);
+  await new DurableAcquisitionWorkflowProducer(
+    binding.journal,
+    ACQUISITION_WORKFLOW_PRODUCER_CONSTRUCTION_AUTHORITY,
+  ).persist(binding.ledgerEntries, binding.journalEntries);
+}
+
+/** Test-only fixture ingress for facts otherwise written only by the owned workflow producer. */
+export async function appendTestAcquisitionWorkflowEvidence(
+  journal: AcquisitionJournal,
+  ledgerEntries: readonly ObservationLedgerEntryV1[],
+  entries: readonly JournalEntry[],
+): Promise<void> {
+  if (P1_10_TEST_AUTHORITY === undefined) {
+    throw new TypeError("test-acquisition-workflow-ingress-unavailable");
+  }
+  await new DurableAcquisitionWorkflowProducer(
+    journal,
+    ACQUISITION_WORKFLOW_PRODUCER_CONSTRUCTION_AUTHORITY,
+  ).persist(ledgerEntries, entries);
+}
+
+Object.freeze(DurableAcquisitionWorkflowProducer.prototype);
+
+export async function appendTestAcquisitionJournalEntry(
+  journal: AcquisitionJournal,
+  entry: JournalEntry,
+): Promise<void> {
+  await appendTestAcquisitionWorkflowEvidence(journal, [], [entry]);
 }
 
 export function journalEntryBody(entry: JournalEntry): JournalCheckpointBody {

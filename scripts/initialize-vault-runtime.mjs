@@ -1,6 +1,15 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import {
   artifactRuntimePaths,
@@ -26,15 +35,44 @@ if (
   throw new Error("Runtime-root validation does not authorize this configured layout");
 }
 
-const database = openSqliteDatabase(
-  paths.databasePath,
-  loadMigrations(join(process.cwd(), "migrations")),
+const provisioningParent = resolve(process.cwd(), ".tmp-output-integrity");
+mkdirSync(provisioningParent, { recursive: true });
+const provisioningRoot = mkdtempSync(join(provisioningParent, "p1-10-provisioning-"));
+const provisioningSourceRoot = join(provisioningRoot, "src");
+const provisioningAuthorityPath = join(
+  provisioningSourceRoot,
+  "internal-provisioning-authority.js",
 );
+const activatedProvisioningAuthority = `
+const boundRuntimeRoot = ${JSON.stringify(root)};
+let available = true;
+export const P1_10_PROVISIONING_AUTHORITY = Object.freeze({
+  claim(runtimeRoot) {
+    if (!available) throw new TypeError("credential-authority-provisioning-consumed");
+    available = false;
+    if (runtimeRoot !== boundRuntimeRoot) {
+      throw new TypeError("credential-authority-provisioning-root-mismatch");
+    }
+  },
+});
+`;
+let database;
 try {
+  cpSync(resolve(process.cwd(), "dist/src"), provisioningSourceRoot, { recursive: true });
+  writeFileSync(provisioningAuthorityPath, activatedProvisioningAuthority, {
+    encoding: "utf8",
+    flag: "w",
+  });
+  const { provisionSqliteDurableCredentialAuthorityRuntime } = await import(
+    pathToFileURL(join(provisioningSourceRoot, "adapters/market-acquisition/credentials.js")).href
+  );
+  const migrations = loadMigrations(join(process.cwd(), "migrations"));
+  provisionSqliteDurableCredentialAuthorityRuntime(migrations);
+  database = openSqliteDatabase(paths.databasePath, migrations);
   const journalMode = database.pragma("journal_mode", { simple: true });
   if (String(journalMode).toLowerCase() !== "wal")
     throw new Error("Vault SQLite is not in WAL mode");
-  const migrations = database
+  const migrationRows = database
     .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
     .all()
     .map((row) => ({ version: Number(row.version), name: row.name }));
@@ -45,12 +83,13 @@ try {
         runtimeRoot: root,
         databasePath: paths.databasePath,
         journalMode: "wal",
-        migrations,
+        migrations: migrationRows,
       },
       null,
       2,
     )}\n`,
   );
 } finally {
-  database.close();
+  database?.close();
+  rmSync(provisioningRoot, { recursive: true, force: true });
 }

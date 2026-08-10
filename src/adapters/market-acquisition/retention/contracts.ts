@@ -1,3 +1,5 @@
+import type { AlpacaPreparedArtifactCommit } from "../alpaca/contracts.js";
+
 export type RetentionProviderLane = "alpaca" | "fmp";
 export type RetentionStopReason =
   | "maximum-retention"
@@ -88,6 +90,15 @@ export type RetentionCheckpoint = Readonly<{
   completedAtMs: number;
 }>;
 
+export type RetentionReceiptRevalidation = Readonly<{
+  revalidationId: string;
+  planId: string;
+  sequence: number;
+  predecessorReceiptId: string;
+  receipt: RetentionReceipt;
+  recordedAtMs: number;
+}>;
+
 export type ErasureCopyKind = "content" | "staging" | "snapshot" | "quarantine";
 
 export type ErasureResult = Readonly<{
@@ -103,30 +114,62 @@ export interface RetentionArtifactBoundary {
 }
 
 export interface ArtifactRetentionJournal {
-  registerOwnership(ownership: RetentionOwnership): void;
+  registerOwnershipAndApplyActiveStop(ownership: RetentionOwnership): boolean;
+  registerDerivedLineageAndApplyActiveStop(
+    ownershipId: string,
+    derivedIds: readonly string[],
+  ): boolean;
   listOwnership(
     providerLane: RetentionProviderLane,
     providerId: string,
   ): readonly RetentionOwnership[];
+  ownershipForDigest(digest: string): readonly RetentionOwnership[];
+  ownershipForDerivedId(derivedId: string): readonly RetentionOwnership[];
   recordStopAndDenials(stop: RetentionStopEvent, derivedIds: readonly string[]): void;
   providerUseDenied(providerLane: RetentionProviderLane, providerId: string): boolean;
+  reconciliationUseDenied(trustedNowMs: number): boolean;
   digestUseDenied(digest: string): boolean;
   derivedUseDenied(derivedId: string): boolean;
   recordPlan(plan: RetentionErasurePlan): void;
   getPlan(planId: string): RetentionErasurePlan | undefined;
+  getPlanForStop(stopEventId: string): RetentionErasurePlan | undefined;
   recordAttempt(attempt: RetentionErasureAttempt): void;
   attemptsFor(planId: string, digest: string): readonly RetentionErasureAttempt[];
   recordTombstone(tombstone: RetentionTombstone): void;
   hasTombstone(digest: string): boolean;
   recordReceipt(receipt: RetentionReceipt): void;
   getReceiptForPlan(planId: string): RetentionReceipt | undefined;
+  recordReceiptRevalidation(revalidation: RetentionReceiptRevalidation): void;
+  recordReceiptRevalidationAndCheckpoint(
+    revalidation: RetentionReceiptRevalidation,
+    checkpoint: RetentionCheckpoint,
+  ): void;
+  receiptRevalidationsForPlan(planId: string): readonly RetentionReceiptRevalidation[];
+  revalidationCheckpointsForPlan(planId: string): readonly RetentionCheckpoint[];
   recordCheckpoint(checkpoint: RetentionCheckpoint): void;
   getCheckpoint(planId: string): RetentionCheckpoint | undefined;
 }
 
 export interface ArtifactRetentionController {
   registerOwnership(input: Omit<RetentionOwnership, "ownershipId">): RetentionOwnership;
+  commitArtifact<T>(prepared: AlpacaPreparedArtifactCommit<T>): Promise<T>;
+  commitArtifact<T>(
+    input: Omit<RetentionOwnership, "ownershipId">,
+    commit: () => Promise<T>,
+  ): Promise<T>;
+  registerDerivedLineage(artifactDigests: readonly string[], derivedIds: readonly string[]): void;
+  registerDerivedLineageFromLease(lease: object, derivedIds: readonly string[]): void;
+  beginUse(
+    artifactDigests?: readonly string[],
+    derivedIds?: readonly string[],
+  ): RetentionOperationLease;
   enforceStop(input: Omit<RetentionStopEvent, "stopEventId">): Promise<RetentionReceipt>;
   assertArtifactUseAllowed(digest: string): void;
   assertDerivedUseAllowed(derivedId: string): void;
+}
+
+export interface RetentionOperationLease {
+  assertAllowed(): void;
+  onStop(handler: () => void): void;
+  release(): void;
 }

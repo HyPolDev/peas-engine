@@ -6,6 +6,7 @@ import type {
   RetentionErasurePlan,
   RetentionOwnership,
   RetentionReceipt,
+  RetentionReceiptRevalidation,
   RetentionStopEvent,
   RetentionTombstone,
 } from "./contracts.js";
@@ -44,6 +45,12 @@ export function deriveRetentionTombstoneId(value: Omit<RetentionTombstone, "tomb
 
 export function deriveRetentionReceiptId(value: Omit<RetentionReceipt, "receiptId">): string {
   return prefixed("rrc1_", "peas/market-acquisition-retention-receipt/v1", value);
+}
+
+export function deriveRetentionReceiptRevalidationId(
+  value: Omit<RetentionReceiptRevalidation, "revalidationId">,
+): string {
+  return prefixed("rrv1_", "peas/market-acquisition-retention-revalidation/v1", value);
 }
 
 export function deriveRetentionCheckpointId(

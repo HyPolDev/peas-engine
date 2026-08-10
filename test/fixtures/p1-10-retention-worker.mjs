@@ -1,9 +1,12 @@
 import { join } from "node:path";
 
 import { openSqliteDatabase, loadMigrations } from "../../dist/src/adapters/sqlite/database.js";
-import { DefaultArtifactRetentionController } from "../../dist/src/adapters/market-acquisition/retention/controller.js";
-import { SqliteArtifactRetentionJournal } from "../../dist/src/adapters/market-acquisition/retention/sqlite-journal.js";
+import { createTestArtifactRetentionController } from "../../dist/src/adapters/market-acquisition/retention/controller.js";
+import { createSqliteArtifactRetentionJournal } from "../../dist/src/adapters/market-acquisition/retention/sqlite-journal.js";
 import { VaultArtifactRetentionBoundary } from "../../dist/src/adapters/market-acquisition/retention/vault-boundary.js";
+import { DurableArtifactStore } from "../../dist/src/adapters/artifacts/durable-artifact-store.js";
+import { SqliteArtifactRepository } from "../../dist/src/adapters/artifacts/sqlite-artifact-repository.js";
+import { ManualClock } from "../../dist/src/core/clock.js";
 
 const [databasePath, runtimeRoot, targetCheckpoint, digest] = process.argv.slice(2);
 if (!databasePath || !runtimeRoot || !targetCheckpoint || !digest)
@@ -17,16 +20,29 @@ const database = openSqliteDatabase(
   databasePath,
   loadMigrations(join(process.cwd(), "migrations")),
 );
-const journal = new SqliteArtifactRetentionJournal(database);
-const boundary = await VaultArtifactRetentionBoundary.open({
-  store: {
-    async settleForRetention() {
-      return true;
-    },
+const journal = createSqliteArtifactRetentionJournal(database);
+const store = await DurableArtifactStore.open({
+  repository: new SqliteArtifactRepository(database),
+  clock: new ManualClock(effectiveAtMs),
+  config: {
+    runtimeRootMode: "ci-temporary",
+    runtimeRoot,
+    maxArtifactBytes: 1_024,
+    maxVaultBytes: 4_096,
+    maxConcurrentWrites: 1,
+    streamHighWaterMarkBytes: 17,
+    stageExpiryMs: 1_000,
+    writerLeaseBehavior: "fail",
+    writerLeaseWaitMs: 0,
+    writerLeaseDurationMs: 30_000,
+    writerLeaseRenewalMs: 10_000,
   },
+});
+const boundary = await VaultArtifactRetentionBoundary.open({
+  store,
   runtimeRoot,
 });
-const controller = new DefaultArtifactRetentionController({
+const controller = createTestArtifactRetentionController({
   journal,
   artifacts: boundary,
   nowMs: () => effectiveAtMs,

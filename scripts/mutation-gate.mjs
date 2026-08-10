@@ -403,7 +403,7 @@ const mutants = [
           {
             from: "await this.#lease.renewAndAssert();",
             to: "",
-            expectedOccurrences: 18,
+            expectedOccurrences: 22,
             occurrence: 5,
           },
         ],

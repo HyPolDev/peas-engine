@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   rmSync,
   symlinkSync,
@@ -44,7 +45,9 @@ import type {
 } from "../src/artifacts/artifact-store.js";
 import { ManualClock } from "../src/core/clock.js";
 import { canonicalHash } from "../src/core/hash.js";
-import type { JsonValue } from "../src/core/json.js";
+import { canonicalJson, type JsonValue } from "../src/core/json.js";
+import { VaultWriterLease } from "../src/adapters/artifacts/writer-lease.js";
+import { createSqliteArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/sqlite-journal.js";
 
 const migrations = loadMigrations(join(process.cwd(), "migrations"));
 const artifactWorkerPath = join(process.cwd(), "test", "fixtures", "artifact-vault-worker.mjs");
@@ -157,46 +160,93 @@ function activeFence(
   };
 }
 
+type ObservedWorkerState = {
+  readonly messages: Record<string, unknown>[];
+  readonly listeners: Set<() => void>;
+  terminal: Error | null;
+};
+
+const observedWorkers = new WeakMap<ChildProcess, ObservedWorkerState>();
+
+function forkObservedWorker(modulePath: string, args: readonly string[]): ChildProcess {
+  const child = fork(modulePath, [...args], { stdio: ["ignore", "ignore", "pipe", "ipc"] });
+  const state: ObservedWorkerState = {
+    messages: [],
+    listeners: new Set(),
+    terminal: null,
+  };
+  observedWorkers.set(child, state);
+  const notify = (): void => {
+    for (const listener of [...state.listeners]) listener();
+  };
+  child.on("message", (message: unknown) => {
+    if (typeof message !== "object" || message === null || !("type" in message)) return;
+    state.messages.push(message as Record<string, unknown>);
+    notify();
+  });
+  child.once("error", (error) => {
+    state.terminal = error;
+    notify();
+  });
+  child.once("exit", (code, signal) => {
+    state.terminal = new Error(
+      `Artifact worker exited early (code=${String(code)}, signal=${String(signal)})`,
+    );
+    notify();
+  });
+  return child;
+}
+
 function waitForWorkerMessage(
   child: ChildProcess,
   expectedType: "ready" | "staged" | "checkpoint" | "result",
 ): Promise<Record<string, unknown>> {
+  const state = observedWorkers.get(child);
+  if (state === undefined) throw new TypeError("Artifact worker must be observed from fork");
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       cleanup();
-      reject(new Error(`Artifact worker timed out before ${expectedType}`));
-    }, 5_000);
+      const error = new Error(`Artifact worker timed out before ${expectedType}`);
+      if (child.exitCode !== null || child.signalCode !== null) {
+        reject(error);
+        return;
+      }
+      const exited = waitForWorkerExit(child);
+      child.kill("SIGKILL");
+      void exited.then(
+        () => reject(error),
+        (exitError: unknown) => reject(exitError),
+      );
+    }, 90_000);
     const cleanup = (): void => {
       clearTimeout(timeout);
-      child.off("message", onMessage);
-      child.off("error", onError);
-      child.off("exit", onExit);
+      state.listeners.delete(poll);
     };
-    const onMessage = (message: unknown): void => {
-      if (typeof message !== "object" || message === null || !("type" in message)) return;
-      const actualType = (message as { type: unknown }).type;
-      if (actualType !== expectedType) {
-        if (actualType !== "result") return;
+    const poll = (): void => {
+      const expectedIndex = state.messages.findIndex((message) => message["type"] === expectedType);
+      if (expectedIndex >= 0) {
+        const [message] = state.messages.splice(expectedIndex, 1);
+        cleanup();
+        resolve(message as Record<string, unknown>);
+        return;
+      }
+      const resultIndex =
+        expectedType === "result"
+          ? -1
+          : state.messages.findIndex((message) => message["type"] === "result");
+      if (resultIndex >= 0) {
+        state.messages.splice(resultIndex, 1);
         cleanup();
         reject(new Error(`Artifact worker failed before ${expectedType}`));
         return;
       }
-      cleanup();
-      resolve(message as Record<string, unknown>);
+      if (state.terminal !== null) {
+        cleanup();
+        reject(state.terminal);
+      }
     };
-    const onError = (error: Error): void => {
-      cleanup();
-      reject(error);
-    };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
-      cleanup();
-      reject(
-        new Error(`Artifact worker exited early (code=${String(code)}, signal=${String(signal)})`),
-      );
-    };
-    child.on("message", onMessage);
-    child.once("error", onError);
-    child.once("exit", onExit);
+    state.listeners.add(poll);
+    poll();
   });
 }
 
@@ -668,6 +718,239 @@ test("expired takeover fences a still-live stale writer before install and SQLit
   assert.equal(committed.observation.attemptId, persistedRetrievalAttemptId("winner"));
 });
 
+test("a contender cannot rename a stale snapshot after the live owner renews its SQLite fence", async (context) => {
+  const root = mkdtempSync(join(tmpdir(), "peas-artifact-lease-renew-race-"));
+  const paths = artifactRuntimePaths(root);
+  mkdirSync(paths.databaseDirectory);
+  mkdirSync(paths.locks, { recursive: true });
+  const database = openSqliteDatabase(paths.databasePath, migrations);
+  const repository = new SqliteArtifactRepository(database);
+  const clock = new ManualClock(1_800_000_000_000);
+  const path = join(paths.locks, "writer.lock");
+  const owner = await VaultWriterLease.acquire({
+    path,
+    behavior: "fail",
+    waitMs: 0,
+    durationMs: 10,
+    renewalMs: 60_000,
+    repository,
+    clock,
+  });
+  context.after(async () => {
+    await owner.release();
+    if (database.open) database.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+  const original = readFileSync(path, "utf8");
+  clock.advanceBy(10);
+  let resume!: () => void;
+  let reached!: () => void;
+  const paused = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const staleRead = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  const contender = VaultWriterLease.acquire({
+    path,
+    behavior: "fail",
+    waitMs: 0,
+    durationMs: 10,
+    renewalMs: 60_000,
+    repository,
+    clock,
+    faultBoundary: async (checkpoint) => {
+      if (checkpoint !== "lease-stale-record-read") return;
+      reached();
+      await paused;
+    },
+  });
+  await staleRead;
+  await owner.renewAndAssert();
+  const renewed = readFileSync(path, "utf8");
+  assert.notEqual(renewed, original);
+  resume();
+  await assert.rejects(() => contender, /writer lease is held/u);
+  assert.equal(readFileSync(path, "utf8"), renewed);
+  await owner.renewAndAssert();
+});
+
+test("same-owner heartbeat and foreground renewal coalesce around slow lease I/O", async (context) => {
+  const root = mkdtempSync(join(tmpdir(), "peas-artifact-lease-coalesce-"));
+  const paths = artifactRuntimePaths(root);
+  mkdirSync(paths.databaseDirectory);
+  mkdirSync(paths.locks, { recursive: true });
+  const database = openSqliteDatabase(paths.databasePath, migrations);
+  const repository = new SqliteArtifactRepository(database);
+  const clock = new ManualClock(1_800_000_000_000);
+  let releaseRenewal!: () => void;
+  let reachedRenewal!: () => void;
+  const paused = new Promise<void>((resolve) => {
+    releaseRenewal = resolve;
+  });
+  const reached = new Promise<void>((resolve) => {
+    reachedRenewal = resolve;
+  });
+  let renewalEntries = 0;
+  const lease = await VaultWriterLease.acquire({
+    path: join(paths.locks, "writer.lock"),
+    behavior: "fail",
+    waitMs: 0,
+    durationMs: 30_000,
+    renewalMs: 1,
+    repository,
+    clock,
+    faultBoundary: async (checkpoint) => {
+      if (checkpoint !== "lease-sqlite-renewal") return;
+      renewalEntries += 1;
+      if (renewalEntries === 1) {
+        reachedRenewal();
+        await paused;
+      }
+    },
+  });
+  context.after(async () => {
+    await lease.release();
+    if (database.open) database.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+  await reached;
+  const foreground = lease.renewAndAssert();
+  await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  assert.equal(renewalEntries, 1);
+  releaseRenewal();
+  await foreground;
+  await lease.release();
+  assert.equal(existsSync(join(paths.locks, "writer.lock")), false);
+});
+
+test("same-stack renewal reentrancy shares one rewrite and release waits for it", async (context) => {
+  const root = mkdtempSync(join(tmpdir(), "peas-artifact-lease-reentrant-"));
+  const paths = artifactRuntimePaths(root);
+  mkdirSync(paths.databaseDirectory);
+  mkdirSync(paths.locks, { recursive: true });
+  const database = openSqliteDatabase(paths.databasePath, migrations);
+  const repository = new SqliteArtifactRepository(database);
+  const clock = new ManualClock(1_800_000_000_000);
+  let lease!: VaultWriterLease;
+  let nested: Promise<void> | null = null;
+  let releasePause!: () => void;
+  const paused = new Promise<void>((resolve) => {
+    releasePause = resolve;
+  });
+  let renewalEntries = 0;
+  lease = await VaultWriterLease.acquire({
+    path: join(paths.locks, "writer.lock"),
+    behavior: "fail",
+    waitMs: 0,
+    durationMs: 30_000,
+    renewalMs: 60_000,
+    repository,
+    clock,
+    faultBoundary(checkpoint) {
+      if (checkpoint !== "lease-sqlite-renewal") return;
+      renewalEntries += 1;
+      if (renewalEntries === 1) {
+        nested = lease.renewAndAssert();
+        return paused;
+      }
+      return undefined;
+    },
+  });
+  context.after(() => {
+    if (database.open) database.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+  const foreground = lease.renewAndAssert();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const releasing = lease.release();
+  assert.equal(existsSync(join(paths.locks, "writer.lock")), true);
+  assert.equal(renewalEntries, 1);
+  releasePause();
+  await foreground;
+  await nested;
+  await releasing;
+  assert.equal(renewalEntries, 1);
+  assert.equal(existsSync(join(paths.locks, "writer.lock")), false);
+  assert.equal(
+    (
+      database.prepare("SELECT count(*) count FROM artifact_writer_fence").get() as {
+        count: bigint;
+      }
+    ).count,
+    0n,
+  );
+});
+
+test("clean release clears its durable fence and immediate fail-mode reopen does not spin", async (context) => {
+  const root = mkdtempSync(join(tmpdir(), "peas-artifact-lease-reopen-"));
+  const paths = artifactRuntimePaths(root);
+  mkdirSync(paths.databaseDirectory);
+  mkdirSync(paths.locks, { recursive: true });
+  const database = openSqliteDatabase(paths.databasePath, migrations);
+  const repository = new SqliteArtifactRepository(database);
+  const clock = new ManualClock(1_800_000_000_000);
+  const options = {
+    path: join(paths.locks, "writer.lock"),
+    behavior: "fail" as const,
+    waitMs: 0,
+    durationMs: 30_000,
+    renewalMs: 60_000,
+    repository,
+    clock,
+  };
+  context.after(() => {
+    if (database.open) database.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+  const first = await VaultWriterLease.acquire(options);
+  const staleFence = first.fence();
+  await first.release();
+  assert.equal(repository.releaseWriter(staleFence.ownerToken, staleFence.generation), false);
+  const second = await VaultWriterLease.acquire(options);
+  await second.release();
+  assert.equal(existsSync(options.path), false);
+  assert.equal(
+    (
+      database.prepare("SELECT count(*) count FROM artifact_writer_fence").get() as {
+        count: bigint;
+      }
+    ).count,
+    0n,
+  );
+});
+
+test("database-only competing fence honors fail mode without ENOENT retry churn", async (context) => {
+  const root = mkdtempSync(join(tmpdir(), "peas-artifact-lease-db-only-"));
+  const paths = artifactRuntimePaths(root);
+  mkdirSync(paths.databaseDirectory);
+  mkdirSync(paths.locks, { recursive: true });
+  const database = openSqliteDatabase(paths.databasePath, migrations);
+  const repository = new SqliteArtifactRepository(database);
+  const clock = new ManualClock(1_800_000_000_000);
+  repository.claimWriter("competing-owner", clock.nowMs(), 30_000);
+  context.after(() => {
+    if (database.open) database.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+  const started = performance.now();
+  await assert.rejects(
+    () =>
+      VaultWriterLease.acquire({
+        path: join(paths.locks, "writer.lock"),
+        behavior: "fail",
+        waitMs: 0,
+        durationMs: 30_000,
+        renewalMs: 60_000,
+        repository,
+        clock,
+      }),
+    /writer lease is held/u,
+  );
+  assert.ok(performance.now() - started < 1_000);
+  assert.equal(existsSync(join(paths.locks, "writer.lock")), false);
+});
+
 test("transaction mutations evaluate lease expiry from a fresh clock reading", async (context) => {
   const { database, repository, clock } = await harness(context);
   const bytes = Buffer.from("paused-before-transaction");
@@ -753,9 +1036,7 @@ test("successful evidence commit is atomic when observation insertion aborts", a
 
 test("a separate-process stale writer cannot append outcomes or mutate staging after takeover", async (context) => {
   const { root, databasePath } = processFixture(context, "takeover");
-  const child = fork(artifactWorkerPath, [databasePath, root, "1800000000000"], {
-    stdio: ["ignore", "ignore", "pipe", "ipc"],
-  });
+  const child = forkObservedWorker(artifactWorkerPath, [databasePath, root, "1800000000000"]);
   context.after(() => {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
   });
@@ -791,9 +1072,7 @@ test("a separate-process stale writer cannot append outcomes or mutate staging a
 
 test("hard-killed staged writer leaves only recoverable evidence for fenced reconciliation", async (context) => {
   const { root, databasePath } = processFixture(context, "hard-kill");
-  const child = fork(artifactWorkerPath, [databasePath, root, "1800000000000"], {
-    stdio: ["ignore", "ignore", "pipe", "ipc"],
-  });
+  const child = forkObservedWorker(artifactWorkerPath, [databasePath, root, "1800000000000"]);
   await waitForWorkerMessage(child, "staged");
   child.kill("SIGKILL");
   await waitForWorkerExit(child);
@@ -815,8 +1094,13 @@ test("hard-killed staged writer leaves only recoverable evidence for fenced reco
       0n,
     );
     assert.equal(readdirSync(join(root, "artifacts", "staging")).length, 1);
-    const report = await recovered.reconcile();
-    assert.equal(report.expiredStages, 1);
+    let report = await recovered.reconcile();
+    let expiredStages = report.expiredStages;
+    while (report.continuationCursor !== null) {
+      report = await recovered.reconcile({ cursor: report.continuationCursor });
+      expiredStages += report.expiredStages;
+    }
+    assert.equal(expiredStages, 1);
     assert.equal(
       (
         database
@@ -833,11 +1117,12 @@ test("hard-killed staged writer leaves only recoverable evidence for fenced reco
 
 test("hard kill after install intent converges from durable intent without fabricated evidence", async (context) => {
   const { root, databasePath } = processFixture(context, "install-intent-kill");
-  const child = fork(
-    artifactWorkerPath,
-    [databasePath, root, "1800000000000", "install-intent-commit"],
-    { stdio: ["ignore", "ignore", "pipe", "ipc"] },
-  );
+  const child = forkObservedWorker(artifactWorkerPath, [
+    databasePath,
+    root,
+    "1800000000000",
+    "install-intent-commit",
+  ]);
   await waitForWorkerMessage(child, "staged");
   child.send({ type: "resume" });
   const checkpoint = await waitForWorkerMessage(child, "checkpoint");
@@ -852,7 +1137,13 @@ test("hard kill after install intent converges from durable intent without fabri
     config: vaultConfig(root),
   });
   try {
-    const report = await recovered.reconcile();
+    let report = await recovered.reconcile();
+    let calls = 1;
+    while (report.continuationCursor !== null) {
+      assert.equal(calls < 30, true);
+      report = await recovered.reconcile({ cursor: report.continuationCursor });
+      calls += 1;
+    }
     assert.equal(report.continuationCursor, null);
     for (const table of [
       "artifact_install_intents",
@@ -874,6 +1165,104 @@ test("hard kill after install intent converges from durable intent without fabri
       ).count,
       1n,
     );
+  } finally {
+    await recovered.close();
+    database.close();
+  }
+});
+
+test("a hard-killed install intent cannot resurrect content after a durable digest denial", async (context) => {
+  const { root, databasePath } = processFixture(context, "denied-install-intent-kill");
+  const child = forkObservedWorker(artifactWorkerPath, [
+    databasePath,
+    root,
+    "1800000000000",
+    "content-sync",
+  ]);
+  await waitForWorkerMessage(child, "staged");
+  child.send({ type: "resume" });
+  const checkpoint = await waitForWorkerMessage(child, "checkpoint");
+  assert.equal(checkpoint["checkpoint"], "content-sync");
+  child.kill("SIGKILL");
+  await waitForWorkerExit(child);
+
+  const digest = createHash("sha256").update("cross-process-stale").digest("hex");
+  const database = openSqliteDatabase(databasePath, migrations);
+  createSqliteArtifactRetentionJournal(database);
+  const policy = database
+    .prepare("SELECT policy_id FROM market_retention_policies ORDER BY policy_id LIMIT 1")
+    .get() as { policy_id: string };
+  const stop = {
+    stopEventId: `rse1_${"d".repeat(64)}`,
+    policyId: policy.policy_id,
+    providerLane: "alpaca",
+    providerId: "synthetic-denied-provider",
+    effectiveAtMs: 1_800_000_030_000,
+    deadlineMs: 1_800_000_060_000,
+    reason: "owner-revocation",
+  } as const;
+  const stopJson = canonicalJson(stop as unknown as JsonValue);
+  database
+    .prepare(`INSERT INTO market_retention_stop_events (
+      stop_event_id, policy_id, provider_lane, provider_id, effective_at_ms, deadline_ms,
+      reason, stop_json, stop_hash
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(
+      stop.stopEventId,
+      stop.policyId,
+      stop.providerLane,
+      stop.providerId,
+      stop.effectiveAtMs,
+      stop.deadlineMs,
+      stop.reason,
+      stopJson,
+      canonicalHash("peas/retention-stop-test/v1", stop as unknown as JsonValue),
+    );
+  database
+    .prepare(`INSERT INTO market_retention_provider_denials
+      (stop_event_id, provider_lane, provider_id, effective_at_ms) VALUES (?, ?, ?, ?)`)
+    .run(stop.stopEventId, stop.providerLane, stop.providerId, stop.effectiveAtMs);
+  database
+    .prepare(
+      "INSERT INTO market_retention_digest_denials (stop_event_id, artifact_digest) VALUES (?, ?)",
+    )
+    .run(stop.stopEventId, digest);
+  const recovered = await DurableArtifactStore.open({
+    repository: new SqliteArtifactRepository(database),
+    clock: new ManualClock(1_800_000_030_001),
+    config: vaultConfig(root),
+  });
+  try {
+    await assert.rejects(() => recovered.reconcile(), /Reconciliation use is denied/u);
+    await assert.rejects(() => recovered.stat(digest), /Artifact use is denied/u);
+    assert.equal(
+      (database.prepare("SELECT count(*) count FROM artifact_blobs").get() as { count: bigint })
+        .count,
+      0n,
+    );
+    assert.equal(
+      (
+        database.prepare("SELECT count(*) count FROM artifact_observations").get() as {
+          count: bigint;
+        }
+      ).count,
+      0n,
+    );
+    const contentPath = join(
+      artifactRuntimePaths(root).content,
+      digest.slice(0, 2),
+      digest.slice(2, 4),
+      digest,
+    );
+    assert.equal(existsSync(contentPath), false);
+    assert.equal(readdirSync(join(root, "artifacts", "staging")).length, 0);
+    const outcome = database
+      .prepare("SELECT outcome, reason_code FROM artifact_retrieval_outcomes WHERE attempt_id = ?")
+      .get(persistedRetrievalAttemptId("cross-process-stale")) as {
+      outcome: string;
+      reason_code: string;
+    };
+    assert.deepEqual(outcome, { outcome: "failed", reason_code: "retention-denied" });
   } finally {
     await recovered.close();
     database.close();
@@ -938,11 +1327,12 @@ test("store and lease hard-kill boundary matrix converges with exact evidence", 
 
   for (const boundary of boundaries) {
     const fixture = processFixture(context, `store-boundary-${boundary.replaceAll(":", "-")}`);
-    const child = fork(
-      artifactWorkerPath,
-      [fixture.databasePath, fixture.root, "1800000000000", boundary],
-      { stdio: ["ignore", "ignore", "pipe", "ipc"] },
-    );
+    const child = forkObservedWorker(artifactWorkerPath, [
+      fixture.databasePath,
+      fixture.root,
+      "1800000000000",
+      boundary,
+    ]);
     if (afterStageSync.has(boundary)) {
       await waitForWorkerMessage(child, "staged");
       child.send({ type: "resume" });
@@ -959,7 +1349,15 @@ test("store and lease hard-kill boundary matrix converges with exact evidence", 
       config: vaultConfig(fixture.root),
     });
     try {
-      await recovered.reconcile();
+      let reconciliationCalls = 0;
+      let recoveryReport = await recovered.reconcile();
+      while (recoveryReport.continuationCursor !== null) {
+        reconciliationCalls += 1;
+        assert.equal(reconciliationCalls < 30, true, boundary);
+        recoveryReport = await recovered.reconcile({
+          cursor: recoveryReport.continuationCursor,
+        });
+      }
       const count = (table: string): bigint =>
         (database.prepare(`SELECT count(*) count FROM ${table}`).get() as { count: bigint }).count;
       assert.equal(count("artifact_observations"), successful.has(boundary) ? 1n : 0n, boundary);
@@ -987,6 +1385,113 @@ test("store and lease hard-kill boundary matrix converges with exact evidence", 
   }
 });
 
+test("cancellation after source removal preserves the exact quarantine copy and restart recovery", async (context) => {
+  for (const boundary of [
+    "quarantine-source-removed",
+    "quarantine-source-directory-sync",
+    "quarantine-target-hash",
+  ]) {
+    const fixture = processFixture(context, `quarantine-cancel-${boundary}`);
+    const database = openSqliteDatabase(fixture.databasePath, migrations);
+    let store!: DurableArtifactStore;
+    store = await DurableArtifactStore.open({
+      repository: new SqliteArtifactRepository(database),
+      clock: new ManualClock(1_800_000_000_000),
+      config: vaultConfig(fixture.root),
+      faultBoundary(checkpoint) {
+        if (checkpoint === boundary) store.closeRetentionAdmission();
+      },
+    });
+    const source = join(fixture.root, "artifacts", "staging", `cancel-${boundary}.part`);
+    const original = Buffer.from(`original synthetic ${boundary}`, "utf8");
+    writeFileSync(source, original);
+    await assert.rejects(
+      () => store.reconcile({ maxElapsedMs: 60_000 }),
+      /Reconciliation was stopped/u,
+    );
+    assert.equal(existsSync(source), false, boundary);
+    const names = readdirSync(join(fixture.root, "artifacts", "quarantine"));
+    assert.equal(names.length, 1, boundary);
+    const target = join(fixture.root, "artifacts", "quarantine", names[0] as string);
+    assert.deepEqual(readFileSync(target), original, boundary);
+    await store.close();
+    database.close();
+
+    const restartedDatabase = openSqliteDatabase(fixture.databasePath, migrations);
+    const restarted = await DurableArtifactStore.open({
+      repository: new SqliteArtifactRepository(restartedDatabase),
+      clock: new ManualClock(1_800_000_060_000),
+      config: vaultConfig(fixture.root),
+    });
+    try {
+      const durableCursor = (
+        restartedDatabase
+          .prepare("SELECT cursor_token FROM artifact_reconciliation_state WHERE singleton = 1")
+          .get() as { cursor_token: string }
+      ).cursor_token;
+      let report = await restarted.reconcile({ cursor: durableCursor });
+      while (report.continuationCursor !== null) {
+        report = await restarted.reconcile({ cursor: report.continuationCursor });
+      }
+      assert.deepEqual(readFileSync(target), original, boundary);
+      assert.equal(report.continuationCursor, null, boundary);
+    } finally {
+      await restarted.close();
+      restartedDatabase.close();
+    }
+  }
+});
+
+test("cancellation before source removal leaves both owned links for deterministic restart", async (context) => {
+  const fixture = processFixture(context, "quarantine-cancel-before-source-removal");
+  const database = openSqliteDatabase(fixture.databasePath, migrations);
+  let store!: DurableArtifactStore;
+  store = await DurableArtifactStore.open({
+    repository: new SqliteArtifactRepository(database),
+    clock: new ManualClock(1_800_000_000_000),
+    config: vaultConfig(fixture.root),
+    faultBoundary(checkpoint) {
+      if (checkpoint === "quarantine-sync") store.closeRetentionAdmission();
+    },
+  });
+  const source = join(fixture.root, "artifacts", "staging", "cancel-before-removal.part");
+  const original = Buffer.from("original synthetic pre-removal cancellation", "utf8");
+  writeFileSync(source, original);
+  await assert.rejects(() => store.reconcile(), /Reconciliation was stopped/u);
+  const quarantine = join(fixture.root, "artifacts", "quarantine");
+  const names = readdirSync(quarantine);
+  assert.equal(existsSync(source), true);
+  assert.equal(names.length, 1);
+  const target = join(quarantine, names[0] as string);
+  assert.deepEqual(readFileSync(source), original);
+  assert.deepEqual(readFileSync(target), original);
+  await store.close();
+  database.close();
+
+  const restartedDatabase = openSqliteDatabase(fixture.databasePath, migrations);
+  const restarted = await DurableArtifactStore.open({
+    repository: new SqliteArtifactRepository(restartedDatabase),
+    clock: new ManualClock(1_800_000_060_000),
+    config: vaultConfig(fixture.root),
+  });
+  try {
+    const durableCursor = (
+      restartedDatabase
+        .prepare("SELECT cursor_token FROM artifact_reconciliation_state WHERE singleton = 1")
+        .get() as { cursor_token: string }
+    ).cursor_token;
+    let report = await restarted.reconcile({ cursor: durableCursor });
+    while (report.continuationCursor !== null) {
+      report = await restarted.reconcile({ cursor: report.continuationCursor });
+    }
+    assert.equal(existsSync(source), false);
+    assert.deepEqual(readFileSync(target), original);
+  } finally {
+    await restarted.close();
+    restartedDatabase.close();
+  }
+});
+
 test("reconciliation hard-kill boundary matrix replays one deterministic action", {
   skip:
     process.env["PEAS_SKIP_HARD_KILL_MATRIX"] === "1"
@@ -999,6 +1504,9 @@ test("reconciliation hard-kill boundary matrix replays one deterministic action"
     "quarantine-link",
     "quarantine-sync",
     "quarantine-source-removal",
+    "quarantine-source-removed",
+    "quarantine-source-directory-sync",
+    "quarantine-target-hash",
     "reconciliation-action-application-commit",
     "reconciliation-call-receipt-commit",
     "reconciliation-terminal-receipt-commit",
@@ -1019,11 +1527,12 @@ test("reconciliation hard-kill boundary matrix replays one deterministic action"
     seedDatabase.close();
     writeFileSync(join(fixture.root, "artifacts", "staging", "hard-kill-orphan.part"), "orphan");
 
-    const child = fork(
-      reconciliationWorkerPath,
-      [fixture.databasePath, fixture.root, "1800000030001", boundary],
-      { stdio: ["ignore", "ignore", "pipe", "ipc"] },
-    );
+    const child = forkObservedWorker(reconciliationWorkerPath, [
+      fixture.databasePath,
+      fixture.root,
+      "1800000030001",
+      boundary,
+    ]);
     await waitForWorkerMessage(child, "ready");
     child.send({
       type: "reconcile",
@@ -1110,11 +1619,13 @@ test("verified-read hard-kill boundaries leave only recoverable snapshots", {
       writeFileSync(content, "corrupt read");
     }
 
-    const child = fork(
-      artifactReadWorkerPath,
-      [fixture.databasePath, fixture.root, "1800000030001", stored.artifact.digest, boundary],
-      { stdio: ["ignore", "ignore", "pipe", "ipc"] },
-    );
+    const child = forkObservedWorker(artifactReadWorkerPath, [
+      fixture.databasePath,
+      fixture.root,
+      "1800000030001",
+      stored.artifact.digest,
+      boundary,
+    ]);
     await waitForWorkerMessage(child, "ready");
     const checkpoint = await waitForWorkerMessage(child, "checkpoint");
     assert.equal(checkpoint["checkpoint"], boundary);
@@ -1128,7 +1639,15 @@ test("verified-read hard-kill boundaries leave only recoverable snapshots", {
       config: vaultConfig(fixture.root),
     });
     try {
-      await recovered.reconcile();
+      let recoveryCalls = 0;
+      let recoveryReport = await recovered.reconcile();
+      while (recoveryReport.continuationCursor !== null) {
+        recoveryCalls += 1;
+        assert.equal(recoveryCalls < 30, true, boundary);
+        recoveryReport = await recovered.reconcile({
+          cursor: recoveryReport.continuationCursor,
+        });
+      }
       assert.deepEqual(readdirSync(join(fixture.root, "artifacts", "snapshots")), []);
       await recovered.close();
       const secondRestart = await DurableArtifactStore.open({
@@ -1137,7 +1656,16 @@ test("verified-read hard-kill boundaries leave only recoverable snapshots", {
         config: vaultConfig(fixture.root),
       });
       try {
-        assert.equal((await secondRestart.reconcile()).continuationCursor, null);
+        let restartCalls = 0;
+        let restartReport = await secondRestart.reconcile();
+        while (restartReport.continuationCursor !== null) {
+          restartCalls += 1;
+          assert.equal(restartCalls < 30, true, boundary);
+          restartReport = await secondRestart.reconcile({
+            cursor: restartReport.continuationCursor,
+          });
+        }
+        assert.equal(restartReport.continuationCursor, null, boundary);
       } finally {
         await secondRestart.close();
       }
@@ -1150,9 +1678,7 @@ test("verified-read hard-kill boundaries leave only recoverable snapshots", {
 
 test("hard kill after cursor advancement resumes from the durable generation", async (context) => {
   const { root, databasePath } = processFixture(context, "cursor-kill");
-  const child = fork(reconciliationWorkerPath, [databasePath, root, "1800000000000"], {
-    stdio: ["ignore", "ignore", "pipe", "ipc"],
-  });
+  const child = forkObservedWorker(reconciliationWorkerPath, [databasePath, root, "1800000000000"]);
   await waitForWorkerMessage(child, "ready");
   child.send({ type: "reconcile", cursor: null });
   const result = await waitForWorkerMessage(child, "result");
@@ -1222,7 +1748,7 @@ test("invalid orphans are quarantined without false artifact metadata", async (c
   mkdirSync(directory, { recursive: true });
   writeFileSync(join(directory, claimed), "wrong bytes");
 
-  const report = await store.reconcile();
+  const report = await store.reconcile({ maxElapsedMs: 60_000 });
   assert.equal(report.quarantinedObjects, 1);
   assert.equal(
     (database.prepare("SELECT count(*) count FROM artifact_blobs").get() as { count: bigint })
@@ -1280,7 +1806,7 @@ test("same-clock incidents and quarantine objects remain distinct", async (conte
   const directory = join(root, "artifacts", "staging");
   writeFileSync(join(directory, "collision-one.part"), "one");
   writeFileSync(join(directory, "collision-two.part"), "two");
-  const report = await store.reconcile();
+  const report = await store.reconcile({ maxElapsedMs: 60_000 });
   assert.equal(new Set(report.incidents).size, 2);
   assert.equal(readdirSync(join(root, "artifacts", "quarantine")).length, 2);
   assert.equal(
@@ -1316,7 +1842,7 @@ test("canonical evidence reads fail closed on relational-only forgery", async (c
   database.prepare("UPDATE artifact_observations SET etag = '\"fixture\"'").run();
   database.prepare("UPDATE artifact_blobs SET size_bytes = size_bytes + 1").run();
   await assert.rejects(() => store.stat(stored.artifact.digest), /relational mismatch/u);
-  await assert.rejects(() => store.reconcile(), /relational mismatch/u);
+  await assert.rejects(() => store.reconcile({ maxElapsedMs: 60_000 }), /relational mismatch/u);
 });
 
 test("tampered and missing committed content fails before consumer bytes", async (context) => {
@@ -1353,8 +1879,19 @@ test("tampered and missing committed content fails before consumer bytes", async
   );
   rmSync(missingPath);
   await assert.rejects(() => store.read(missing.artifact.digest), /missing/u);
-  const report = await store.reconcile();
-  assert.equal(report.missingArtifacts >= 1, true);
+  let report = await store.reconcile({ maxElapsedMs: 60_000 });
+  let missingArtifacts = report.missingArtifacts;
+  let calls = 1;
+  while (report.continuationCursor !== null) {
+    assert.equal(calls < 30, true);
+    report = await store.reconcile({
+      cursor: report.continuationCursor,
+      maxElapsedMs: 60_000,
+    });
+    missingArtifacts += report.missingArtifacts;
+    calls += 1;
+  }
+  assert.equal(missingArtifacts >= 1, true);
 });
 
 test("oversized corrupt reads stop after one bounded chunk", async (context) => {

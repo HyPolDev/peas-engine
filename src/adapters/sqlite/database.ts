@@ -1,11 +1,32 @@
 import { readFileSync, readdirSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
+import { isProxy } from "node:util/types";
 
 import Database from "better-sqlite3";
 
 import { hashParts } from "../../core/hash.js";
 
 export type SqliteDatabase = Database.Database;
+const ownedSqliteDatabases = new WeakSet<object>();
+const protectedSqliteDatabasePaths = new Set<string>();
+const RESERVED_DATABASE_FILENAMES = new Set([
+  "market-acquisition-authority.sqlite",
+  "market-acquisition-authority-anchor.sqlite",
+]);
+
+function normalizedDatabasePath(filename: string): string {
+  const resolved = resolve(filename);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+/**
+ * Permanently reserves an owned live database path against the repository's general raw opener.
+ * The reservation is process-lifetime and can only reduce authority.
+ */
+export function protectSqliteDatabasePath(filename: string): void {
+  if (filename === ":memory:") throw new TypeError("protected-sqlite-path-invalid");
+  protectedSqliteDatabasePaths.add(normalizedDatabasePath(filename));
+}
 
 export type Migration = Readonly<{
   version: number;
@@ -40,6 +61,13 @@ export function openSqliteDatabase(
   filename: string,
   migrations: readonly Migration[],
 ): SqliteDatabase {
+  if (
+    filename !== ":memory:" &&
+    (protectedSqliteDatabasePaths.has(normalizedDatabasePath(filename)) ||
+      RESERVED_DATABASE_FILENAMES.has(basename(filename).toLowerCase()))
+  ) {
+    throw new TypeError("protected-sqlite-database-path");
+  }
   const database = new Database(filename);
   database.pragma("foreign_keys = ON");
   database.pragma("busy_timeout = 5000");
@@ -47,7 +75,26 @@ export function openSqliteDatabase(
   if (filename !== ":memory:") database.pragma("journal_mode = WAL");
   database.defaultSafeIntegers(true);
   applyMigrations(database, migrations);
+  Object.preventExtensions(database);
+  ownedSqliteDatabases.add(database);
   return database;
+}
+
+export function assertOwnedSqliteDatabase(database: SqliteDatabase): void {
+  if (
+    !ownedSqliteDatabases.has(database) ||
+    isProxy(database) ||
+    Object.getPrototypeOf(database) !== Database.prototype ||
+    Object.isExtensible(database) ||
+    Reflect.ownKeys(database).some((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(database, key);
+      return (
+        descriptor !== undefined && "value" in descriptor && typeof descriptor.value === "function"
+      );
+    })
+  ) {
+    throw new TypeError("owned-sqlite-database-required");
+  }
 }
 
 export function applyMigrations(database: SqliteDatabase, migrations: readonly Migration[]): void {

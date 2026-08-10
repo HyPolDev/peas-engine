@@ -9,13 +9,14 @@ import {
   type ObservationLedgerEntryV1,
   type ObservationLedgerFactsV1,
 } from "../../providers/observation-ledger.js";
-import type { ArtifactStore } from "../../artifacts/artifact-store.js";
 import {
   type CommittedArtifactExpectation,
+  snapshotCommittedArtifactExpectation,
   verifyCommittedArtifact,
 } from "./artifact-integration.js";
 import type { JournalEntry, JournalIdentityInput } from "./journal.js";
 import { validateJournalEntries } from "./journal.js";
+import type { RetentionEnforcedArtifactStore } from "./retention/artifact-access.js";
 
 function sortIds(values: readonly string[]): readonly string[] {
   return Object.freeze(
@@ -23,20 +24,9 @@ function sortIds(values: readonly string[]): readonly string[] {
   );
 }
 
-function replayFacts(
-  facts: ObservationLedgerFactsV1,
-  remapped: ReadonlyMap<string, string>,
-): ObservationLedgerFactsV1 {
+function replayFacts(facts: ObservationLedgerFactsV1): ObservationLedgerFactsV1 {
   if (facts.kind === "artifact.committed") {
     return Object.freeze({ ...facts, acquisitionMode: "replay" });
-  }
-  if (facts.kind === "clock.regression") {
-    const priorEntryId = remapped.get(facts.priorEntryId);
-    const regressingEntryId = remapped.get(facts.regressingEntryId);
-    if (priorEntryId === undefined || regressingEntryId === undefined) {
-      throw new TypeError("replay-clock-regression-parent-missing");
-    }
-    return Object.freeze({ ...facts, priorEntryId, regressingEntryId });
   }
   return facts;
 }
@@ -70,23 +60,80 @@ export function replayAcquisitionLedger(
   const originalById = new Map(validated.map((entry) => [entry.entryId, entry]));
   const remapped = new Map<string, string>();
   const replayed: ObservationLedgerEntryV1[] = [];
+  const clockDeclarations = new Map<string, string>();
+  const lastWallEntry = new Map<string, ObservationLedgerEntryV1>();
 
   for (let offset = 0; offset < validated.length; offset += pageSize) {
     for (const source of validated.slice(offset, offset + pageSize)) {
-      if (shouldOmit(source)) continue;
-      const parents: string[] = [];
-      for (const parentId of source.parentEntryIds) {
-        const mapped = remapped.get(parentId);
-        if (mapped !== undefined) {
-          parents.push(mapped);
+      if (source.facts.kind === "clock.regression") {
+        const regressing = remapped.get(source.facts.regressingEntryId);
+        const prior = remapped.get(source.facts.priorEntryId);
+        const originalRegressing = originalById.get(source.facts.regressingEntryId);
+        const originalPrior = originalById.get(source.facts.priorEntryId);
+        if (
+          (originalRegressing !== undefined && shouldOmit(originalRegressing)) ||
+          (originalPrior !== undefined && shouldOmit(originalPrior))
+        ) {
+          const representative = regressing ?? prior;
+          if (representative === undefined) {
+            throw new TypeError("replay-clock-regression-endpoint-missing");
+          }
+          remapped.set(source.entryId, representative);
           continue;
         }
+        const witness = replayed.find(
+          (entry) =>
+            entry.facts.kind === "clock.regression" &&
+            entry.facts.regressingEntryId === regressing &&
+            entry.facts.priorEntryId === prior,
+        );
+        if (witness === undefined) throw new TypeError("replay-clock-regression-witness-missing");
+        remapped.set(source.entryId, witness.entryId);
+        continue;
+      }
+      if (shouldOmit(source)) {
+        const representatives = source.parentEntryIds.flatMap((parentId) => {
+          const mapped = remapped.get(parentId);
+          return mapped === undefined ? [] : [mapped];
+        });
+        if (representatives.length === 0) throw new TypeError("replay-omitted-parent-missing");
+        // Parent identifiers are canonically hash-sorted, not causally ordered.  An omitted
+        // transport-stage row commonly has both a clock declaration and the actual stage
+        // predecessor as parents; choosing the last hash can therefore remap the mainline to
+        // the clock basis and make the next valid clock-regression witness impossible.  Keep
+        // the causally latest non-clock representative, falling back to a clock declaration
+        // only when it is the sole available parent.
+        const replayedById = new Map(replayed.map((entry) => [entry.entryId, entry]));
+        const representative = representatives
+          .map((entryId) => replayedById.get(entryId))
+          .filter((entry): entry is ObservationLedgerEntryV1 => entry !== undefined)
+          .sort((left, right) => {
+            const leftClock = left.facts.kind === "clock-basis.declared" ? 0 : 1;
+            const rightClock = right.facts.kind === "clock-basis.declared" ? 0 : 1;
+            if (leftClock !== rightClock) return rightClock - leftClock;
+            return right.clock.monotonicTimeUs === null
+              ? -1
+              : left.clock.monotonicTimeUs === null
+                ? 1
+                : Number(right.clock.monotonicTimeUs - left.clock.monotonicTimeUs);
+          })[0];
+        if (representative === undefined) throw new TypeError("replay-omitted-parent-missing");
+        remapped.set(source.entryId, representative.entryId);
+        continue;
+      }
+      const parents: string[] = [];
+      for (const parentId of source.parentEntryIds) {
         const parent = originalById.get(parentId);
         if (
           source.facts.kind === "artifact.committed" &&
           source.facts.acquisitionMode === "live" &&
           parent?.facts.kind === "request.succeeded"
         ) {
+          continue;
+        }
+        const mapped = remapped.get(parentId);
+        if (mapped !== undefined) {
+          if (!parents.includes(mapped)) parents.push(mapped);
           continue;
         }
         throw new TypeError("replay-parent-missing");
@@ -96,12 +143,46 @@ export function replayAcquisitionLedger(
         executionId,
         parentEntryIds: sortIds(parents),
         clock: source.clock,
-        facts: replayFacts(source.facts, remapped),
+        facts: replayFacts(source.facts),
       });
-      const prospective = [...replayed, entry];
-      validateObservationLedgerBundle(prospective);
       replayed.push(entry);
       remapped.set(source.entryId, entry.entryId);
+      if (entry.facts.kind === "clock-basis.declared") {
+        clockDeclarations.set(entry.facts.clockBasis.clockBasisId, entry.entryId);
+        continue;
+      }
+      const basisId = entry.clock.clockBasisId;
+      if (basisId === null || entry.clock.wallTimeMs === null) continue;
+      const prior = lastWallEntry.get(basisId);
+      if (
+        prior !== undefined &&
+        prior.clock.wallTimeMs !== null &&
+        entry.clock.wallTimeMs < prior.clock.wallTimeMs
+      ) {
+        const basisEntryId = clockDeclarations.get(basisId);
+        if (basisEntryId === undefined) throw new TypeError("replay-clock-basis-missing");
+        const witness = createObservationLedgerEntry({
+          schemaVersion: 1,
+          executionId,
+          parentEntryIds: sortIds([basisEntryId, prior.entryId, entry.entryId]),
+          clock: entry.clock,
+          facts: Object.freeze({
+            kind: "clock.regression" as const,
+            priorEntryId: prior.entryId,
+            regressingEntryId: entry.entryId,
+            priorWallTimeMs: prior.clock.wallTimeMs,
+            currentWallTimeMs: entry.clock.wallTimeMs,
+            monotonicOrderPreserved:
+              prior.clock.monotonicTimeUs !== null &&
+              entry.clock.monotonicTimeUs !== null &&
+              entry.clock.monotonicTimeUs > prior.clock.monotonicTimeUs,
+          }),
+        });
+        replayed.push(witness);
+        lastWallEntry.set(basisId, witness);
+        continue;
+      }
+      lastWallEntry.set(basisId, entry);
     }
   }
   return validateObservationLedgerBundle(replayed);
@@ -109,22 +190,77 @@ export function replayAcquisitionLedger(
 
 export async function replayVerifiedAcquisition(
   input: Readonly<{
-    artifactStore: ArtifactStore;
+    artifactStore: RetentionEnforcedArtifactStore;
     artifacts: readonly CommittedArtifactExpectation[];
     ledger: readonly ObservationLedgerEntryV1[];
     executionId: string;
     pageSize: number;
   }>,
 ): Promise<readonly ObservationLedgerEntryV1[]> {
-  const observations = new Set<string>();
-  for (const artifact of [...input.artifacts].sort((left, right) =>
+  const ledger = validateObservationLedgerBundle(input.ledger);
+  const declarations = new Map(
+    ledger.flatMap((entry) =>
+      entry.facts.kind === "acquisition.declared"
+        ? [[entry.facts.acquisitionObservationId, entry.facts] as const]
+        : [],
+    ),
+  );
+  const required = new Map<string, CommittedArtifactExpectation>();
+  for (const entry of ledger) {
+    if (entry.facts.kind !== "artifact.committed") continue;
+    const declaration = declarations.get(entry.facts.acquisitionObservationId);
+    if (declaration === undefined) throw new TypeError("replay-artifact-acquisition-missing");
+    const expectation: CommittedArtifactExpectation = Object.freeze({
+      artifactObservationId: entry.facts.vaultObservationId,
+      artifactDigest: entry.facts.artifactDigest,
+      artifactSizeBytes: entry.facts.sizeBytes,
+      artifactObservationHash: entry.facts.vaultObservationHash,
+      retrievalAttemptId: declaration.retrievalAttemptId,
+      requestIdentityHash: declaration.sanitizedRequestIdentityHash,
+      provider: declaration.provider,
+    });
+    const prior = required.get(expectation.artifactObservationId);
+    if (
+      prior !== undefined &&
+      canonicalJson(prior as unknown as JsonValue) !==
+        canonicalJson(expectation as unknown as JsonValue)
+    ) {
+      throw new TypeError("replay-ledger-artifact-conflict");
+    }
+    required.set(expectation.artifactObservationId, expectation);
+  }
+  const supplied = new Map<string, CommittedArtifactExpectation>();
+  for (const candidate of input.artifacts) {
+    const artifact = snapshotCommittedArtifactExpectation(candidate);
+    const prior = supplied.get(artifact.artifactObservationId);
+    if (
+      prior !== undefined &&
+      canonicalJson(prior as unknown as JsonValue) !==
+        canonicalJson(artifact as unknown as JsonValue)
+    ) {
+      throw new TypeError("replay-artifact-expectation-conflict");
+    }
+    supplied.set(artifact.artifactObservationId, artifact);
+  }
+  if (
+    supplied.size !== required.size ||
+    [...required].some(([id, expectation]) => {
+      const artifact = supplied.get(id);
+      return (
+        artifact === undefined ||
+        canonicalJson(artifact as unknown as JsonValue) !==
+          canonicalJson(expectation as unknown as JsonValue)
+      );
+    })
+  ) {
+    throw new TypeError("replay-artifact-coverage-mismatch");
+  }
+  for (const artifact of [...supplied.values()].sort((left, right) =>
     left.artifactObservationId.localeCompare(right.artifactObservationId),
   )) {
-    if (observations.has(artifact.artifactObservationId)) continue;
     await verifyCommittedArtifact(input.artifactStore, artifact);
-    observations.add(artifact.artifactObservationId);
   }
-  return replayAcquisitionLedger(input.ledger, input.executionId, input.pageSize);
+  return replayAcquisitionLedger(ledger, input.executionId, input.pageSize);
 }
 
 /**

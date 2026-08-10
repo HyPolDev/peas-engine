@@ -1,9 +1,10 @@
-import type { AlpacaAuthorizationHeaders } from "../credentials.js";
+import type { AlpacaDispatchCapability } from "../credentials.js";
 import type {
   MarketAcquisitionSafeError,
   ValidatedMarketAcquisitionConfiguration,
 } from "../contracts.js";
 import type { RetryFailure } from "../retry.js";
+import type { RetentionOwnership } from "../retention/contracts.js";
 
 export type AlpacaQueryFieldName =
   | "symbols"
@@ -56,7 +57,6 @@ export type AlpacaTransportRequest = Readonly<{
   requestIdentityHash: string;
   pageOrdinal: number;
   query: readonly AlpacaQueryPair[];
-  authorizationHeaders: AlpacaAuthorizationHeaders;
   signal: AbortSignal;
 }>;
 
@@ -90,33 +90,51 @@ export type AlpacaTransportResponse = Readonly<{
 }>;
 
 export interface AlpacaTransport {
-  dispatch(request: AlpacaTransportRequest): Promise<AlpacaTransportResponse>;
+  dispatch(authorization: AlpacaDispatchCapability): Promise<AlpacaTransportResponse>;
   abort(): Promise<void>;
   settle(): Promise<void>;
 }
 
 export interface AlpacaVerifiedPageSink<T> extends AlpacaAttemptResource {
   write(bytes: Uint8Array): Promise<void>;
-  completeAndVerify(): Promise<T>;
+  /**
+   * Atomically commits and verifies the artifact and registers its retention ownership against
+   * the journal's active provider-stop state. A stop race must reject this operation and leave no
+   * usable artifact result.
+   */
+  completeVerifyAndRegisterOwnership(): Promise<T>;
+}
+
+export type AlpacaPreparedArtifactCommit<T> = Readonly<{
+  ownership: Omit<RetentionOwnership, "ownershipId">;
+  commit(): Promise<T>;
+}>;
+
+/** Lower-level sink hidden behind the retention-owning production composition. */
+export interface AlpacaArtifactCommitSink<T> extends AlpacaAttemptResource {
+  write(bytes: Uint8Array): Promise<void>;
+  prepareVerifiedCommit(): Promise<AlpacaPreparedArtifactCommit<T>>;
 }
 
 export interface AlpacaDeadlineHandle {
   readonly expired: Promise<void>;
+  assertRemaining(): void;
   cancel(): void;
   settle(): Promise<void>;
 }
 
 export interface AlpacaDeadlineScheduler {
-  arm(delayMs: 30_000): AlpacaDeadlineHandle;
+  arm(delayMs: number): AlpacaDeadlineHandle;
 }
 
 export type AlpacaAttemptInput<T> = Readonly<{
   plan: ValidatedMarketAcquisitionConfiguration;
   page: AlpacaPageAuthority;
-  authorizationHeaders: AlpacaAuthorizationHeaders;
+  dispatchCapability: AlpacaDispatchCapability;
   transport: AlpacaTransport;
   artifactSink: AlpacaVerifiedPageSink<T>;
   deadlineScheduler: AlpacaDeadlineScheduler;
+  attemptBudgetMs: number;
 }>;
 
 export type AlpacaAttemptSuccess<T> = Readonly<{

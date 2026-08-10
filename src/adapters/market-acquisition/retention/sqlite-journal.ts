@@ -1,4 +1,8 @@
-import type { SqliteDatabase } from "../../sqlite/database.js";
+import { assertOwnedSqliteDatabase, type SqliteDatabase } from "../../sqlite/database.js";
+import { resolve } from "node:path";
+import { P1_10_TEST_AUTHORITY } from "../../../internal-test-authority.js";
+import { artifactRuntimePaths, configuredPeasRuntimeRoot } from "../../artifacts/runtime-root.js";
+import { retentionDatabaseIdentity } from "./runtime-identity.js";
 import { canonicalHash } from "../../../core/hash.js";
 import { canonicalJson, type JsonValue } from "../../../core/json.js";
 import {
@@ -14,9 +18,13 @@ import type {
   RetentionOwnership,
   RetentionProviderLane,
   RetentionReceipt,
+  RetentionReceiptRevalidation,
   RetentionStopEvent,
   RetentionTombstone,
 } from "./contracts.js";
+
+const ownedSqliteRetentionJournals = new WeakSet<object>();
+const sqliteRetentionJournalRoots = new WeakMap<object, object>();
 
 type JsonRow = Readonly<{ json: string; hash: string }>;
 
@@ -32,6 +40,14 @@ function sameRecord(label: string, stored: unknown, value: unknown): void {
     throw new Error(`${label} conflicts with immutable retention evidence`);
 }
 
+function safeSqliteNumber(value: number | bigint, label: string): number {
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < 0) {
+    throw new Error(`${label} is invalid`);
+  }
+  return number;
+}
+
 export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal {
   readonly #database: SqliteDatabase;
 
@@ -41,7 +57,8 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
     this.#registerPolicy(FMP_PRIVATE_ARTIFACT_POLICY);
   }
 
-  registerOwnership(value: RetentionOwnership): void {
+  registerOwnershipAndApplyActiveStop(value: RetentionOwnership): boolean {
+    let allowed = true;
     this.#database
       .transaction(() => {
         const json = canonicalJson(value as unknown as JsonValue);
@@ -85,9 +102,60 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
             )
             .all(value.ownershipId) as Array<{ derived_id: string }>
         ).map((row) => row.derived_id);
-        sameRecord("Derivation ownership", persistedDerived, [...value.derivedIds].sort());
+        if (value.derivedIds.some((derivedId) => !persistedDerived.includes(derivedId))) {
+          throw new Error("Derivation ownership conflicts with immutable retention evidence");
+        }
+        const active = this.#database
+          .prepare(`SELECT stop_event_id FROM market_retention_provider_denials
+            WHERE provider_lane = ? AND provider_id = ?`)
+          .get(value.providerLane, value.providerId) as { stop_event_id: string } | undefined;
+        if (active !== undefined) {
+          allowed = false;
+          this.#database
+            .prepare(
+              "INSERT OR IGNORE INTO market_retention_digest_denials (stop_event_id, artifact_digest) VALUES (?, ?)",
+            )
+            .run(active.stop_event_id, value.artifactDigest);
+          const denyDerived = this.#database.prepare(
+            "INSERT OR IGNORE INTO market_retention_derivation_denials (stop_event_id, derived_id) VALUES (?, ?)",
+          );
+          for (const derivedId of value.derivedIds)
+            denyDerived.run(active.stop_event_id, derivedId);
+        }
       })
       .immediate();
+    return allowed;
+  }
+
+  registerDerivedLineageAndApplyActiveStop(
+    ownershipId: string,
+    derivedIds: readonly string[],
+  ): boolean {
+    let allowed = true;
+    this.#database
+      .transaction(() => {
+        const ownership = this.#ownership(ownershipId);
+        if (ownership === undefined) throw new Error("Retention ownership is missing");
+        const insert = this.#database.prepare(
+          "INSERT OR IGNORE INTO market_retention_derivation_ownership (ownership_id, derived_id) VALUES (?, ?)",
+        );
+        for (const derivedId of derivedIds) insert.run(ownershipId, derivedId);
+        const active = this.#database
+          .prepare(`SELECT stop_event_id FROM market_retention_provider_denials
+            WHERE provider_lane = ? AND provider_id = ?`)
+          .get(ownership.providerLane, ownership.providerId) as
+          | { stop_event_id: string }
+          | undefined;
+        if (active !== undefined) {
+          allowed = false;
+          const deny = this.#database.prepare(
+            "INSERT OR IGNORE INTO market_retention_derivation_denials (stop_event_id, derived_id) VALUES (?, ?)",
+          );
+          for (const derivedId of derivedIds) deny.run(active.stop_event_id, derivedId);
+        }
+      })
+      .immediate();
+    return allowed;
   }
 
   listOwnership(lane: RetentionProviderLane, providerId: string): readonly RetentionOwnership[] {
@@ -97,7 +165,44 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
         WHERE provider_lane = ? AND provider_id = ? ORDER BY ownership_id`)
       .all(lane, providerId) as JsonRow[];
     return rows.map((row) =>
-      parseRecord<RetentionOwnership>(row, "peas/market-acquisition-retention-ownership-record/v1"),
+      this.#withDerived(
+        parseRecord<RetentionOwnership>(
+          row,
+          "peas/market-acquisition-retention-ownership-record/v1",
+        ),
+      ),
+    );
+  }
+
+  ownershipForDigest(digest: string): readonly RetentionOwnership[] {
+    const rows = this.#database
+      .prepare(`SELECT ownership_json AS json, ownership_hash AS hash
+        FROM market_retention_ownership WHERE artifact_digest = ? ORDER BY ownership_id`)
+      .all(digest) as JsonRow[];
+    return rows.map((row) =>
+      this.#withDerived(
+        parseRecord<RetentionOwnership>(
+          row,
+          "peas/market-acquisition-retention-ownership-record/v1",
+        ),
+      ),
+    );
+  }
+
+  ownershipForDerivedId(derivedId: string): readonly RetentionOwnership[] {
+    const rows = this.#database
+      .prepare(`SELECT o.ownership_json AS json, o.ownership_hash AS hash
+        FROM market_retention_ownership o
+        JOIN market_retention_derivation_ownership d ON d.ownership_id = o.ownership_id
+        WHERE d.derived_id = ? ORDER BY o.ownership_id`)
+      .all(derivedId) as JsonRow[];
+    return rows.map((row) =>
+      this.#withDerived(
+        parseRecord<RetentionOwnership>(
+          row,
+          "peas/market-acquisition-retention-ownership-record/v1",
+        ),
+      ),
     );
   }
 
@@ -144,17 +249,20 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
           .prepare(`SELECT stop_event_id FROM market_retention_provider_denials
             WHERE provider_lane = ? AND provider_id = ?`)
           .get(stop.providerLane, stop.providerId) as { stop_event_id: string } | undefined;
-        if (providerDenial?.stop_event_id !== stop.stopEventId)
-          throw new Error("Provider already has a conflicting retention stop");
+        if (providerDenial === undefined)
+          throw new Error("Provider retention denial insert failed");
+        // A later ownership registration is settled by a new immutable stop/plan generation,
+        // while the original provider denial remains the permanent admission root.
+        const denialStopEventId = providerDenial.stop_event_id;
         const insertDigest = this.#database.prepare(
           "INSERT OR IGNORE INTO market_retention_digest_denials (stop_event_id, artifact_digest) VALUES (?, ?)",
         );
         for (const ownership of this.listOwnership(stop.providerLane, stop.providerId))
-          insertDigest.run(stop.stopEventId, ownership.artifactDigest);
+          insertDigest.run(denialStopEventId, ownership.artifactDigest);
         const insertDerived = this.#database.prepare(
           "INSERT OR IGNORE INTO market_retention_derivation_denials (stop_event_id, derived_id) VALUES (?, ?)",
         );
-        for (const derivedId of derivedIds) insertDerived.run(stop.stopEventId, derivedId);
+        for (const derivedId of derivedIds) insertDerived.run(denialStopEventId, derivedId);
       })
       .immediate();
   }
@@ -166,6 +274,16 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
           "SELECT 1 present FROM market_retention_provider_denials WHERE provider_lane = ? AND provider_id = ?",
         )
         .get(lane, providerId) !== undefined
+    );
+  }
+
+  reconciliationUseDenied(trustedNowMs: number): boolean {
+    return (
+      this.#database
+        .prepare(`SELECT 1 AS denied FROM market_retention_provider_denials
+          UNION ALL SELECT 1 AS denied FROM market_retention_ownership
+          WHERE expires_at_ms <= ? LIMIT 1`)
+        .get(trustedNowMs) !== undefined
     );
   }
   digestUseDenied(digest: string): boolean {
@@ -220,6 +338,12 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
     )
       throw new Error("Retention plan evidence mismatch");
     return value;
+  }
+  getPlanForStop(stopEventId: string): RetentionErasurePlan | undefined {
+    const row = this.#database
+      .prepare("SELECT plan_id FROM market_retention_erasure_plans WHERE stop_event_id = ?")
+      .get(stopEventId) as { plan_id: string } | undefined;
+    return row === undefined ? undefined : this.getPlan(row.plan_id);
   }
 
   recordAttempt(value: RetentionErasureAttempt): void {
@@ -343,6 +467,214 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
       : parseRecord<RetentionReceipt>(row, "peas/market-acquisition-retention-receipt-record/v1");
   }
 
+  recordReceiptRevalidation(value: RetentionReceiptRevalidation): void {
+    const json = canonicalJson(value as unknown as JsonValue);
+    const hash = canonicalHash(
+      "peas/market-acquisition-retention-revalidation-record/v1",
+      value as unknown as JsonValue,
+    );
+    this.#database
+      .prepare(`INSERT OR IGNORE INTO market_retention_receipt_revalidations (
+        revalidation_id, plan_id, sequence, predecessor_receipt_id, receipt_id, attempt_count,
+        completed_at_ms, revalidation_json, revalidation_hash
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(
+        value.revalidationId,
+        value.planId,
+        value.sequence,
+        value.predecessorReceiptId,
+        value.receipt.receiptId,
+        value.receipt.attemptCount,
+        value.recordedAtMs,
+        json,
+        hash,
+      );
+    const existing = this.#database
+      .prepare(`SELECT revalidation_json AS json, revalidation_hash AS hash,
+        revalidation_id, plan_id, sequence, predecessor_receipt_id, receipt_id, attempt_count,
+        completed_at_ms
+        FROM market_retention_receipt_revalidations WHERE plan_id = ? AND sequence = ?`)
+      .get(value.planId, value.sequence) as
+      | (JsonRow & {
+          revalidation_id: string;
+          plan_id: string;
+          sequence: bigint;
+          predecessor_receipt_id: string;
+          receipt_id: string;
+          attempt_count: bigint;
+          completed_at_ms: bigint;
+        })
+      | undefined;
+    if (existing === undefined) throw new Error("Retention receipt revalidation insert failed");
+    const parsed = parseRecord<RetentionReceiptRevalidation>(
+      existing,
+      "peas/market-acquisition-retention-revalidation-record/v1",
+    );
+    if (
+      existing.revalidation_id !== parsed.revalidationId ||
+      existing.plan_id !== parsed.planId ||
+      safeSqliteNumber(existing.sequence, "Receipt revalidation sequence") !== parsed.sequence ||
+      existing.predecessor_receipt_id !== parsed.predecessorReceiptId ||
+      existing.receipt_id !== parsed.receipt.receiptId ||
+      safeSqliteNumber(existing.attempt_count, "Receipt revalidation attempt count") !==
+        parsed.receipt.attemptCount ||
+      safeSqliteNumber(existing.completed_at_ms, "Receipt revalidation time") !==
+        parsed.recordedAtMs
+    ) {
+      throw new Error("Retention receipt revalidation relational evidence mismatch");
+    }
+    sameRecord("Receipt revalidation", parsed, value);
+  }
+
+  receiptRevalidationsForPlan(planId: string): readonly RetentionReceiptRevalidation[] {
+    const rows = this.#database
+      .prepare(`SELECT revalidation_json AS json, revalidation_hash AS hash,
+        revalidation_id, plan_id, sequence, predecessor_receipt_id, receipt_id, attempt_count,
+        completed_at_ms
+        FROM market_retention_receipt_revalidations WHERE plan_id = ? ORDER BY sequence`)
+      .all(planId) as Array<
+      JsonRow & {
+        revalidation_id: string;
+        plan_id: string;
+        sequence: bigint;
+        predecessor_receipt_id: string;
+        receipt_id: string;
+        attempt_count: bigint;
+        completed_at_ms: bigint;
+      }
+    >;
+    return rows.map((row) => {
+      const parsed = parseRecord<RetentionReceiptRevalidation>(
+        row,
+        "peas/market-acquisition-retention-revalidation-record/v1",
+      );
+      if (
+        row.revalidation_id !== parsed.revalidationId ||
+        row.plan_id !== parsed.planId ||
+        safeSqliteNumber(row.sequence, "Receipt revalidation sequence") !== parsed.sequence ||
+        row.predecessor_receipt_id !== parsed.predecessorReceiptId ||
+        row.receipt_id !== parsed.receipt.receiptId ||
+        safeSqliteNumber(row.attempt_count, "Receipt revalidation attempt count") !==
+          parsed.receipt.attemptCount ||
+        safeSqliteNumber(row.completed_at_ms, "Receipt revalidation time") !== parsed.recordedAtMs
+      ) {
+        throw new Error("Retention receipt revalidation relational evidence mismatch");
+      }
+      return parsed;
+    });
+  }
+
+  recordReceiptRevalidationAndCheckpoint(
+    value: RetentionReceiptRevalidation,
+    checkpoint: RetentionCheckpoint,
+  ): void {
+    if (
+      checkpoint.planId !== value.planId ||
+      checkpoint.receiptId !== value.receipt.receiptId ||
+      checkpoint.sequence !== value.sequence ||
+      checkpoint.completedAtMs !== value.receipt.completedAtMs
+    ) {
+      throw new Error("Receipt revalidation checkpoint evidence mismatch");
+    }
+    this.#database
+      .transaction(() => {
+        this.recordReceiptRevalidation(value);
+        const json = canonicalJson(checkpoint as unknown as JsonValue);
+        const hash = canonicalHash(
+          "peas/market-acquisition-retention-checkpoint-record/v1",
+          checkpoint as unknown as JsonValue,
+        );
+        this.#database
+          .prepare(`INSERT OR IGNORE INTO market_retention_revalidation_checkpoints (
+            checkpoint_id, plan_id, revalidation_id, receipt_id, sequence, completed_at_ms,
+            checkpoint_json, checkpoint_hash
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(
+            checkpoint.checkpointId,
+            checkpoint.planId,
+            value.revalidationId,
+            checkpoint.receiptId,
+            checkpoint.sequence,
+            checkpoint.completedAtMs,
+            json,
+            hash,
+          );
+        const row = this.#database
+          .prepare(`SELECT checkpoint_json AS json, checkpoint_hash AS hash,
+            checkpoint_id, plan_id, revalidation_id, receipt_id, sequence, completed_at_ms
+            FROM market_retention_revalidation_checkpoints WHERE plan_id = ? AND sequence = ?`)
+          .get(checkpoint.planId, checkpoint.sequence) as
+          | (JsonRow & {
+              checkpoint_id: string;
+              plan_id: string;
+              revalidation_id: string;
+              receipt_id: string;
+              sequence: bigint;
+              completed_at_ms: bigint;
+            })
+          | undefined;
+        if (row === undefined) throw new Error("Retention revalidation checkpoint insert failed");
+        const parsed = parseRecord<RetentionCheckpoint>(
+          row,
+          "peas/market-acquisition-retention-checkpoint-record/v1",
+        );
+        if (
+          row.checkpoint_id !== parsed.checkpointId ||
+          row.plan_id !== parsed.planId ||
+          row.revalidation_id !== value.revalidationId ||
+          row.receipt_id !== parsed.receiptId ||
+          safeSqliteNumber(row.sequence, "Revalidation checkpoint sequence") !== parsed.sequence ||
+          safeSqliteNumber(row.completed_at_ms, "Revalidation checkpoint time") !==
+            parsed.completedAtMs
+        ) {
+          throw new Error("Retention revalidation checkpoint relational evidence mismatch");
+        }
+        sameRecord("Revalidation checkpoint", parsed, checkpoint);
+      })
+      .immediate();
+  }
+
+  revalidationCheckpointsForPlan(planId: string): readonly RetentionCheckpoint[] {
+    const rows = this.#database
+      .prepare(`SELECT checkpoint_json AS json, checkpoint_hash AS hash,
+        checkpoint_id, plan_id, revalidation_id, receipt_id, sequence, completed_at_ms
+        FROM market_retention_revalidation_checkpoints WHERE plan_id = ? ORDER BY sequence`)
+      .all(planId) as Array<
+      JsonRow & {
+        checkpoint_id: string;
+        plan_id: string;
+        revalidation_id: string;
+        receipt_id: string;
+        sequence: bigint;
+        completed_at_ms: bigint;
+      }
+    >;
+    return rows.map((row) => {
+      const parsed = parseRecord<RetentionCheckpoint>(
+        row,
+        "peas/market-acquisition-retention-checkpoint-record/v1",
+      );
+      if (
+        row.checkpoint_id !== parsed.checkpointId ||
+        row.plan_id !== parsed.planId ||
+        row.receipt_id !== parsed.receiptId ||
+        safeSqliteNumber(row.sequence, "Revalidation checkpoint sequence") !== parsed.sequence ||
+        safeSqliteNumber(row.completed_at_ms, "Revalidation checkpoint time") !==
+          parsed.completedAtMs
+      ) {
+        throw new Error("Retention revalidation checkpoint relational evidence mismatch");
+      }
+      const revalidation = this.#database
+        .prepare(`SELECT revalidation_id FROM market_retention_receipt_revalidations
+          WHERE plan_id = ? AND sequence = ?`)
+        .get(parsed.planId, parsed.sequence) as { revalidation_id: string } | undefined;
+      if (revalidation?.revalidation_id !== row.revalidation_id) {
+        throw new Error("Retention revalidation checkpoint relational evidence mismatch");
+      }
+      return parsed;
+    });
+  }
+
   recordCheckpoint(value: RetentionCheckpoint): void {
     const json = canonicalJson(value as unknown as JsonValue);
     const hash = canonicalHash(
@@ -425,4 +757,55 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
           "peas/market-acquisition-retention-ownership-record/v1",
         );
   }
+
+  #withDerived(value: RetentionOwnership): RetentionOwnership {
+    const derivedIds = (
+      this.#database
+        .prepare(
+          "SELECT derived_id FROM market_retention_derivation_ownership WHERE ownership_id = ? ORDER BY derived_id",
+        )
+        .all(value.ownershipId) as Array<{ derived_id: string }>
+    ).map((row) => row.derived_id);
+    return { ...value, derivedIds };
+  }
 }
+
+export function createSqliteArtifactRetentionJournal(
+  database: SqliteDatabase,
+): SqliteArtifactRetentionJournal {
+  assertOwnedSqliteDatabase(database);
+  if (
+    P1_10_TEST_AUTHORITY === undefined &&
+    resolve(database.name) !==
+      resolve(artifactRuntimePaths(configuredPeasRuntimeRoot()).databasePath)
+  ) {
+    throw new TypeError("canonical-retention-database-required");
+  }
+  const journal = new SqliteArtifactRetentionJournal(database);
+  ownedSqliteRetentionJournals.add(journal);
+  sqliteRetentionJournalRoots.set(journal, retentionDatabaseIdentity(database.name));
+  Object.freeze(journal);
+  return journal;
+}
+
+export function ownedSqliteRetentionJournalRuntimeIdentity(
+  value: ArtifactRetentionJournal,
+): object {
+  if (!isOwnedSqliteArtifactRetentionJournal(value as object)) {
+    throw new TypeError("owned-sqlite-retention-journal-required");
+  }
+  const identity = sqliteRetentionJournalRoots.get(value as object);
+  if (identity === undefined) throw new TypeError("owned-sqlite-retention-journal-required");
+  return identity;
+}
+
+export function isOwnedSqliteArtifactRetentionJournal(value: object): boolean {
+  return (
+    ownedSqliteRetentionJournals.has(value) &&
+    Object.getPrototypeOf(value) === SqliteArtifactRetentionJournal.prototype &&
+    Object.isFrozen(value) &&
+    Reflect.ownKeys(value).length === 0
+  );
+}
+
+Object.freeze(SqliteArtifactRetentionJournal.prototype);

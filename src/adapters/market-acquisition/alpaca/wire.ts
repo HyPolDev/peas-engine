@@ -1,5 +1,8 @@
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import { isProxy } from "node:util/types";
+import { existsSync } from "node:fs";
+import { P1_10_TEST_AUTHORITY } from "../../../internal-test-authority.js";
 
 import { canonicalHash } from "../../../core/hash.js";
 import { canonicalJson, type JsonValue } from "../../../core/json.js";
@@ -14,6 +17,54 @@ import {
   canonicalDecimalFromToken,
   deriveCanonicalProviderPayloadDigest,
 } from "../../../providers/market-reference/normalization.js";
+import {
+  TERMINAL_TOKEN_HASH,
+  deriveMarketAcquisitionJournalId,
+  derivePrivateTokenHash,
+  type AcquisitionJournal,
+  type JournalEntry,
+  type JournalIdentityInput,
+  validateJournalEntries,
+} from "../journal.js";
+import type { ValidatedMarketAcquisitionConfiguration } from "../contracts.js";
+import { assertValidatedMarketAcquisitionConfiguration } from "../configuration.js";
+import { ALPACA_ROUTE_REGISTRY } from "../identity.js";
+import { loadWorkflowProducedAcquisitionEvidence } from "../artifact-integration.js";
+import { assertOwnedAcquisitionJournal } from "../owned-journal.js";
+import {
+  type AlpacaWireSemanticEvidenceStore,
+  assertOwnedAlpacaWireSemanticEvidenceStore,
+  assertAcceptedAlpacaWireSemanticEvidence,
+  createSqliteAlpacaWireSemanticEvidenceStore,
+  revalidateOwnedAlpacaWireSemanticEvidence,
+} from "./wire-semantic-evidence.js";
+import { openSqliteDatabase, type Migration, type SqliteDatabase } from "../../sqlite/database.js";
+import { createSqliteAcquisitionJournal } from "../sqlite-journal.js";
+import {
+  beginRetentionUse,
+  type RetentionEnforcedArtifactStore,
+  type RetentionUseLease,
+} from "../retention/artifact-access.js";
+import type { RetentionOperationLease } from "../retention/contracts.js";
+import type { ArtifactRetentionJournal } from "../retention/contracts.js";
+import { createSqliteArtifactRetentionJournal } from "../retention/sqlite-journal.js";
+import {
+  ownedLiveCredentialAcquisitionJournal,
+  type DurableCredentialAuthorizationBoundary,
+} from "../credentials.js";
+import { artifactRuntimePaths, configuredPeasRuntimeRoot } from "../../artifacts/runtime-root.js";
+import { ownedRetentionEnforcedArtifactStoreRuntimeIdentity } from "../retention/artifact-access.js";
+import { retentionRuntimeIdentity } from "../retention/runtime-identity.js";
+export {
+  DurableAlpacaWireSemanticEvidenceBoundary,
+  openSqliteDurableAlpacaWireSemanticEvidenceBoundary,
+  openOwnedDurableAlpacaWireSemanticEvidenceBoundary,
+  createTestDurableAlpacaWireSemanticEvidenceBoundary,
+} from "./wire-semantic-evidence.js";
+import {
+  classifyFrozenSession,
+  type FrozenSessionCalendarEntryV1,
+} from "../../../providers/market-reference/operations.js";
 
 export type AlpacaWireEndpointKind = "quotes" | "trades" | "bars";
 type PlainRecord = Record<string, unknown>;
@@ -43,6 +94,9 @@ export type AlpacaBarObservation = Readonly<{
 
 export type AlpacaWirePageAdmission = Readonly<{
   endpointKind: AlpacaWireEndpointKind;
+  marketAcquisitionId: string;
+  rawArtifactId: string;
+  wireItemCount: number;
   terminal: boolean;
   privateNextToken: string | null;
   records: readonly RecordedMarketRecordV1[];
@@ -65,6 +119,32 @@ export type AlpacaWireChainResolution = Readonly<{
   barObservationCount: number;
 }>;
 
+type AuthenticatedAdmissionBinding = Readonly<{
+  artifactDigest: string;
+  artifactSizeBytes: number;
+  admissionHash: string;
+  retentionLease?: RetentionUseLease;
+}>;
+
+const authenticatedAdmissions = new WeakMap<object, AuthenticatedAdmissionBinding>();
+const wireAdmissionAuthorities = new WeakMap<
+  object,
+  Readonly<{
+    endpointKind: AlpacaWireEndpointKind;
+    artifactDigest: string;
+    artifactSizeBytes: number;
+    context: AlpacaWireParseContext;
+    retentionLease?: RetentionUseLease;
+  }>
+>();
+const wireAdmissionBoundaries = new WeakSet<object>();
+const productionWireAdmissionDatabases = new WeakMap<object, readonly SqliteDatabase[]>();
+const WIRE_ADMISSION_BOUNDARY_CONSTRUCTION_AUTHORITY = Object.freeze({});
+
+export type AlpacaWireAdmissionAuthority = Readonly<{
+  kind: "p1-10-durable-wire-admission-authority";
+}>;
+
 export type AlpacaWireParseContext = Readonly<{
   requestedSymbols: readonly string[];
   instrumentIds: Readonly<Record<string, string>>;
@@ -79,9 +159,304 @@ export type AlpacaWireParseContext = Readonly<{
   durableLogicalAtMs: number;
   sessionKind: RecordedMarketRecordV1["sessionKind"];
   primaryCorpusMember: boolean;
+  calendarEntries?: readonly FrozenSessionCalendarEntryV1[];
   timeframe: "1Min";
   adjustment: "raw";
 }>;
+
+/** Issues page semantics only from a validated plan and an exact durable artifact checkpoint. */
+export class DurableAlpacaWireAdmissionBoundary {
+  readonly #journal: AcquisitionJournal;
+  readonly #evidence: AlpacaWireSemanticEvidenceStore;
+  readonly #artifacts: RetentionEnforcedArtifactStore | undefined;
+  readonly #retention: ArtifactRetentionJournal | undefined;
+  readonly #completeChainIssued = new Set<string>();
+
+  constructor(
+    journal: AcquisitionJournal,
+    evidence: AlpacaWireSemanticEvidenceStore,
+    artifacts?: RetentionEnforcedArtifactStore,
+    retention?: ArtifactRetentionJournal,
+    authority?: object,
+  ) {
+    assertOwnedAcquisitionJournal(journal);
+    assertOwnedAlpacaWireSemanticEvidenceStore(evidence);
+    this.#journal = journal;
+    this.#evidence = evidence;
+    this.#artifacts = artifacts;
+    this.#retention = retention;
+    if (authority === WIRE_ADMISSION_BOUNDARY_CONSTRUCTION_AUTHORITY) {
+      wireAdmissionBoundaries.add(this);
+    }
+  }
+
+  async issue(
+    input: Readonly<{
+      plan: ValidatedMarketAcquisitionConfiguration;
+      expectedIdentity: JournalIdentityInput;
+      marketAcquisitionJournalId: string;
+    }>,
+  ): Promise<AlpacaWireAdmissionAuthority> {
+    assertOwnedDurableAlpacaWireAdmissionBoundary(this);
+    const { plan } = input;
+    try {
+      assertValidatedMarketAcquisitionConfiguration(plan);
+    } catch {
+      reject("page-semantic-authority-invalid");
+    }
+    if (
+      !Object.isFrozen(plan) ||
+      plan.route !== ALPACA_ROUTE_REGISTRY[plan.kind] ||
+      input.marketAcquisitionJournalId !== deriveMarketAcquisitionJournalId(input.expectedIdentity)
+    ) {
+      reject("page-semantic-authority-invalid");
+    }
+    const { journal, ledger } = await loadWorkflowProducedAcquisitionEvidence(
+      this.#journal,
+      input.marketAcquisitionJournalId,
+      input.expectedIdentity,
+    );
+    const durableLatest = journal.at(-1);
+    if (durableLatest === undefined) {
+      throw new AlpacaWireContractError("page-semantic-authority-invalid");
+    }
+    const latest =
+      durableLatest.checkpointKind === "chain-complete"
+        ? journal.find(
+            (entry) =>
+              entry.checkpointKind === "artifact-verified" &&
+              !this.#completeChainIssued.has(entry.journalEntryHash),
+          )
+        : durableLatest;
+    if (latest === undefined) {
+      throw new AlpacaWireContractError("page-semantic-authority-invalid");
+    }
+    if (
+      latest.checkpointKind !== "artifact-verified" ||
+      latest.requestIdentityHash !== plan.requestIdentityHash ||
+      latest.acquisitionConfigurationHash !== plan.acquisitionConfigurationHash ||
+      latest.providerId !== plan.route.providerId ||
+      latest.datasetId !== plan.route.datasetId ||
+      latest.feedId !== plan.route.feedId ||
+      latest.endpointChannelId !== plan.route.endpointChannelId ||
+      latest.artifactDigest === null ||
+      latest.artifactSizeBytes === null ||
+      latest.rawArtifactId === null
+    ) {
+      throw new AlpacaWireContractError("page-semantic-authority-invalid");
+    }
+    const artifactDigest = latest.artifactDigest;
+    const artifactSizeBytes = latest.artifactSizeBytes;
+    const rawArtifactId = latest.rawArtifactId;
+    if (artifactDigest === null || artifactSizeBytes === null || rawArtifactId === null) {
+      throw new AlpacaWireContractError("page-semantic-authority-invalid");
+    }
+    const semantic = this.#evidence.loadForJournalEntry(latest.journalEntryHash);
+    if (
+      semantic === undefined ||
+      semantic.marketAcquisitionJournalId !== input.marketAcquisitionJournalId ||
+      semantic.artifactObservationId !== latest.artifactObservationId ||
+      semantic.artifactObservationHash !== latest.artifactObservationHash ||
+      semantic.artifactDigest !== artifactDigest ||
+      semantic.artifactSizeBytes !== artifactSizeBytes ||
+      semantic.stageLedgerFactId !== latest.stageLedgerFactId
+    ) {
+      throw new AlpacaWireContractError("page-semantic-authority-invalid");
+    }
+    const ledgerById = new Map(ledger.map((entry) => [entry.entryId, entry]));
+    assertAcceptedAlpacaWireSemanticEvidence(
+      semantic,
+      plan.requestIdentityHash,
+      plan.queryStartNs.toString(),
+      plan.queryEndNs.toString(),
+    );
+    if (this.#artifacts !== undefined && this.#retention !== undefined) {
+      await revalidateOwnedAlpacaWireSemanticEvidence(
+        semantic,
+        plan,
+        latest.retrievalAttemptId,
+        this.#artifacts,
+        this.#retention,
+      );
+    }
+    const pageStage = ledgerById.get(semantic.stageLedgerFactId);
+    const authorityStage = ledgerById.get(semantic.semanticAuthorityStageLedgerFactId);
+    const authorityCommit = authorityStage?.parentEntryIds
+      .map((entryId) => ledgerById.get(entryId))
+      .find((entry) => entry?.facts.kind === "artifact.committed");
+    const clockDeclaration = ledgerById.get(semantic.clockDeclarationFactId);
+    const workflowProvenance = await Promise.all([
+      this.#journal.isWorkflowProducedJournalEntry(latest.journalEntryHash),
+      this.#journal.isWorkflowProducedLedgerEntry(semantic.stageLedgerFactId),
+      this.#journal.isWorkflowProducedLedgerEntry(semantic.semanticAuthorityStageLedgerFactId),
+      authorityCommit === undefined
+        ? Promise.resolve(false)
+        : this.#journal.isWorkflowProducedLedgerEntry(authorityCommit.entryId),
+      this.#journal.isWorkflowProducedLedgerEntry(semantic.clockDeclarationFactId),
+    ]);
+    if (
+      workflowProvenance.some((produced) => !produced) ||
+      pageStage?.facts.kind !== "artifact.verified" ||
+      pageStage.facts.vaultObservationId !== semantic.artifactObservationId ||
+      pageStage.facts.artifactDigest !== semantic.artifactDigest ||
+      pageStage.facts.metadataSizeBytes !== semantic.artifactSizeBytes ||
+      authorityStage?.facts.kind !== "artifact.verified" ||
+      authorityStage.facts.vaultObservationId !== semantic.semanticAuthorityObservationId ||
+      authorityStage.facts.artifactDigest !== semantic.semanticAuthorityDigest ||
+      authorityStage.facts.metadataSizeBytes !== semantic.semanticAuthoritySizeBytes ||
+      authorityCommit?.facts.kind !== "artifact.committed" ||
+      authorityCommit.facts.vaultObservationHash !== semantic.semanticAuthorityObservationHash ||
+      clockDeclaration?.facts.kind !== "clock-basis.declared" ||
+      clockDeclaration.facts.clockBasis.clockBasisId !== semantic.durableClockBasisId
+    ) {
+      throw new AlpacaWireContractError("page-semantic-authority-invalid");
+    }
+    const context: AlpacaWireParseContext = Object.freeze({
+      requestedSymbols: Object.freeze(plan.instruments.map((value) => value.symbol)),
+      instrumentIds: Object.freeze(
+        Object.fromEntries(plan.instruments.map((value) => [value.symbol, value.instrumentId])),
+      ),
+      queryStartNs: BigInt(plan.queryStartNs),
+      queryEndNs: BigInt(plan.queryEndNs),
+      entitlementSnapshotId: plan.entitlementSnapshotId,
+      marketAcquisitionId: latest.marketAcquisitionId,
+      rawArtifactId,
+      calendarVersion: semantic.calendarVersion,
+      durableClockBasisId: semantic.durableClockBasisId,
+      durablyRecordedAtMs: semantic.durablyRecordedAtMs,
+      durableLogicalAtMs: semantic.durableLogicalAtMs,
+      sessionKind: "unknown",
+      primaryCorpusMember: semantic.primaryCorpusMember,
+      calendarEntries: Object.freeze(structuredClone(semantic.calendarEntries)),
+      timeframe: "1Min",
+      adjustment: "raw",
+    });
+    const authority = Object.freeze({
+      kind: "p1-10-durable-wire-admission-authority" as const,
+    });
+    const retentionLease = this.#artifacts?.createUseLease([artifactDigest]);
+    if (retentionLease === undefined && P1_10_TEST_AUTHORITY === undefined) {
+      reject("page-semantic-authority-invalid");
+    }
+    wireAdmissionAuthorities.set(
+      authority,
+      Object.freeze({
+        endpointKind: plan.kind as AlpacaWireEndpointKind,
+        artifactDigest,
+        artifactSizeBytes,
+        context,
+        ...(retentionLease === undefined ? {} : { retentionLease }),
+      }),
+    );
+    if (durableLatest.checkpointKind === "chain-complete") {
+      this.#completeChainIssued.add(latest.journalEntryHash);
+    }
+    return authority;
+  }
+
+  close(): void {
+    assertOwnedDurableAlpacaWireAdmissionBoundary(this);
+    const databases = productionWireAdmissionDatabases.get(this);
+    if (databases === undefined) throw new TypeError("production-wire-admission-root-required");
+    productionWireAdmissionDatabases.delete(this);
+    for (const database of databases) database.close();
+  }
+}
+
+function constructAlpacaWireAdmissionBoundary(
+  journal: AcquisitionJournal,
+  evidence: AlpacaWireSemanticEvidenceStore,
+  artifacts?: RetentionEnforcedArtifactStore,
+  retention?: ArtifactRetentionJournal,
+): DurableAlpacaWireAdmissionBoundary {
+  const boundary = new DurableAlpacaWireAdmissionBoundary(
+    journal,
+    evidence,
+    artifacts,
+    retention,
+    WIRE_ADMISSION_BOUNDARY_CONSTRUCTION_AUTHORITY,
+  );
+  Object.freeze(boundary);
+  return boundary;
+}
+
+export function openSqliteDurableAlpacaWireAdmissionBoundary(
+  filename: string,
+  migrations: readonly Migration[],
+  expectedIdentity: JournalIdentityInput,
+  artifacts: RetentionEnforcedArtifactStore,
+): DurableAlpacaWireAdmissionBoundary {
+  if (P1_10_TEST_AUTHORITY === undefined) {
+    throw new TypeError("arbitrary-wire-admission-root-unavailable");
+  }
+  const database = openSqliteDatabase(filename, migrations);
+  try {
+    const journal = createSqliteAcquisitionJournal(database, expectedIdentity);
+    const evidence = createSqliteAlpacaWireSemanticEvidenceStore(database);
+    const retention = createSqliteArtifactRetentionJournal(database);
+    const boundary = constructAlpacaWireAdmissionBoundary(journal, evidence, artifacts, retention);
+    productionWireAdmissionDatabases.set(boundary, Object.freeze([database]));
+    return boundary;
+  } catch (error) {
+    database.close();
+    throw error;
+  }
+}
+
+/** Canonical live admission root; journal authority comes only from the owned credential root. */
+export async function openOwnedDurableAlpacaWireAdmissionBoundary(
+  authorization: DurableCredentialAuthorizationBoundary,
+  migrations: readonly Migration[],
+  plan: ValidatedMarketAcquisitionConfiguration,
+  artifacts: RetentionEnforcedArtifactStore,
+): Promise<DurableAlpacaWireAdmissionBoundary> {
+  assertValidatedMarketAcquisitionConfiguration(plan);
+  if (
+    ownedRetentionEnforcedArtifactStoreRuntimeIdentity(artifacts) !==
+    retentionRuntimeIdentity(configuredPeasRuntimeRoot())
+  ) {
+    throw new TypeError("wire-runtime-root-mismatch");
+  }
+  const runtime = artifactRuntimePaths(configuredPeasRuntimeRoot());
+  if (!existsSync(runtime.databasePath)) throw new TypeError("wire-runtime-layout-corrupt");
+  const journal = await ownedLiveCredentialAcquisitionJournal(authorization, plan);
+  const database = openSqliteDatabase(runtime.databasePath, migrations);
+  try {
+    const evidence = createSqliteAlpacaWireSemanticEvidenceStore(database);
+    const retention = createSqliteArtifactRetentionJournal(database);
+    const boundary = constructAlpacaWireAdmissionBoundary(journal, evidence, artifacts, retention);
+    productionWireAdmissionDatabases.set(boundary, Object.freeze([database]));
+    return boundary;
+  } catch (error) {
+    database.close();
+    throw error;
+  }
+}
+
+export function createTestDurableAlpacaWireAdmissionBoundary(
+  journal: AcquisitionJournal,
+  evidence: AlpacaWireSemanticEvidenceStore,
+): DurableAlpacaWireAdmissionBoundary {
+  if (P1_10_TEST_AUTHORITY === undefined) {
+    throw new TypeError("test-wire-admission-composition-unavailable");
+  }
+  assertOwnedAcquisitionJournal(journal);
+  assertOwnedAlpacaWireSemanticEvidenceStore(evidence);
+  return constructAlpacaWireAdmissionBoundary(journal, evidence);
+}
+
+export function assertOwnedDurableAlpacaWireAdmissionBoundary(
+  value: DurableAlpacaWireAdmissionBoundary,
+): void {
+  if (
+    !wireAdmissionBoundaries.has(value) ||
+    isProxy(value) ||
+    Object.getPrototypeOf(value) !== DurableAlpacaWireAdmissionBoundary.prototype ||
+    !Object.isFrozen(value)
+  ) {
+    throw new TypeError("owned-durable-wire-admission-boundary-required");
+  }
+}
 
 export class AlpacaWireContractError extends Error {
   constructor(readonly code: string) {
@@ -674,10 +1049,42 @@ function fallbackFamily(
   } as unknown as JsonValue);
 }
 
+function barSession(
+  context: AlpacaWireParseContext,
+  barStartNs: bigint,
+): Readonly<{
+  sessionKind: RecordedMarketRecordV1["sessionKind"];
+  calendarVersion: string;
+}> {
+  if (context.calendarEntries === undefined) {
+    return { sessionKind: context.sessionKind, calendarVersion: context.calendarVersion };
+  }
+  const matching = context.calendarEntries.filter((entry) => {
+    if (entry.holiday || entry.extendedOpenNs === null || entry.extendedCloseNs === null) {
+      return false;
+    }
+    return barStartNs >= BigInt(entry.extendedOpenNs) && barStartNs < BigInt(entry.extendedCloseNs);
+  });
+  if (matching.length !== 1) {
+    return { sessionKind: "unknown", calendarVersion: context.calendarVersion };
+  }
+  const acceptedEntry = matching[0];
+  if (acceptedEntry === undefined) {
+    return { sessionKind: "unknown", calendarVersion: context.calendarVersion };
+  }
+  const classification = classifyFrozenSession(acceptedEntry, barStartNs.toString());
+  return {
+    sessionKind: classification.sessionKind,
+    calendarVersion: classification.calendarVersion,
+  };
+}
+
 function translateBar(
   item: Extract<ValidatedItem, { kind: "bar" }>,
   context: AlpacaWireParseContext,
 ): RecordedMarketRecordV1 {
+  const session = barSession(context, item.barStartNs);
+  if (session.sessionKind === "unknown") reject("page-semantic-evidence-invalid");
   const instrumentId = context.instrumentIds[item.symbol] ?? reject("schema-invalid");
   const source = Object.freeze({
     providerId: ALPACA_WIRE_IDS.providerId,
@@ -720,12 +1127,12 @@ function translateBar(
     revisionKind: "original",
     supersedesRevisionId: null,
     effectiveEventTime: null,
-    sessionKind: context.sessionKind,
+    sessionKind: session.sessionKind,
     currency: "USD",
     payload,
     normalizerVersion: "market-normalizer-v1",
     conditionPolicyVersion: "p1-10-alpaca-no-quote-trade-emission-v1",
-    calendarVersion: context.calendarVersion,
+    calendarVersion: session.calendarVersion,
     parserContractVersion: "p1-10-alpaca-historical-wire-v1",
     durablyRecordedAtMs: context.durablyRecordedAtMs,
     durableLogicalAtMs: context.durableLogicalAtMs,
@@ -769,11 +1176,11 @@ export function admitAlpacaHistoricalPage(
   for (const symbol of groupNames) {
     const items = (groupDescriptors[symbol] as PropertyDescriptor & { value: unknown }).value;
     assertDenseArray(items);
-    recordCount += items.length;
-    if (recordCount > LIMITS.arrayItems) reject("recordsPerArtifactOrPage");
     const descriptors = Object.getOwnPropertyDescriptors(items);
     let priorNs: bigint | null = null;
     for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
+      recordCount += 1;
+      if (recordCount > LIMITS.arrayItems) reject("recordsPerArtifactOrPage");
       const item = validateItem(
         kind,
         symbol,
@@ -787,10 +1194,13 @@ export function admitAlpacaHistoricalPage(
       if (item.kind === "trade" && item.update !== null) {
         const terminalReason = "correction-unsupported" as const;
         const quarantines = Object.freeze([
-          Object.freeze({ endpointKind: kind, reason: terminalReason, symbol, itemIndex }),
+          Object.freeze({ endpointKind: kind, reason: terminalReason, symbol, itemIndex: 0 }),
         ]);
         return Object.freeze({
           endpointKind: kind,
+          marketAcquisitionId: context.marketAcquisitionId,
+          rawArtifactId: context.rawArtifactId,
+          wireItemCount: 0,
           terminal: true,
           privateNextToken: null,
           records: Object.freeze([]),
@@ -847,7 +1257,8 @@ export function admitAlpacaHistoricalPage(
       const digests = new Set(group.map((item) => item.digest));
       const contradiction =
         group[0]?.contradictory === true ||
-        context.sessionKind === "unknown" ||
+        (group[0] !== undefined &&
+          barSession(context, group[0].barStartNs).sessionKind === "unknown") ||
         context.calendarVersion.length === 0;
       if (digests.size > 1 || contradiction) {
         const reason =
@@ -894,6 +1305,9 @@ export function admitAlpacaHistoricalPage(
   });
   return Object.freeze({
     endpointKind: kind,
+    marketAcquisitionId: context.marketAcquisitionId,
+    rawArtifactId: context.rawArtifactId,
+    wireItemCount: recordCount,
     terminal: token === null,
     privateNextToken: token as string | null,
     records: Object.freeze(records),
@@ -908,9 +1322,62 @@ export function admitAlpacaHistoricalPage(
 export function parseAndAdmitAlpacaHistoricalPage(
   kind: AlpacaWireEndpointKind,
   bytes: Uint8Array,
-  context: AlpacaWireParseContext,
+  authority: AlpacaWireAdmissionAuthority,
 ): AlpacaWirePageAdmission {
-  return admitAlpacaHistoricalPage(kind, decodeAlpacaHistoricalJson(bytes), context);
+  const snapshot = Buffer.from(bytes);
+  let operation: RetentionOperationLease | undefined;
+  try {
+    const binding = wireAdmissionAuthorities.get(authority);
+    const artifactDigest = createHash("sha256").update(snapshot).digest("hex");
+    if (
+      binding === undefined ||
+      binding.endpointKind !== kind ||
+      binding.artifactDigest !== artifactDigest ||
+      binding.artifactSizeBytes !== snapshot.byteLength
+    ) {
+      return reject("page-semantic-authority-invalid");
+    }
+    if (binding.retentionLease !== undefined) {
+      operation = beginRetentionUse(binding.retentionLease, [binding.artifactDigest]);
+      operation.assertAllowed();
+    } else if (P1_10_TEST_AUTHORITY === undefined) {
+      return reject("page-semantic-authority-invalid");
+    }
+    wireAdmissionAuthorities.delete(authority);
+    const admission = admitAlpacaHistoricalPage(
+      kind,
+      decodeAlpacaHistoricalJson(snapshot),
+      binding.context,
+    );
+    authenticatedAdmissions.set(
+      admission,
+      Object.freeze({
+        artifactDigest,
+        artifactSizeBytes: snapshot.byteLength,
+        admissionHash: canonicalHash(
+          "peas/alpaca-authenticated-page-admission/v1",
+          admission as unknown as JsonValue,
+        ),
+        ...(binding.retentionLease === undefined ? {} : { retentionLease: binding.retentionLease }),
+      }),
+    );
+    return admission;
+  } finally {
+    operation?.release();
+    snapshot.fill(0);
+  }
+}
+
+/** Read-only artifact identity for constructing the durable page checkpoint. */
+export function authenticatedAlpacaAdmissionArtifact(
+  admission: AlpacaWirePageAdmission,
+): Readonly<{ artifactDigest: string; artifactSizeBytes: number }> {
+  const binding = authenticatedAdmissions.get(admission);
+  if (binding === undefined) return reject("page-semantic-evidence-invalid");
+  return Object.freeze({
+    artifactDigest: binding.artifactDigest,
+    artifactSizeBytes: binding.artifactSizeBytes,
+  });
 }
 
 function semanticRecordProjection(record: RecordedMarketRecordV1): JsonValue {
@@ -918,12 +1385,74 @@ function semanticRecordProjection(record: RecordedMarketRecordV1): JsonValue {
   return semantic as unknown as JsonValue;
 }
 
-/** Resolves only after the verified complete chain; duplicate/conflict decisions are corpus-wide. */
-export function resolveAlpacaHistoricalChain(
+function resolveDurablyAuthenticatedAlpacaHistoricalChain(
   endpointKind: AlpacaWireEndpointKind,
   admissions: readonly AlpacaWirePageAdmission[],
+  proof: Readonly<{
+    journal: readonly JournalEntry[];
+    expectedIdentity: JournalIdentityInput;
+  }>,
 ): AlpacaWireChainResolution {
+  validateJournalEntries(proof.journal, proof.expectedIdentity);
   if (admissions.some((entry) => entry.endpointKind !== endpointKind)) reject("schema-invalid");
+  const pages = proof.journal.filter((entry) => entry.checkpointKind === "page-checkpointed");
+  const chainCompletions = proof.journal.filter(
+    (entry) => entry.checkpointKind === "chain-complete",
+  );
+  if (
+    admissions.length === 0 ||
+    pages.length !== admissions.length ||
+    chainCompletions.length !== 1 ||
+    proof.journal.at(-1)?.checkpointKind !== "chain-complete"
+  ) {
+    reject("page-chain-incomplete");
+  }
+  let terminalCount = 0;
+  for (const [index, admission] of admissions.entries()) {
+    const page = pages[index] ?? reject("page-chain-incomplete");
+    const authenticated = authenticatedAdmissions.get(admission);
+    if (
+      authenticated === undefined ||
+      authenticated.admissionHash !==
+        canonicalHash(
+          "peas/alpaca-authenticated-page-admission/v1",
+          admission as unknown as JsonValue,
+        ) ||
+      page.artifactDigest !== authenticated.artifactDigest ||
+      page.artifactSizeBytes !== authenticated.artifactSizeBytes
+    ) {
+      reject("page-semantic-evidence-invalid");
+    }
+    if (
+      page.pageOrdinal !== index ||
+      page.marketAcquisitionId !== admission.marketAcquisitionId ||
+      page.rawArtifactId !== admission.rawArtifactId ||
+      !page.admittedMarketAcquisitionIds.includes(admission.marketAcquisitionId) ||
+      page.pageRecordCount !== admission.wireItemCount
+    ) {
+      reject("page-chain-substitution");
+    }
+    if (admission.terminal) {
+      terminalCount += 1;
+      if (
+        admission.privateNextToken !== null ||
+        page.nextTokenHash !== TERMINAL_TOKEN_HASH ||
+        page.nextContinuationBindingHash !== null ||
+        index !== admissions.length - 1
+      ) {
+        reject("page-chain-terminal-invalid");
+      }
+    } else if (
+      admission.privateNextToken === null ||
+      page.nextTokenHash !== derivePrivateTokenHash(admission.privateNextToken) ||
+      page.nextContinuationBindingHash === null
+    ) {
+      reject("page-chain-continuation-invalid");
+    }
+  }
+  if (terminalCount !== 1 || chainCompletions[0]?.pageOrdinal !== pages.at(-1)?.pageOrdinal) {
+    reject("page-chain-terminal-invalid");
+  }
   const quarantines = admissions.flatMap((entry) => entry.quarantines);
   const terminalReason = admissions.some(
     (entry) => entry.terminalReason === "correction-unsupported",
@@ -931,9 +1460,15 @@ export function resolveAlpacaHistoricalChain(
     ? "correction-unsupported"
     : null;
   if (terminalReason !== null || endpointKind !== "bars") {
+    const terminalQuarantines =
+      terminalReason === null
+        ? quarantines
+        : admissions
+            .filter((entry) => entry.terminalReason === terminalReason)
+            .flatMap((entry) => entry.quarantines);
     return Object.freeze({
       records: Object.freeze([]),
-      quarantines: Object.freeze(quarantines),
+      quarantines: Object.freeze(terminalQuarantines),
       terminalReason,
       barObservationCount: 0,
     });
@@ -988,3 +1523,86 @@ export function resolveAlpacaHistoricalChain(
     barObservationCount: observations.length,
   });
 }
+
+/** Resolves only after reloading the owned, workflow-produced durable complete chain. */
+export function resolveAlpacaHistoricalChain(
+  endpointKind: AlpacaWireEndpointKind,
+  admissions: readonly AlpacaWirePageAdmission[],
+  proof: Readonly<{
+    journal: readonly JournalEntry[];
+    expectedIdentity: JournalIdentityInput;
+  }>,
+): AlpacaWireChainResolution;
+export function resolveAlpacaHistoricalChain(
+  endpointKind: AlpacaWireEndpointKind,
+  admissions: readonly AlpacaWirePageAdmission[],
+  proof: Readonly<{
+    journal: AcquisitionJournal;
+    journalId: string;
+    expectedIdentity: JournalIdentityInput;
+  }>,
+): Promise<AlpacaWireChainResolution>;
+export function resolveAlpacaHistoricalChain(
+  endpointKind: AlpacaWireEndpointKind,
+  admissions: readonly AlpacaWirePageAdmission[],
+  proof:
+    | Readonly<{
+        journal: readonly JournalEntry[];
+        expectedIdentity: JournalIdentityInput;
+      }>
+    | Readonly<{
+        journal: AcquisitionJournal;
+        journalId: string;
+        expectedIdentity: JournalIdentityInput;
+      }>,
+): AlpacaWireChainResolution | Promise<AlpacaWireChainResolution> {
+  if (Array.isArray(proof.journal)) {
+    if (P1_10_TEST_AUTHORITY === undefined) reject("page-chain-incomplete");
+    return resolveDurablyAuthenticatedAlpacaHistoricalChain(
+      endpointKind,
+      admissions,
+      proof as Readonly<{
+        journal: readonly JournalEntry[];
+        expectedIdentity: JournalIdentityInput;
+      }>,
+    );
+  }
+  const durableProof = proof as Readonly<{
+    journal: AcquisitionJournal;
+    journalId: string;
+    expectedIdentity: JournalIdentityInput;
+  }>;
+  return (async () => {
+    const evidence = await loadWorkflowProducedAcquisitionEvidence(
+      durableProof.journal,
+      durableProof.journalId,
+      durableProof.expectedIdentity,
+    );
+    const operations: RetentionOperationLease[] = [];
+    try {
+      for (const admission of admissions) {
+        const binding =
+          authenticatedAdmissions.get(admission) ?? reject("page-semantic-evidence-invalid");
+        if (binding.retentionLease !== undefined) {
+          const operation = beginRetentionUse(binding.retentionLease, [binding.artifactDigest]);
+          operation.assertAllowed();
+          operations.push(operation);
+        } else if (P1_10_TEST_AUTHORITY === undefined) {
+          reject("page-semantic-evidence-invalid");
+        }
+      }
+      return resolveDurablyAuthenticatedAlpacaHistoricalChain(
+        endpointKind,
+        admissions,
+        Object.freeze({
+          journal: evidence.journal,
+          expectedIdentity: durableProof.expectedIdentity,
+        }),
+      );
+    } finally {
+      for (const operation of operations.reverse()) operation.release();
+    }
+  })();
+}
+
+Object.freeze(DurableAlpacaWireAdmissionBoundary.prototype);

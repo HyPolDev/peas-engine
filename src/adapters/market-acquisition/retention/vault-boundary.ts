@@ -1,17 +1,21 @@
-import { lstat, opendir } from "node:fs/promises";
-import { resolve } from "node:path";
+import { lstat, opendir, rm } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { isProxy } from "node:util/types";
 
-import type { DurableArtifactStore } from "../../artifacts/durable-artifact-store.js";
-import { artifactRuntimePaths, assertPathBelowRuntimeRoot } from "../../artifacts/runtime-root.js";
 import {
-  eraseTrustedFileMatchingDigest,
-  hashTrustedFile,
-  safeChild,
-} from "../../artifacts/trusted-filesystem.js";
+  type DurableArtifactStore,
+  assertOwnedDurableArtifactStore,
+  ownedDurableArtifactStoreRuntimeIdentity,
+} from "../../artifacts/durable-artifact-store.js";
+import { artifactRuntimePaths, assertPathBelowRuntimeRoot } from "../../artifacts/runtime-root.js";
+import { hashTrustedFile, safeChild, syncDirectory } from "../../artifacts/trusted-filesystem.js";
 import { digestContentPath } from "../private-artifact-policy.js";
 import type { ErasureCopyKind, ErasureResult, RetentionArtifactBoundary } from "./contracts.js";
 
 const MAX_PRIVATE_DIRECTORY_ENTRIES = 1_024;
+const ownedVaultBoundaries = new WeakSet<object>();
+const vaultCoordinatorRoots = new WeakMap<object, DurableArtifactStore>();
+const vaultRuntimeIdentities = new WeakMap<object, object>();
 
 async function directoryNames(path: string, device: number): Promise<readonly string[]> {
   const info = await lstat(path);
@@ -57,19 +61,30 @@ export class VaultArtifactRetentionBoundary implements RetentionArtifactBoundary
     settlementTimeoutMs?: number;
   }): Promise<VaultArtifactRetentionBoundary> {
     const runtimeRoot = resolve(input.runtimeRoot);
+    assertOwnedDurableArtifactStore(input.store, runtimeRoot);
     const rootInfo = await lstat(runtimeRoot);
     if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink())
       throw new Error("Retention runtime root is not trusted");
-    return new VaultArtifactRetentionBoundary(
+    const boundary = new VaultArtifactRetentionBoundary(
       input.store,
       runtimeRoot,
       rootInfo.dev,
       input.settlementTimeoutMs ?? 30_000,
     );
+    ownedVaultBoundaries.add(boundary);
+    vaultCoordinatorRoots.set(boundary, input.store);
+    vaultRuntimeIdentities.set(boundary, ownedDurableArtifactStoreRuntimeIdentity(input.store));
+    Object.freeze(boundary);
+    return boundary;
   }
 
-  settleActiveReadersAndWriters(): Promise<boolean> {
-    return this.#store.settleForRetention(this.#settlementTimeoutMs);
+  async settleActiveReadersAndWriters(): Promise<boolean> {
+    this.#store.closeRetentionAdmission();
+    try {
+      return await this.#store.settleForRetention(this.#settlementTimeoutMs);
+    } finally {
+      this.#store.reopenRetentionAdmission();
+    }
   }
 
   async eraseDigestCopies(digest: string): Promise<ErasureResult> {
@@ -80,39 +95,73 @@ export class VaultArtifactRetentionBoundary implements RetentionArtifactBoundary
       snapshot: 0,
       quarantine: 0,
     };
+    type Candidate = Readonly<{ kind: ErasureCopyKind; path: string }>;
+    const candidates: Candidate[] = [];
     const content = digestContentPath(this.#runtimeRoot, digest);
-    const contentOutcome = await eraseTrustedFileMatchingDigest(
-      paths.artifactsRoot,
-      content,
-      this.#device,
-      digest,
-    );
-    if (contentOutcome === "different-content")
-      throw new Error("Retention content path contains conflicting bytes");
-    if (contentOutcome === "erased") counts.content += 1;
-
+    try {
+      await lstat(content);
+      candidates.push({ kind: "content", path: content });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
     for (const [kind, directory] of [
       ["staging", paths.staging],
       ["snapshot", paths.snapshots],
       ["quarantine", paths.quarantine],
     ] as const) {
       for (const name of await directoryNames(directory, this.#device)) {
-        const path = safeChild(directory, name);
-        assertPathBelowRuntimeRoot(this.#runtimeRoot, path);
-        let verified: Awaited<ReturnType<typeof hashTrustedFile>>;
-        try {
-          verified = await hashTrustedFile(path);
-        } catch {
-          throw new Error("Retention scan encountered an unsafe private copy");
+        candidates.push({ kind, path: safeChild(directory, name) });
+      }
+    }
+    const groups = new Map<string, Candidate[]>();
+    for (const candidate of candidates) {
+      assertPathBelowRuntimeRoot(this.#runtimeRoot, candidate.path);
+      const info = await lstat(candidate.path);
+      if (!info.isFile() || info.isSymbolicLink() || info.dev !== this.#device || info.nlink < 1) {
+        throw new Error("Retention scan encountered an unsafe private copy");
+      }
+      const key = `${info.dev}:${info.ino}`;
+      const group = groups.get(key) ?? [];
+      group.push(candidate);
+      groups.set(key, group);
+    }
+    for (const group of groups.values()) {
+      const first = group[0] as Candidate;
+      const initial = await lstat(first.path);
+      if (initial.nlink !== group.length) {
+        throw new Error("Retention scan encountered an unowned hard-link copy");
+      }
+      const verified = await hashTrustedFile(first.path, Number.MAX_SAFE_INTEGER, group.length);
+      if (verified.digest !== digest) {
+        if (group.some((candidate) => candidate.kind === "content")) {
+          throw new Error("Retention content path contains conflicting bytes");
         }
-        if (verified.digest !== digest) continue;
-        const outcome = await eraseTrustedFileMatchingDigest(
-          paths.artifactsRoot,
-          path,
-          this.#device,
-          digest,
+        continue;
+      }
+      let remainingLinks = group.length;
+      for (const candidate of group.sort((left, right) =>
+        left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+      )) {
+        const current = await lstat(candidate.path);
+        if (
+          current.dev !== initial.dev ||
+          current.ino !== initial.ino ||
+          current.nlink !== remainingLinks
+        ) {
+          throw new Error("Retention hard-link identity changed before erasure");
+        }
+        const currentBytes = await hashTrustedFile(
+          candidate.path,
+          Number.MAX_SAFE_INTEGER,
+          remainingLinks,
         );
-        if (outcome === "erased") counts[kind] += 1;
+        if (currentBytes.digest !== digest) {
+          throw new Error("Retention hard-link bytes changed before erasure");
+        }
+        await rm(candidate.path);
+        await syncDirectory(dirname(candidate.path));
+        counts[candidate.kind] += 1;
+        remainingLinks -= 1;
       }
     }
     return {
@@ -141,3 +190,34 @@ export class VaultArtifactRetentionBoundary implements RetentionArtifactBoundary
     return true;
   }
 }
+
+/** Module-owned serialization key shared by every boundary opened over the same durable store. */
+export function ownedVaultRetentionCoordinatorRoot(
+  value: RetentionArtifactBoundary,
+): DurableArtifactStore {
+  assertOwnedVaultArtifactRetentionBoundary(value);
+  const root = vaultCoordinatorRoots.get(value);
+  if (root === undefined) throw new TypeError("owned-vault-retention-boundary-required");
+  return root;
+}
+
+export function ownedVaultRetentionRuntimeIdentity(value: RetentionArtifactBoundary): object {
+  assertOwnedVaultArtifactRetentionBoundary(value);
+  const identity = vaultRuntimeIdentities.get(value as object);
+  if (identity === undefined) throw new TypeError("owned-vault-retention-boundary-required");
+  return identity;
+}
+
+export function assertOwnedVaultArtifactRetentionBoundary(
+  value: RetentionArtifactBoundary,
+): asserts value is VaultArtifactRetentionBoundary {
+  if (
+    !ownedVaultBoundaries.has(value) ||
+    isProxy(value) ||
+    Object.getPrototypeOf(value) !== VaultArtifactRetentionBoundary.prototype
+  ) {
+    throw new TypeError("owned-vault-retention-boundary-required");
+  }
+}
+
+Object.freeze(VaultArtifactRetentionBoundary.prototype);

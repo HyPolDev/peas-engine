@@ -96,6 +96,7 @@ const ZERO_SPEND_KEYS = Object.freeze([
 const SIGNED_NS_MAX = (1n << 63n) - 1n;
 const HISTORY_DELAY_NS = 900_000_000_000n;
 const NS_PER_DAY = 86_400_000_000_000n;
+const validatedConfigurations = new WeakSet<object>();
 
 class ClosedFailure {
   constructor(
@@ -509,7 +510,9 @@ export function validateMarketAcquisitionConfiguration(
   input: unknown,
 ): MarketAcquisitionResult<ValidatedMarketAcquisitionConfiguration> {
   try {
-    return Object.freeze({ ok: true, value: parseConfiguration(input) });
+    const value = parseConfiguration(input);
+    validatedConfigurations.add(value);
+    return Object.freeze({ ok: true, value });
   } catch (error) {
     const failure =
       error instanceof ClosedFailure
@@ -523,5 +526,13 @@ export function validateMarketAcquisitionConfiguration(
         failure.detailKind,
       ),
     });
+  }
+}
+
+export function assertValidatedMarketAcquisitionConfiguration(
+  value: ValidatedMarketAcquisitionConfiguration,
+): void {
+  if (!validatedConfigurations.has(value)) {
+    throw new TypeError("validated-market-acquisition-configuration-required");
   }
 }

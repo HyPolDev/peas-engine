@@ -24,10 +24,17 @@ import {
   createJournalEntry,
   deriveLogicalPageIdentityHash,
   deriveMarketAcquisitionJournalId,
+  journalEntryBody,
+  appendTestAcquisitionJournalEntry,
+  appendTestAcquisitionWorkflowEvidence,
 } from "../src/adapters/market-acquisition/journal.js";
-import { MemoryAcquisitionJournal } from "../src/adapters/market-acquisition/memory-journal.js";
+import {
+  MemoryAcquisitionJournal,
+  createMemoryAcquisitionJournal,
+} from "../src/adapters/market-acquisition/memory-journal.js";
 import { canonicalJournalProjection } from "../src/adapters/market-acquisition/replay.js";
 import { SqliteAcquisitionJournal } from "../src/adapters/market-acquisition/sqlite-journal.js";
+import { retentionGuardedArtifactStore } from "./p1-10-repair-fixtures.js";
 
 const hash = (member: string): string =>
   canonicalHash("peas/p1-10-persistence-equivalence-test/v1", { member });
@@ -190,7 +197,8 @@ function history(): Readonly<{
     kind: Parameters<typeof createJournalEntry>[2],
     checkpoint: JournalCheckpointBody,
   ): void => {
-    const stage = kind === "page-checkpointed" ? null : stages[stageIndex++];
+    const stage =
+      kind === "page-checkpointed" || kind === "attempt-started" ? null : stages[stageIndex++];
     const evidence =
       stage === null || stage === undefined
         ? { ...checkpoint, stageLedgerFactId: null, causalParentFactIds: [] }
@@ -204,6 +212,7 @@ function history(): Readonly<{
     rows.push(createJournalEntry(rows.at(-1) ?? null, journalId, kind, evidence));
   };
   append("acquisition-declared", body());
+  append("request-started", body());
   append("attempt-started", body({ cumulativeAttempts: 1, quotaWindowEvidence: [1_000] }));
   append("request-succeeded", body({ cumulativeAttempts: 1, quotaWindowEvidence: [1_000] }));
   const artifact = {
@@ -311,8 +320,8 @@ test("memory and SQLite journals make byte-identical append and rejection decisi
   const sqlite = new SqliteAcquisitionJournal(database, identity);
   const { rows, ledger } = history();
   for (const row of rows) {
-    await memory.append(row);
-    await sqlite.append(row);
+    await appendTestAcquisitionJournalEntry(memory, row);
+    await appendTestAcquisitionJournalEntry(sqlite, row);
     const memoryRows = await memory.load(journalId);
     const sqliteRows = await sqlite.load(journalId);
     assert.equal(
@@ -323,8 +332,14 @@ test("memory and SQLite journals make byte-identical append and rejection decisi
     assert.doesNotThrow(() => validateJournalLedgerBindings(sqliteRows, ledger));
   }
   const forged = { ...(rows.at(-1) as JournalEntry), journalEntryHash: hash("forged") };
-  await assert.rejects(() => memory.append(forged), /journal-hash-chain-invalid/u);
-  await assert.rejects(() => sqlite.append(forged), /journal-hash-chain-invalid/u);
+  await assert.rejects(
+    () => appendTestAcquisitionJournalEntry(memory, forged),
+    /journal-hash-chain-invalid/u,
+  );
+  await assert.rejects(
+    () => appendTestAcquisitionJournalEntry(sqlite, forged),
+    /journal-hash-chain-invalid/u,
+  );
   assert.equal((await memory.load(journalId)).length, rows.length);
   assert.equal((await sqlite.load(journalId)).length, rows.length);
   database.close();
@@ -339,7 +354,9 @@ test("SQLite close/reopen preserves every exact durable prefix", async (t) => {
     let database = openSqliteDatabase(filename, []);
     let journal = new SqliteAcquisitionJournal(database, identity);
     const existing = await journal.load(journalId);
-    for (const row of rows.slice(existing.length, prefix)) await journal.append(row);
+    for (const row of rows.slice(existing.length, prefix)) {
+      await appendTestAcquisitionJournalEntry(journal, row);
+    }
     const beforeRows = await journal.load(journalId);
     const before = canonicalJournalProjection(beforeRows, identity);
     assert.doesNotThrow(() => validateJournalLedgerBindings(beforeRows, ledger));
@@ -355,10 +372,48 @@ test("SQLite close/reopen preserves every exact durable prefix", async (t) => {
   }
 });
 
-test("restart decisions never re-request committed or verified pages", async () => {
+test("restart journals reject partial and conflicting checkpoint artifact identities", async () => {
   const { rows } = history();
+  const committed = rows.find((row) => row.checkpointKind === "artifact-committed");
+  const verified = rows.find((row) => row.checkpointKind === "artifact-verified");
+  assert.ok(committed);
+  assert.ok(verified);
+  for (const testCase of [
+    {
+      prefix: committed.journalSequence,
+      kind: "artifact-committed" as const,
+      mutation: { ...journalEntryBody(committed), artifactDigest: null },
+    },
+    {
+      prefix: verified.journalSequence,
+      kind: "artifact-verified" as const,
+      mutation: {
+        ...journalEntryBody(verified),
+        retrievalAttemptId: prefixed("rat1_", "conflict"),
+      },
+    },
+  ]) {
+    const journal = createMemoryAcquisitionJournal(identity);
+    for (const row of rows.slice(0, testCase.prefix)) {
+      await appendTestAcquisitionJournalEntry(journal, row);
+    }
+    const prior = (await journal.load(journalId)).at(-1) ?? null;
+    await assert.rejects(
+      () =>
+        appendTestAcquisitionJournalEntry(
+          journal,
+          createJournalEntry(prior, journalId, testCase.kind, testCase.mutation),
+        ),
+      /artifact-tuple/u,
+    );
+  }
+});
+
+test("restart decisions never re-request committed or verified pages", async () => {
+  const { rows, ledger } = history();
   const expected = [
     "preflight",
+    "load-credentials",
     "fresh-attempt",
     "fresh-attempt",
     "append-artifact-verification",
@@ -366,20 +421,26 @@ test("restart decisions never re-request committed or verified pages", async () 
     "close-chain",
   ];
   for (let prefix = 1; prefix <= rows.length; prefix += 1) {
-    const journal = new MemoryAcquisitionJournal(identity);
-    for (const row of rows.slice(0, prefix)) await journal.append(row);
+    const journal = createMemoryAcquisitionJournal(identity);
+    await appendTestAcquisitionWorkflowEvidence(journal, ledger, rows.slice(0, prefix));
     const decision = await decideAcquisitionRestart({
       journal,
       journalId,
       expectedIdentity: identity,
       expectedConfigurationHash: CONFIGURATION_HASH,
-      artifactStore: artifactStoreDouble(),
+      artifactStore: retentionGuardedArtifactStore(artifactStoreDouble(), [
+        {
+          artifactDigest,
+          artifactSizeBytes: artifactBytes.byteLength,
+          artifactObservationId,
+        },
+      ]),
     });
     assert.equal(decision.kind, expected[prefix - 1]);
-    if (prefix >= 4) assert.equal(decision.transportAllowed, false);
+    if (prefix === 2 || prefix >= 5) assert.equal(decision.transportAllowed, false);
   }
-  const journal = new MemoryAcquisitionJournal(identity);
-  for (const row of rows) await journal.append(row);
+  const journal = createMemoryAcquisitionJournal(identity);
+  await appendTestAcquisitionWorkflowEvidence(journal, ledger, rows);
   await assert.rejects(
     () =>
       decideAcquisitionRestart({
@@ -387,8 +448,74 @@ test("restart decisions never re-request committed or verified pages", async () 
         journalId,
         expectedIdentity: identity,
         expectedConfigurationHash: hash("changed-configuration"),
-        artifactStore: artifactStoreDouble(),
+        artifactStore: retentionGuardedArtifactStore(artifactStoreDouble(), [
+          {
+            artifactDigest,
+            artifactSizeBytes: artifactBytes.byteLength,
+            artifactObservationId,
+          },
+        ]),
       }),
     /journal-conflict/u,
+  );
+});
+
+test("restart rejects missing workflow stage provenance and a substituted journal identity", async () => {
+  const { rows, ledger } = history();
+  const first = rows[0] as JournalEntry;
+  const stageLess = createJournalEntry(null, journalId, "acquisition-declared", {
+    ...journalEntryBody(first),
+    stageLedgerFactId: null,
+    causalParentFactIds: [],
+  });
+  const journal = createMemoryAcquisitionJournal(identity);
+  await appendTestAcquisitionWorkflowEvidence(journal, ledger, [stageLess]);
+  const guarded = retentionGuardedArtifactStore(artifactStoreDouble(), [
+    {
+      artifactDigest,
+      artifactSizeBytes: artifactBytes.byteLength,
+      artifactObservationId,
+    },
+  ]);
+  await assert.rejects(
+    () =>
+      decideAcquisitionRestart({
+        journal,
+        journalId,
+        expectedIdentity: identity,
+        expectedConfigurationHash: CONFIGURATION_HASH,
+        artifactStore: guarded,
+      }),
+    /acquisition-workflow-provenance-invalid/u,
+  );
+
+  const empty = createMemoryAcquisitionJournal(identity);
+  await assert.rejects(
+    () =>
+      decideAcquisitionRestart({
+        journal: empty,
+        journalId: hash("substituted-journal"),
+        expectedIdentity: identity,
+        expectedConfigurationHash: CONFIGURATION_HASH,
+        artifactStore: guarded,
+      }),
+    /journal-identity-invalid/u,
+  );
+
+  const substitutedIdentity = {
+    ...identity,
+    requestIdentityHash: hash("substituted-request-identity"),
+  };
+  const substitutedJournalId = deriveMarketAcquisitionJournalId(substitutedIdentity);
+  await assert.rejects(() => empty.load(substitutedJournalId), /journal-identity-mismatch/u);
+  const substitutedEntry = createJournalEntry(
+    null,
+    substitutedJournalId,
+    "acquisition-declared",
+    journalEntryBody(first),
+  );
+  await assert.rejects(
+    () => appendTestAcquisitionJournalEntry(empty, substitutedEntry),
+    /journal-identity-mismatch/u,
   );
 });
