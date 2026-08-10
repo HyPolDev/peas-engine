@@ -275,7 +275,8 @@ test("path and process fixtures remain valid with Windows and Linux separators",
   assert.doesNotMatch(manifest, /[A-Za-z]:\\|\/home\//u);
   const gate = readFileSync("scripts/local-validation/gate.mjs", "utf8");
   const evidence = readFileSync("scripts/local-validation/evidence.mjs", "utf8");
-  assert.match(evidence, /process\.platform === "win32"/u);
+  assert.match(evidence, /process\.env\.npm_execpath/u);
+  assert.match(evidence, /spawnSync\(process\.execPath/u);
   assert.match(gate, /windowsHide/u);
   assert.doesNotMatch(gate, /SIGKILL/u);
 });
