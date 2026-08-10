@@ -5,6 +5,8 @@ import {
   acquireGateLock,
   canonicalBytes,
   compileManifest,
+  listFiles,
+  platformIdentity,
   readJson,
   repositoryIdentity,
   verifyCandidate,
@@ -25,6 +27,16 @@ if (operation === "manifest") {
   process.stdout.write(canonicalBytes(compileManifest(readJson(argument))));
 } else if (operation === "candidate") {
   process.stdout.write(`${JSON.stringify(verifyCandidate(argument))}\n`);
+} else if (operation === "evidence-fixture-identity") {
+  const { manifest, digest } = verifyFrozenManifest();
+  process.stdout.write(
+    canonicalBytes({
+      candidate: repositoryIdentity(),
+      manifest: { id: manifest.manifestId, caseCount: manifest.caseCount, sha256: digest },
+      migrations: listFiles("migrations"),
+      platform: platformIdentity(),
+    }),
+  );
 } else if (operation === "lock-overlap") {
   const lock = acquireGateLock(argument);
   try {
@@ -55,6 +67,13 @@ if (operation === "manifest") {
   process.stdout.write(
     `${JSON.stringify(provisionValidationRuntime(root, repositoryIdentity()))}\n`,
   );
+} else if (operation === "runtime-corrupt-staging") {
+  const root = argument;
+  mkdirSync(join(root, "artifacts", "staging"), { recursive: true });
+  writeFileSync(join(root, "artifacts", "staging", "existing.bin"), "primary-state", "utf8");
+  process.stdout.write(
+    `${JSON.stringify(provisionValidationRuntime(root, repositoryIdentity()))}\n`,
+  );
 } else if (operation === "execute") {
   const root = argument;
   const { manifest } = verifyFrozenManifest();
@@ -63,9 +82,12 @@ if (operation === "manifest") {
   process.stdout.write(`${JSON.stringify(result)}\n`);
 } else if (operation === "hard-kill") {
   const { manifest } = verifyFrozenManifest();
+  const hardKillCases = manifest.cases.filter(({ executable }) =>
+    /hard.kill/iu.test(executable.testName),
+  );
   const result = await executeHardKillMatrix(argument, {
     ...manifest,
-    cases: manifest.cases.slice(0, 2),
+    cases: hardKillCases.slice(0, 1),
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);
 } else if (operation === "read") {

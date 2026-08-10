@@ -1,157 +1,108 @@
 # Effects-disabled local-validation manifest and automation contract V1
 
-Status: implementation contract, corpus execution separately authorized  
-Published baseline: `3084f4362fb94a62f1ff0ddd416b3957484d3893`  
-Published baseline tree: `19a9a0f40c6d6a37d4237e322c8f18950673170f`  
-Corpus manifest: `config/local-validation/manifest.v1.json`  
-Manifest digest: `3f5a3d8a0f9975c7bc231cca5d55fdf4beabc593c7252e7b5d24b73c32faedd8`
+Status: implementation contract; corpus execution requires separate authorization
+
+Published baseline: `3084f4362fb94a62f1ff0ddd416b3957484d3893`
+
+Published baseline tree: `19a9a0f40c6d6a37d4237e322c8f18950673170f`
+
+Frozen corpus: `config/local-validation/manifest.v1.json` and its adjacent SHA-256 file
 
 ## Scope and authority
 
-This contract defines the offline automation required before the effects-disabled local-validation
-milestone may be run. Its 216 cases are unique original-synthetic software-validation identities.
-They are not issuer identities, observed releases, P2 `StudyManifest` members, or the later exact
-180 prospective earnings clusters. This work does not authorize provider access, issuer selection,
-prospective recording, P1-03, P1-04, P1-06, or P2.
+The manifest freezes 216 unique, project-authored, offline software-validation test identities. It
+does not contain issuers, observed earnings, provider records, or the later 180 prospective earnings
+clusters. This milestone does not authorize provider access, prospective recording, P1-03, P1-04,
+P1-06, or any financial effect.
 
-The accepted fail-closed authority rule is immutable. The owned explicit first-boot path may create
-the authority anchor only when the complete runtime layout is absent and no primary acquisition or
-retention state exists. If any primary SQLite state, artifact content, snapshot, or quarantine state
-exists while the authority anchor is missing, the only disposition is terminal corruption. Neither
-the gate nor a restart may reconstruct authority from mutable primary records.
+The authority rule is fail-closed. The explicit PEAS-owned first-boot path may create
+`sqlite/local-validation-authority.json` only when no durable content exists below `sqlite/` or
+`artifacts/`. Any file or directory entry—including staging, locks, snapshots, quarantine, or a
+future layout addition—with a missing anchor is terminal corruption. An existing anchor must bind
+the exact candidate SHA and tree.
 
-The final corpus command is disabled until the owner supplies the exact separate authorization
-value documented below. Implementation tests exercise only two-case probes and manifest/matrix
-generation; they do not execute the frozen 216-case corpus.
+## Exact executable manifest
 
-## Immutable corpus
+The canonical compiler discovers repository `test/**/*.test.ts` files, excludes local-automation
+self-tests and named provider suites, extracts literal `node:test` identities, prioritizes the
+durability/equivalence/resource/effects cases, and freezes exactly 216 selectors. Each case contains:
 
-The source matrix is `config/local-validation/matrix.v1.json`. The committed canonical compiler is
-`scripts/local-validation/compile-manifest.mjs`. Compilation produces 216 explicit case objects
-(18 categories times 12 variants), each with a unique case ID and SHA-256 identity, fixture identity,
-fixture SHA-256 and exact canonical byte size, deterministic seed, expected terminal disposition,
-backend set, order/page/duplicate/correction/terminal permutation, and every durable restart prefix.
+- a unique case ID and identity SHA-256;
+- category and expected terminal disposition;
+- exact TypeScript source path, compiled JavaScript path, test name and anchored regex selector;
+- source-file SHA-256, byte size and media type;
+- a deterministic per-case seed.
 
-The categories and terminal dispositions are:
+The five categories are `accepted-behavior`, `accepted-idempotence-or-revision`, `quarantine`,
+`retention-erasure`, and `fail-closed-rejection`. Dispositions are `accepted`,
+`accepted-deduplicated`, `accepted-corrected`, `terminal-quarantined`, `terminal-erased`, and
+`terminal-denied`. They are derived deterministically from the executable test identity; the test's
+production assertions remain authoritative.
 
-| Category | Expected terminal disposition |
-| --- | --- |
-| accepted | `accepted` |
-| missing | `terminal-missing` |
-| malformed | `terminal-malformed` |
-| duplicate | `accepted-deduplicated` |
-| corrected | `accepted-corrected` |
-| quarantined | `terminal-quarantined` |
-| terminal-page | `terminal-page-complete` |
-| expiry | `terminal-expired` |
-| erasure-reappearance | `terminal-erased` |
-| stop-race | `terminal-stopped` |
-| page-chain-invalid | `terminal-page-chain-invalid` |
-| lineage-mismatch | `terminal-corruption` |
-| ownership-denied | `terminal-denied` |
-| receipt-revalidation | `terminal-erased` |
-| clock-regression | `terminal-clock-invalid` |
-| quota-exhausted | `terminal-budget-exhausted` |
-| deadline | `terminal-deadline` |
-| authority-corruption | `terminal-corruption` |
+`executableCoverage` names the exact case IDs that execute memory/SQLite equivalence, restart and
+recovery, hard kills, page sizes, duplicate delivery, corrections/revisions, terminal behavior,
+reconciliation, exact/one-over resource bounds, ownership, erasure/tombstones and quarantine.
+Manifest verification rejects an empty required coverage class or fewer than three physical
+hard-kill test identities. The order permutations are canonical, reverse, and SHA-256 seeded; page
+sizes are 1, 2, 7, and 10,000. The durable prefixes and approved hard-kill points are immutable
+manifest inputs. The runner does not manufacture expected PEAS rows or multiply coverage claims.
 
-`npm run manifest:local-validation` recompiles in memory, compares exact canonical bytes, verifies
-the committed digest file, enforces at least 200 unique IDs, and rejects any drift. Corpus edits after
-evidence begins invalidate all evidence.
+`npm run manifest:local-validation` recompiles the manifest, compares its exact canonical bytes,
+verifies the adjacent digest, enforces 216 unique identities, re-hashes every source fixture and
+checks all required coverage classes.
 
-## Exact candidate and execution identity
+## Candidate and platform identity
 
-Every candidate or evidence run must set both `PEAS_LOCAL_VALIDATION_CANDIDATE_SHA` and
-`PEAS_LOCAL_VALIDATION_CANDIDATE_TREE`. The gate compares them with `HEAD` and `HEAD^{tree}` and
-rejects a mismatch or any tracked/untracked non-ignored worktree byte. Evidence records:
+Corpus and evidence commands require `PEAS_LOCAL_VALIDATION_CANDIDATE_SHA` and
+`PEAS_LOCAL_VALIDATION_CANDIDATE_TREE`. Both must equal clean `HEAD`/`HEAD^{tree}`. Evidence records
+the exact package lock, Node/npm constraints and actual versions, SQLite version, ordered migration
+inventory and hashes, OS/release/architecture, timezone and monotonic/diagnostic clock basis.
 
-- executable commit and tree;
-- `package-lock.json` digest and exact `package.json` Node/npm constraints;
-- actual Node, npm, `better-sqlite3` SQLite, OS type/release/build, architecture and logical CPU count;
-- timezone plus the trusted monotonic clock basis and diagnostic-only wall-clock basis;
-- every ordered SQL migration path, size and SHA-256;
-- matrix, manifest, digest-file, schema, runtime-root and evidence-format identities.
+Every run atomically acquires an exclusive `wx` gate lock. A stale owner is recovered by atomically
+renaming the observed stale inode to a unique quarantine name before retrying, so concurrent
+recoverers cannot unlink a new live claim. Malformed, live, or unexpired locks fail closed.
 
-The supported runtime is the repository-pinned Node `24.17.0`, npm `12.0.0`, locked dependencies,
-Windows or Linux, and the SQLite version reported by the locked `better-sqlite3` binary. A different
-identity is a new candidate and receives new evidence.
+The gate creates one temporary `PEAS_RUNTIME_ROOT` containing `sqlite/`, `artifacts/{sha256,staging,
+snapshots,quarantine,locks}/`, and `evidence/`. It is removed only after child settlement.
 
-## Runtime root and exclusive ownership
+## Denial and effects accounting
 
-The gate obtains an exclusive `wx` lock before provisioning. A live owner or unexpired lock rejects
-the run. A stale lock is recoverable only when its PID is absent and its six-hour bound has expired;
-malformed lock state fails closed. Release is idempotent.
+Before an executable case loads, Node preloads `network-deny.cjs`. It denies TCP, TLS, HTTP/1,
+HTTP/2, UDP, DNS, fetch and WebSocket entry points. Shell execution is denied. Only Node child
+processes carrying the same preload capability may be created, which permits owned hard-kill
+workers without creating an outbound escape. Built-in ESM exports are synchronized after patching.
+A deliberate `.invalid` probe must produce `PEAS_NETWORK_DENIED` before case execution.
 
-Each run creates one isolated temporary `PEAS_RUNTIME_ROOT`. Its exact layout is:
+The parent and worker reject all enumerated credential/account variables. Executable source paths
+are provider-suite-free, `PEAS_EFFECTS_ALLOWED=false`, and production effect-policy tests are part of
+the frozen corpus. Successful network, provider, credential, account, broker, order, portfolio,
+position, fill, spending and financial-effect totals must all be exactly zero. Denied attempts are
+reported separately and do not count as activity.
 
-```text
-PEAS_RUNTIME_ROOT/
-  sqlite/
-    local-validation-authority.json
-    local-validation.sqlite
-  artifacts/
-    sha256/
-    staging/
-    snapshots/
-    quarantine/
-    locks/
-  evidence/
-```
+## Execution, restarts, hard kills and resources
 
-No shared or pre-existing provider/account root is accepted. SQLite runs in WAL mode and must pass
-`PRAGMA integrity_check`. The root is removed after settlement; evidence is written outside it.
+`gate:integration` compiles the production and test artifacts and runs two real acceptance selectors
+under the denial boundary. It is not the corpus. A separately authorized corpus runs all 216 exact
+selectors in canonical, reverse and seeded order. Each invocation must exit zero with exactly one
+selected test pass; the transcript is hashed. The selected production tests themselves execute the
+memory/SQLite, pagination, duplicate, correction, restart-prefix, reconciliation, retention,
+ownership, erasure, quarantine, physical-copy and integrity assertions identified by
+`executableCoverage`.
 
-## Effects and network prohibition
+The hard-kill gate executes the frozen hard-kill test selectors. Those tests spawn and terminate
+owned worker processes at their real durable checkpoints and prove recovery. The automation reports
+only executed selector identities and transcript hashes; it never substitutes serialized objects or
+multiplies one kill by the corpus size.
 
-Before the first case, the child process preloads `network-deny.cjs`. It denies `net`, TLS, HTTP,
-HTTPS, UDP, DNS and global `fetch`; a deliberate `.invalid` probe must be rejected with the owned
-denial code. The worker refuses to start without the installed marker. The parent and worker reject
-all PEAS/Alpaca/FMP credential environment variables before reading case data.
+CPU, diagnostic wall time, RSS, heap, runtime storage and handle classes are sampled from the runner.
+Child PIDs are checked after settlement. Exact/one-over bound proof identities come from the executed
+production tests rather than constructed pass records. At the terminal decision there must be zero
+orphan child PIDs, extra workers, leases, SQLite fences and active retention operations. A failed
+production assertion, ceiling, cleanup, integrity or effects check is `LOCAL_TEST_NO_GO`.
 
-The exact accepted totals are zero for network, provider, credential, account, broker, order,
-portfolio, position, fill, spending and financial-effect activity. There is no broker/order surface
-in this composition. Any nonzero counter is terminal `LOCAL_TEST_NO_GO`.
+## Evidence and decision
 
-## Deterministic matrix, restart and hard-kill generation
-
-Every case executes in memory and SQLite and compares canonical semantic bytes after removing only
-the backend label. Case order is canonical, reverse or SHA-256-seeded shuffle. Page sizes are exactly
-1, 2, 7 and 31. Duplicate, correction and terminal-first/terminal-last variants are frozen per case.
-
-Every case generates a restart reproduction from each of these durable prefixes:
-
-1. layout validated; authority anchored; acquisition declared; request started; attempt started;
-2. page artifact committed; page proof verified; page ledger committed;
-3. normalization committed; derived lineage registered; ownership registered;
-4. provider denial committed; tombstone committed; erasure attempt committed; erasure receipt committed;
-5. receipt revalidated; reconciliation plan committed; quarantine action committed;
-6. reconciliation receipt committed; terminal committed.
-
-Every case also generates the approved hard-kill matrix around credential claim-before-read, writer
-lease claim/renewal/release, artifact link and commit/source-removal, ownership, denial, erasure
-attempt and receipt-version commit, quarantine last-copy link, and reconciliation action commit. A
-later authorized corpus run must execute all 4,320 prefix reproductions and generate all 2,592
-hard-kill vectors. No restart may advance from an unverified prefix, and all terminal canonical
-bytes must match the uninterrupted execution.
-
-## Reconciliation and resource decisions
-
-For every case the gate reconciles exact set counts and hashes for ledger rows, artifact identities,
-page proofs, normalized facts, derived lineage, retention ownership, provider denials, tombstones,
-unique physical `(digest, attemptOrdinal)` erasure attempts, versioned erasure receipts, quarantine
-actions and physical copies. Existing receipts trigger absence/denial revalidation. Duplicates may
-not create a second physical effect. Stop and terminal facts prohibit later-item access or mutation.
-
-The exact ceilings and one-over rejection vectors are embedded in the manifest. They cover 15,000 ms
-processing CPU, diagnostic 120,000 ms wall time, RSS, heap, runtime storage, open handles, workers,
-timers, streams, readers, leases, fences, active retention operations and cleanup latency. The
-15,000 ms CPU bound remains normative; wall time is retained only as host-isolation diagnostics.
-At settlement the exact required counts are zero orphan processes, workers, leases, SQLite fences
-and active retention operations. A value equal to its maximum passes; maximum plus one fails.
-
-## Commands and evidence
-
-The commands are:
+Commands:
 
 ```text
 npm run manifest:local-validation
@@ -161,31 +112,25 @@ npm run evidence:bundle
 npm run evidence:verify
 ```
 
-`gate:integration` runs a two-case offline probe of manifest, denial, first boot, memory/SQLite,
-reconciliation, resource and cleanup machinery. `gate:local-validation` is the 216-case corpus gate
-and requires all of:
+The corpus command additionally requires:
 
 ```text
 PEAS_LOCAL_VALIDATION_AUTHORIZATION=EXECUTE_FROZEN_EFFECTS_DISABLED_LOCAL_VALIDATION_V1
-PEAS_LOCAL_VALIDATION_CANDIDATE_SHA=<exact frozen SHA>
-PEAS_LOCAL_VALIDATION_CANDIDATE_TREE=<exact frozen tree>
 ```
 
-`evidence:bundle` does not run the corpus. On one clean exact candidate it runs manifest validation,
-the integration probe, formatting, lint, typecheck, build, unchanged unit/integration/restart tests,
-coverage, reconciliation, mutation, hard-kill, scale, and the unmodified `npm run check`. It stores
-the exact command, exit code, signal, elapsed time and complete stdout/stderr transcript. The bundle
-uses a 60-minute diagnostic wrapper timeout per repository command; this does not alter any PEAS CPU,
-resource, deadline, cleanup, or correctness assertion inside that command. The bundle
-also contains platform identity, candidate identity, input/migration digests, effects totals, a
-complete regular-file inventory, per-file sizes and hashes, an inventory hash and root bundle hash.
-`evidence:verify` recalculates all hashes and rejects missing, added, changed, linked or non-regular
-content.
+`evidence:bundle` never runs the corpus. On one clean candidate it runs manifest validation,
+integration, format, lint, typecheck, build, the unchanged unit/integration/restart package,
+coverage, reconciliation, mutation, hard-kill, scale and the unmodified `npm run check`. It records
+all commands, exit codes, signals, elapsed times and transcripts, plus platform/input/migration
+identity, the real integration proof, and effects totals.
 
-The corpus decision procedure returns exactly one JSON decision. `LOCAL_TEST_GO` requires the exact
-candidate/manifest, all 216 cases, memory/SQLite equivalence, every prefix and hard-kill vector,
-SQLite integrity, reconciliation equality, all ceilings, zero effects and zero orphans. Every other
-outcome is `LOCAL_TEST_NO_GO` with a nonzero exit. There is no warning or partial-success state.
+`evidence:verify` requires the complete ordered command set, zero exits, null signals/errors, the
+exact current clean SHA/tree, exact manifest/package-lock/matrix/migration/platform identities, a
+two-case real integration proof, zero effects, `corpusExecuted=false`, a complete regular-file
+inventory and every file/root hash. Missing, added, changed, linked, forged, stale or partial bundles
+are rejected.
 
-At this milestone stopping gate, only a clean automation-evidence `GO` is permitted. The corpus must
-remain unexecuted until the owner separately authorizes the exact command and frozen SHA/tree.
+There is no partial success. The authorized corpus returns one machine-readable `LOCAL_TEST_GO` only
+after every frozen executable and terminal invariant passes; every other outcome is
+`LOCAL_TEST_NO_GO`. This milestone stops before that corpus and requests separate authorization for
+the exact frozen SHA/tree.

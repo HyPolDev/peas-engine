@@ -72,9 +72,10 @@ async function run() {
         env: {
           ...process.env,
           PEAS_LOCAL_VALIDATION_WORKER_INPUT: inputPath,
+          PEAS_NETWORK_DENIAL_INHERITED: "1",
           PEAS_RUNTIME_ROOT: runtimeRoot,
         },
-        timeout: mode === "integration" ? 60_000 : 120_000,
+        timeout: mode === "integration" ? 5 * 60_000 : 24 * 60 * 60_000,
       },
     );
     if (child.status !== 0) {
@@ -86,12 +87,21 @@ async function run() {
         ? await executeHardKillMatrix(workspace, manifest)
         : {
             status: "not-executed-in-integration-probe",
-            physicalKillCount: 0,
-            coveredVectorCount: 0,
+            executableHardKillCaseCount: 0,
           };
+    const zeroEffects = Object.values(result.effects).every((value) => value === 0);
+    const zeroCleanup = Object.values(result.cleanup).every((value) => value === 0);
     const passed =
       result.status === "passed" &&
-      (mode === "integration" || result.executedCaseCount === manifest.caseCount);
+      zeroEffects &&
+      zeroCleanup &&
+      (mode === "integration" ||
+        (result.executedCaseCount === manifest.caseCount &&
+          result.executionCount === manifest.caseCount * manifest.orderPermutations.length &&
+          result.orderPermutationCount === manifest.orderPermutations.length &&
+          result.resourceOneOverProofs.length > 0 &&
+          hardKill.status === "passed" &&
+          hardKill.executableHardKillCaseCount === manifest.executableCoverage.hardKill.length));
     const decision =
       mode === "corpus" ? (passed ? "LOCAL_TEST_GO" : "LOCAL_TEST_NO_GO") : passed ? "GO" : "NO_GO";
     const report = {

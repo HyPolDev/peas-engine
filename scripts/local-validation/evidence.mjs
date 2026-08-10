@@ -11,6 +11,7 @@ import {
   listFiles,
   platformIdentity,
   readJson,
+  repositoryIdentity,
   sha256,
   verifyCandidate,
   verifyFrozenManifest,
@@ -37,6 +38,18 @@ const commandPlan = Object.freeze([
   ["scale", ["run", "test:scale"]],
   ["unchanged-check", ["run", "check"]],
 ]);
+
+function lastJsonLine(text) {
+  for (const line of String(text ?? "")
+    .trim()
+    .split(/\r?\n/u)
+    .reverse()) {
+    try {
+      return JSON.parse(line);
+    } catch {}
+  }
+  throw new Error("integration-proof-json-missing");
+}
 
 function migrationIdentity() {
   return listFiles(resolve("migrations"));
@@ -95,6 +108,17 @@ function bundle() {
     }
     const allPassed =
       commands.length === commandPlan.length && commands.every((item) => item.exitCode === 0);
+    const integrationCommand = commands.find(({ name }) => name === "integration");
+    const integrationTranscript = readFileSync(
+      join(outputRoot, integrationCommand.transcriptPath),
+      "utf8",
+    );
+    const integrationProof = lastJsonLine(
+      integrationTranscript.split("--- stdout ---\n")[1]?.split("--- stderr ---\n")[0],
+    );
+    if (integrationProof.decision !== "GO" || integrationProof.result?.status !== "passed") {
+      throw new Error("integration-proof-invalid");
+    }
     const packageLockBytes = readFileSync("package-lock.json");
     const matrixBytes = readFileSync(MATRIX_PATH);
     const manifestDigestBytes = readFileSync(MANIFEST_DIGEST_PATH);
@@ -118,19 +142,8 @@ function bundle() {
       },
       platform: platformIdentity(),
       commands,
-      effects: {
-        network: 0,
-        provider: 0,
-        credential: 0,
-        account: 0,
-        broker: 0,
-        order: 0,
-        portfolio: 0,
-        position: 0,
-        fill: 0,
-        spending: 0,
-        financialEffect: 0,
-      },
+      integrationProof,
+      effects: integrationProof.result.effects,
     };
     writeFileSync(join(outputRoot, "automation-report.json"), canonicalBytes(report), "utf8");
     const inventory = listFiles(outputRoot);
@@ -179,7 +192,61 @@ function verify() {
     throw new Error("evidence-inventory-digest-mismatch");
   }
   const report = readJson(join(root, "automation-report.json"));
-  if (report.decision !== manifest.decision || report.corpusExecuted !== false) {
+  const identity = repositoryIdentity();
+  const { manifest: frozenManifest, digest: manifestDigest } = verifyFrozenManifest();
+  const requiredNames = commandPlan.map(([name]) => name);
+  const actualNames = report.commands?.map(({ name }) => name);
+  const completeCommands =
+    canonicalBytes(actualNames) === canonicalBytes(requiredNames) &&
+    report.commands.every(
+      (entry, index) =>
+        entry.command === `npm ${commandPlan[index][1].join(" ")}` &&
+        entry.exitCode === 0 &&
+        entry.signal === null &&
+        entry.spawnError === null &&
+        entry.transcriptPath === `commands/${entry.name}.log`,
+    );
+  const transcriptsExact = report.commands?.every((entry) => {
+    const transcript = readFileSync(join(root, entry.transcriptPath), "utf8");
+    return (
+      transcript.startsWith(`command: ${entry.command}\n`) &&
+      transcript.includes(`exitCode: ${entry.exitCode}\n`)
+    );
+  });
+  const effects = report.effects ?? {};
+  const expectedEffectNames = Object.keys(frozenManifest.effectsCeilings);
+  const zeroEffects =
+    canonicalBytes(Object.keys(effects).sort()) === canonicalBytes(expectedEffectNames.sort()) &&
+    Object.values(effects).every((value) => value === 0);
+  const candidateExact =
+    report.candidate?.sha === identity.sha &&
+    report.candidate?.tree === identity.tree &&
+    identity.status === "" &&
+    canonicalBytes(report.candidate) === canonicalBytes(manifest.candidate);
+  const inputsExact =
+    report.manifest?.sha256 === manifestDigest &&
+    report.manifest?.caseCount === frozenManifest.caseCount &&
+    report.inputs?.matrix?.sha256 === sha256(readFileSync(MATRIX_PATH)) &&
+    report.inputs?.packageLock?.sha256 === sha256(readFileSync("package-lock.json")) &&
+    canonicalBytes(report.inputs?.migrations) === canonicalBytes(migrationIdentity());
+  const integrationExact =
+    report.integrationProof?.decision === "GO" &&
+    report.integrationProof?.result?.status === "passed" &&
+    report.integrationProof?.result?.executedCaseCount === 2 &&
+    canonicalBytes(report.integrationProof?.result?.effects) === canonicalBytes(effects);
+  if (
+    report.decision !== manifest.decision ||
+    report.decision !== "GO" ||
+    report.corpusExecuted !== false ||
+    report.corpusAuthorizationRequired !== true ||
+    !completeCommands ||
+    !transcriptsExact ||
+    !zeroEffects ||
+    !candidateExact ||
+    !inputsExact ||
+    !integrationExact ||
+    canonicalBytes(report.platform) !== canonicalBytes(platformIdentity())
+  ) {
     throw new Error("evidence-decision-invalid");
   }
   process.stdout.write(

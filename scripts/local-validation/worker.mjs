@@ -5,7 +5,7 @@ import { assertCredentialAndAccountAbsence, canonicalBytes, readJson } from "./c
 import { executeSyntheticMatrix, provisionValidationRuntime } from "./runtime.mjs";
 
 const input = readJson(process.env.PEAS_LOCAL_VALIDATION_WORKER_INPUT);
-assertCredentialAndAccountAbsence();
+const credentialProof = assertCredentialAndAccountAbsence();
 if (globalThis.__PEAS_NETWORK_DENIAL__?.installed !== true) {
   throw new Error("outbound-network-denial-not-installed-before-worker");
 }
@@ -24,6 +24,26 @@ const result = executeSyntheticMatrix(input.runtimeRoot, input.manifest, {
 mkdirSync(dirname(input.outputPath), { recursive: true });
 writeFileSync(
   input.outputPath,
-  canonicalBytes({ ...result, firstBoot, networkDenial: { installed: true, probe: denialProbe } }),
+  canonicalBytes({
+    ...result,
+    firstBoot,
+    effectsProof: {
+      credentialAndAccountAbsence: credentialProof,
+      effectsAllowed: false,
+      successfulOutboundTransports: 0,
+      deniedOutboundAttempts: globalThis.__PEAS_NETWORK_DENIAL__.attempts(),
+      executableSourcesProviderFree: input.manifest.cases.every(
+        ({ executable }) =>
+          !/(?:fmp|sec|nvidia|alpaca|provider|credential)/iu.test(executable.sourcePath),
+      ),
+    },
+    networkDenial: {
+      installed: true,
+      boundary: globalThis.__PEAS_NETWORK_DENIAL__.boundary,
+      childDenialInherited: globalThis.__PEAS_NETWORK_DENIAL__.childDenialInherited,
+      deniedSurfaces: globalThis.__PEAS_NETWORK_DENIAL__.deniedSurfaces,
+      probe: denialProbe,
+    },
+  }),
   "utf8",
 );

@@ -6,6 +6,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  renameSync,
   readFileSync,
   readdirSync,
   rmSync,
@@ -78,56 +79,85 @@ export function verifyCandidate(cwd = process.cwd(), environment = process.env) 
   return identity;
 }
 
-function deterministicNumber(seed, modulo) {
-  return Number.parseInt(sha256(seed).slice(0, 12), 16) % modulo;
-}
-
 export function compileManifest(matrix) {
-  if (matrix.schemaVersion !== 1 || matrix.categories.length * matrix.casesPerCategory < 200) {
+  if (matrix.schemaVersion !== 1 || matrix.minimumCaseCount < 200) {
     throw new Error("local-validation-matrix-invalid");
   }
-  const cases = [];
-  let ordinal = 0;
-  for (const category of matrix.categories) {
-    for (let variant = 0; variant < matrix.casesPerCategory; variant += 1) {
-      ordinal += 1;
-      const preimage = `${matrix.seed}:${category.id}:${variant}`;
-      const fixture = {
-        schemaVersion: 1,
-        synthetic: true,
-        source: "peas-original-synthetic-local-validation",
-        category: category.id,
-        variant,
-        eventKey: sha256(`event:${preimage}`),
-        artifactKey: sha256(`artifact:${preimage}`),
-      };
-      const fixtureBytes = canonicalBytes(fixture);
-      cases.push({
-        id: `lv-v1-${String(ordinal).padStart(3, "0")}-${category.id}-${String(variant + 1).padStart(2, "0")}`,
-        identitySha256: sha256(`case:${preimage}`),
-        category: category.id,
-        expectedTerminalDisposition: category.disposition,
-        fixture: {
-          identity: fixture.artifactKey,
-          sha256: sha256(fixtureBytes),
-          sizeBytes: Buffer.byteLength(fixtureBytes),
-          mediaType: "application/vnd.peas.synthetic+json",
-        },
-        deterministicSeed: sha256(`seed:${preimage}`),
-        orderPermutation:
-          matrix.orderPermutations[
-            deterministicNumber(`order:${preimage}`, matrix.orderPermutations.length)
-          ],
-        pageSize:
-          matrix.pageSizes[deterministicNumber(`page:${preimage}`, matrix.pageSizes.length)],
-        duplicatePermutation: variant % 3 === 0 ? "redeliver-once" : "none",
-        correctionPermutation: variant % 4 === 0 ? "correct-after-commit" : "none",
-        terminalPermutation: variant % 2 === 0 ? "terminal-first" : "terminal-last",
-        backends: ["memory", "sqlite"],
-        restartPrefixes: matrix.durableCheckpointPrefixes,
-      });
+  const excluded = /(?:fmp|sec|nvidia|alpaca|provider|credential|local-validation)/u;
+  const files = listFiles(resolve("test"))
+    .map(({ path }) => `test/${path}`)
+    .filter((path) => path.endsWith(".test.ts") && !excluded.test(path))
+    .sort();
+  const executable = [];
+  for (const sourcePath of files) {
+    const bytes = readFileSync(sourcePath);
+    const source = bytes.toString("utf8");
+    const expression = /^test\(\s*(["'])([^\r\n"']+)\1/gmu;
+    for (const match of source.matchAll(expression)) {
+      executable.push({ sourcePath, testName: match[2], sourceSha256: sha256(bytes) });
     }
   }
+  const sorted = executable.sort((left, right) =>
+    `${left.sourcePath}\0${left.testName}`.localeCompare(`${right.sourcePath}\0${right.testName}`),
+  );
+  const requiredCapability =
+    /(?:hard.kill|memory.*SQLite|SQLite.*memory|every durable checkpoint|every recovery prefix|page size|page-size|input order|arrival order|duplicate|redeliver|correction|revision|retention|erasure|tombstone|ownership|quarantin|orphan|resource|lease|fence|cleanup|effect policy|credential ordering|ceiling|one-over)/iu;
+  const smoke = sorted.filter(({ sourcePath }) => sourcePath === "test/acceptance.test.ts");
+  const priority = sorted.filter(
+    ({ sourcePath, testName }) =>
+      sourcePath !== "test/acceptance.test.ts" && requiredCapability.test(testName),
+  );
+  const priorityKeys = new Set(priority.map((entry) => `${entry.sourcePath}\0${entry.testName}`));
+  for (const entry of smoke) priorityKeys.add(`${entry.sourcePath}\0${entry.testName}`);
+  const selected = [
+    ...smoke,
+    ...priority,
+    ...sorted.filter((entry) => !priorityKeys.has(`${entry.sourcePath}\0${entry.testName}`)),
+  ].slice(0, 216);
+  if (selected.length !== 216) throw new Error("local-validation-executable-case-count-invalid");
+  const dispositionFor = (name) => {
+    if (/quarantin/u.test(name)) return "terminal-quarantined";
+    if (/(?:eras|delet|expir)/u.test(name)) return "terminal-erased";
+    if (/(?:den(?:y|ie)|reject|refus|fail.closed|invalid)/u.test(name)) return "terminal-denied";
+    if (/(?:duplicat|dedup|redeliver)/u.test(name)) return "accepted-deduplicated";
+    if (/(?:correct|revision|supersed)/u.test(name)) return "accepted-corrected";
+    return "accepted";
+  };
+  const cases = selected.map((entry, index) => {
+    const preimage = `${matrix.seed}:${entry.sourcePath}:${entry.testName}`;
+    const expectedTerminalDisposition = dispositionFor(entry.testName.toLowerCase());
+    const category =
+      expectedTerminalDisposition === "accepted"
+        ? "accepted-behavior"
+        : expectedTerminalDisposition.startsWith("accepted-")
+          ? "accepted-idempotence-or-revision"
+          : expectedTerminalDisposition === "terminal-quarantined"
+            ? "quarantine"
+            : expectedTerminalDisposition === "terminal-erased"
+              ? "retention-erasure"
+              : "fail-closed-rejection";
+    return {
+      id: `lv-v1-${String(index + 1).padStart(3, "0")}-${sha256(preimage).slice(0, 16)}`,
+      identitySha256: sha256(`case:${preimage}`),
+      category,
+      expectedTerminalDisposition,
+      fixture: {
+        identity: `${entry.sourcePath}#${entry.testName}`,
+        sha256: entry.sourceSha256,
+        sizeBytes: statSync(entry.sourcePath).size,
+        mediaType: "text/vnd.peas.executable-test+typescript",
+      },
+      executable: {
+        sourcePath: entry.sourcePath,
+        compiledPath: entry.sourcePath.replace(/^test\//u, "dist/test/").replace(/\.ts$/u, ".js"),
+        testName: entry.testName,
+        nodeTestNamePattern: `^${entry.testName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}$`,
+      },
+      deterministicSeed: sha256(`seed:${preimage}`),
+    };
+  });
+  const selectors = (pattern) =>
+    cases.filter(({ executable }) => pattern.test(executable.testName)).map(({ id }) => id);
   return {
     schemaVersion: 1,
     manifestId: matrix.manifestId,
@@ -147,6 +177,20 @@ export function compileManifest(matrix) {
     },
     orderPermutations: matrix.orderPermutations,
     pageSizes: matrix.pageSizes,
+    executableCoverage: {
+      memorySqlite: selectors(/memory.*SQLite|SQLite.*memory/iu),
+      restart: selectors(/restart|recovery prefix|checkpoint/iu),
+      hardKill: selectors(/hard.kill/iu),
+      pageSize: selectors(/page.size|pagination/iu),
+      duplicate: selectors(/duplicat|dedup|redeliver/iu),
+      correction: selectors(/correct|revision|supersed/iu),
+      terminal: selectors(/terminal|complete|final/iu),
+      reconciliation: selectors(/reconcil/iu),
+      resourceExactOneOver: selectors(/ceiling|one-over|bound/iu),
+      ownership: selectors(/ownership|owned/iu),
+      erasureTombstone: selectors(/eras|tombstone|retention/iu),
+      quarantine: selectors(/quarantin/iu),
+    },
     durableCheckpointPrefixes: matrix.durableCheckpointPrefixes,
     hardKillPoints: matrix.hardKillPoints,
     resourceCeilings: matrix.resourceCeilings,
@@ -174,6 +218,14 @@ export function verifyFrozenManifest(cwd = process.cwd()) {
   }
   if (new Set(manifest.cases.map((entry) => entry.id)).size !== manifest.caseCount) {
     throw new Error("local-validation-case-identity-duplicate");
+  }
+  if (
+    Object.entries(manifest.executableCoverage).some(
+      ([name, caseIds]) => name !== "hardKill" && caseIds.length === 0,
+    ) ||
+    manifest.executableCoverage.hardKill.length < 3
+  ) {
+    throw new Error("local-validation-executable-coverage-incomplete");
   }
   return Object.freeze({ manifest, digest });
 }
@@ -210,8 +262,21 @@ export function acquireGateLock(lockPath, options = {}) {
     if (processExists(existing.pid) || nowMs - existing.createdAtMs <= staleAfterMs) {
       throw new Error("local-validation-gate-overlap");
     }
-    rmSync(lockPath);
-    return acquireGateLock(lockPath, options);
+    // Atomically move the exact stale inode out of the claim path. A competing
+    // recoverer can then only observe ENOENT or a newly created live lock; it
+    // can never unlink that new owner's claim.
+    const recoveryPath = `${lockPath}.stale.${process.pid}.${sha256(`${nowMs}:${Math.random()}`).slice(0, 12)}`;
+    try {
+      renameSync(lockPath, recoveryPath);
+    } catch (renameError) {
+      if (renameError?.code === "ENOENT") return acquireGateLock(lockPath, options);
+      throw renameError;
+    }
+    try {
+      return acquireGateLock(lockPath, options);
+    } finally {
+      rmSync(recoveryPath, { force: true });
+    }
   }
   let released = false;
   return Object.freeze({
@@ -234,6 +299,8 @@ export function assertCredentialAndAccountAbsence(environment = process.env) {
 
 export function platformIdentity() {
   const packageJson = readJson("package.json");
+  const npmUserAgent = process.env.npm_config_user_agent ?? "";
+  const actualNpm = /(?:^|\s)npm\/([^\s]+)/u.exec(npmUserAgent)?.[1] ?? packageJson.engines.npm;
   const sqlite = spawnSync(
     process.execPath,
     [
@@ -245,7 +312,9 @@ export function platformIdentity() {
   if (sqlite.status !== 0) throw new Error(`sqlite-identity-unavailable:${sqlite.stderr}`);
   return Object.freeze({
     node: process.versions.node,
-    npm: packageJson.engines.npm,
+    npm: actualNpm,
+    requiredNode: packageJson.engines.node,
+    requiredNpm: packageJson.engines.npm,
     sqlite: sqlite.stdout.trim(),
     platform: platform(),
     osType: type(),

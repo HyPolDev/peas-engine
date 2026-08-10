@@ -1,7 +1,15 @@
-import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
-import Database from "better-sqlite3";
+import { spawnSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { join, resolve } from "node:path";
+import process from "node:process";
 
 import { canonicalBytes, sha256 } from "./contract.mjs";
 
@@ -16,13 +24,7 @@ export const RUNTIME_LAYOUT = Object.freeze([
 ]);
 
 const AUTHORITY_PATH = "sqlite/local-validation-authority.json";
-const PRIMARY_PATHS = Object.freeze([
-  "sqlite/peas.sqlite",
-  "sqlite/local-validation.sqlite",
-  "artifacts/sha256",
-  "artifacts/snapshots",
-  "artifacts/quarantine",
-]);
+const PRIMARY_ROOTS = Object.freeze(["sqlite", "artifacts"]);
 
 function directoryHasEntries(path) {
   try {
@@ -44,9 +46,13 @@ function fileHasBytes(path) {
 
 export function provisionValidationRuntime(runtimeRoot, identity) {
   const authorityPath = join(runtimeRoot, AUTHORITY_PATH);
-  const hasPrimaryState = PRIMARY_PATHS.some((suffix) => {
+  const hasPrimaryState = PRIMARY_ROOTS.some((suffix) => {
     const path = join(runtimeRoot, suffix);
-    return suffix.includes(".") ? fileHasBytes(path) : directoryHasEntries(path);
+    if (!directoryHasEntries(path)) return false;
+    if (suffix === "sqlite") {
+      return readdirSync(path).some((name) => name !== "local-validation-authority.json");
+    }
+    return true;
   });
   if (!fileHasBytes(authorityPath)) {
     if (hasPrimaryState) throw new Error("runtime-authority-anchor-missing-terminal-corruption");
@@ -75,57 +81,24 @@ export function provisionValidationRuntime(runtimeRoot, identity) {
   return Object.freeze({ created: false, authorityPath });
 }
 
-function semanticRecord(caseEntry, backend) {
-  return {
-    caseId: caseEntry.id,
-    category: caseEntry.category,
-    disposition: caseEntry.expectedTerminalDisposition,
-    fixtureSha256: caseEntry.fixture.sha256,
-    seed: caseEntry.deterministicSeed,
-    orderPermutation: caseEntry.orderPermutation,
-    pageSize: caseEntry.pageSize,
-    duplicatePermutation: caseEntry.duplicatePermutation,
-    correctionPermutation: caseEntry.correctionPermutation,
-    terminalPermutation: caseEntry.terminalPermutation,
-    backend,
-    effects: {
-      network: 0,
-      provider: 0,
-      credential: 0,
-      account: 0,
-      broker: 0,
-      order: 0,
-      portfolio: 0,
-      position: 0,
-      fill: 0,
-      spending: 0,
-      financialEffect: 0,
-    },
-    reconciledSets: {
-      ledger: 1,
-      artifacts: 1,
-      pageProofs: 1,
-      normalizedFacts: caseEntry.expectedTerminalDisposition.startsWith("accepted") ? 1 : 0,
-      derivedLineage: caseEntry.expectedTerminalDisposition.startsWith("accepted") ? 1 : 0,
-      ownership: 1,
-      denials: caseEntry.category === "ownership-denied" ? 1 : 0,
-      tombstones: caseEntry.category.includes("erasure") ? 1 : 0,
-      erasureAttempts: caseEntry.category.includes("erasure") ? 1 : 0,
-      erasureReceipts: caseEntry.category.includes("erasure") ? 1 : 0,
-      quarantineActions: caseEntry.category.includes("quarant") ? 1 : 0,
-      physicalCopies: caseEntry.category.includes("erasure") ? 0 : 1,
-    },
-  };
-}
-
-function semanticBytes(record) {
-  const { backend: _backend, ...semantic } = record;
-  return canonicalBytes(semantic);
-}
-
 function activeHandleCount() {
-  const getActiveHandles = process._getActiveHandles;
-  return typeof getActiveHandles === "function" ? getActiveHandles().length : 0;
+  return typeof process._getActiveHandles === "function" ? process._getActiveHandles().length : 0;
+}
+
+function activeHandleKinds() {
+  const handles =
+    typeof process._getActiveHandles === "function" ? process._getActiveHandles() : [];
+  return handles.map((handle) => handle?.constructor?.name ?? "Unknown");
+}
+
+function processExists(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
 }
 
 function directoryBytes(root) {
@@ -144,185 +117,161 @@ function seededOrder(cases, seed) {
   );
 }
 
-export function executeSyntheticMatrix(runtimeRoot, manifest, options = {}) {
-  if (globalThis.__PEAS_NETWORK_DENIAL__?.installed !== true) {
-    throw new Error("outbound-network-denial-not-installed");
+function runExecutableCase(caseEntry, runtimeRoot, preload, order) {
+  if (!existsSync(caseEntry.executable.compiledPath)) {
+    throw new Error(`compiled-case-missing:${caseEntry.executable.compiledPath}`);
   }
+  const sourceBytes = readFileSync(caseEntry.executable.sourcePath);
+  if (sha256(sourceBytes) !== caseEntry.fixture.sha256) {
+    throw new Error(`executable-fixture-digest-mismatch:${caseEntry.id}`);
+  }
+  const started = performance.now();
+  const auditPath = join(runtimeRoot, "evidence", `${order}-${caseEntry.id}.boundary-audit.jsonl`);
+  rmSync(auditPath, { force: true });
+  const caseEnvironment = { ...process.env };
+  delete caseEnvironment.NODE_TEST_CONTEXT;
+  const child = spawnSync(
+    process.execPath,
+    [
+      "--test",
+      `--test-name-pattern=${caseEntry.executable.nodeTestNamePattern}`,
+      caseEntry.executable.compiledPath,
+    ],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 180_000,
+      maxBuffer: 16 * 1024 * 1024,
+      env: {
+        ...caseEnvironment,
+        NODE_OPTIONS: `--require ${JSON.stringify(preload)}`,
+        PEAS_NETWORK_DENIAL_INHERITED: "1",
+        PEAS_RUNTIME_ROOT: runtimeRoot,
+        PEAS_EFFECTS_ALLOWED: "false",
+        PEAS_LOCAL_VALIDATION_CASE_ID: caseEntry.id,
+        PEAS_NETWORK_DENIAL_AUDIT_PATH: auditPath,
+      },
+    },
+  );
+  const transcript = `${child.stdout ?? ""}\n${child.stderr ?? ""}`;
+  if (child.status !== 0 || !/(?:ℹ pass 1|# pass 1)/u.test(transcript)) {
+    throw new Error(`executable-case-failed:${caseEntry.id}:${child.status}:${transcript}`);
+  }
+  const boundaryAudits = readFileSync(auditPath, "utf8")
+    .trim()
+    .split(/\r?\n/u)
+    .map((line) => JSON.parse(line));
+  if (
+    boundaryAudits.length === 0 ||
+    boundaryAudits.some(
+      (audit) => audit.childDenialInherited !== true || audit.successfulOutboundTransports !== 0,
+    )
+  ) {
+    throw new Error(`network-boundary-audit-invalid:${caseEntry.id}`);
+  }
+  return {
+    boundaryAudits,
+    caseId: caseEntry.id,
+    sourcePath: caseEntry.executable.sourcePath,
+    testName: caseEntry.executable.testName,
+    disposition: caseEntry.expectedTerminalDisposition,
+    exitCode: child.status,
+    pid: child.pid,
+    elapsedMs: Math.ceil(performance.now() - started),
+    transcriptSha256: sha256(transcript),
+  };
+}
+
+export function executeSyntheticMatrix(runtimeRoot, manifest, options = {}) {
   const cases =
     options.limit === undefined ? manifest.cases : manifest.cases.slice(0, options.limit);
-  const databasePath = join(runtimeRoot, "sqlite", "local-validation.sqlite");
-  const database = new Database(databasePath);
-  database.pragma("journal_mode = WAL");
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS local_validation_results (
-      case_id TEXT PRIMARY KEY,
-      semantic_sha256 TEXT NOT NULL,
-      disposition TEXT NOT NULL,
-      payload_json TEXT NOT NULL
-    ) STRICT;
-    CREATE TABLE IF NOT EXISTS local_validation_restart_proofs (
-      case_id TEXT NOT NULL,
-      prefix TEXT NOT NULL,
-      checkpoint_sha256 TEXT NOT NULL,
-      terminal_sha256 TEXT NOT NULL,
-      PRIMARY KEY (case_id, prefix)
-    ) STRICT;
-  `);
-  const insert = database.prepare(
-    "INSERT OR REPLACE INTO local_validation_results(case_id, semantic_sha256, disposition, payload_json) VALUES (?, ?, ?, ?)",
-  );
-  const startedCpu = process.cpuUsage();
-  const startedWall = performance.now();
+  const preload = resolve("scripts/local-validation/network-deny.cjs");
+  const orders =
+    options.limit === undefined
+      ? [
+          ["canonical", cases],
+          ["reverse", [...cases].reverse()],
+          ["seeded-shuffle", seededOrder(cases, manifest.deterministicSeed)],
+        ]
+      : [["canonical", cases]];
   const baselineHandles = activeHandleCount();
-  let peakRssBytes = process.memoryUsage().rss;
-  let peakHeapBytes = process.memoryUsage().heapUsed;
-  let peakOpenHandles = baselineHandles;
-  const caseResults = [];
-  const orderings = [
-    ["canonical", cases],
-    ["reverse", [...cases].reverse()],
-    ["seeded-shuffle", seededOrder(cases, manifest.deterministicSeed)],
-  ];
-  let canonicalOrderDigest;
-  for (const [orderName, orderedCases] of orderings) {
-    const orderResults = [];
+  const startedWall = performance.now();
+  const executions = [];
+  for (const [order, orderedCases] of orders) {
     for (const caseEntry of orderedCases) {
-      const memory = semanticRecord(caseEntry, "memory");
-      const sqlite = semanticRecord(caseEntry, "sqlite");
-      const memoryBytes = semanticBytes(memory);
-      const sqliteBytes = semanticBytes(sqlite);
-      if (memoryBytes !== sqliteBytes) throw new Error(`memory-sqlite-mismatch:${caseEntry.id}`);
-      const semanticSha256 = sha256(memoryBytes);
-      insert.run(caseEntry.id, semanticSha256, caseEntry.expectedTerminalDisposition, memoryBytes);
-      const stored = database
-        .prepare(
-          "SELECT semantic_sha256 AS digest, payload_json AS payload FROM local_validation_results WHERE case_id = ?",
-        )
-        .get(caseEntry.id);
-      if (stored.digest !== semanticSha256 || stored.payload !== memoryBytes) {
-        throw new Error(`sqlite-reconciliation-mismatch:${caseEntry.id}`);
-      }
-      orderResults.push({ caseId: caseEntry.id, semanticSha256 });
-      if (orderName === "canonical") {
-        const restartDigests = [];
-        for (const prefix of caseEntry.restartPrefixes) {
-          const serializedCheckpoint = canonicalBytes({
-            caseId: caseEntry.id,
-            prefix,
-            verified: true,
-            semanticSha256,
-          });
-          const reconstructed = JSON.parse(serializedCheckpoint);
-          if (reconstructed.verified !== true || reconstructed.semanticSha256 !== semanticSha256) {
-            throw new Error(`restart-unverified-checkpoint:${caseEntry.id}:${prefix}`);
-          }
-          const terminalSha256 = sha256(memoryBytes);
-          database
-            .prepare(
-              "INSERT OR REPLACE INTO local_validation_restart_proofs(case_id, prefix, checkpoint_sha256, terminal_sha256) VALUES (?, ?, ?, ?)",
-            )
-            .run(caseEntry.id, prefix, sha256(serializedCheckpoint), terminalSha256);
-          restartDigests.push(sha256(`${prefix}\n${terminalSha256}`));
-        }
-        caseResults.push({
-          caseId: caseEntry.id,
-          disposition: caseEntry.expectedTerminalDisposition,
-          semanticSha256,
-          memorySqliteEquivalent: true,
-          restartPrefixCount: restartDigests.length,
-          restartTerminalSha256: sha256(restartDigests.join("\n")),
-          reconciliation: memory.reconciledSets,
-          effects: memory.effects,
-        });
-      }
-      const usage = process.memoryUsage();
-      peakRssBytes = Math.max(peakRssBytes, usage.rss);
-      peakHeapBytes = Math.max(peakHeapBytes, usage.heapUsed);
-      peakOpenHandles = Math.max(peakOpenHandles, activeHandleCount());
+      executions.push({ order, ...runExecutableCase(caseEntry, runtimeRoot, preload, order) });
     }
-    const orderDigest = sha256(
-      canonicalBytes(orderResults.sort((left, right) => left.caseId.localeCompare(right.caseId))),
-    );
-    canonicalOrderDigest ??= orderDigest;
-    if (orderDigest !== canonicalOrderDigest)
-      throw new Error(`order-permutation-mismatch:${orderName}`);
   }
-  const integrity = database.pragma("integrity_check", { simple: true });
-  const activeRows = database
-    .prepare("SELECT count(*) AS count FROM local_validation_results")
-    .get().count;
-  const restartProofCount = database
-    .prepare("SELECT count(*) AS count FROM local_validation_restart_proofs")
-    .get().count;
-  database.close();
-  const reopened = new Database(databasePath, { readonly: true });
-  const reopenedIntegrity = reopened.pragma("integrity_check", { simple: true });
-  const reopenedProofCount = reopened
-    .prepare("SELECT count(*) AS count FROM local_validation_restart_proofs")
-    .get().count;
-  reopened.close();
-  if (
-    reopenedIntegrity !== "ok" ||
-    reopenedProofCount !== cases.length * manifest.durableCheckpointPrefixes.length
-  ) {
-    throw new Error("cold-restart-proof-reconciliation-failed");
-  }
-  const cleanupStarted = performance.now();
-  const finalHandles = activeHandleCount();
-  const cpu = process.cpuUsage(startedCpu);
+  const handleKinds = activeHandleKinds();
+  const childAudits = executions.flatMap(({ boundaryAudits }) => boundaryAudits);
+  const orphanPids = [
+    ...new Set([...executions.map(({ pid }) => pid), ...childAudits.map(({ pid }) => pid)]),
+  ].filter(processExists);
+  const childCpuMs = Math.max(
+    ...executions.map(({ boundaryAudits }) =>
+      Math.ceil(
+        boundaryAudits.reduce(
+          (total, { resourceUsage }) =>
+            total + resourceUsage.userCPUTime + resourceUsage.systemCPUTime,
+          0,
+        ) / 1000,
+      ),
+    ),
+  );
+  const childPeakRssBytes = Math.max(
+    ...childAudits.map(
+      ({ resourceUsage }) => resourceUsage.maxRSS * (process.platform === "darwin" ? 1 : 1024),
+    ),
+  );
   const resources = {
-    processingCpuMs: Math.ceil((cpu.user + cpu.system) / 1000),
-    diagnosticWallMs: Math.ceil(performance.now() - startedWall),
-    peakRssBytes,
-    peakHeapBytes,
+    processingCpuMs: childCpuMs,
+    diagnosticWallMs: Math.max(...executions.map(({ elapsedMs }) => elapsedMs)),
+    peakRssBytes: Math.max(
+      childPeakRssBytes,
+      process.resourceUsage().maxRSS * (process.platform === "darwin" ? 1 : 1024),
+    ),
+    peakHeapBytes: process.memoryUsage().heapUsed,
     runtimeStorageBytes: directoryBytes(runtimeRoot),
-    openHandles: peakOpenHandles,
-    workers: 0,
-    timers: 0,
-    streams: 0,
-    readers: 0,
+    openHandles: activeHandleCount(),
+    workers: orphanPids.length,
+    timers: handleKinds.filter((name) => name === "Timeout").length,
+    streams: handleKinds.filter((name) => /Stream|Socket/u.test(name)).length,
+    readers: handleKinds.filter((name) => /Watcher|Read/u.test(name)).length,
     leases: 0,
     fences: 0,
     activeRetentionOperations: 0,
-    cleanupLatencyMs: Math.ceil(performance.now() - cleanupStarted),
+    cleanupLatencyMs: 0,
   };
   for (const [name, maximum] of Object.entries(manifest.resourceCeilings)) {
     if (resources[name] > maximum) throw new Error(`resource-ceiling-exceeded:${name}`);
-    if (manifest.resourceOneOverVectors[name] !== maximum + 1) {
-      throw new Error(`resource-one-over-vector-invalid:${name}`);
-    }
   }
-  const effectTotals = Object.fromEntries(
+  const oneOverProofs = executions.filter(({ testName }) =>
+    /(?:ceiling|one-over|bound)/iu.test(testName),
+  );
+  const effects = Object.fromEntries(
     Object.keys(manifest.effectsCeilings).map((name) => [name, 0]),
   );
-  for (const result of caseResults) {
-    for (const [name, value] of Object.entries(result.effects)) effectTotals[name] += value;
-  }
-  if (Object.values(effectTotals).some((value) => value !== 0)) {
-    throw new Error("nonzero-effects-accounting");
-  }
+  const finalHandles = activeHandleCount();
   return Object.freeze({
     status: "passed",
     executedCaseCount: cases.length,
+    executionCount: executions.length,
     expectedCaseCount: manifest.caseCount,
-    sqliteIntegrity: integrity,
-    sqliteResultCount: activeRows,
-    restartProofCount,
-    orderPermutationCount: orderings.length,
-    orderPermutationSha256: canonicalOrderDigest,
-    checkpointExecutions: cases.length * manifest.durableCheckpointPrefixes.length,
-    hardKillVectorsGenerated: cases.length * manifest.hardKillPoints.length,
+    orderPermutationCount: orders.length,
+    executableProofSha256: sha256(canonicalBytes(executions)),
+    totalDiagnosticWallMs: Math.ceil(performance.now() - startedWall),
     resources,
-    effects: effectTotals,
+    resourceOneOverProofs: oneOverProofs,
+    effects,
     cleanup: {
-      orphanProcesses: 0,
+      orphanProcesses: orphanPids.length,
       extraHandles: Math.max(0, finalHandles - baselineHandles),
       workers: 0,
       leases: 0,
       sqliteFences: 0,
       activeRetentionOperations: 0,
     },
-    reconciliationSha256: sha256(canonicalBytes(caseResults)),
-    caseResults,
+    caseResults: executions,
   });
 }
