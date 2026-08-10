@@ -96,7 +96,7 @@ Do not maintain task state independently in Linear, Notion, and GitHub.
 | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | P0 Foundation - complete                 | Deterministic kernel, durable artifacts, bounded ingress, replay evidence                                                               | RC.2 and PR 2A gates are satisfied                                                                                                               |
 | P1 Forward read-only slice - in progress | Live SEC/FMP/IR capture, calendar prewarming, and a zero-incremental-cost delayed market-reference path                                 | A readiness drill proves complete provenance, frozen market joins, restart recovery, replay equivalence, and zero dispatchable financial effects |
-| P2 Observation run                       | 100–200 forward earnings clusters with latency, missing-event, duplicate, revision, and first-observation price-movement measurements   | Dataset has source-level provenance and a reproducible measurement report                                                                        |
+| P2 Observation run                       | Exactly 180 forward earnings clusters with fixed 120 standard / 40 specialized / 20 prospective-control membership, collected across exactly 65 regular sessions | Dataset has source-level provenance and a reproducible measurement report                                                                        |
 | P3 Context snapshots                     | Prospective FMP estimates, regular/aftermarket market data, sector/SPY abnormal movement, session, halt, and first-tradable-quote state | Every decision input is timestamped, versioned, and replayable                                                                                   |
 | P4 Decision packets                      | Deterministic numbers first; evidence-backed language/guidance extraction second; explicit setup/no-trade classification                | Packets are reproducible, source-linked, and safe to compare in replay                                                                           |
 | P5 Historical research                   | Parquet datasets, latency assumptions, executable fills, benchmark-adjusted outcomes, MFE/MAE, and cost-aware walk-forward validation   | Research runs are isolated, auditable, and do not create dispatchable work                                                                       |
@@ -289,6 +289,73 @@ fault/restart/replay variants; they are not a P2 `StudyManifest`, do not change 
 | Resource measurements | Preserve raw processing CPU and diagnostic wall time, peak RSS/heap, artifact/SQLite bytes, files/handles, workers, timers, readers, streams, leases/fences, reconciliation duration, per-case throughput, and cleanup latency | No accepted resource maximum is exceeded; exact and one-over vectors behave as contracted; zero orphan worker, timer, stream, reader, lease, fence, snapshot, or active retention operation remains |
 | Final decision | Freeze the candidate SHA/tree, corpus/config digests, commands, platform/runtime inventory, raw results, reconciliation report, resource report, effects query, and independent exact-SHA review | Return exactly `LOCAL_TEST_GO` only when every preceding row passes on unchanged bytes. Otherwise preserve `LOCAL_TEST_NO_GO` with deterministic reproductions and authorize no later gate |
 
+### Compressed parallel path to real collection
+
+The active planning target is **16–20 engineering working days** from authorization to accepted
+P1-06 readiness and `readyAtMs`. After readiness, the accepted prospective design still requires the
+full S1-S15 lead. With no entitlement or review delay, first real capture is therefore expected
+approximately **30–35 working days, or 6–7 calendar weeks, after authorization**. This estimate is a
+parallel delivery target, not authority to waive or merge gates.
+
+The clean milestone sequence reaches readiness on Day 17. The 16–20-day target retains bounded
+allowance for exact-SHA evidence closeout, one supported finding repair, and fresh review. A larger
+or recurring finding extends the schedule; it does not consume the prospective lead or relax a
+contract. This documentation change does not authorize provider access, local-corpus execution,
+production-runtime provisioning, real-company selection, or recording.
+
+| Working-day window | Concurrent outcome | Required exit evidence |
+| --- | --- | --- |
+| Days 1–2 | Freeze the local manifest, provider/entitlement matrix, interfaces, exact configuration, test commands, and evidence format concurrently | One reviewed immutable planning package; no provider access, runtime provisioning, or corpus execution |
+| Days 3–5 | Execute the complete effects-disabled local matrix while the independent reviewer pre-reviews contracts, fixtures, and evidence structure | Full final-byte replay/restart/integrity/resource/zero-effects evidence with no stale or overlapping run |
+| Day 6 | Perform detached exact-SHA review | Exact unchanged-byte `LOCAL_TEST_GO`, or preserved `LOCAL_TEST_NO_GO` and finding-only repair |
+| Days 7–11 | Run parallel SEC, FMP, generic issuer-IR, and universe/calendar implementation lanes under separately frozen authority | Owned read-only adapters, exact provenance, recorded contract tests, calendar/session authority, and no financial effects |
+| Days 12–14 | Integrate and run memory/SQLite replay, every-prefix restart, correction, reconciliation, resource, and zero-effects gates | One clean exact candidate with complete final-byte evidence and deterministic recovery |
+| Days 15–17 | Run the P1-06 sustained readiness drill and independent readiness review | P1-06 readiness `GO`; its accepted publication time establishes `readyAtMs` |
+| From `readyAtMs` | Derive S1; capture the candidate frame through S5; publish the immutable manifest before S6; rehearse operations during S6–S14; begin real collection at S15 | Exact prospective frame and immutable 180-cluster manifest before outcomes; no substitution after freeze |
+
+The complete recording remains exactly **180 clusters** with fixed **120 standard / 40 specialized /
+20 prospective-control** membership, collected across exactly **65 regular sessions**. The 200+
+local event cases remain effects-disabled software-validation cases; they are not members of the
+scientific sample and cannot change its numerator, denominator, selection, or timing.
+
+### Preserved provider architecture
+
+- FMP earnings calendar is the broad candidate-discovery source, subject to separately frozen exact
+  dataset, endpoint, entitlement, retention, and use authority.
+- SEC submissions provide regulatory release confirmation with exact CIK, filing, artifact, and
+  retrieval provenance.
+- One configuration-driven generic issuer-IR source family handles issuer-owned sources. The
+  recorded NVIDIA RSS/IR fixture is the first supported pattern; this does not authorize or require
+  one bespoke adapter per issuer.
+- Alpaca historical REST `feed=sip` with an end time older than 15 minutes remains the existing
+  primary market source under the accepted entitlement boundary.
+- FMP market data remains the approved private non-fallback discrepancy source and never fills
+  missing primary evidence.
+- No new commercial provider may be added unless a frozen coverage rehearsal proves the current
+  sources cannot fill the exact 120/40/20 prospective frame. Any addition requires a separate
+  pre-outcome contract, entitlement, retention, cost, provenance, and independent review.
+
+### Planned automation workstream
+
+Automation is **planning only and requires separately authorized implementation**. Its bounded
+scope is:
+
+- one-command local-validation and P1-06 readiness gates;
+- deterministic manifest and exact-configuration compilation;
+- provider-adapter scaffolding and contract-test generation;
+- a configuration-driven issuer-source registry;
+- generated every-prefix restart and fault matrices;
+- automatic reconciliation and resource measurement;
+- exact-SHA evidence packaging and local/origin/PR/CI identity verification;
+- gate-state tracking that prevents overlapping, stale, or wrong-byte runs;
+- candidate-frame preflight and deterministic exact 180-cluster selection; and
+- continuous zero-network and zero-financial-effects assertions.
+
+These automations may reduce a clean, finding-free engineering cycle to approximately **13–16
+working days**. They cannot weaken or self-authorize a gate, shorten the mandatory S1-S15
+prospective lead, or shorten the exactly 65-regular-session recording window. This documentation
+change implements none of them.
+
 The next decision is therefore to approve or reject that exact local-validation manifest. Only a
 clean `LOCAL_TEST_GO` may unblock the separately frozen P1-03/P1-04 source-capture and calendar
 work. Those tasks still require their own implementation, restart, provenance, and independent
@@ -298,8 +365,9 @@ readiness `GO`.
 
 ### Post-PR 2D next actions
 
-PR 2D is complete and merged. The active critical path is now P1-09 -> P1-10 -> P1-06 -> P2. Work
-must follow the order below; parallel preparation does not waive a gate.
+PR 2D, P1-09, and P1-10 are complete and merged. The active critical path is the effects-disabled
+local gate -> P1-03/P1-04 -> P1-06 readiness and `readyAtMs` -> mandatory S1-S15 prospective lead ->
+P2 collection. Parallel implementation does not waive a gate.
 
 | Order | Work item                                                      | Owner                                             | May start now                                                                                      | Required output and exit condition                                                                                                                                                                                                                |
 | ----- | -------------------------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -311,7 +379,7 @@ must follow the order below; parallel preparation does not waive a gate.
 | 6     | Freeze and execute the effects-disabled 200+ event local gate  | Integration owner plus fresh auditor              | Planning may complete; execution is blocked pending approval of the exact corpus/runtime/configuration manifest       | At least 200 frozen local cases; exact replay/restart/integrity/resource/effects evidence; independent `LOCAL_TEST_GO`; no provider call or scientific outcome                                                                                    |
 | 7     | Complete live read-only source capture and calendar prewarming | Non-overlapping source and calendar owners        | Blocked pending `LOCAL_TEST_GO` and a separately frozen human authorization for exact P1-03/P1-04   | Bounded SEC/FMP/issuer-IR capture as authorized, issuer allowlist, schedule provenance, restart/backfill evidence, independent acceptance, and no dispatchable financial effects                                                               |
 | 8     | Run P1-06 integrated readiness drill                           | Integration owner plus fresh auditor              | After P1-03, P1-04, P1-05, and P1-10 are independently complete                                    | Same-SHA Linux/Windows and 10k evidence; complete synthetic matrix; retention enforcement; restart/replay and memory/SQLite equivalence; binary readiness `GO`                                                                                    |
-| 9     | Collect and freeze P2                                          | Collection agents, then research owner            | Blocked until P1-06 independent `GO`                                                               | Exactly the prospectively frozen 180-cluster cohort, fixed denominators, immutable dataset manifest, code/config/entitlement identities, and completeness report before conclusions                                                               |
+| 9     | Collect and freeze P2                                          | Collection agents, then research owner            | After P1-06 independent `GO`, derive S1, freeze the frame through S5, publish before S6, rehearse S6-S14, and begin collection at S15 | Exactly 180 prospectively frozen clusters with fixed 120/40/20 membership across exactly 65 regular sessions; immutable dataset manifest, code/config/entitlement identities, and completeness report before conclusions |
 | 10    | Execute the event-validation analysis                          | Research owner plus independent reviewer          | Blocked until the dataset freeze                                                                   | Reproducible frozen-metric report and binary decision on whether the evidence justifies any later data, model, or market-access investment                                                                                                        |
 
 Immediate agent-safe preparation in item 3 must remain a separate recorded/offline change. It may
@@ -340,56 +408,19 @@ That active-action sentence is retained as audit history and is now superseded b
 timing repair, verified PR 2E merge `bda45d8ef8f97c35dec614f79e5e3ca81a7bfe93`, and the owner's
 explicit authorization to resume the preserved PR 2F checkpoint under the unchanged offline gates.
 
-### Work-session plan through dataset collection
+### Scheduling and critical-path judgment
 
-A work session is one focused engineering/review block comparable to the sessions used from the
-kernel through PR 2D. Human/provider response time and waiting for a suitable scheduled earnings
-window are not counted as work sessions. The fastest credible plan is ten sessions before P2
-collection begins, followed by an observation period whose elapsed duration is determined by the
-frozen cohort calendar.
+The compressed day windows above supersede the former sequential work-session estimate. Treat each
+day as an evidence-producing delivery box, not an unconditional promise. Human/provider response
+time, a supported finding and repair cycle, unavailable independent review, or a failed entitlement
+or coverage gate extends the schedule rather than permitting a waiver. Parallel owners must retain
+non-overlapping file and decision authority, while the integration owner alone freezes candidate
+bytes and final evidence.
 
-| Session                                          | Primary outcome                                                                                                                                | Parallel work                                                                                                            | Exit evidence                                                                                                    |
-| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| 1. P1-09 evidence intake and decision inventory  | Complete                                                                                                                                       | Human owner froze the source decision and accepted residual interpretation risk                                          | Owner authorization and opaque private-evidence digest are recorded                                              |
-| 2. P1-09 snapshot independent audit              | Complete                                                                                                                                       | All identities and authorization boundaries independently reproduced                                                     | `GO` for exact candidate `36dcf92b...`; P1-09 closed                                                             |
-| 3. P1-10 recorded/offline implementation package | Complete                                                                                                                                       | Original-synthetic loader, replay, fault-injection, and restart harnesses preserved                                       | Accepted PR 2E contract and immutable finding history                                                            |
-| 4. P1-10 approved acquisition implementation     | Complete                                                                                                                                       | Finding-only repairs preserved every prior closure and restriction                                                       | No unapproved feed, fallback, spend, credential echo, or partial trusted output                                  |
-| 5. P1-10 integration, restart, and final audit   | Complete and merged as PR #9                                                                                                                    | Exact-SHA local/hosted evidence plus detached internal, external, and final review                                        | Candidate `d513da9...` merged byte-identically as `e1d9c1a...`                                                   |
-| 6. Effects-disabled 200+ event local validation  | After manifest approval, execute only the frozen local corpus and configuration                                                                | Fresh auditor independently checks exact replay/restart/integrity/resource/effects evidence                              | Exact unchanged-byte `LOCAL_TEST_GO`; no provider access or scientific result                                     |
-| 7. P1-03/P1-04 source and calendar completion    | After `LOCAL_TEST_GO`, await a separately frozen human authorization, then complete only that approved scope                                    | Source and calendar owners may prepare no live work before both decision gates                                           | Bounded capture, missed-window backfill, deterministic normalization, restart evidence, and independent `GO`     |
-| 8. P1-06 drill preparation and rehearsal         | Assemble one deployment candidate and rehearse restart, reconciliation, outage, correction, and clock-regression procedures entirely read-only | Evidence owner prepares completeness, quota, replay, and zero-effects reports                                            | Exact drill candidate, frozen configuration, selected scheduled window, and preflight `GO`                       |
-| 9. P1-06 scheduled-window execution              | Observe one complete eligible window and exercise controlled recovery cases                                                                    | Independent observer records deviations without changing thresholds or acceptance criteria                               | Complete window evidence, stable missing reasons, verified raw artifacts, and memory/SQLite replay equality      |
-| 10. P1-06 final audit and P2 launch package      | Independently audit the drill and freeze collection deployment/configuration                                                                   | Collection and dataset-freeze owners rehearse the 180-cluster manifest with synthetic identities                         | Binary readiness `GO`, P2 runbook, monitoring/stop rules, private-storage plan, and collection authorization     |
-| Observation period: P2-01                        | Collect the prospectively frozen 180-cluster cohort                                                                                            | Continuous reconciliation, completeness monitoring, and typed missing-evidence accounting                                | All 180 clusters accounted for; no substitutions, threshold changes, or denominator deletions                    |
-| Dataset-freeze session: P2-02                    | Freeze the collected dataset before analysis                                                                                                   | Independent inventory reconciliation                                                                                     | Immutable dataset manifest, code/config/entitlement identities, evidence-union equality, and completeness report |
-
-Sessions 1 and 2 cannot be completed by agents alone because the underlying entitlement statements
-and provider correspondence are human-owned. Sessions 3 through 10 can be delegated to agents once
-their stated gates are satisfied. If provider permission is denied or materially changes the
-accepted source identity or study meaning, return to the applicable contract/audit session rather
-than consuming a later session to work around the gate.
-
-### Fast-track scheduling judgment
-
-Treat one day as an evidence-producing delivery box, not as an unconditional calendar promise. The
-first three steps can move at roughly one box per focused day because they are contract, research,
-and recorded-fixture work. Step 4 contains several adapters and needs parallel ownership plus an
-integration pass. Step 5 must include a real scheduled observation window, so its elapsed time also
-depends on the earnings calendar and provider availability.
-
-| Delivery box                                     | Fastest credible effort                                 | Exit evidence                                                                                                                  | Main timing risk                                                    |
-| ------------------------------------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
-| 1. ADR 0010 and frozen study design              | 1 focused day plus independent review                   | Accepted ADR, metric/reason-code tables, study manifest contract, review `GO`                                                  | A metric or timestamp decision changes the contract                 |
-| 2. Zero-cost entitlement and retention           | Human response and provider response time are unbounded | Sanitized human attestation plus written permission, or an explicit permitted lower-evidence fallback decision before outcomes | Account-specific and provider legal/support response time           |
-| 3. Recorded market-reference implementation gate | 1-2 focused days after ADR `GO`                         | Synthetic fixtures, exact/one-over tests, replay/order invariance, independent `GO`                                            | Corrections, quote conditions, or bounds expose contract gaps       |
-| 4. Live sources plus delayed reference adapter   | 2-4 focused days with non-overlapping parallel owners   | SEC, FMP, NVIDIA and delayed reference paths integrated behind recorded contracts                                              | Rate limits, authentication, provider variance, restart integration |
-| 5. Integrated readiness drill                    | 1 setup day plus one complete scheduled window          | Restart/reconciliation, backfill, deterministic replay, completeness and zero-effects evidence                                 | No suitable event window or an external provider outage             |
-
-A strong team can therefore finish the engineering portion in approximately five to eight focused
-working days. Five calendar days is an aggressive best case: it assumes ADR review closes quickly,
-Alpaca answers immediately, implementation runs in parallel, and a suitable live event window is
-available. The project manager may compress handoffs but must not merge a gate merely to preserve
-the schedule.
+The nominal **16–20 working days to P1-06 readiness and `readyAtMs`** can compress to **13–16 working
+days** only after the separately authorized automation workstream exists and a clean cycle produces
+no supported finding. Neither estimate includes or shortens the required S1-S15 lead or the exactly
+65-regular-session observation window.
 
 ### Step 1 - freeze the study and market-reference contract
 
@@ -407,7 +438,7 @@ Create ADR 0010 before market-provider implementation. It must define:
 - a licensing boundary that keeps raw provider bytes private and permits only synthetic fixtures in
   Git.
 
-In parallel, freeze the 100-200-cluster universe, sampling strata, prospective controls,
+In parallel, freeze the exact 180-cluster universe, sampling strata, prospective controls,
 event-time data-quality annotations, exclusions, denominators, minimum evidence completeness, and
 success/failure/inconclusive thresholds. Follow the `ADOPT_WITH_CHANGES` decision in
 [`docs/research/no-trade-policy-disposition.md`](research/no-trade-policy-disposition.md): treat the
@@ -487,7 +518,7 @@ The deployment must expose no broker/order surface and create zero dispatchable 
 
 ### Step 6 - collect and freeze the forward dataset
 
-P2 remains blocked until P1-09, P1-10, and P1-06 are complete. Then collect 100-200 forward earnings
+P2 remains blocked until P1-09, P1-10, and P1-06 are complete. Then collect exactly 180 forward earnings
 clusters using the precommitted universe and strata. Every cluster
 must retain source-level provenance, publication and PEAS observation clocks, raw artifact digests,
 duplicate/revision relationships, the frozen market-reference join, and eligibility/no-trade

@@ -21,9 +21,71 @@
     "pr2dPublishedHead": "fb150828c0fe5e1272c246f1889be02aab8b0d90",
     "pr2dMergeCommit": "ebe959324e48faf73c325a97ed9200bd6c76c9a6",
     "release": "v0.2.0-kernel-rc.2",
-    "focus": "P1-10 is complete and merged; freeze the planning contract for an effects-disabled 200+ event local validation without provisioning or running the corpus",
+    "focus": "P1-10 is complete and merged; freeze the compressed parallel planning path from the effects-disabled 200+ local validation through P1-06 readiness and the mandatory S1-S15 lead to real 180-cluster collection without executing any later scope",
     "nextGate": "Human authorization must approve one exact local-validation manifest covering the corpus, runtime root, configuration, thresholds, replay/restart matrix, integrity checks, and resource ceilings before any corpus run; successful execution must end in an independently reviewed LOCAL_TEST_GO before P1-06 or P2 may begin",
-    "estimatedWorkSessionsToP2Collection": 10,
+    "compressedParallelPath": {
+      "status": "planning-only-no-execution-authority",
+      "targetEngineeringWorkingDaysToP106ReadinessAndReadyAtMs": {
+        "minimum": 16,
+        "maximum": 20
+      },
+      "targetFirstRealCaptureWorkingDaysAfterAuthorization": {
+        "minimum": 30,
+        "maximum": 35
+      },
+      "targetFirstRealCaptureCalendarWeeksAfterAuthorization": {
+        "minimum": 6,
+        "maximum": 7
+      },
+      "assumptions": [
+        "The estimate assumes parallel non-overlapping implementation lanes, a clean finding-free cycle, available independent review, and no entitlement or review delay.",
+        "The clean milestone sequence targets readiness on Day 17; the 16-20 working-day range preserves bounded exact-SHA evidence closeout, supported finding repair, and fresh review allowance without weakening a gate.",
+        "Engineering compression never waives LOCAL_TEST_GO, P1-03/P1-04 acceptance, P1-06 readiness GO, exact-SHA identity, evidence, restart, reconciliation, resource, or zero-effects gates.",
+        "After readyAtMs, the accepted prospective calendar derives S1, captures the candidate frame through S5, publishes the immutable manifest before S6, rehearses operations during S6-S14, and begins real collection at S15.",
+        "The mandatory S1-S15 prospective lead and the exactly 65-regular-session recording window cannot be compressed by engineering parallelism or automation.",
+        "This documentation update does not authorize provider access, local-corpus execution, production-runtime provisioning, real-company selection, or recording."
+      ],
+      "milestones": [
+        {
+          "workingDays": "1-2",
+          "outcome": "Freeze the local manifest, provider/entitlement matrix, interfaces, exact configuration, test commands, and evidence format concurrently."
+        },
+        {
+          "workingDays": "3-5",
+          "outcome": "Execute the complete effects-disabled local matrix while the independent reviewer pre-reviews contracts, fixtures, and evidence structure."
+        },
+        {
+          "workingDays": "6",
+          "outcome": "Perform detached exact-SHA review and return LOCAL_TEST_GO only on unchanged passing bytes."
+        },
+        {
+          "workingDays": "7-11",
+          "outcome": "Run parallel SEC, FMP, generic issuer-IR, and universe/calendar implementation lanes under separately frozen authority."
+        },
+        {
+          "workingDays": "12-14",
+          "outcome": "Integrate and pass memory/SQLite replay, every-prefix restart, correction, reconciliation, resource, and zero-effects gates."
+        },
+        {
+          "workingDays": "15-17",
+          "outcome": "Run the P1-06 sustained readiness drill and independent readiness review; accepted readiness establishes readyAtMs."
+        },
+        {
+          "workingDays": "from-readyAtMs",
+          "outcome": "Derive S1, capture the candidate frame through S5, publish the immutable manifest before S6, rehearse during S6-S14, and begin real collection at S15."
+        }
+      ],
+      "recordingDesign": {
+        "targetClusters": 180,
+        "laneMembership": {
+          "standard": 120,
+          "specialized": 40,
+          "prospectiveControl": 20
+        },
+        "regularSessions": 65,
+        "localValidationCasesAreScientificSample": false
+      }
+    },
     "elapsedTimeExclusions": [
       "Human and provider response time for P1-09",
       "Waiting for an eligible scheduled earnings window",
@@ -75,6 +137,39 @@
         "Compare exact maxima and one-over vectors to the accepted resource contracts; preserve raw measurements and host-isolation diagnostics without relaxing deterministic bounds."
       ],
       "finalDecision": "Return LOCAL_TEST_GO only if the frozen manifest, exact configuration, all thresholds, deterministic replay, restart matrix, integrity/reconciliation, resource evidence, effects-disabled proof, and independent review pass on unchanged bytes. Otherwise preserve LOCAL_TEST_NO_GO with exact reproductions; no waiver, corpus substitution, or later-scope authorization is implied."
+    },
+    "providerArchitecture": {
+      "status": "preserved-planning-only-no-provider-access-authorized",
+      "broadCandidateDiscovery": "FMP earnings calendar, subject to separately frozen exact dataset, endpoint, entitlement, retention, and use authority.",
+      "regulatoryReleaseConfirmation": "SEC submissions with exact CIK, filing, artifact, and retrieval provenance.",
+      "issuerOwnedSources": "One configuration-driven generic issuer-IR source family; the recorded NVIDIA RSS/IR fixture is the first supported pattern and does not imply one bespoke adapter per issuer.",
+      "primaryMarketSource": "Alpaca historical REST feed=sip with an end time older than 15 minutes under the existing accepted entitlement boundary.",
+      "privateDiscrepancySource": "FMP market data under the approved private non-fallback discrepancy policy; it never fills missing primary evidence.",
+      "newCommercialProviderGate": "Do not authorize a new commercial provider unless a frozen coverage rehearsal proves that the current sources cannot fill the exact 120/40/20 prospective frame; any addition requires its own pre-outcome contract, entitlement, retention, cost, provenance, and independent review."
+    },
+    "automationWorkstream": {
+      "status": "planning-only-separately-authorized-implementation-required",
+      "scope": [
+        "One-command local-validation and P1-06 readiness gates.",
+        "Deterministic manifest and exact-configuration compilation.",
+        "Provider-adapter scaffolding and contract-test generation.",
+        "A configuration-driven issuer-source registry.",
+        "Generated every-prefix restart and fault matrices.",
+        "Automatic reconciliation and resource measurement.",
+        "Exact-SHA evidence packaging and local/origin/PR/CI identity verification.",
+        "Gate-state tracking that prevents overlapping, stale, or wrong-byte runs.",
+        "Candidate-frame preflight and deterministic exact 180-cluster selection.",
+        "Continuous zero-network and zero-financial-effects assertions."
+      ],
+      "potentialCleanCycleEngineeringWorkingDays": {
+        "minimum": 13,
+        "maximum": 16
+      },
+      "constraints": [
+        "Automation cannot weaken, skip, merge, infer, or self-authorize any contract, entitlement, evidence, review, or decision gate.",
+        "Automation cannot shorten the mandatory S1-S15 prospective lead or the exactly 65-regular-session recording window.",
+        "This documentation change does not authorize or implement the automation workstream."
+      ]
     }
   },
   "stages": [
@@ -238,7 +333,7 @@
           "status": "done",
           "owner": "integration-owner",
           "dependsOn": ["P1-02", "P1-05"],
-          "acceptance": "ADR 0010 freezes observation anchors, prior-close/release-gap/residual movement metrics, quote/trade and session rules, deterministic market identity and joins, corrections, missing-data reason codes, resource bounds, licensing, and the precommitted 100-200-cluster study design without changing frozen kernel ports.",
+          "acceptance": "ADR 0010 freezes observation anchors, prior-close/release-gap/residual movement metrics, quote/trade and session rules, deterministic market identity and joins, corrections, missing-data reason codes, resource bounds, licensing, the 100-200 schema range, and the accepted exact 180-cluster 120/40/20 run design without changing frozen kernel ports.",
           "evidence": [
             "docs/agent-prompts/adr-0010-market-reference.md",
             "docs/audit/pre-pr-2d-readiness.md",
@@ -465,15 +560,15 @@
       "name": "Forward observation run",
       "status": "blocked",
       "blocker": "P2 collection and outcome calculation remain prohibited until P1-06 receives its independent readiness GO",
-      "goal": "Collect and freeze 100-200 precommitted forward clusters, then validate source quality, first-observation latency, and reproducible event-time price movement before authorizing new data spend.",
+      "goal": "Collect and freeze exactly 180 prospectively selected forward clusters with fixed 120 standard, 40 specialized, and 20 prospective-control membership across exactly 65 regular sessions, then validate source quality, first-observation latency, and reproducible event-time price movement before authorizing new data spend.",
       "tasks": [
         {
           "id": "P2-01",
-          "title": "100-200 cluster collection",
+          "title": "Exact 180-cluster prospective collection",
           "status": "planned",
           "owner": "agent",
           "dependsOn": ["P1-06", "P1-09"],
-          "acceptance": "Every precommitted cluster has source timestamps, raw artifact identities, duplicates, revisions, a prospectively frozen stratum/control assignment, an event-time data-quality snapshot, and a frozen marketReferenceJoinKey or stable missing-reference reason; missing cases remain in the denominator and later trade eligibility remains out of scope.",
+          "acceptance": "Exactly 180 precommitted clusters with fixed 120 standard, 40 specialized, and 20 prospective-control membership are collected across exactly 65 regular sessions. Every cluster has source timestamps, raw artifact identities, duplicates, revisions, a prospectively frozen stratum/control assignment, an event-time data-quality snapshot, and a frozen marketReferenceJoinKey or stable missing-reference reason; missing cases remain in the denominator and later trade eligibility remains out of scope.",
           "evidence": [
             "docs/research/no-trade-policy-disposition.md",
             "docs/research/market-data-entitlement-gate.md"
