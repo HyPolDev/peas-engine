@@ -49,7 +49,9 @@ const acquisitionObservationId = deriveAcquisitionObservationId({
   routeLabel: "alpaca-v2-historical-quotes",
 });
 
-function artifactStoreDouble(): Readonly<{ store: ArtifactStore; readCalls: () => number }> {
+function artifactStoreDouble(
+  provider = "alpaca",
+): Readonly<{ store: ArtifactStore; readCalls: () => number }> {
   let reads = 0;
   const request = {
     method: "GET",
@@ -60,7 +62,7 @@ function artifactStoreDouble(): Readonly<{ store: ArtifactStore; readCalls: () =
   };
   const attempt = {
     attemptId: retrievalAttemptId,
-    provider: "alpaca",
+    provider,
     recordId: "synthetic-record",
     revisionId: "synthetic-revision",
     startedAtMs: 1_000,
@@ -72,7 +74,7 @@ function artifactStoreDouble(): Readonly<{ store: ArtifactStore; readCalls: () =
     observationId: artifactObservationId,
     attemptId: retrievalAttemptId,
     artifactDigest: digest,
-    provider: "alpaca",
+    provider,
     recordId: "synthetic-record",
     revisionId: "synthetic-revision",
     retrievedAtMs: 1_001,
@@ -356,6 +358,25 @@ test("artifact verification reconciles attempt, observation, metadata, digest, a
       }),
     /retention-enforced-store-required/u,
   );
+
+  const substitutedProvider = artifactStoreDouble("fmp");
+  const substitutedProviderGuard = retentionGuardedArtifactStore(substitutedProvider.store, [
+    { artifactDigest: digest, artifactSizeBytes: bytes.byteLength, artifactObservationId },
+  ]);
+  await assert.rejects(
+    () =>
+      verifyCommittedArtifact(substitutedProviderGuard, {
+        artifactObservationId,
+        artifactDigest: digest,
+        artifactSizeBytes: bytes.byteLength,
+        artifactObservationHash,
+        retrievalAttemptId,
+        requestIdentityHash,
+        provider: "alpaca",
+      }),
+    /artifact-observation-mismatch/u,
+  );
+  assert.equal(substitutedProvider.readCalls(), 0);
 });
 
 test("live ledger uses genuine ADR-0009 entries and a distinct matching clock parent", () => {
@@ -448,6 +469,41 @@ test("replay is page-size invariant, omits request facts, and re-verifies artifa
     pageSize: 2,
   });
   assert.equal(fixture.readCalls(), 1, "physical duplicate is reverified once per replay");
+});
+
+test("verified replay and cold restart reject a durable provider substitution", async () => {
+  const ledger = buildLiveLedger();
+  const expectation = {
+    artifactObservationId,
+    artifactDigest: digest,
+    artifactSizeBytes: bytes.byteLength,
+    artifactObservationHash,
+    retrievalAttemptId,
+    requestIdentityHash,
+    provider: "alpaca",
+  } as const;
+
+  for (const executionId of [
+    "p1-10-provider-substitution-direct-replay-v1",
+    "p1-10-provider-substitution-cold-restart-v1",
+  ]) {
+    const restartedStore = artifactStoreDouble("fmp");
+    const restartedGuard = retentionGuardedArtifactStore(restartedStore.store, [
+      { artifactDigest: digest, artifactSizeBytes: bytes.byteLength, artifactObservationId },
+    ]);
+    await assert.rejects(
+      () =>
+        replayVerifiedAcquisition({
+          artifactStore: restartedGuard,
+          artifacts: [expectation],
+          ledger,
+          executionId,
+          pageSize: 2,
+        }),
+      /artifact-observation-mismatch/u,
+    );
+    assert.equal(restartedStore.readCalls(), 0);
+  }
 });
 
 test("duplicate and conflicting delivery classification is order-independent", () => {

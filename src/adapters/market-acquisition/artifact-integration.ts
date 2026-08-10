@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { isProxy } from "node:util/types";
+import { canonicalHash } from "../../core/hash.js";
 import { canonicalJson, type JsonValue } from "../../core/json.js";
 import { P1_10_TEST_AUTHORITY } from "../../internal-test-authority.js";
 
@@ -300,10 +301,14 @@ export async function verifyCommittedArtifact(
   }
   const observation = await store.getObservation(expected.artifactObservationId);
   const persistedAttemptId = persistedRetrievalAttemptId(expected.retrievalAttemptId);
+  const persistedProviderId = `prv1_${canonicalHash("peas/artifact-provider-identifier/v1", {
+    value: expected.provider,
+  })}`;
   if (
     observation === undefined ||
     observation.artifactDigest !== expected.artifactDigest ||
     observation.observationHash !== expected.artifactObservationHash ||
+    (observation.provider !== expected.provider && observation.provider !== persistedProviderId) ||
     (observation.attemptId !== expected.retrievalAttemptId &&
       observation.attemptId !== persistedAttemptId) ||
     observation.request.identityHash !== expected.requestIdentityHash
