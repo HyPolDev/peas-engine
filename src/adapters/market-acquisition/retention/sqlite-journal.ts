@@ -249,17 +249,20 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
           .prepare(`SELECT stop_event_id FROM market_retention_provider_denials
             WHERE provider_lane = ? AND provider_id = ?`)
           .get(stop.providerLane, stop.providerId) as { stop_event_id: string } | undefined;
-        if (providerDenial?.stop_event_id !== stop.stopEventId)
-          throw new Error("Provider already has a conflicting retention stop");
+        if (providerDenial === undefined)
+          throw new Error("Provider retention denial insert failed");
+        // A later ownership registration is settled by a new immutable stop/plan generation,
+        // while the original provider denial remains the permanent admission root.
+        const denialStopEventId = providerDenial.stop_event_id;
         const insertDigest = this.#database.prepare(
           "INSERT OR IGNORE INTO market_retention_digest_denials (stop_event_id, artifact_digest) VALUES (?, ?)",
         );
         for (const ownership of this.listOwnership(stop.providerLane, stop.providerId))
-          insertDigest.run(stop.stopEventId, ownership.artifactDigest);
+          insertDigest.run(denialStopEventId, ownership.artifactDigest);
         const insertDerived = this.#database.prepare(
           "INSERT OR IGNORE INTO market_retention_derivation_denials (stop_event_id, derived_id) VALUES (?, ?)",
         );
-        for (const derivedId of derivedIds) insertDerived.run(stop.stopEventId, derivedId);
+        for (const derivedId of derivedIds) insertDerived.run(denialStopEventId, derivedId);
       })
       .immediate();
   }
@@ -335,6 +338,12 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
     )
       throw new Error("Retention plan evidence mismatch");
     return value;
+  }
+  getPlanForStop(stopEventId: string): RetentionErasurePlan | undefined {
+    const row = this.#database
+      .prepare("SELECT plan_id FROM market_retention_erasure_plans WHERE stop_event_id = ?")
+      .get(stopEventId) as { plan_id: string } | undefined;
+    return row === undefined ? undefined : this.getPlan(row.plan_id);
   }
 
   recordAttempt(value: RetentionErasureAttempt): void {
@@ -550,6 +559,117 @@ export class SqliteArtifactRetentionJournal implements ArtifactRetentionJournal 
         safeSqliteNumber(row.completed_at_ms, "Receipt revalidation time") !== parsed.recordedAtMs
       ) {
         throw new Error("Retention receipt revalidation relational evidence mismatch");
+      }
+      return parsed;
+    });
+  }
+
+  recordReceiptRevalidationAndCheckpoint(
+    value: RetentionReceiptRevalidation,
+    checkpoint: RetentionCheckpoint,
+  ): void {
+    if (
+      checkpoint.planId !== value.planId ||
+      checkpoint.receiptId !== value.receipt.receiptId ||
+      checkpoint.sequence !== value.sequence ||
+      checkpoint.completedAtMs !== value.receipt.completedAtMs
+    ) {
+      throw new Error("Receipt revalidation checkpoint evidence mismatch");
+    }
+    this.#database
+      .transaction(() => {
+        this.recordReceiptRevalidation(value);
+        const json = canonicalJson(checkpoint as unknown as JsonValue);
+        const hash = canonicalHash(
+          "peas/market-acquisition-retention-checkpoint-record/v1",
+          checkpoint as unknown as JsonValue,
+        );
+        this.#database
+          .prepare(`INSERT OR IGNORE INTO market_retention_revalidation_checkpoints (
+            checkpoint_id, plan_id, revalidation_id, receipt_id, sequence, completed_at_ms,
+            checkpoint_json, checkpoint_hash
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(
+            checkpoint.checkpointId,
+            checkpoint.planId,
+            value.revalidationId,
+            checkpoint.receiptId,
+            checkpoint.sequence,
+            checkpoint.completedAtMs,
+            json,
+            hash,
+          );
+        const row = this.#database
+          .prepare(`SELECT checkpoint_json AS json, checkpoint_hash AS hash,
+            checkpoint_id, plan_id, revalidation_id, receipt_id, sequence, completed_at_ms
+            FROM market_retention_revalidation_checkpoints WHERE plan_id = ? AND sequence = ?`)
+          .get(checkpoint.planId, checkpoint.sequence) as
+          | (JsonRow & {
+              checkpoint_id: string;
+              plan_id: string;
+              revalidation_id: string;
+              receipt_id: string;
+              sequence: bigint;
+              completed_at_ms: bigint;
+            })
+          | undefined;
+        if (row === undefined) throw new Error("Retention revalidation checkpoint insert failed");
+        const parsed = parseRecord<RetentionCheckpoint>(
+          row,
+          "peas/market-acquisition-retention-checkpoint-record/v1",
+        );
+        if (
+          row.checkpoint_id !== parsed.checkpointId ||
+          row.plan_id !== parsed.planId ||
+          row.revalidation_id !== value.revalidationId ||
+          row.receipt_id !== parsed.receiptId ||
+          safeSqliteNumber(row.sequence, "Revalidation checkpoint sequence") !== parsed.sequence ||
+          safeSqliteNumber(row.completed_at_ms, "Revalidation checkpoint time") !==
+            parsed.completedAtMs
+        ) {
+          throw new Error("Retention revalidation checkpoint relational evidence mismatch");
+        }
+        sameRecord("Revalidation checkpoint", parsed, checkpoint);
+      })
+      .immediate();
+  }
+
+  revalidationCheckpointsForPlan(planId: string): readonly RetentionCheckpoint[] {
+    const rows = this.#database
+      .prepare(`SELECT checkpoint_json AS json, checkpoint_hash AS hash,
+        checkpoint_id, plan_id, revalidation_id, receipt_id, sequence, completed_at_ms
+        FROM market_retention_revalidation_checkpoints WHERE plan_id = ? ORDER BY sequence`)
+      .all(planId) as Array<
+      JsonRow & {
+        checkpoint_id: string;
+        plan_id: string;
+        revalidation_id: string;
+        receipt_id: string;
+        sequence: bigint;
+        completed_at_ms: bigint;
+      }
+    >;
+    return rows.map((row) => {
+      const parsed = parseRecord<RetentionCheckpoint>(
+        row,
+        "peas/market-acquisition-retention-checkpoint-record/v1",
+      );
+      if (
+        row.checkpoint_id !== parsed.checkpointId ||
+        row.plan_id !== parsed.planId ||
+        row.receipt_id !== parsed.receiptId ||
+        safeSqliteNumber(row.sequence, "Revalidation checkpoint sequence") !== parsed.sequence ||
+        safeSqliteNumber(row.completed_at_ms, "Revalidation checkpoint time") !==
+          parsed.completedAtMs
+      ) {
+        throw new Error("Retention revalidation checkpoint relational evidence mismatch");
+      }
+      const revalidation = this.#database
+        .prepare(`SELECT revalidation_id FROM market_retention_receipt_revalidations
+          WHERE plan_id = ? AND sequence = ?`)
+        .get(parsed.planId, parsed.sequence) as { revalidation_id: string } | undefined;
+      if (revalidation?.revalidation_id !== row.revalidation_id) {
+        throw new Error("Retention revalidation checkpoint relational evidence mismatch");
       }
       return parsed;
     });

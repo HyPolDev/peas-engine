@@ -1309,7 +1309,7 @@ test("durable attempt claims exclude replay and concurrent remint before one sec
   );
 });
 
-test("SQLite restart advances one owned attempt ordinal without reminting caller identity", async (t) => {
+test("SQLite restart cannot remint a claim not advanced by the owned workflow", async (t) => {
   const fixture = await credentialAuthorizationFixture(validatedRepairPlan());
   const directory = await mkdtemp(join(tmpdir(), "peas-p1-10-credential-claim-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -1327,7 +1327,10 @@ test("SQLite restart advances one owned attempt ordinal without reminting caller
     migrations,
     fixture.request.plan,
   );
-  await restarted.establish(fixture.request);
+  await assert.rejects(
+    () => restarted.establish(fixture.request),
+    /credential-acquisition-state-not-dispatch-ready/u,
+  );
   restarted.close();
   const database = openSqliteDatabase(filename, migrations);
   const claims = database
@@ -1336,9 +1339,9 @@ test("SQLite restart advances one owned attempt ordinal without reminting caller
     .all() as Array<{ attempt_ordinal: bigint; retrieval_attempt_id: string }>;
   assert.deepEqual(
     claims.map((claim) => claim.attempt_ordinal),
-    [0n, 1n],
+    [0n],
   );
-  assert.equal(new Set(claims.map((claim) => claim.retrieval_attempt_id)).size, 2);
+  assert.equal(new Set(claims.map((claim) => claim.retrieval_attempt_id)).size, 1);
   assert.equal(
     claims.some((claim) => claim.retrieval_attempt_id === fixture.request.retrievalAttemptId),
     false,
@@ -1346,7 +1349,7 @@ test("SQLite restart advances one owned attempt ordinal without reminting caller
   database.close();
 });
 
-test("owned production admission caps caller-selected workflows before secret reads", async (t) => {
+test("owned production admission rejects caller-selected workflow remint before secret reads", async (t) => {
   const fixture = await credentialAuthorizationFixture(validatedRepairPlan());
   const directory = await mkdtemp(join(tmpdir(), "peas-p1-10-owned-admission-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -1359,7 +1362,7 @@ test("owned production admission caps caller-selected workflows before secret re
   );
   let reads = 0;
   const admittedRetrievalIds = new Set<string>();
-  for (let index = 0; index < MARKET_ACQUISITION_LIMITS.rateAttempts; index += 1) {
+  for (let index = 0; index < 1; index += 1) {
     const callerRetrievalAttemptId = `rat1_${index.toString(16).padStart(64, "0")}`;
     const evidence = await authorization.establish({
       ...fixture.request,
@@ -1382,22 +1385,18 @@ test("owned production admission caps caller-selected workflows before secret re
     );
     assert.deepEqual(result, { ok: true, value: "admitted" });
   }
-  for (
-    let index = MARKET_ACQUISITION_LIMITS.rateAttempts;
-    index < MARKET_ACQUISITION_LIMITS.attemptsPerAcquisition + 1;
-    index += 1
-  ) {
+  for (let index = 1; index < MARKET_ACQUISITION_LIMITS.attemptsPerAcquisition + 1; index += 1) {
     await assert.rejects(
       () =>
         authorization.establish({
           ...fixture.request,
           retrievalAttemptId: `rat1_${index.toString(16).padStart(64, "0")}`,
         }),
-      /credential-quota-exhausted/u,
+      /credential-acquisition-state-not-dispatch-ready/u,
     );
   }
-  assert.equal(reads, MARKET_ACQUISITION_LIMITS.rateAttempts * 2);
-  assert.equal(admittedRetrievalIds.size, MARKET_ACQUISITION_LIMITS.rateAttempts);
+  assert.equal(reads, 2);
+  assert.equal(admittedRetrievalIds.size, 1);
   authorization.close();
 
   const restarted = openTestSqliteDurableCredentialAuthorizationBoundary(
@@ -1405,7 +1404,10 @@ test("owned production admission caps caller-selected workflows before secret re
     migrations,
     fixture.request.plan,
   );
-  await assert.rejects(() => restarted.establish(fixture.request), /credential-quota-exhausted/u);
+  await assert.rejects(
+    () => restarted.establish(fixture.request),
+    /credential-acquisition-state-not-dispatch-ready/u,
+  );
   restarted.close();
   const database = openSqliteDatabase(filename, migrations);
   const claims = database
@@ -1419,10 +1421,10 @@ test("owned production admission caps caller-selected workflows before secret re
     maximum_ordinal: bigint;
   };
   assert.deepEqual(claims, {
-    count: BigInt(MARKET_ACQUISITION_LIMITS.rateAttempts),
+    count: 1n,
     acquisitions: 1n,
     minimum_ordinal: 0n,
-    maximum_ordinal: BigInt(MARKET_ACQUISITION_LIMITS.rateAttempts - 1),
+    maximum_ordinal: 0n,
   });
   database.close();
 });

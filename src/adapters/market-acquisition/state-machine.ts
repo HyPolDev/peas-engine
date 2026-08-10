@@ -582,6 +582,9 @@ function deriveNext(
     case "retry-delay-elapsed": {
       if (snapshot.pendingRetryDelayMs === null) throw new TypeError("retry-delay-not-pending");
       validateRetryDelayProof(snapshot.pendingRetryDelayMs, event.delayProof);
+      if (event.proof.nowMonotonicMs - snapshot.lastMonotonicMs < snapshot.pendingRetryDelayMs) {
+        throw new TypeError("retry-delay-proof-backdated");
+      }
       return immutableSnapshot({ ...next, pendingRetryDelayMs: null });
     }
     case "page-checkpointed": {
@@ -729,6 +732,7 @@ export function createInitialAcquisitionSnapshot(
 export class AcquisitionStateMachine {
   #snapshot: AcquisitionMachineSnapshot;
   readonly #persist: PersistTransitionPlan;
+  readonly #ownedPersistence: boolean;
 
   constructor(snapshot: AcquisitionMachineSnapshot, persist: PersistTransitionPlan) {
     validateSnapshot(snapshot);
@@ -740,6 +744,7 @@ export class AcquisitionStateMachine {
     }
     this.#snapshot = immutableSnapshot(snapshot);
     this.#persist = persist;
+    this.#ownedPersistence = ownedStatePersistence.has(persist);
   }
 
   get snapshot(): AcquisitionMachineSnapshot {
@@ -751,21 +756,120 @@ export class AcquisitionStateMachine {
    * only after the supplied durable-plan callback succeeds.
    */
   async applyAcquisitionEvent(event: AcquisitionEvent): Promise<AcquisitionTransitionPlan> {
-    const before = this.#snapshot;
-    const eventJson = canonicalJson(event as unknown as JsonValue);
-    const eventSnapshot = JSON.parse(eventJson) as AcquisitionEvent;
-    const next = deriveNext(before, eventSnapshot);
-    validateSnapshot(next);
-    const plan = Object.freeze({
-      eventKind: eventSnapshot.kind,
-      fromState: before.currentState,
-      toState: next.currentState,
-      checkpointKind: checkpointForEvent(before, eventSnapshot),
-      next,
-    });
+    if (this.#ownedPersistence && P1_10_TEST_AUTHORITY === undefined) {
+      throw new TypeError("owned-acquisition-composer-required");
+    }
+    return this.#apply(event);
+  }
+
+  async #apply(event: AcquisitionEvent): Promise<AcquisitionTransitionPlan> {
+    const { event: eventSnapshot, plan } = deriveAcquisitionTransition(this.#snapshot, event);
     await this.#persist(plan, eventSnapshot);
-    this.#snapshot = next;
+    this.#snapshot = plan.next;
     return plan;
+  }
+
+  #ownedProof(nowMonotonicMs: number, resourcesSettled = true): AcquisitionEventProof {
+    if (!this.#ownedPersistence) throw new TypeError("owned-acquisition-state-required");
+    return Object.freeze({
+      requestIdentityHash: this.#snapshot.requestIdentityHash,
+      acquisitionConfigurationHash: this.#snapshot.acquisitionConfigurationHash,
+      marketAcquisitionJournalId: this.#snapshot.marketAcquisitionJournalId,
+      runSessionNonce: this.#snapshot.runSessionNonce,
+      nowMonotonicMs,
+      resourcesSettled,
+    });
+  }
+
+  productionBeginPreflight(nowMonotonicMs: number): Promise<AcquisitionTransitionPlan> {
+    return this.#apply({ kind: "begin-preflight", proof: this.#ownedProof(nowMonotonicMs) });
+  }
+  productionApprovePreflight(nowMonotonicMs: number): Promise<AcquisitionTransitionPlan> {
+    return this.#apply({ kind: "preflight-approved", proof: this.#ownedProof(nowMonotonicMs) });
+  }
+  productionCredentialsLoaded(nowMonotonicMs: number): Promise<AcquisitionTransitionPlan> {
+    return this.#apply({ kind: "credentials-loaded", proof: this.#ownedProof(nowMonotonicMs) });
+  }
+  productionDispatchStarted(
+    nowMonotonicMs: number,
+    entitlementQuotaLimit: number,
+  ): Promise<AcquisitionTransitionPlan> {
+    return this.#apply({
+      kind: "dispatch-started",
+      proof: this.#ownedProof(nowMonotonicMs),
+      deadlineProof: Object.freeze({
+        acquisitionDeclaredMonotonicMs: this.#snapshot.acquisitionDeclaredMonotonicMs,
+        attemptStartedMonotonicMs: nowMonotonicMs,
+        nowMonotonicMs,
+      }),
+      entitlementQuotaLimit,
+    });
+  }
+  productionResponseAccepted(nowMonotonicMs: number): Promise<AcquisitionTransitionPlan> {
+    return this.#apply({ kind: "response-accepted", proof: this.#ownedProof(nowMonotonicMs) });
+  }
+  productionArtifactStoreStarted(nowMonotonicMs: number): Promise<AcquisitionTransitionPlan> {
+    return this.#apply({ kind: "artifact-store-started", proof: this.#ownedProof(nowMonotonicMs) });
+  }
+  productionArtifactStoreCommitted(nowMonotonicMs: number): Promise<AcquisitionTransitionPlan> {
+    return this.#apply({
+      kind: "artifact-store-committed",
+      proof: this.#ownedProof(nowMonotonicMs),
+    });
+  }
+  productionArtifactVerificationStarted(
+    nowMonotonicMs: number,
+  ): Promise<AcquisitionTransitionPlan> {
+    return this.#apply({
+      kind: "artifact-verification-started",
+      proof: this.#ownedProof(nowMonotonicMs),
+    });
+  }
+  productionPageVerified(nowMonotonicMs: number): Promise<AcquisitionTransitionPlan> {
+    return this.#apply({ kind: "page-verified", proof: this.#ownedProof(nowMonotonicMs) });
+  }
+  productionRetryCleanup(
+    nowMonotonicMs: number,
+    failure: RetryContext["failure"],
+    resourcesSettled: boolean,
+  ): Promise<AcquisitionTransitionPlan> {
+    return this.#apply({
+      kind: "retry-cleanup-complete",
+      proof: this.#ownedProof(nowMonotonicMs, resourcesSettled),
+      context: Object.freeze({
+        failure,
+        pageAttemptsStarted: this.#snapshot.pageAttemptsStarted,
+        acquisitionAttemptsStarted: this.#snapshot.budgets.attempts,
+      }),
+    });
+  }
+  productionRetryDelayElapsed(nowMonotonicMs: number): Promise<AcquisitionTransitionPlan> {
+    const delayMs = this.#snapshot.pendingRetryDelayMs;
+    if (delayMs === null) throw new TypeError("retry-delay-not-pending");
+    return this.#apply({
+      kind: "retry-delay-elapsed",
+      proof: this.#ownedProof(nowMonotonicMs),
+      delayProof: Object.freeze({
+        clockBasis: "same-session-monotonic",
+        elapsedMs: delayMs,
+        monotonicOrderValid: true,
+      }),
+    });
+  }
+  productionAttemptFailed(
+    nowMonotonicMs: number,
+    reason: MarketAcquisitionTerminalReason,
+  ): Promise<AcquisitionTransitionPlan> {
+    return this.#apply({ kind: "attempt-failed", reason, proof: this.#ownedProof(nowMonotonicMs) });
+  }
+  productionArtifactStoreFailed(nowMonotonicMs: number): Promise<AcquisitionTransitionPlan> {
+    return this.#apply({ kind: "artifact-store-failed", proof: this.#ownedProof(nowMonotonicMs) });
+  }
+  productionPageVerificationFailed(nowMonotonicMs: number): Promise<AcquisitionTransitionPlan> {
+    return this.#apply({
+      kind: "page-verification-failed",
+      proof: this.#ownedProof(nowMonotonicMs),
+    });
   }
 }
 
@@ -774,6 +878,9 @@ export function createOwnedAcquisitionStateMachine(
   authorization: DurableCredentialAuthorizationBoundary,
   snapshot: AcquisitionMachineSnapshot,
 ): AcquisitionStateMachine {
+  if (P1_10_TEST_AUTHORITY === undefined) {
+    throw new TypeError("owned-acquisition-state-test-composition-unavailable");
+  }
   assertOwnedAcquisitionStateSnapshot(authorization, snapshot);
   const persist: PersistTransitionPlan = async (plan, event) => {
     if (event === undefined) throw new TypeError("owned-acquisition-event-required");
@@ -793,10 +900,35 @@ export function createOwnedAcquisitionStateMachine(
 export function openOwnedAcquisitionStateMachine(
   authorization: DurableCredentialAuthorizationBoundary,
 ): AcquisitionStateMachine {
+  if (P1_10_TEST_AUTHORITY === undefined) {
+    throw new TypeError("owned-acquisition-state-test-composition-unavailable");
+  }
   return createOwnedAcquisitionStateMachine(
     authorization,
     loadOwnedAcquisitionStateSnapshot(authorization),
   );
+}
+
+/** Pure closed reducer used by the lexical production composer and deterministic tests. */
+export function deriveAcquisitionTransition(
+  snapshot: AcquisitionMachineSnapshot,
+  event: AcquisitionEvent,
+): Readonly<{ event: AcquisitionEvent; plan: AcquisitionTransitionPlan }> {
+  validateSnapshot(snapshot);
+  const eventJson = canonicalJson(event as unknown as JsonValue);
+  const eventSnapshot = JSON.parse(eventJson) as AcquisitionEvent;
+  const next = deriveNext(snapshot, eventSnapshot);
+  validateSnapshot(next);
+  return Object.freeze({
+    event: eventSnapshot,
+    plan: Object.freeze({
+      eventKind: eventSnapshot.kind,
+      fromState: snapshot.currentState,
+      toState: next.currentState,
+      checkpointKind: checkpointForEvent(snapshot, eventSnapshot),
+      next,
+    }),
+  });
 }
 
 export function consumeOwnedAcquisitionTransitionReceipt(

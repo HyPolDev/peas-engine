@@ -170,6 +170,7 @@ export class DurableAlpacaWireAdmissionBoundary {
   readonly #evidence: AlpacaWireSemanticEvidenceStore;
   readonly #artifacts: RetentionEnforcedArtifactStore | undefined;
   readonly #retention: ArtifactRetentionJournal | undefined;
+  readonly #completeChainIssued = new Set<string>();
 
   constructor(
     journal: AcquisitionJournal,
@@ -215,7 +216,18 @@ export class DurableAlpacaWireAdmissionBoundary {
       input.marketAcquisitionJournalId,
       input.expectedIdentity,
     );
-    const latest = journal.at(-1);
+    const durableLatest = journal.at(-1);
+    if (durableLatest === undefined) {
+      throw new AlpacaWireContractError("page-semantic-authority-invalid");
+    }
+    const latest =
+      durableLatest.checkpointKind === "chain-complete"
+        ? journal.find(
+            (entry) =>
+              entry.checkpointKind === "artifact-verified" &&
+              !this.#completeChainIssued.has(entry.journalEntryHash),
+          )
+        : durableLatest;
     if (latest === undefined) {
       throw new AlpacaWireContractError("page-semantic-authority-invalid");
     }
@@ -336,6 +348,9 @@ export class DurableAlpacaWireAdmissionBoundary {
         ...(retentionLease === undefined ? {} : { retentionLease }),
       }),
     );
+    if (durableLatest.checkpointKind === "chain-complete") {
+      this.#completeChainIssued.add(latest.journalEntryHash);
+    }
     return authority;
   }
 

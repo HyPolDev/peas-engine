@@ -1219,6 +1219,10 @@ test("a hard-killed install intent cannot resurrect content after a durable dige
       canonicalHash("peas/retention-stop-test/v1", stop as unknown as JsonValue),
     );
   database
+    .prepare(`INSERT INTO market_retention_provider_denials
+      (stop_event_id, provider_lane, provider_id, effective_at_ms) VALUES (?, ?, ?, ?)`)
+    .run(stop.stopEventId, stop.providerLane, stop.providerId, stop.effectiveAtMs);
+  database
     .prepare(
       "INSERT INTO market_retention_digest_denials (stop_event_id, artifact_digest) VALUES (?, ?)",
     )
@@ -1229,16 +1233,7 @@ test("a hard-killed install intent cannot resurrect content after a durable dige
     config: vaultConfig(root),
   });
   try {
-    await assert.rejects(() => recovered.reconcile(), /denied by retention policy/u);
-    const cursor = (
-      database
-        .prepare("SELECT cursor_token FROM artifact_reconciliation_state WHERE singleton = 1")
-        .get() as { cursor_token: string }
-    ).cursor_token;
-    let report = await recovered.reconcile({ cursor });
-    while (report.continuationCursor !== null) {
-      report = await recovered.reconcile({ cursor: report.continuationCursor });
-    }
+    await assert.rejects(() => recovered.reconcile(), /Reconciliation use is denied/u);
     await assert.rejects(() => recovered.stat(digest), /Artifact use is denied/u);
     assert.equal(
       (database.prepare("SELECT count(*) count FROM artifact_blobs").get() as { count: bigint })

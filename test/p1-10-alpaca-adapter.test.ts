@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import type { ArtifactStore } from "../src/artifacts/artifact-store.js";
+import type { ArtifactStore, ArtifactVaultConfig } from "../src/artifacts/artifact-store.js";
+import { ManualClock } from "../src/core/clock.js";
 import { canonicalHash } from "../src/core/hash.js";
 import { canonicalJson, type JsonValue } from "../src/core/json.js";
 import { AlpacaProductionAttemptBoundary } from "../src/adapters/market-acquisition/alpaca/adapter.js";
@@ -23,10 +24,14 @@ import type {
 import {
   RetentionOwnedAlpacaPageSink,
   createRetentionOwnedAlpacaPageSink,
+  createDurableAlpacaArtifactCommitSink,
   createTestAlpacaArtifactCommitSink,
 } from "../src/adapters/market-acquisition/alpaca/retained-sink.js";
 import { createOwnedAlpacaDeadlineScheduler } from "../src/adapters/market-acquisition/alpaca/deadline.js";
 import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
+import { DurableArtifactStore } from "../src/adapters/artifacts/durable-artifact-store.js";
+import { artifactRuntimePaths } from "../src/adapters/artifacts/runtime-root.js";
+import { SqliteArtifactRepository } from "../src/adapters/artifacts/sqlite-artifact-repository.js";
 import {
   MarketAcquisitionLedger,
   decideAcquisitionRestart,
@@ -42,7 +47,9 @@ import { validateMarketAcquisitionConfiguration } from "../src/adapters/market-a
 import type { AlpacaAuthorizationHeaders } from "../src/adapters/market-acquisition/credentials.js";
 import {
   createTestCredentialIsolatedAlpacaTransport,
+  openTestSqliteDurableCredentialAuthorizationBoundary,
   openSqliteDurableCredentialAuthorizationBoundary,
+  ownedLiveCredentialAcquisitionJournal,
   provisionSqliteDurableCredentialAuthorityRuntime,
 } from "../src/adapters/market-acquisition/credentials.js";
 import {
@@ -75,10 +82,13 @@ import {
 } from "../src/providers/observation-ledger.js";
 import {
   type DefaultArtifactRetentionController,
+  createArtifactRetentionController,
   createTestArtifactRetentionController,
 } from "../src/adapters/market-acquisition/retention/controller.js";
 import type { RetentionArtifactBoundary } from "../src/adapters/market-acquisition/retention/contracts.js";
 import { createMemoryArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/memory-journal.js";
+import { createSqliteArtifactRetentionJournal } from "../src/adapters/market-acquisition/retention/sqlite-journal.js";
+import { VaultArtifactRetentionBoundary } from "../src/adapters/market-acquisition/retention/vault-boundary.js";
 import {
   AcquisitionStateMachine,
   createInitialAcquisitionSnapshot,
@@ -276,6 +286,42 @@ function validatedPlan(
   assert.equal(result.ok, true);
   if (!result.ok) throw new Error("test plan must validate");
   return result.value;
+}
+
+function validatedCalendarPlan(): ValidatedMarketAcquisitionConfiguration {
+  const queryEndNs = 1_999_030_000_000_000_000n;
+  const requestStartedNs = queryEndNs + 900_000_000_000n;
+  const input = configuration("quotes", queryEndNs);
+  const clock = input.trustedClockEvidence as NonNullable<
+    MarketAcquisitionConfigurationInput["trustedClockEvidence"]
+  > & { priorSample: Record<string, unknown>; currentSample: Record<string, unknown> };
+  const validated = validateMarketAcquisitionConfiguration({
+    ...input,
+    trustedClockEvidence: {
+      ...clock,
+      priorSample: { ...clock.priorSample, wallNs: requestStartedNs - 1n },
+      currentSample: { ...clock.currentSample, wallNs: requestStartedNs },
+    },
+  });
+  assert.equal(validated.ok, true);
+  if (!validated.ok) throw new Error("calendar-authorized plan must validate");
+  return validated.value;
+}
+
+function productionVaultConfig(runtimeRoot: string): ArtifactVaultConfig {
+  return {
+    runtimeRootMode: "ci-temporary",
+    runtimeRoot,
+    maxArtifactBytes: MARKET_ACQUISITION_LIMITS.rawArtifactBytes,
+    maxVaultBytes: MARKET_ACQUISITION_LIMITS.rawArtifactBytes * 2,
+    maxConcurrentWrites: 1,
+    streamHighWaterMarkBytes: 17,
+    stageExpiryMs: 1_000,
+    writerLeaseBehavior: "fail",
+    writerLeaseWaitMs: 0,
+    writerLeaseDurationMs: 30_000,
+    writerLeaseRenewalMs: 10_000,
+  };
 }
 
 type ResourceCounts = {
@@ -1121,6 +1167,271 @@ test("the production attempt boundary durably drives the exact claimed attempt t
   assert.match(restarted.retrievalAttemptId ?? "", /^rat1_[0-9a-f]{64}$/u);
   assert.equal(restarted.budgets.attempts, 1);
   assert.equal(counters.transport, 1);
+});
+
+test("the owned durable sink composes verified bytes through a terminal page checkpoint", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "peas-p1-10-owned-page-composer-"));
+  const previousRoot = process.env["PEAS_RUNTIME_ROOT"];
+  let authorization: ReturnType<typeof openSqliteDurableCredentialAuthorizationBoundary> | null =
+    null;
+  let store: DurableArtifactStore | null = null;
+  let database: ReturnType<typeof openSqliteDatabase> | null = null;
+  t.after(async () => {
+    authorization?.close();
+    await store?.close();
+    if (database?.open) database.close();
+    if (previousRoot === undefined) delete process.env["PEAS_RUNTIME_ROOT"];
+    else process.env["PEAS_RUNTIME_ROOT"] = previousRoot;
+    rmSync(root, { recursive: true, force: true });
+  });
+  process.env["PEAS_RUNTIME_ROOT"] = root;
+  const plan = validatedCalendarPlan();
+  const migrations = loadMigrations(join(process.cwd(), "migrations"));
+  const paths = artifactRuntimePaths(root);
+  mkdirSync(paths.databaseDirectory, { recursive: true });
+  database = openSqliteDatabase(paths.databasePath, migrations);
+  store = await DurableArtifactStore.open({
+    repository: new SqliteArtifactRepository(database),
+    clock: new ManualClock(Number(plan.trustedRequestStartedAtNs / 1_000_000n) + 1),
+    config: productionVaultConfig(root),
+  });
+  const retentionJournal = createSqliteArtifactRetentionJournal(database);
+  const vault = await VaultArtifactRetentionBoundary.open({ store, runtimeRoot: root });
+  const retention = createArtifactRetentionController({
+    journal: retentionJournal,
+    artifacts: vault,
+  });
+  authorization = openTestSqliteDurableCredentialAuthorizationBoundary(
+    join(paths.databaseDirectory, "owned-page-credential.sqlite"),
+    migrations,
+    plan,
+  );
+  const fixture = await credentialAuthorizationFixture(plan);
+  const wireBytes = Buffer.from(
+    JSON.stringify({
+      quotes: {
+        QA: [
+          {
+            t: timestamp(plan.queryStartNs + 1n),
+            bx: "PX",
+            bp: 17.125,
+            bs: 3,
+            ap: 17.875,
+            as: 5,
+            ax: "QX",
+            c: ["Q1"],
+            z: "A",
+          },
+        ],
+      },
+      next_page_token: null,
+    }),
+    "utf8",
+  );
+  const counters = counts();
+  const transportDouble = new TransportDouble(
+    counters,
+    response(new BodyDouble(counters, [wireBytes]), { contentLength: wireBytes.byteLength }),
+  );
+  const responseMetadata = {
+    statusCode: 200,
+    etag: null,
+    lastModified: null,
+    mediaType: "application/json",
+    contentEncoding: null,
+    declaredContentLength: wireBytes.byteLength,
+    transportDecoded: true as const,
+  };
+  const sink = createRetentionOwnedAlpacaPageSink(
+    createDurableAlpacaArtifactCommitSink(store, {
+      request: { response: responseMetadata },
+      plan,
+      retention: { derivedIds: [] },
+    }),
+    retention,
+  );
+  const boundary = new AlpacaProductionAttemptBoundary(
+    {
+      read(name) {
+        return name.endsWith("KEY_ID") ? "synthetic-key" : "synthetic-secret";
+      },
+    },
+    authorization,
+  );
+  const result = await boundary.execute({
+    plan,
+    credentialAuthorization: fixture.request,
+    page: firstPage(),
+    transport: createTestCredentialIsolatedAlpacaTransport({
+      dispatch: (request) => transportDouble.dispatch(request),
+      abort: () => transportDouble.abort(),
+      settle: () => transportDouble.settle(),
+    }),
+    artifactSink: sink,
+    deadlineScheduler: new TimerDouble().scheduler,
+  });
+  assert.equal(result.ok, true);
+  const restarted = openOwnedAcquisitionStateMachine(authorization).snapshot;
+  assert.equal(restarted.currentState, "chain-complete");
+  assert.equal(restarted.budgets.successfulPages, 1);
+  const journal = await ownedLiveCredentialAcquisitionJournal(authorization, plan);
+  const journalId = deriveMarketAcquisitionJournalId({
+    schemaVersion: 1,
+    requestIdentityHash: plan.requestIdentityHash,
+    providerId: plan.route.providerId,
+    datasetId: plan.route.datasetId,
+    feedId: plan.route.feedId,
+    endpointChannelId: plan.route.endpointChannelId,
+  });
+  assert.equal((await journal.load(journalId)).at(-1)?.checkpointKind, "chain-complete");
+  assert.equal(counters.transport, 1);
+  assert.equal(unexpectedNetworkCalls, 0);
+});
+
+test("owned continuation survives SQLite restart and ignores caller token authority", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "peas-p1-10-owned-continuation-"));
+  const previousRoot = process.env["PEAS_RUNTIME_ROOT"];
+  let authorization: ReturnType<typeof openSqliteDurableCredentialAuthorizationBoundary> | null =
+    null;
+  let store: DurableArtifactStore | null = null;
+  let database: ReturnType<typeof openSqliteDatabase> | null = null;
+  t.after(async () => {
+    authorization?.close();
+    await store?.close();
+    if (database?.open) database.close();
+    if (previousRoot === undefined) delete process.env["PEAS_RUNTIME_ROOT"];
+    else process.env["PEAS_RUNTIME_ROOT"] = previousRoot;
+    rmSync(root, { recursive: true, force: true });
+  });
+  process.env["PEAS_RUNTIME_ROOT"] = root;
+  const plan = validatedCalendarPlan();
+  const migrations = loadMigrations(join(process.cwd(), "migrations"));
+  const paths = artifactRuntimePaths(root);
+  mkdirSync(paths.databaseDirectory, { recursive: true });
+  database = openSqliteDatabase(paths.databasePath, migrations);
+  store = await DurableArtifactStore.open({
+    repository: new SqliteArtifactRepository(database),
+    clock: new ManualClock(Number(plan.trustedRequestStartedAtNs / 1_000_000n) + 1),
+    config: productionVaultConfig(root),
+  });
+  const retention = createArtifactRetentionController({
+    journal: createSqliteArtifactRetentionJournal(database),
+    artifacts: await VaultArtifactRetentionBoundary.open({ store, runtimeRoot: root }),
+  });
+  const credentialPath = join(paths.databaseDirectory, "owned-continuation-credential.sqlite");
+  authorization = openTestSqliteDurableCredentialAuthorizationBoundary(
+    credentialPath,
+    migrations,
+    plan,
+  );
+  const fixture = await credentialAuthorizationFixture(plan);
+  const pageBytes = (symbol: string, nextPageToken: string | null) =>
+    Buffer.from(
+      JSON.stringify({
+        quotes: {
+          [symbol]: [
+            {
+              t: timestamp(plan.queryStartNs + BigInt(symbol === "QA" ? 1 : 2)),
+              bx: "PX",
+              bp: 17.125,
+              bs: 3,
+              ap: 17.875,
+              as: 5,
+              ax: "QX",
+              c: ["Q1"],
+              z: "A",
+            },
+          ],
+        },
+        next_page_token: nextPageToken,
+      }),
+      "utf8",
+    );
+  const executePage = async (bytes: Buffer, suppliedPage: AlpacaPageAuthority) => {
+    if (authorization === null || store === null) throw new Error("owned fixture closed");
+    const counters = counts();
+    const transport = new TransportDouble(
+      counters,
+      response(new BodyDouble(counters, [bytes]), { contentLength: bytes.byteLength }),
+    );
+    let dispatchedPageOrdinal: number | null = null;
+    let dispatchedPageToken: string | null = null;
+    const responseMetadata = {
+      statusCode: 200,
+      etag: null,
+      lastModified: null,
+      mediaType: "application/json",
+      contentEncoding: null,
+      declaredContentLength: bytes.byteLength,
+      transportDecoded: true as const,
+    };
+    const boundary = new AlpacaProductionAttemptBoundary(
+      {
+        read(name) {
+          return name.endsWith("KEY_ID") ? "synthetic-key" : "synthetic-secret";
+        },
+      },
+      authorization,
+    );
+    const result = await boundary.execute({
+      plan,
+      credentialAuthorization: fixture.request,
+      page: suppliedPage,
+      transport: createTestCredentialIsolatedAlpacaTransport({
+        dispatch: (request) => {
+          dispatchedPageOrdinal = request.pageOrdinal;
+          dispatchedPageToken = request.query.find(([key]) => key === "page_token")?.[1] ?? null;
+          return transport.dispatch(request);
+        },
+        abort: () => transport.abort(),
+        settle: () => transport.settle(),
+      }),
+      artifactSink: createRetentionOwnedAlpacaPageSink(
+        createDurableAlpacaArtifactCommitSink(store, {
+          request: { response: responseMetadata },
+          plan,
+          retention: { derivedIds: [] },
+        }),
+        retention,
+      ),
+      deadlineScheduler: new TimerDouble().scheduler,
+    });
+    return { result, transport, counters, dispatchedPageOrdinal, dispatchedPageToken };
+  };
+
+  const first = await executePage(pageBytes("QA", "owned-next-token"), firstPage());
+  assert.equal(first.result.ok, true);
+  assert.equal(
+    openOwnedAcquisitionStateMachine(authorization).snapshot.currentState,
+    "checkpointing",
+  );
+  authorization.close();
+  authorization = null;
+  authorization = openTestSqliteDurableCredentialAuthorizationBoundary(
+    credentialPath,
+    migrations,
+    plan,
+  );
+  // A caller-supplied first-page authority cannot replace the private durable continuation.
+  const second = await executePage(pageBytes("QB", null), firstPage());
+  assert.equal(second.result.ok, true, JSON.stringify(second.result));
+  assert.equal(second.dispatchedPageOrdinal, 1);
+  assert.equal(second.dispatchedPageToken, "owned-next-token");
+  const restarted = openOwnedAcquisitionStateMachine(authorization).snapshot;
+  assert.equal(restarted.currentState, "chain-complete");
+  assert.equal(restarted.budgets.successfulPages, 2);
+  assert.equal(restarted.budgets.records, 2);
+  const journal = await ownedLiveCredentialAcquisitionJournal(authorization, plan);
+  const entries = await journal.load(restarted.marketAcquisitionJournalId);
+  assert.deepEqual(
+    entries
+      .filter((entry) => entry.checkpointKind === "page-checkpointed")
+      .map((entry) => entry.pageOrdinal),
+    [0, 1],
+  );
+  assert.equal(entries.at(-1)?.checkpointKind, "chain-complete");
+  assert.equal(first.counters.transport + second.counters.transport, 2);
+  assert.equal(unexpectedNetworkCalls, 0);
 });
 
 test("caller and test-double sinks cannot attest atomic artifact ownership", async () => {

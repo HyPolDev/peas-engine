@@ -762,11 +762,48 @@ test("replay remaps a regression endpoint that is intentionally omitted", () => 
       monotonicOrderPreserved: true,
     },
   });
+  const nextRetrievalAttemptId = `rat1_${hash("post-omission-regression-attempt")}`;
+  const nextObservationId = deriveAcquisitionObservationId({
+    provider: "alpaca",
+    retrievalAttemptId: nextRetrievalAttemptId,
+    sanitizedRequestIdentityHash: requestIdentityHash,
+    routeLabel: "alpaca-v2-historical-quotes",
+  });
+  const nextDeclaration = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId,
+    parentEntryIds: [basisEntry.entryId],
+    clock: { clockBasisId: basis.clockBasisId, wallTimeMs: 100, monotonicTimeUs: 3 },
+    facts: {
+      kind: "acquisition.declared",
+      acquisitionObservationId: nextObservationId,
+      provider: "alpaca",
+      retrievalAttemptId: nextRetrievalAttemptId,
+      sanitizedRequestIdentityHash: requestIdentityHash,
+      routeLabel: "alpaca-v2-historical-quotes",
+    },
+  });
+  const downstreamWitness = createObservationLedgerEntry({
+    schemaVersion: 1,
+    executionId,
+    parentEntryIds: [basisEntry.entryId, witness.entryId, nextDeclaration.entryId].sort(),
+    clock: nextDeclaration.clock,
+    facts: {
+      kind: "clock.regression",
+      priorEntryId: witness.entryId,
+      regressingEntryId: nextDeclaration.entryId,
+      priorWallTimeMs: 200,
+      currentWallTimeMs: 100,
+      monotonicOrderPreserved: true,
+    },
+  });
   const original = validateObservationLedgerBundle([
     basisEntry,
     declaration,
     requestStarted,
     witness,
+    nextDeclaration,
+    downstreamWitness,
   ]);
   for (let pageSize = 1; pageSize <= original.length; pageSize += 1) {
     const replayed = replayAcquisitionLedger(original, `p1-10-omitted-${pageSize}`, pageSize);
@@ -774,9 +811,6 @@ test("replay remaps a regression endpoint that is intentionally omitted", () => 
       replayed.some((entry) => entry.facts.kind === "request.started"),
       false,
     );
-    assert.equal(
-      replayed.some((entry) => entry.facts.kind === "clock.regression"),
-      false,
-    );
+    assert.equal(replayed.filter((entry) => entry.facts.kind === "clock.regression").length, 1);
   }
 });

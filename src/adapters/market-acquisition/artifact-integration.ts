@@ -2,8 +2,10 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { isProxy } from "node:util/types";
 import { canonicalJson, type JsonValue } from "../../core/json.js";
+import { P1_10_TEST_AUTHORITY } from "../../internal-test-authority.js";
 
 import type { ArtifactObservation, StoreArtifactResult } from "../../artifacts/artifact-store.js";
+import { persistedRetrievalAttemptId } from "../../artifacts/validation.js";
 import {
   createClockBasis,
   createObservationLedgerEntry,
@@ -297,23 +299,31 @@ export async function verifyCommittedArtifact(
     throw new TypeError("artifact-expectation-invalid");
   }
   const observation = await store.getObservation(expected.artifactObservationId);
+  const persistedAttemptId = persistedRetrievalAttemptId(expected.retrievalAttemptId);
   if (
     observation === undefined ||
     observation.artifactDigest !== expected.artifactDigest ||
     observation.observationHash !== expected.artifactObservationHash ||
-    observation.attemptId !== expected.retrievalAttemptId ||
-    observation.request.identityHash !== expected.requestIdentityHash ||
-    observation.provider !== expected.provider
+    (observation.attemptId !== expected.retrievalAttemptId &&
+      observation.attemptId !== persistedAttemptId) ||
+    observation.request.identityHash !== expected.requestIdentityHash
   ) {
     throw new TypeError("artifact-observation-mismatch");
   }
-  const attempt = await store.getAttempt(expected.retrievalAttemptId);
-  if (
-    attempt === undefined ||
-    attempt.attemptId !== observation.attemptId ||
-    attempt.request.identityHash !== expected.requestIdentityHash
-  ) {
-    throw new TypeError("artifact-attempt-mismatch");
+  const attempt =
+    (await store.getAttempt(expected.retrievalAttemptId)) ??
+    (observation.attemptId === expected.retrievalAttemptId
+      ? undefined
+      : await store.getAttempt(observation.attemptId));
+  if (attempt === undefined) throw new TypeError("artifact-attempt-missing");
+  if (attempt.attemptId !== observation.attemptId) {
+    throw new TypeError("artifact-attempt-identity-mismatch");
+  }
+  if (attempt.provider !== observation.provider) {
+    throw new TypeError("artifact-attempt-provider-mismatch");
+  }
+  if (attempt.request.identityHash !== expected.requestIdentityHash) {
+    throw new TypeError("artifact-attempt-request-mismatch");
   }
   const metadata = await store.stat(expected.artifactDigest);
   if (
@@ -566,15 +576,17 @@ export async function loadWorkflowProducedAcquisitionEvidence(
  * artifact-bearing checkpoint is re-proved against the owned retention-enforced store before the
  * private journal writer can receive a one-shot receipt.
  */
-export async function persistVerifiedAcquisitionWorkflowEvidence(
-  input: Readonly<{
-    journal: AcquisitionJournal;
-    journalId: string;
-    expectedIdentity: JournalIdentityInput;
-    artifactStore: RetentionEnforcedArtifactStore;
-    journalEntries: readonly JournalEntry[];
-    ledgerEntries: readonly ObservationLedgerEntryV1[];
-  }>,
+export type VerifiedAcquisitionWorkflowEvidenceInput = Readonly<{
+  journal: AcquisitionJournal;
+  journalId: string;
+  expectedIdentity: JournalIdentityInput;
+  artifactStore: RetentionEnforcedArtifactStore;
+  journalEntries: readonly JournalEntry[];
+  ledgerEntries: readonly ObservationLedgerEntryV1[];
+}>;
+
+async function persistVerifiedAcquisitionWorkflowEvidenceInternal(
+  input: VerifiedAcquisitionWorkflowEvidenceInput,
 ): Promise<void> {
   const journal = input.journal;
   const artifactStore = input.artifactStore;
@@ -665,6 +677,25 @@ export async function persistVerifiedAcquisitionWorkflowEvidence(
   await persistVerifiedAcquisitionWorkflowReceipt(receipt);
   const { commitOwnedWorkflowJournalLinks } = await import("./credentials.js");
   commitOwnedWorkflowJournalLinks(journal, links);
+}
+
+/** Synthetic/test composition only; live production accepts no caller-authored arrays. */
+export async function persistVerifiedAcquisitionWorkflowEvidence(
+  input: VerifiedAcquisitionWorkflowEvidenceInput,
+): Promise<void> {
+  if (P1_10_TEST_AUTHORITY === undefined) {
+    throw new TypeError("verified-workflow-test-composition-unavailable");
+  }
+  await persistVerifiedAcquisitionWorkflowEvidenceInternal(input);
+}
+
+/** Consumes one lexical adapter receipt; ordinary callers cannot mint its evidence binding. */
+export async function persistOwnedProductionAcquisitionWorkflowEvidence(
+  receipt: object,
+): Promise<void> {
+  const { consumeOwnedProductionWorkflowEvidenceReceipt } = await import("./alpaca/adapter.js");
+  const binding = consumeOwnedProductionWorkflowEvidenceReceipt(receipt);
+  await persistVerifiedAcquisitionWorkflowEvidenceInternal(binding);
 }
 
 export function consumeVerifiedAcquisitionWorkflowReceipt(

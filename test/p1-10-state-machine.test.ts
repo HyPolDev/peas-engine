@@ -63,13 +63,13 @@ function initialSnapshot(): AcquisitionMachineSnapshot {
 
 test("production artifacts reject no-op persistence, arbitrary wire roots, and prototype mutation", () => {
   const script = `
-    import { AcquisitionStateMachine, createInitialAcquisitionSnapshot } from './dist/production/src/adapters/market-acquisition/state-machine.js';
+    import { AcquisitionStateMachine, createInitialAcquisitionSnapshot, openOwnedAcquisitionStateMachine } from './dist/production/src/adapters/market-acquisition/state-machine.js';
     import { openSqliteDurableAlpacaWireAdmissionBoundary, DurableAlpacaWireAdmissionBoundary, resolveAlpacaHistoricalChain } from './dist/production/src/adapters/market-acquisition/alpaca/wire.js';
     import { openSqliteDurableAlpacaWireSemanticEvidenceBoundary, DurableAlpacaWireSemanticEvidenceBoundary } from './dist/production/src/adapters/market-acquisition/alpaca/wire-semantic-evidence.js';
     import { DurableCredentialAuthorizationBoundary } from './dist/production/src/adapters/market-acquisition/credentials.js';
     import { openSqliteDatabase } from './dist/production/src/adapters/sqlite/database.js';
     import { createSqliteAcquisitionJournal } from './dist/production/src/adapters/market-acquisition/sqlite-journal.js';
-    import { decideAcquisitionRestart } from './dist/production/src/adapters/market-acquisition/artifact-integration.js';
+    import { decideAcquisitionRestart, persistVerifiedAcquisitionWorkflowEvidence } from './dist/production/src/adapters/market-acquisition/artifact-integration.js';
     const snapshot = createInitialAcquisitionSnapshot({
       requestIdentityHash: '1'.repeat(64), acquisitionConfigurationHash: '2'.repeat(64),
       marketAcquisitionJournalId: '3'.repeat(64), runSessionNonce: 'offline-owned-run',
@@ -77,6 +77,10 @@ test("production artifacts reject no-op persistence, arbitrary wire roots, and p
     });
     const outcomes = [];
     try { new AcquisitionStateMachine(snapshot, async () => {}); outcomes.push('noop-accepted'); }
+    catch (error) { outcomes.push(error.message); }
+    try { openOwnedAcquisitionStateMachine({}); outcomes.push('owned-state-opened'); }
+    catch (error) { outcomes.push(error.message); }
+    try { await persistVerifiedAcquisitionWorkflowEvidence({}); outcomes.push('workflow-arrays-accepted'); }
     catch (error) { outcomes.push(error.message); }
     try { openSqliteDurableAlpacaWireAdmissionBoundary('caller.sqlite', [], {}, {}); outcomes.push('wire-root-accepted'); }
     catch (error) { outcomes.push(error.message); }
@@ -104,6 +108,8 @@ test("production artifacts reject no-op persistence, arbitrary wire roots, and p
   assert.equal(child.status, 0, child.stderr);
   assert.deepEqual(JSON.parse(child.stdout), [
     "owned-acquisition-durable-persistence-required",
+    "owned-acquisition-state-test-composition-unavailable",
+    "verified-workflow-test-composition-unavailable",
     "arbitrary-wire-admission-root-unavailable",
     "arbitrary-wire-semantic-root-unavailable",
     "owned-attempt-claim-required",

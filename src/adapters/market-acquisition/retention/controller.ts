@@ -310,11 +310,25 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
 
   async enforceStop(input: Omit<RetentionStopEvent, "stopEventId">): Promise<RetentionReceipt> {
     this.#validateStop(input);
+    const initialOwnership = this.#journal.listOwnership(input.providerLane, input.providerId);
+    const baseStopEventId = deriveRetentionStopEventId(input);
+    const basePlan = this.#journal.getPlanForStop(baseStopEventId);
+    const baseScope = basePlan?.artifactObservationIds ?? [];
+    const currentScope = sortedSet(initialOwnership.map((value) => value.artifactObservationId));
+    const sameScope =
+      canonicalJson(baseScope as unknown as JsonValue) ===
+      canonicalJson(currentScope as unknown as JsonValue);
+    const stopEventId =
+      basePlan === undefined || sameScope
+        ? baseStopEventId
+        : `rst1_${canonicalHash("peas/market-acquisition-retention-stop-settlement/v1", {
+            baseStopEventId,
+            ownershipIds: initialOwnership.map((value) => value.ownershipId).sort(),
+          } as unknown as JsonValue)}`;
     const stop: RetentionStopEvent = {
       ...input,
-      stopEventId: deriveRetentionStopEventId(input),
+      stopEventId,
     };
-    const initialOwnership = this.#journal.listOwnership(input.providerLane, input.providerId);
     this.#coordinator.pendingStops += 1;
     this.#coordinator.admissionClosed = true;
     for (const handler of [...this.#coordinator.operationStopHandlers]) {
@@ -476,6 +490,17 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
         try {
           erasure = await this.#artifacts.eraseDigestCopies(digest);
         } catch {
+          const failedBody = {
+            planId: plan.planId,
+            artifactDigest: digest,
+            attemptOrdinal,
+            startedAtMs,
+            outcome: "failed" as const,
+          };
+          this.#journal.recordAttempt({
+            ...failedBody,
+            attemptId: deriveRetentionAttemptId(failedBody),
+          });
           throw safeAcquisitionError("retention-erasure-failed", "retention-erase");
         }
         const outcomeBody = {
@@ -554,10 +579,27 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
         ...revalidationBody,
         revalidationId: deriveRetentionReceiptRevalidationId(revalidationBody),
       };
-      this.#journal.recordReceiptRevalidation(revalidation);
+      const checkpointBody = {
+        planId: plan.planId,
+        receiptId: receipt.receiptId,
+        sequence: revalidation.sequence,
+        completedAtMs: receipt.completedAtMs,
+      };
+      const checkpoint: RetentionCheckpoint = {
+        ...checkpointBody,
+        checkpointId: deriveRetentionCheckpointId(checkpointBody),
+      };
+      this.#journal.recordReceiptRevalidationAndCheckpoint(revalidation, checkpoint);
       const reread = this.#latestReceipt(plan, baseReceipt);
+      const checkpointReread = this.#journal.revalidationCheckpointsForPlan(plan.planId).at(-1);
       if (reread?.receiptId !== receipt.receiptId) {
         throw safeAcquisitionError("retention-erasure-unprovable", "retention-verify");
+      }
+      if (
+        checkpointReread?.checkpointId !== checkpoint.checkpointId ||
+        checkpointReread.receiptId !== reread.receiptId
+      ) {
+        throw safeAcquisitionError("retention-erasure-unprovable", "checkpoint");
       }
       await this.#faultBoundary("retention-revalidation-committed-reread");
       return reread;
@@ -663,7 +705,12 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
       throw safeAcquisitionError("retention-erasure-unprovable", "retention-verify");
     }
     let latest = baseReceipt;
+    const checkpoints = this.#journal.revalidationCheckpointsForPlan(plan.planId);
+    if (checkpoints.length !== revalidations.length) {
+      throw safeAcquisitionError("retention-erasure-unprovable", "checkpoint");
+    }
     for (const [index, value] of revalidations.entries()) {
+      const checkpoint = checkpoints[index];
       const expectedBody = {
         planId: value.planId,
         sequence: value.sequence,
@@ -700,6 +747,22 @@ export class DefaultArtifactRetentionController implements ArtifactRetentionCont
         value.revalidationId !== deriveRetentionReceiptRevalidationId(expectedBody)
       ) {
         throw safeAcquisitionError("retention-erasure-unprovable", "retention-verify");
+      }
+      if (
+        checkpoint === undefined ||
+        checkpoint.planId !== plan.planId ||
+        checkpoint.receiptId !== value.receipt.receiptId ||
+        checkpoint.sequence !== value.sequence ||
+        checkpoint.completedAtMs !== value.receipt.completedAtMs ||
+        checkpoint.checkpointId !==
+          deriveRetentionCheckpointId({
+            planId: checkpoint.planId,
+            receiptId: checkpoint.receiptId,
+            sequence: checkpoint.sequence,
+            completedAtMs: checkpoint.completedAtMs,
+          })
+      ) {
+        throw safeAcquisitionError("retention-erasure-unprovable", "checkpoint");
       }
       latest = value.receipt;
     }

@@ -97,7 +97,28 @@ export function replayAcquisitionLedger(
           return mapped === undefined ? [] : [mapped];
         });
         if (representatives.length === 0) throw new TypeError("replay-omitted-parent-missing");
-        remapped.set(source.entryId, representatives.at(-1) as string);
+        // Parent identifiers are canonically hash-sorted, not causally ordered.  An omitted
+        // transport-stage row commonly has both a clock declaration and the actual stage
+        // predecessor as parents; choosing the last hash can therefore remap the mainline to
+        // the clock basis and make the next valid clock-regression witness impossible.  Keep
+        // the causally latest non-clock representative, falling back to a clock declaration
+        // only when it is the sole available parent.
+        const replayedById = new Map(replayed.map((entry) => [entry.entryId, entry]));
+        const representative = representatives
+          .map((entryId) => replayedById.get(entryId))
+          .filter((entry): entry is ObservationLedgerEntryV1 => entry !== undefined)
+          .sort((left, right) => {
+            const leftClock = left.facts.kind === "clock-basis.declared" ? 0 : 1;
+            const rightClock = right.facts.kind === "clock-basis.declared" ? 0 : 1;
+            if (leftClock !== rightClock) return rightClock - leftClock;
+            return right.clock.monotonicTimeUs === null
+              ? -1
+              : left.clock.monotonicTimeUs === null
+                ? 1
+                : Number(right.clock.monotonicTimeUs - left.clock.monotonicTimeUs);
+          })[0];
+        if (representative === undefined) throw new TypeError("replay-omitted-parent-missing");
+        remapped.set(source.entryId, representative.entryId);
         continue;
       }
       const parents: string[] = [];

@@ -44,7 +44,12 @@ import type {
 const retentionOwnedSinks = new WeakSet<object>();
 const ownedArtifactCommitSinks = new WeakSet<object>();
 const artifactCommitSinkRoots = new WeakMap<object, object>();
+const artifactCommitStores = new WeakMap<object, DurableArtifactStore>();
 const retentionSinkCommitSinks = new WeakMap<object, AlpacaArtifactCommitSink<unknown>>();
+const ownedCommittedPageResults = new WeakMap<
+  object,
+  Readonly<{ store: DurableArtifactStore; retention: ArtifactRetentionController }>
+>();
 const artifactCommitAuthorities = new WeakMap<
   object,
   Readonly<{
@@ -106,17 +111,21 @@ class DurableAlpacaArtifactCommitSink implements AlpacaArtifactCommitSink<StoreA
       }
       artifactCommitAuthorities.delete(this);
       const trustedCaptureMs = authority.admittedAtMs;
+      const routeRequest = sanitizeRequestIdentity({
+        method: this.#input.plan.route.method,
+        origin: this.#input.plan.route.origin,
+        path: this.#input.plan.route.path,
+        routeLabel: this.#input.plan.route.safeRouteLabel,
+      });
       const attempt = Object.freeze({
         attemptId: authority.retrievalAttemptId,
         provider: "alpaca",
         recordId: `acquisition-${this.#input.plan.requestIdentityHash}`,
         revisionId: `configuration-${this.#input.plan.acquisitionConfigurationHash}`,
         startedAtMs: trustedCaptureMs,
-        request: sanitizeRequestIdentity({
-          method: this.#input.plan.route.method,
-          origin: this.#input.plan.route.origin,
-          path: this.#input.plan.route.path,
-          routeLabel: this.#input.plan.route.safeRouteLabel,
+        request: Object.freeze({
+          ...routeRequest,
+          identityHash: this.#input.plan.requestIdentityHash,
         }),
       });
       const digest = createHash("sha256").update(snapshot).digest("hex");
@@ -200,6 +209,7 @@ export function createDurableAlpacaArtifactCommitSink(
   const sink = new DurableAlpacaArtifactCommitSink(store, input);
   ownedArtifactCommitSinks.add(sink);
   artifactCommitSinkRoots.set(sink, ownedDurableArtifactStoreRuntimeIdentity(store));
+  artifactCommitStores.set(sink, store);
   Object.freeze(sink);
   return sink;
 }
@@ -332,7 +342,19 @@ export class RetentionOwnedAlpacaPageSink<T> implements AlpacaVerifiedPageSink<T
       ) {
         throw new TypeError("alpaca-artifact-ownership-byte-mismatch");
       }
-      return await this.#retention.commitArtifact(prepared);
+      const result = await this.#retention.commitArtifact(prepared);
+      if (result !== null && typeof result === "object") {
+        const commitSink = retentionSinkCommitSinks.get(this);
+        const store =
+          commitSink === undefined ? undefined : artifactCommitStores.get(commitSink as object);
+        if (store !== undefined) {
+          ownedCommittedPageResults.set(
+            result as object,
+            Object.freeze({ store, retention: this.#retention }),
+          );
+        }
+      }
+      return result;
     } catch (error) {
       discardPreparedAlpacaArtifactCommit(prepared);
       throw error;
@@ -408,6 +430,17 @@ export function assertRetentionOwnedAlpacaPageSink(value: AlpacaVerifiedPageSink
   ) {
     throw new TypeError("alpaca-retention-owned-sink-required");
   }
+}
+
+export function consumeOwnedAlpacaCommittedPageResult(
+  value: object,
+): Readonly<{ store: DurableArtifactStore; retention: ArtifactRetentionController }> {
+  const binding = ownedCommittedPageResults.get(value);
+  if (binding === undefined || isProxy(value)) {
+    throw new TypeError("owned-alpaca-committed-page-result-required");
+  }
+  ownedCommittedPageResults.delete(value);
+  return binding;
 }
 
 Object.freeze(DurableAlpacaArtifactCommitSink.prototype);

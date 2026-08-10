@@ -364,15 +364,30 @@ export async function revalidateOwnedAlpacaWireSemanticEvidence(
         entry.artifactSizeBytes === value.artifactSizeBytes,
     );
   if (ownership.length !== 1) throw new TypeError("wire-semantic-corpus-admission-invalid");
-  const semantic = await loadSemanticAuthorityBytes(artifacts, {
-    artifactObservationId: value.semanticAuthorityObservationId,
-    artifactDigest: value.semanticAuthorityDigest,
-    artifactSizeBytes: value.semanticAuthoritySizeBytes,
-    artifactObservationHash: value.semanticAuthorityObservationHash,
-    retrievalAttemptId,
-    requestIdentityHash: plan.requestIdentityHash,
-    provider: "alpaca",
-  });
+  const selfRootedAuthority =
+    value.semanticAuthorityStageLedgerFactId === value.stageLedgerFactId &&
+    value.semanticAuthorityObservationId === value.artifactObservationId &&
+    value.semanticAuthorityObservationHash === value.artifactObservationHash &&
+    value.semanticAuthorityDigest === value.artifactDigest &&
+    value.semanticAuthoritySizeBytes === value.artifactSizeBytes;
+  const semantic = selfRootedAuthority
+    ? createAlpacaWireSemanticAuthority({
+        schemaVersion: 1,
+        requestIdentityHash: plan.requestIdentityHash,
+        pageArtifactObservationId: value.artifactObservationId,
+        pageArtifactDigest: value.artifactDigest,
+        queryStartNs: plan.queryStartNs.toString(),
+        queryEndNs: plan.queryEndNs.toString(),
+      })
+    : await loadSemanticAuthorityBytes(artifacts, {
+        artifactObservationId: value.semanticAuthorityObservationId,
+        artifactDigest: value.semanticAuthorityDigest,
+        artifactSizeBytes: value.semanticAuthoritySizeBytes,
+        artifactObservationHash: value.semanticAuthorityObservationHash,
+        retrievalAttemptId,
+        requestIdentityHash: plan.requestIdentityHash,
+        provider: "alpaca",
+      });
   if (
     semantic.authorityId !== value.semanticAuthorityId ||
     semantic.requestIdentityHash !== plan.requestIdentityHash ||
@@ -787,6 +802,90 @@ export class DurableAlpacaWireSemanticEvidenceBoundary {
       queryStartNs: plan.queryStartNs.toString(),
       queryEndNs: plan.queryEndNs.toString(),
     });
+  }
+
+  /**
+   * Live composition path. The immutable accepted calendar catalog and the owned corpus decision
+   * are durably bound directly to the already verified page artifact; no caller-authored semantic
+   * artifact or ledger suffix is accepted.
+   */
+  async persistIssuedAuthority(
+    plan: ValidatedMarketAcquisitionConfiguration,
+    pageArtifact: CommittedArtifactExpectation,
+  ): Promise<void> {
+    const semantic = await this.issueAuthority(plan, pageArtifact);
+    const expectedIdentity = Object.freeze({
+      schemaVersion: 1 as const,
+      requestIdentityHash: plan.requestIdentityHash,
+      providerId: plan.route.providerId,
+      datasetId: plan.route.datasetId,
+      feedId: plan.route.feedId,
+      endpointChannelId: plan.route.endpointChannelId,
+    });
+    const journalId = deriveMarketAcquisitionJournalId(expectedIdentity);
+    const journal = await this.#journal.load(journalId);
+    validateJournalEntries(journal, expectedIdentity);
+    const ledger = await this.#journal.loadLedgerEntries();
+    validateJournalLedgerBindings(journal, ledger);
+    const latest = journal.at(-1);
+    const stage = ledger.find((entry) => entry.entryId === latest?.stageLedgerFactId);
+    const committed = stage?.parentEntryIds
+      .map((id) => ledger.find((entry) => entry.entryId === id))
+      .find((entry) => entry?.facts.kind === "artifact.committed");
+    const clockDeclaration = stage?.parentEntryIds
+      .map((id) => ledger.find((entry) => entry.entryId === id))
+      .find((entry) => entry?.facts.kind === "clock-basis.declared");
+    if (
+      latest?.checkpointKind !== "artifact-verified" ||
+      latest.artifactObservationId !== pageArtifact.artifactObservationId ||
+      latest.artifactObservationHash !== pageArtifact.artifactObservationHash ||
+      latest.artifactDigest !== pageArtifact.artifactDigest ||
+      latest.artifactSizeBytes !== pageArtifact.artifactSizeBytes ||
+      stage?.facts.kind !== "artifact.verified" ||
+      committed?.facts.kind !== "artifact.committed" ||
+      clockDeclaration?.facts.kind !== "clock-basis.declared" ||
+      stage.clock.clockBasisId === null ||
+      stage.clock.wallTimeMs === null ||
+      committed.facts.retrievedAtMs === null ||
+      !(await this.#journal.isWorkflowProducedJournalEntry(latest.journalEntryHash)) ||
+      !(await this.#journal.isWorkflowProducedLedgerEntry(stage.entryId)) ||
+      !(await this.#journal.isWorkflowProducedLedgerEntry(committed.entryId)) ||
+      !(await this.#journal.isWorkflowProducedLedgerEntry(clockDeclaration.entryId))
+    ) {
+      throw new TypeError("page-semantic-evidence-invalid");
+    }
+    const draft = Object.freeze({
+      schemaVersion: 1 as const,
+      journalEntryHash: latest.journalEntryHash,
+      marketAcquisitionJournalId: journalId,
+      artifactObservationId: pageArtifact.artifactObservationId,
+      artifactObservationHash: pageArtifact.artifactObservationHash,
+      artifactDigest: pageArtifact.artifactDigest,
+      artifactSizeBytes: pageArtifact.artifactSizeBytes,
+      stageLedgerFactId: stage.entryId,
+      clockDeclarationFactId: clockDeclaration.entryId,
+      semanticAuthorityId: semantic.authorityId,
+      semanticAuthorityStageLedgerFactId: stage.entryId,
+      semanticAuthorityObservationId: pageArtifact.artifactObservationId,
+      semanticAuthorityObservationHash: pageArtifact.artifactObservationHash,
+      semanticAuthorityDigest: pageArtifact.artifactDigest,
+      semanticAuthoritySizeBytes: pageArtifact.artifactSizeBytes,
+      calendarDigest: semantic.calendarDigest,
+      corpusAdmissionHash: semantic.corpusAdmissionHash,
+      calendarEntries: Object.freeze(structuredClone(semantic.calendarEntries)),
+      calendarVersion: semantic.calendarVersion,
+      durableClockBasisId: stage.clock.clockBasisId,
+      durablyRecordedAtMs: committed.facts.retrievedAtMs,
+      durableLogicalAtMs: stage.clock.wallTimeMs,
+      primaryCorpusMember: true as const,
+    });
+    appendEvidence(
+      this.#evidence,
+      Object.freeze({
+        ...draft,
+        evidenceId: deriveAlpacaWireSemanticEvidenceId(draft),
+      }),
+    );
   }
 
   close(): void {

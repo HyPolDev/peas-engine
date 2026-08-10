@@ -65,7 +65,6 @@ import {
   ownedSqliteRetentionJournalRuntimeIdentity,
 } from "../src/adapters/market-acquisition/retention/sqlite-journal.js";
 import {
-  deriveRetentionAttemptId,
   deriveRetentionReceiptId,
   deriveRetentionReceiptRevalidationId,
 } from "../src/adapters/market-acquisition/retention/identity.js";
@@ -146,11 +145,17 @@ class SyntheticArtifactBoundary implements RetentionArtifactBoundary {
   settle = true;
   erasures = 0;
   postReturnActivity = 0;
+  failNextErase = false;
 
   async settleActiveReadersAndWriters(): Promise<boolean> {
     return this.settle;
   }
   async eraseDigestCopies(value: string): Promise<ErasureResult> {
+    if (this.failNextErase) {
+      this.failNextErase = false;
+      this.erasures += 1;
+      throw new Error("synthetic physical erasure failure");
+    }
     const present = this.present.delete(value);
     this.erasures += 1;
     return {
@@ -451,16 +456,36 @@ test("ownership registered during or after a provider stop is atomically denied 
 });
 
 test("a valid zero-ownership stop durably denies the provider before any later registration", async () => {
-  const journal = createMemoryArtifactRetentionJournal();
-  const artifacts = new SyntheticArtifactBoundary();
-  artifacts.present.clear();
-  const worker = controller(journal, artifacts, () => stop().effectiveAtMs);
-  const receipt = await worker.enforceStop(stop());
-  assert.deepEqual(receipt.artifactDigests, []);
-  assert.equal(receipt.attemptCount, 0);
-  assert.equal(journal.providerUseDenied("alpaca", providerId), true);
-  assert.throws(() => worker.registerOwnership(ownership()), isSafeAcquisitionError);
-  assert.equal(journal.digestUseDenied(digest), true);
+  for (const backend of ["memory", "sqlite"] as const) {
+    const directory =
+      backend === "sqlite" ? await mkdtemp(join(tmpdir(), "peas-zero-stop-late-owner-")) : null;
+    const database =
+      directory === null
+        ? null
+        : openSqliteDatabase(join(directory, "retention.sqlite"), migrations);
+    try {
+      const journal =
+        database === null
+          ? createMemoryArtifactRetentionJournal()
+          : createSqliteArtifactRetentionJournal(database);
+      const artifacts = new SyntheticArtifactBoundary();
+      artifacts.present.clear();
+      const worker = controller(journal, artifacts, () => stop().effectiveAtMs);
+      const receipt = await worker.enforceStop(stop());
+      assert.deepEqual(receipt.artifactDigests, []);
+      assert.equal(receipt.attemptCount, 0);
+      assert.equal(journal.providerUseDenied("alpaca", providerId), true);
+      assert.throws(() => worker.registerOwnership(ownership()), isSafeAcquisitionError);
+      assert.equal(journal.digestUseDenied(digest), true);
+      const settled = await worker.enforceStop(stop());
+      assert.deepEqual(settled.artifactDigests, [digest]);
+      assert.notEqual(settled.planId, receipt.planId);
+      assert.equal(await artifacts.verifyDigestCopiesAbsent(digest), true);
+    } finally {
+      database?.close();
+      if (directory !== null) await rm(directory, { recursive: true, force: true });
+    }
+  }
 });
 
 test("a retention lease issued before stop cannot admit later wire or derived use", async () => {
@@ -644,6 +669,15 @@ test("existing receipts durably revalidate reappearance with exact physical-atte
       recordedAtMs: recovery.completedAtMs,
     },
   ]);
+  assert.deepEqual(journal.revalidationCheckpointsForPlan(receipt.planId), [
+    {
+      checkpointId: journal.revalidationCheckpointsForPlan(receipt.planId)[0]?.checkpointId,
+      planId: receipt.planId,
+      receiptId: recovery.receiptId,
+      sequence: 1,
+      completedAtMs: recovery.completedAtMs,
+    },
+  ]);
   assert.deepEqual(await worker.enforceStop(stop()), recovery);
 });
 
@@ -653,18 +687,17 @@ test("a durable failed attempt is counted once and never reuses its physical ord
   const worker = controller(journal, artifacts, () => stop().effectiveAtMs);
   worker.registerOwnership(ownership());
   const original = await worker.enforceStop(stop());
-  const failedStartedAtMs = original.completedAtMs + 1;
-  for (const outcome of ["started", "failed"] as const) {
-    const body = {
-      planId: original.planId,
-      artifactDigest: digest,
-      attemptOrdinal: 1,
-      startedAtMs: failedStartedAtMs,
-      outcome,
-    };
-    journal.recordAttempt({ ...body, attemptId: deriveRetentionAttemptId(body) });
-  }
   artifacts.present.add(digest);
+  artifacts.failNextErase = true;
+  await assert.rejects(() => worker.enforceStop(stop()), isSafeAcquisitionError);
+  const failedRows = journal.attemptsFor(original.planId, digest);
+  assert.deepEqual(
+    failedRows
+      .filter((value) => value.attemptOrdinal === 1)
+      .map((value) => value.outcome)
+      .sort(),
+    ["failed", "started"],
+  );
 
   const corrected = await worker.enforceStop(stop());
   assert.equal(corrected.attemptCount, 3);
@@ -728,6 +761,10 @@ test("migration 010 preserves immutable receipt checkpoints and revalidates afte
     journal.receiptRevalidationsForPlan(originalReceipt.planId).map((value) => value.receipt),
     [corrected],
   );
+  assert.deepEqual(
+    journal.revalidationCheckpointsForPlan(originalReceipt.planId).map((value) => value.receiptId),
+    [corrected.receiptId],
+  );
   database.close();
 
   database = openSqliteDatabase(filename, migrations);
@@ -738,6 +775,10 @@ test("migration 010 preserves immutable receipt checkpoints and revalidates afte
   );
   assert.deepEqual(journal.getReceiptForPlan(originalReceipt.planId), originalReceipt);
   assert.deepEqual(journal.getCheckpoint(originalReceipt.planId), originalCheckpoint);
+  assert.deepEqual(
+    journal.revalidationCheckpointsForPlan(originalReceipt.planId).map((value) => value.receiptId),
+    [corrected.receiptId],
+  );
   database.close();
 });
 
@@ -856,7 +897,9 @@ test("receipt revalidation is memory/SQLite equivalent across every recovery pre
           `${backend}:${crashAt}:physical-count`,
         );
         const revalidations = journal.receiptRevalidationsForPlan(initial.planId);
+        const successorCheckpoints = journal.revalidationCheckpointsForPlan(initial.planId);
         assert.equal(revalidations.length, 1, `${backend}:${crashAt}:revalidation-count`);
+        assert.equal(successorCheckpoints.length, 1, `${backend}:${crashAt}:checkpoint-count`);
         assert.equal(revalidations[0]?.sequence, 1, `${backend}:${crashAt}:sequence`);
         assert.equal(
           revalidations[0]?.predecessorReceiptId,
@@ -868,12 +911,27 @@ test("receipt revalidation is memory/SQLite equivalent across every recovery pre
           recovered,
           `${backend}:${crashAt}:durable-receipt`,
         );
+        assert.equal(
+          successorCheckpoints[0]?.receiptId,
+          recovered.receiptId,
+          `${backend}:${crashAt}:checkpoint-receipt`,
+        );
+        assert.equal(
+          successorCheckpoints[0]?.sequence,
+          revalidations[0]?.sequence,
+          `${backend}:${crashAt}:checkpoint-sequence`,
+        );
         closeJournal();
         journal = openJournal();
         assert.deepEqual(
           await controller(journal, artifacts, () => stop().effectiveAtMs).enforceStop(stop()),
           recovered,
           `${backend}:${crashAt}:cold-restart`,
+        );
+        assert.deepEqual(
+          journal.revalidationCheckpointsForPlan(initial.planId),
+          successorCheckpoints,
+          `${backend}:${crashAt}:cold-restart-checkpoint`,
         );
       } finally {
         closeJournal();
@@ -921,6 +979,9 @@ test("multiple receipt revalidations form the same immutable version chain in me
       closeJournal();
       journal = openJournal();
       const revalidations = journal.receiptRevalidationsForPlan(receipts[0]?.planId ?? "");
+      const successorCheckpoints = journal.revalidationCheckpointsForPlan(
+        receipts[0]?.planId ?? "",
+      );
       assert.deepEqual(
         revalidations.map((value) => value.sequence),
         [1, 2],
@@ -932,6 +993,14 @@ test("multiple receipt revalidations form the same immutable version chain in me
       assert.deepEqual(
         revalidations.map((value) => value.receipt),
         receipts.slice(1),
+      );
+      assert.deepEqual(
+        successorCheckpoints.map((value) => value.sequence),
+        [1, 2],
+      );
+      assert.deepEqual(
+        successorCheckpoints.map((value) => value.receiptId),
+        receipts.slice(1).map((value) => value.receiptId),
       );
       assert.deepEqual(
         await controller(journal, artifacts, () => stop().effectiveAtMs).enforceStop(stop()),
@@ -966,6 +1035,56 @@ test("multiple receipt revalidations form the same immutable version chain in me
           revalidationId: deriveRetentionReceiptRevalidationId(conflictingBody),
         }),
       );
+      const latestReceipt = receipts[2] as RetentionReceipt;
+      const atomicReceiptBody = {
+        planId: latestReceipt.planId,
+        planHash: latestReceipt.planHash,
+        artifactDigests: latestReceipt.artifactDigests,
+        artifactObservationIds: latestReceipt.artifactObservationIds,
+        priorSizeBytes: latestReceipt.priorSizeBytes,
+        attemptCount: latestReceipt.attemptCount + 1,
+        outcome: latestReceipt.outcome,
+        completedAtMs: latestReceipt.completedAtMs + 1,
+      };
+      const atomicReceipt = {
+        ...atomicReceiptBody,
+        receiptId: deriveRetentionReceiptId(atomicReceiptBody),
+      };
+      const atomicRevalidationBody = {
+        planId: latestReceipt.planId,
+        sequence: 3,
+        predecessorReceiptId: latestReceipt.receiptId,
+        receipt: atomicReceipt,
+        recordedAtMs: atomicReceipt.completedAtMs,
+      };
+      const atomicRevalidation = {
+        ...atomicRevalidationBody,
+        revalidationId: deriveRetentionReceiptRevalidationId(atomicRevalidationBody),
+      };
+      const existingCheckpoint = successorCheckpoints[0];
+      assert.ok(existingCheckpoint);
+      const conflictingCheckpoint = {
+        checkpointId: existingCheckpoint.checkpointId,
+        planId: atomicReceipt.planId,
+        receiptId: atomicReceipt.receiptId,
+        sequence: atomicRevalidation.sequence,
+        completedAtMs: atomicReceipt.completedAtMs,
+      };
+      const beforeAtomicRevalidations = journal.receiptRevalidationsForPlan(latestReceipt.planId);
+      const beforeAtomicCheckpoints = journal.revalidationCheckpointsForPlan(latestReceipt.planId);
+      assert.throws(() =>
+        journal.recordReceiptRevalidationAndCheckpoint(atomicRevalidation, conflictingCheckpoint),
+      );
+      assert.deepEqual(
+        journal.receiptRevalidationsForPlan(latestReceipt.planId),
+        beforeAtomicRevalidations,
+        `${backend}:atomic-revalidation-rollback`,
+      );
+      assert.deepEqual(
+        journal.revalidationCheckpointsForPlan(latestReceipt.planId),
+        beforeAtomicCheckpoints,
+        `${backend}:atomic-checkpoint-rollback`,
+      );
       if (database !== null) {
         assert.throws(() =>
           database
@@ -977,14 +1096,60 @@ test("multiple receipt revalidations form the same immutable version chain in me
         assert.throws(() =>
           database?.prepare("DELETE FROM market_retention_receipt_revalidations").run(),
         );
+        assert.throws(() =>
+          database
+            ?.prepare(
+              "UPDATE market_retention_revalidation_checkpoints SET sequence = sequence + 1",
+            )
+            .run(),
+        );
+        assert.throws(() =>
+          database?.prepare("DELETE FROM market_retention_revalidation_checkpoints").run(),
+        );
       }
-      projections.push(canonicalJson({ receipts, revalidations } as unknown as JsonValue));
+      projections.push(
+        canonicalJson({ receipts, revalidations, successorCheckpoints } as unknown as JsonValue),
+      );
     } finally {
       closeJournal();
       if (directory !== null) await rm(directory, { recursive: true, force: true });
     }
   }
   assert.equal(projections[0], projections[1]);
+});
+
+test("SQLite successor checkpoints reconcile relational evidence before stale receipt use", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "peas-retention-checkpoint-integrity-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filename = join(directory, "retention.sqlite");
+  let database = openSqliteDatabase(filename, migrations);
+  let journal = createSqliteArtifactRetentionJournal(database);
+  const artifacts = new SyntheticArtifactBoundary();
+  const worker = controller(journal, artifacts, () => stop().effectiveAtMs);
+  worker.registerOwnership(ownership());
+  const original = await worker.enforceStop(stop());
+  artifacts.present.add(digest);
+  const corrected = await worker.enforceStop(stop());
+  assert.notEqual(corrected.receiptId, original.receiptId);
+  database.prepare("DROP TRIGGER market_retention_revalidation_checkpoints_no_update").run();
+  database
+    .prepare(
+      "UPDATE market_retention_revalidation_checkpoints SET completed_at_ms = completed_at_ms + 1",
+    )
+    .run();
+  assert.throws(
+    () => journal.revalidationCheckpointsForPlan(original.planId),
+    /relational evidence mismatch/u,
+  );
+  database.close();
+
+  database = openSqliteDatabase(filename, migrations);
+  journal = createSqliteArtifactRetentionJournal(database);
+  await assert.rejects(
+    () => controller(journal, artifacts, () => stop().effectiveAtMs).enforceStop(stop()),
+    /relational evidence mismatch/u,
+  );
+  database.close();
 });
 
 test("retention ownership cannot name bytes or sizes different from the committed stream", async () => {
@@ -1609,15 +1774,15 @@ test("the production byte-bound sink registers the actual bare observation id an
   const result = await sink.completeVerifyAndRegisterOwnership();
   assert.match(result.observation.observationId, /^[0-9a-f]{64}$/u);
   assert.equal(result.artifact.digest, digest);
-  assert.deepEqual(
-    result.observation.request,
-    sanitizeRequestIdentity({
+  assert.deepEqual(result.observation.request, {
+    ...sanitizeRequestIdentity({
       method: plan.route.method,
       origin: plan.route.origin,
       path: plan.route.path,
       routeLabel: plan.route.safeRouteLabel,
     }),
-  );
+    identityHash: plan.requestIdentityHash,
+  });
   const registered = journal.ownershipForDigest(digest);
   assert.equal(registered.length, 1);
   assert.equal(registered[0]?.artifactObservationId, result.observation.observationId);

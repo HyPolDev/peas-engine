@@ -132,6 +132,7 @@ export interface ArtifactRetentionJournal {
   derivedUseDenied(derivedId: string): boolean;
   recordPlan(plan: RetentionErasurePlan): void;
   getPlan(planId: string): RetentionErasurePlan | undefined;
+  getPlanForStop(stopEventId: string): RetentionErasurePlan | undefined;
   recordAttempt(attempt: RetentionErasureAttempt): void;
   attemptsFor(planId: string, digest: string): readonly RetentionErasureAttempt[];
   recordTombstone(tombstone: RetentionTombstone): void;
@@ -139,7 +140,12 @@ export interface ArtifactRetentionJournal {
   recordReceipt(receipt: RetentionReceipt): void;
   getReceiptForPlan(planId: string): RetentionReceipt | undefined;
   recordReceiptRevalidation(revalidation: RetentionReceiptRevalidation): void;
+  recordReceiptRevalidationAndCheckpoint(
+    revalidation: RetentionReceiptRevalidation,
+    checkpoint: RetentionCheckpoint,
+  ): void;
   receiptRevalidationsForPlan(planId: string): readonly RetentionReceiptRevalidation[];
+  revalidationCheckpointsForPlan(planId: string): readonly RetentionCheckpoint[];
   recordCheckpoint(checkpoint: RetentionCheckpoint): void;
   getCheckpoint(planId: string): RetentionCheckpoint | undefined;
 }

@@ -32,6 +32,7 @@ export class MemoryArtifactRetentionJournal implements ArtifactRetentionJournal 
   readonly #tombstones = new Map<string, RetentionTombstone>();
   readonly #receipts = new Map<string, RetentionReceipt>();
   readonly #receiptRevalidations = new Map<string, RetentionReceiptRevalidation>();
+  readonly #revalidationCheckpoints = new Map<string, RetentionCheckpoint>();
   readonly #checkpoints = new Map<string, RetentionCheckpoint>();
 
   registerOwnershipAndApplyActiveStop(value: RetentionOwnership): boolean {
@@ -126,6 +127,10 @@ export class MemoryArtifactRetentionJournal implements ArtifactRetentionJournal 
     const value = this.#plans.get(planId);
     return value === undefined ? undefined : structuredClone(value);
   }
+  getPlanForStop(stopEventId: string): RetentionErasurePlan | undefined {
+    const value = [...this.#plans.values()].find((plan) => plan.stopEventId === stopEventId);
+    return value === undefined ? undefined : structuredClone(value);
+  }
 
   recordAttempt(value: RetentionErasureAttempt): void {
     const existing = this.#attempts.get(value.attemptId);
@@ -181,6 +186,57 @@ export class MemoryArtifactRetentionJournal implements ArtifactRetentionJournal 
   }
   receiptRevalidationsForPlan(planId: string): readonly RetentionReceiptRevalidation[] {
     return [...this.#receiptRevalidations.values()]
+      .filter((value) => value.planId === planId)
+      .sort((left, right) => left.sequence - right.sequence)
+      .map((value) => structuredClone(value));
+  }
+
+  recordReceiptRevalidationAndCheckpoint(
+    value: RetentionReceiptRevalidation,
+    checkpoint: RetentionCheckpoint,
+  ): void {
+    if (
+      checkpoint.planId !== value.planId ||
+      checkpoint.receiptId !== value.receipt.receiptId ||
+      checkpoint.sequence !== value.sequence ||
+      checkpoint.completedAtMs !== value.receipt.completedAtMs
+    ) {
+      throw new Error(
+        "Receipt revalidation checkpoint conflicts with immutable retention evidence",
+      );
+    }
+    const existingRevalidation = this.#receiptRevalidations.get(value.revalidationId);
+    if (existingRevalidation !== undefined) {
+      replayEqual("Receipt revalidation", existingRevalidation, value);
+    } else if (
+      [...this.#receiptRevalidations.values()].some(
+        (member) =>
+          (member.planId === value.planId && member.sequence === value.sequence) ||
+          member.receipt.receiptId === value.receipt.receiptId,
+      )
+    ) {
+      throw new Error("Receipt revalidation conflicts with immutable retention evidence");
+    }
+    const existingCheckpoint = this.#revalidationCheckpoints.get(checkpoint.checkpointId);
+    if (existingCheckpoint !== undefined) {
+      replayEqual("Revalidation checkpoint", existingCheckpoint, checkpoint);
+    } else if (
+      [...this.#revalidationCheckpoints.values()].some(
+        (member) =>
+          (member.planId === checkpoint.planId && member.sequence === checkpoint.sequence) ||
+          member.receiptId === checkpoint.receiptId,
+      )
+    ) {
+      throw new Error("Revalidation checkpoint conflicts with immutable retention evidence");
+    }
+    if (existingRevalidation === undefined)
+      this.#receiptRevalidations.set(value.revalidationId, structuredClone(value));
+    if (existingCheckpoint === undefined)
+      this.#revalidationCheckpoints.set(checkpoint.checkpointId, structuredClone(checkpoint));
+  }
+
+  revalidationCheckpointsForPlan(planId: string): readonly RetentionCheckpoint[] {
+    return [...this.#revalidationCheckpoints.values()]
       .filter((value) => value.planId === planId)
       .sort((left, right) => left.sequence - right.sequence)
       .map((value) => structuredClone(value));

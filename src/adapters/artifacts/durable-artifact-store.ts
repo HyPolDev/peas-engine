@@ -701,10 +701,15 @@ export class DurableArtifactStore implements ArtifactStore {
       maxBytes < this.#config.maxArtifactBytes
     )
       throw new RangeError("Invalid reconciliation budget");
-    if (
-      this.#retentionAdmissionClosed ||
-      this.#repository.retentionReconciliationUseDenied(this.#clock.nowMs())
-    ) {
+    if (this.#repository.retentionReconciliationUseDenied(this.#clock.nowMs())) {
+      // A crash may leave a pre-denial install intent behind.  Ordinary reconciliation remains
+      // denied, but the owned store must first make that intent physically absent and terminal so
+      // a provider stop can settle after restart.  This path performs erasure only; it never scans
+      // or adopts content.
+      await this.#cleanupDeniedInstallIntents();
+      throw new ArtifactVaultError("artifact-integrity-failure", "Reconciliation use is denied");
+    }
+    if (this.#retentionAdmissionClosed) {
       throw new ArtifactVaultError("artifact-integrity-failure", "Reconciliation use is denied");
     }
     const reconciliation = new AbortController();
@@ -1528,6 +1533,47 @@ export class DurableArtifactStore implements ArtifactStore {
       ]);
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
+    }
+  }
+
+  async #cleanupDeniedInstallIntents(): Promise<void> {
+    let afterIntentId = "";
+    for (;;) {
+      const intent = this.#repository.readPendingIntentPage(afterIntentId, 1)[0];
+      if (intent === undefined) return;
+      afterIntentId = intent.intentId;
+      const attempt = this.#repository.getAttempt(intent.attemptId);
+      if (attempt === undefined) {
+        throw new ArtifactVaultError(
+          "artifact-integrity-failure",
+          "Install intent retrieval attempt is missing",
+        );
+      }
+      if (
+        !this.#repository.retentionProviderUseDenied(attempt.provider) &&
+        !this.#repository.retentionDigestUseDenied(intent.digest)
+      ) {
+        continue;
+      }
+      await this.#lease.renewAndAssert();
+      const contentPath = await this.#contentPath(intent.digest, false, false);
+      const stagePath = safeChild(this.#paths.staging, `${intent.stagingId}.part`);
+      await rm(contentPath, { force: true });
+      await rm(stagePath, { force: true });
+      await syncDirectory(dirname(contentPath));
+      await syncDirectory(dirname(stagePath));
+      await this.#lease.renewAndAssert();
+      this.#repository.abortIntent(
+        intent.intentId,
+        {
+          attemptId: intent.attemptId,
+          outcome: "failed",
+          completedAtMs: this.#clock.nowMs(),
+          reasonCode: "retention-denied",
+          detailHash: null,
+        } as RetrievalAttemptOutcome,
+        this.#lease.fence(),
+      );
     }
   }
 

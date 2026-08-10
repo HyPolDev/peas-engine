@@ -22,3 +22,28 @@ BEGIN SELECT RAISE(ABORT, 'retention receipt revalidation is immutable'); END;
 CREATE TRIGGER market_retention_receipt_revalidations_no_delete
 BEFORE DELETE ON market_retention_receipt_revalidations
 BEGIN SELECT RAISE(ABORT, 'retention receipt revalidation is immutable'); END;
+
+CREATE TABLE market_retention_revalidation_checkpoints (
+  checkpoint_id TEXT PRIMARY KEY,
+  plan_id TEXT NOT NULL,
+  revalidation_id TEXT NOT NULL UNIQUE,
+  receipt_id TEXT NOT NULL UNIQUE,
+  sequence INTEGER NOT NULL CHECK (sequence >= 1),
+  completed_at_ms INTEGER NOT NULL CHECK (completed_at_ms >= 0),
+  checkpoint_json TEXT NOT NULL,
+  checkpoint_hash TEXT NOT NULL,
+  UNIQUE (plan_id, sequence),
+  FOREIGN KEY (plan_id) REFERENCES market_retention_erasure_plans(plan_id),
+  FOREIGN KEY (revalidation_id) REFERENCES market_retention_receipt_revalidations(revalidation_id)
+) STRICT;
+
+CREATE INDEX market_retention_revalidation_checkpoints_plan
+  ON market_retention_revalidation_checkpoints (plan_id, sequence);
+
+CREATE TRIGGER market_retention_revalidation_checkpoints_no_update
+BEFORE UPDATE ON market_retention_revalidation_checkpoints
+BEGIN SELECT RAISE(ABORT, 'retention revalidation checkpoint is immutable'); END;
+
+CREATE TRIGGER market_retention_revalidation_checkpoints_no_delete
+BEFORE DELETE ON market_retention_revalidation_checkpoints
+BEGIN SELECT RAISE(ABORT, 'retention revalidation checkpoint is immutable'); END;
