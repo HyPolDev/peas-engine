@@ -17,7 +17,10 @@ import {
 } from "./contract.mjs";
 
 const action = process.argv[2];
-const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
+const npmCliPath = process.env.npm_execpath;
+if (action === "bundle" && (npmCliPath === undefined || npmCliPath.trim() === "")) {
+  throw new Error("npm-cli-identity-required");
+}
 
 const commandPlan = Object.freeze([
   ["manifest", ["run", "manifest:local-validation"]],
@@ -61,7 +64,7 @@ function bundle() {
     for (const [name, args] of commandPlan) {
       const startedAt = new Date().toISOString();
       const started = performance.now();
-      const child = spawnSync(npmExecutable, args, {
+      const child = spawnSync(process.execPath, [npmCliPath, ...args], {
         cwd: process.cwd(),
         encoding: "utf8",
         windowsHide: true,
@@ -76,12 +79,12 @@ function bundle() {
       const transcriptPath = `commands/${name}.log`;
       writeFileSync(
         join(outputRoot, transcriptPath),
-        `command: ${npmExecutable} ${args.join(" ")}\nstartedAt: ${startedAt}\nexitCode: ${String(child.status)}\n--- stdout ---\n${child.stdout ?? ""}\n--- stderr ---\n${child.stderr ?? ""}\n`,
+        `command: npm ${args.join(" ")}\nnpmCliPath: ${npmCliPath}\nstartedAt: ${startedAt}\nexitCode: ${String(child.status)}\n--- stdout ---\n${child.stdout ?? ""}\n--- stderr ---\n${child.stderr ?? ""}\n`,
         "utf8",
       );
       commands.push({
         name,
-        command: `${npmExecutable} ${args.join(" ")}`,
+        command: `npm ${args.join(" ")}`,
         exitCode: child.status,
         signal: child.signal,
         spawnError: child.error?.message ?? null,
