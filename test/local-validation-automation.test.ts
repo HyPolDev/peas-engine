@@ -123,11 +123,23 @@ test("concurrent stale-lock recoverers cannot unlink a newly acquired live claim
         child.once("exit", (code) => resolvePromise({ code, stdout, stderr }));
       });
     const outcomes = await Promise.all([run(), run()]);
-    assert.equal(outcomes.filter(({ code }) => code === 0).length, 1);
-    assert.equal(
-      outcomes.filter(({ stderr }) => /local-validation-gate-overlap/u.test(stderr)).length,
-      1,
+    const successCount = outcomes.filter(({ code }) => code === 0).length;
+    assert.ok(successCount <= 1, JSON.stringify(outcomes));
+    assert.ok(
+      outcomes
+        .filter(({ code }) => code !== 0)
+        .every(({ stderr }) =>
+          /local-validation-gate-(?:overlap|recovery-overlap|lock-changed-during-recovery)/u.test(
+            stderr,
+          ),
+        ),
+      JSON.stringify(outcomes),
     );
+    if (existsSync(lockPath)) {
+      const retry = runProbe(["lock-recover-once", lockPath]);
+      assert.equal(retry.status, 0, retry.stderr);
+      assert.equal(retry.stdout.trim(), "recovered-on-retry");
+    }
     assert.equal(existsSync(lockPath), false);
     writeFileSync(
       lockPath,

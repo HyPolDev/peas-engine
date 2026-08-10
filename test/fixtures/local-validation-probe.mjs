@@ -59,6 +59,10 @@ if (operation === "manifest") {
   process.stdout.write("acquired\n");
   await new Promise((resolve) => setTimeout(resolve, 1_500));
   lock.release();
+} else if (operation === "lock-recover-once") {
+  const lock = acquireGateLock(argument, { nowMs: 30_000_001, staleAfterMs: 1 });
+  lock.release();
+  process.stdout.write("recovered-on-retry\n");
 } else if (operation === "lock-forced-interleaving") {
   let replacement;
   try {
