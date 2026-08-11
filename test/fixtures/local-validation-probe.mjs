@@ -45,15 +45,12 @@ if (operation === "manifest") {
     lock.release();
   }
 } else if (operation === "lock-stale") {
-  mkdirSync(join(argument, ".."), { recursive: true });
-  writeFileSync(
-    argument,
-    canonicalBytes({ schemaVersion: 1, pid: 2_147_483_647, createdAtMs: 1 }),
-    "utf8",
-  );
   const lock = acquireGateLock(argument, { nowMs: 30_000_000, staleAfterMs: 1 });
   lock.release();
   process.stdout.write("recovered\n");
+} else if (operation === "lock-crash") {
+  acquireGateLock(argument, { nowMs: 1, staleAfterMs: 1 });
+  process.stdout.write("crashed-with-committed-claim\n");
 } else if (operation === "lock-recover-hold") {
   const lock = acquireGateLock(argument, { nowMs: 30_000_000, staleAfterMs: 1 });
   process.stdout.write("acquired\n");
@@ -63,23 +60,22 @@ if (operation === "manifest") {
   const lock = acquireGateLock(argument, { nowMs: 30_000_001, staleAfterMs: 1 });
   lock.release();
   process.stdout.write("recovered-on-retry\n");
-} else if (operation === "lock-forced-interleaving") {
-  let replacement;
+} else if (operation === "lock-recovery-crash") {
   try {
     acquireGateLock(argument, {
       nowMs: 30_000_000,
       staleAfterMs: 1,
       onStaleObserved() {
-        replacement = acquireGateLock(argument, { nowMs: 30_000_001, staleAfterMs: 1 });
+        throw new Error("injected-recovery-crash");
       },
     });
-    throw new Error("forced-interleaving-unexpectedly-acquired");
+    throw new Error("recovery-crash-unexpectedly-acquired");
   } catch (error) {
-    if (!/local-validation-gate-lock-changed-during-recovery/u.test(String(error))) throw error;
+    if (!/injected-recovery-crash/u.test(String(error))) throw error;
   }
-  if (replacement === undefined) throw new Error("forced-interleaving-replacement-missing");
-  replacement.release();
-  process.stdout.write("replacement-preserved\n");
+  const retry = acquireGateLock(argument, { nowMs: 30_000_001, staleAfterMs: 1 });
+  retry.release();
+  process.stdout.write("recovery-crash-recovered\n");
 } else if (operation === "runtime") {
   const root = argument;
   const identity = repositoryIdentity();

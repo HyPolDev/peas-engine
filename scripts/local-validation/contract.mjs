@@ -1,20 +1,11 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  existsSync,
-  lstatSync,
-  linkSync,
-  mkdirSync,
-  renameSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { arch, cpus, platform, release, tmpdir, type } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
+
+import Database from "better-sqlite3";
 
 export const MATRIX_PATH = "config/local-validation/matrix.v1.json";
 export const MANIFEST_PATH = "config/local-validation/manifest.v1.json";
@@ -286,70 +277,87 @@ function processExists(pid) {
 export function acquireGateLock(lockPath, options = {}) {
   const nowMs = options.nowMs ?? Date.now();
   const staleAfterMs = options.staleAfterMs ?? 6 * 60 * 60 * 1000;
-  const recoveryMutexPath = `${lockPath}.recovery`;
-  if (options.recoveryOwner !== true && existsSync(recoveryMutexPath)) {
-    throw new Error("local-validation-gate-recovery-overlap");
-  }
   mkdirSync(dirname(lockPath), { recursive: true });
   const ownerToken = sha256(`${process.pid}:${nowMs}:${Math.random()}`);
-  const claimPath = `${lockPath}.claim.${process.pid}.${ownerToken.slice(0, 12)}`;
-  const claim = {
-    schemaVersion: 1,
-    pid: process.pid,
-    createdAtMs: nowMs,
-    ownerToken,
-  };
+  let database;
   try {
-    writeFileSync(claimPath, canonicalBytes(claim), { encoding: "utf8", flag: "wx" });
-    try {
-      linkSync(claimPath, lockPath);
-    } finally {
-      rmSync(claimPath, { force: true });
+    database = new Database(lockPath);
+    database.pragma("journal_mode = DELETE");
+    database.pragma("synchronous = FULL");
+    database.pragma("busy_timeout = 0");
+    database.exec(`CREATE TABLE IF NOT EXISTS local_validation_gate_claim (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+      pid INTEGER NOT NULL,
+      created_at_ms INTEGER NOT NULL,
+      owner_token TEXT NOT NULL
+    ) STRICT`);
+    database.exec("BEGIN IMMEDIATE");
+    const existing = database
+      .prepare(
+        `SELECT schema_version AS schemaVersion, pid, created_at_ms AS createdAtMs,
+          owner_token AS ownerToken
+        FROM local_validation_gate_claim WHERE singleton = 1`,
+      )
+      .get();
+    if (existing !== undefined) {
+      if (
+        existing.schemaVersion !== 1 ||
+        !Number.isSafeInteger(existing.pid) ||
+        !Number.isSafeInteger(existing.createdAtMs) ||
+        typeof existing.ownerToken !== "string" ||
+        existing.ownerToken.length === 0
+      ) {
+        throw new Error("local-validation-gate-lock-corrupt");
+      }
+      if (processExists(existing.pid) || nowMs - existing.createdAtMs <= staleAfterMs) {
+        throw new Error("local-validation-gate-overlap");
+      }
+      options.onStaleObserved?.(existing);
+      database.prepare("DELETE FROM local_validation_gate_claim WHERE singleton = 1").run();
     }
+    database
+      .prepare(
+        `INSERT INTO local_validation_gate_claim (
+          singleton, schema_version, pid, created_at_ms, owner_token
+        ) VALUES (1, 1, ?, ?, ?)`,
+      )
+      .run(process.pid, nowMs, ownerToken);
+    database.exec("COMMIT");
   } catch (error) {
-    rmSync(claimPath, { force: true });
-    if (error?.code !== "EEXIST") throw error;
-    let existing;
     try {
-      existing = readJson(lockPath);
-    } catch {
-      throw new Error("local-validation-gate-lock-corrupt");
+      if (database?.inTransaction === true) database.exec("ROLLBACK");
+    } finally {
+      database?.close();
     }
-    if (processExists(existing.pid) || nowMs - existing.createdAtMs <= staleAfterMs) {
+    if (error?.code === "SQLITE_BUSY" || error?.code === "SQLITE_LOCKED") {
       throw new Error("local-validation-gate-overlap");
     }
-    options.onStaleObserved?.(existing);
-    try {
-      mkdirSync(recoveryMutexPath);
-    } catch (mutexError) {
-      if (mutexError?.code === "EEXIST") {
-        throw new Error("local-validation-gate-recovery-overlap");
-      }
-      throw mutexError;
-    }
-    const recoveryPath = `${lockPath}.stale.${process.pid}.${ownerToken.slice(0, 12)}`;
-    try {
-      const current = readJson(lockPath);
-      if (canonicalBytes(current) !== canonicalBytes(existing)) {
-        throw new Error("local-validation-gate-lock-changed-during-recovery");
-      }
-      renameSync(lockPath, recoveryPath);
-      return acquireGateLock(lockPath, { ...options, recoveryOwner: true });
-    } finally {
-      rmSync(recoveryPath, { force: true });
-      rmSync(recoveryMutexPath, { recursive: true, force: true });
-    }
+    throw error;
   }
   let released = false;
   return Object.freeze({
     release() {
       if (released) return;
       released = true;
-      const current = readJson(lockPath);
-      if (current.ownerToken !== ownerToken) {
-        throw new Error("local-validation-gate-release-owner-mismatch");
+      try {
+        database.exec("BEGIN IMMEDIATE");
+        const current = database
+          .prepare(
+            "SELECT owner_token AS ownerToken FROM local_validation_gate_claim WHERE singleton = 1",
+          )
+          .get();
+        if (current?.ownerToken !== ownerToken) {
+          throw new Error("local-validation-gate-release-owner-mismatch");
+        }
+        database.prepare("DELETE FROM local_validation_gate_claim WHERE singleton = 1").run();
+        database.exec("COMMIT");
+      } catch (error) {
+        if (database.inTransaction) database.exec("ROLLBACK");
+        throw error;
+      } finally {
+        database.close();
       }
-      rmSync(lockPath, { force: true });
     },
   });
 }

@@ -86,25 +86,28 @@ test("gate locking rejects overlap and recovers only a dead expired owner", () =
     const overlap = runProbe(["lock-overlap", path]);
     assert.notEqual(overlap.status, 0);
     assert.match(overlap.stderr, /local-validation-gate-overlap/u);
-    assert.equal(existsSync(path), false);
+    assert.equal(existsSync(path), true);
+    const crashed = runProbe(["lock-crash", path]);
+    assert.equal(crashed.status, 0, crashed.stderr);
     const stale = runProbe(["lock-stale", path]);
     assert.equal(stale.status, 0, stale.stderr);
     assert.equal(stale.stdout.trim(), "recovered");
-    assert.equal(existsSync(path), false);
+    assert.equal(existsSync(path), true);
+    mkdirSync(`${path}.recovery`);
+    const legacyRecoveryArtifact = runProbe(["lock-recover-once", path]);
+    assert.equal(legacyRecoveryArtifact.status, 0, legacyRecoveryArtifact.stderr);
+    assert.equal(legacyRecoveryArtifact.stdout.trim(), "recovered-on-retry");
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 });
 
-test("concurrent stale-lock recoverers cannot unlink a newly acquired live claim", async () => {
+test("concurrent stale-lock recovery serializes and remains crash-recoverable", async () => {
   const directory = mkdtempSync(join(tmpdir(), "peas-lv-lock-race-"));
   const lockPath = join(directory, "gate.lock");
   try {
-    writeFileSync(
-      lockPath,
-      canonicalBytes({ schemaVersion: 1, pid: 2_147_483_647, createdAtMs: 1 }),
-      "utf8",
-    );
+    const crashed = runProbe(["lock-crash", lockPath]);
+    assert.equal(crashed.status, 0, crashed.stderr);
     const run = () =>
       new Promise<{ code: number | null; stdout: string; stderr: string }>((resolvePromise) => {
         const child = spawn(process.execPath, [probe, "lock-recover-hold", lockPath], {
@@ -135,21 +138,14 @@ test("concurrent stale-lock recoverers cannot unlink a newly acquired live claim
         ),
       JSON.stringify(outcomes),
     );
-    if (existsSync(lockPath)) {
-      const retry = runProbe(["lock-recover-once", lockPath]);
-      assert.equal(retry.status, 0, retry.stderr);
-      assert.equal(retry.stdout.trim(), "recovered-on-retry");
-    }
-    assert.equal(existsSync(lockPath), false);
-    writeFileSync(
-      lockPath,
-      canonicalBytes({ schemaVersion: 1, pid: 2_147_483_647, createdAtMs: 1 }),
-      "utf8",
-    );
-    const forced = runProbe(["lock-forced-interleaving", lockPath]);
-    assert.equal(forced.status, 0, forced.stderr);
-    assert.equal(forced.stdout.trim(), "replacement-preserved");
-    assert.equal(existsSync(lockPath), false);
+    const retry = runProbe(["lock-recover-once", lockPath]);
+    assert.equal(retry.status, 0, retry.stderr);
+    assert.equal(retry.stdout.trim(), "recovered-on-retry");
+    const crashedAgain = runProbe(["lock-crash", lockPath]);
+    assert.equal(crashedAgain.status, 0, crashedAgain.stderr);
+    const recoveryCrash = runProbe(["lock-recovery-crash", lockPath]);
+    assert.equal(recoveryCrash.status, 0, recoveryCrash.stderr);
+    assert.equal(recoveryCrash.stdout.trim(), "recovery-crash-recovered");
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

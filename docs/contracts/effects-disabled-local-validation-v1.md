@@ -58,10 +58,11 @@ Corpus and evidence commands require `PEAS_LOCAL_VALIDATION_CANDIDATE_SHA` and
 the exact package lock, Node/npm constraints and actual versions, SQLite version, ordered migration
 inventory and hashes, OS/release/architecture, timezone and monotonic/diagnostic clock basis.
 
-Every run acquires an exclusive hard-link claim with an unguessable owner token. Stale recovery first
-owns a fixed sibling recovery mutex, re-reads and byte-compares the stale claim, then renames it to a
-unique quarantine name before retrying. Release unlinks only a claim carrying the caller's token.
-Malformed, changed, live, unexpired or concurrently recovered locks fail closed.
+Every run acquires an exclusive SQLite-backed claim with an unguessable owner token inside a
+`BEGIN IMMEDIATE` transaction. Live or unexpired owners fail closed. A committed dead owner is
+replaced in the same serialized transaction; a crash before commit rolls back, and a crash after
+commit leaves a claim that a later dead-owner transaction can recover. Release atomically deletes
+only a claim carrying the caller's token. Malformed claims and concurrent owners fail closed.
 
 The gate creates one temporary `PEAS_RUNTIME_ROOT` containing `sqlite/`, `artifacts/{sha256,staging,
 snapshots,quarantine,locks}/`, and `evidence/`. It is removed only after child settlement.
