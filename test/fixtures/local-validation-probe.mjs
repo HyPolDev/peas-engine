@@ -1,5 +1,8 @@
+import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
+import Database from "better-sqlite3";
 
 import {
   acquireGateLock,
@@ -76,6 +79,45 @@ if (operation === "manifest") {
   const retry = acquireGateLock(argument, { nowMs: 30_000_001, staleAfterMs: 1 });
   retry.release();
   process.stdout.write("recovery-crash-recovered\n");
+} else if (operation === "lock-hold-write-transaction") {
+  const database = new Database(argument);
+  database.pragma("busy_timeout = 0");
+  database.exec("BEGIN IMMEDIATE");
+  process.stdout.write("held\n");
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  database.exec("ROLLBACK");
+  database.close();
+} else if (operation === "lock-release-contention") {
+  const lock = acquireGateLock(argument);
+  const contender = spawn(
+    process.execPath,
+    [process.argv[1], "lock-hold-write-transaction", argument],
+    { cwd: process.cwd(), windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  let stderr = "";
+  contender.stderr.setEncoding("utf8").on("data", (chunk) => {
+    stderr += chunk;
+  });
+  const contenderExit = new Promise((resolve) => contender.once("exit", resolve));
+  await new Promise((resolve, reject) => {
+    let stdout = "";
+    contender.stdout.setEncoding("utf8").on("data", (chunk) => {
+      stdout += chunk;
+      if (stdout.includes("held\n")) resolve();
+    });
+    contender.once("error", reject);
+    contenderExit.then((code) => {
+      if (!stdout.includes("held\n")) {
+        reject(new Error(`contender-exited-before-lock:${code}:${stderr}`));
+      }
+    });
+  });
+  lock.release();
+  const exitCode = await contenderExit;
+  if (exitCode !== 0) throw new Error(`contender-failed:${exitCode}:${stderr}`);
+  const retry = acquireGateLock(argument);
+  retry.release();
+  process.stdout.write("release-contention-settled\n");
 } else if (operation === "runtime") {
   const root = argument;
   const identity = repositoryIdentity();

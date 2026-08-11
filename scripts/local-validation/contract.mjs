@@ -339,8 +339,8 @@ export function acquireGateLock(lockPath, options = {}) {
   return Object.freeze({
     release() {
       if (released) return;
-      released = true;
       try {
+        database.pragma("busy_timeout = 5000");
         database.exec("BEGIN IMMEDIATE");
         const current = database
           .prepare(
@@ -352,11 +352,11 @@ export function acquireGateLock(lockPath, options = {}) {
         }
         database.prepare("DELETE FROM local_validation_gate_claim WHERE singleton = 1").run();
         database.exec("COMMIT");
+        released = true;
+        database.close();
       } catch (error) {
         if (database.inTransaction) database.exec("ROLLBACK");
         throw error;
-      } finally {
-        database.close();
       }
     },
   });

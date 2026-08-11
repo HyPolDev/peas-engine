@@ -18,6 +18,17 @@ import {
 } from "./contract.mjs";
 import { executeHardKillMatrix } from "./hard-kill.mjs";
 
+function releaseGateAndRemoveWorkspace(lock, workspace) {
+  let releaseError;
+  try {
+    lock.release();
+  } catch (error) {
+    releaseError = error;
+  }
+  rmSync(workspace, { recursive: true, force: true });
+  if (releaseError !== undefined) throw releaseError;
+}
+
 async function run() {
   const mode = process.argv[2];
   if (mode !== "corpus" && mode !== "integration") throw new Error("local-validation-mode-invalid");
@@ -140,8 +151,7 @@ async function run() {
     }
     return { output: report, exitCode: passed ? 0 : 1 };
   } finally {
-    lock.release();
-    rmSync(workspace, { recursive: true, force: true });
+    releaseGateAndRemoveWorkspace(lock, workspace);
   }
 }
 

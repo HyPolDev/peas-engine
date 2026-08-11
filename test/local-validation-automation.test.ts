@@ -97,6 +97,9 @@ test("gate locking rejects overlap and recovers only a dead expired owner", () =
     const legacyRecoveryArtifact = runProbe(["lock-recover-once", path]);
     assert.equal(legacyRecoveryArtifact.status, 0, legacyRecoveryArtifact.stderr);
     assert.equal(legacyRecoveryArtifact.stdout.trim(), "recovered-on-retry");
+    const releaseContention = runProbe(["lock-release-contention", path]);
+    assert.equal(releaseContention.status, 0, releaseContention.stderr);
+    assert.equal(releaseContention.stdout.trim(), "release-contention-settled");
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
