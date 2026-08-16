@@ -9,6 +9,7 @@ import {
   acquireGateLock,
   assertCredentialAndAccountAbsence,
   canonicalBytes,
+  git,
   platformIdentity,
   readJson,
   repositoryIdentity,
@@ -32,10 +33,32 @@ function releaseGateAndRemoveWorkspace(lock, workspace) {
 async function run() {
   const mode = process.argv[2];
   if (mode !== "corpus" && mode !== "integration") throw new Error("local-validation-mode-invalid");
-  const identity =
-    mode === "corpus" || process.env.PEAS_LOCAL_VALIDATION_CANDIDATE_SHA !== undefined
-      ? verifyCandidate()
-      : repositoryIdentity();
+  const observedIdentity =
+    mode === "integration" && process.env.PEAS_LOCAL_VALIDATION_CANDIDATE_SHA === undefined
+      ? repositoryIdentity()
+      : null;
+  const identity = verifyCandidate(
+    process.cwd(),
+    observedIdentity === null
+      ? process.env
+      : {
+          ...process.env,
+          PEAS_LOCAL_VALIDATION_CANDIDATE_SHA: observedIdentity.sha,
+          PEAS_LOCAL_VALIDATION_CANDIDATE_TREE: observedIdentity.tree,
+        },
+  );
+  const origin = git(process.cwd(), "remote", "get-url", "origin");
+  if (origin.length === 0 || /[\0\r\n]/u.test(origin)) {
+    throw new Error("candidate-origin-invalid");
+  }
+  const candidateAttestation = Object.freeze({
+    schemaVersion: 1,
+    kind: "peas-local-validation-verified-checkout",
+    sha: identity.sha,
+    tree: identity.tree,
+    status: identity.status,
+    origin,
+  });
   if (
     mode === "corpus" &&
     process.env.PEAS_LOCAL_VALIDATION_AUTHORIZATION !== AUTHORIZATION_VALUE
@@ -65,6 +88,7 @@ async function run() {
       inputPath,
       canonicalBytes({
         identity,
+        candidateAttestation,
         manifest,
         runtimeRoot,
         outputPath,

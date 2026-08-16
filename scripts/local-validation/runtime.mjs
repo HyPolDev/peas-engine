@@ -27,6 +27,75 @@ export const RUNTIME_LAYOUT = Object.freeze([
 
 const AUTHORITY_PATH = "sqlite/local-validation-authority.json";
 const PRIMARY_ROOTS = Object.freeze(["sqlite", "artifacts"]);
+const ATTESTATION_KEYS = Object.freeze([
+  "kind",
+  "origin",
+  "schemaVersion",
+  "sha",
+  "status",
+  "tree",
+]);
+const CASE_ID_PATTERN = /^lv-v1-\d{3}-[0-9a-f]{16}$/u;
+
+export const CHECKOUT_ATTESTATION_ENV = "PEAS_LOCAL_VALIDATION_CHECKOUT_ATTESTATION";
+export const ATTESTED_CASE_ID_ENV = "PEAS_LOCAL_VALIDATION_ATTESTED_CASE_ID";
+
+function recordValue(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+export function validateCheckoutAttestation(value, identity) {
+  if (value === undefined || value === null) {
+    throw new Error("local-validation-checkout-attestation-required");
+  }
+  const attestation = recordValue(value);
+  if (attestation === null) throw new Error("local-validation-checkout-attestation-invalid");
+  if (
+    canonicalBytes(Object.keys(attestation).sort()) !== canonicalBytes(ATTESTATION_KEYS) ||
+    attestation.schemaVersion !== 1 ||
+    attestation.kind !== "peas-local-validation-verified-checkout" ||
+    !/^[0-9a-f]{40}$/u.test(attestation.sha) ||
+    !/^[0-9a-f]{40}$/u.test(attestation.tree) ||
+    attestation.status !== "" ||
+    typeof attestation.origin !== "string" ||
+    attestation.origin.length === 0 ||
+    /[\0\r\n]/u.test(attestation.origin)
+  ) {
+    throw new Error("local-validation-checkout-attestation-invalid");
+  }
+  if (
+    identity !== undefined &&
+    (attestation.sha !== identity?.sha ||
+      attestation.tree !== identity?.tree ||
+      attestation.status !== identity?.status)
+  ) {
+    throw new Error("local-validation-checkout-attestation-mismatch");
+  }
+  return Object.freeze({ ...attestation });
+}
+
+function environmentAttestation() {
+  const raw = process.env[CHECKOUT_ATTESTATION_ENV];
+  if (raw === undefined) throw new Error("local-validation-checkout-attestation-required");
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("local-validation-checkout-attestation-invalid");
+  }
+  return validateCheckoutAttestation(parsed);
+}
+
+export function attestedCaseEnvironment(inherited, candidateAttestation, caseId) {
+  const attestation = validateCheckoutAttestation(candidateAttestation);
+  if (!CASE_ID_PATTERN.test(caseId)) throw new Error("local-validation-attested-case-id-invalid");
+  return {
+    ...inherited,
+    [CHECKOUT_ATTESTATION_ENV]: canonicalBytes({ ...attestation, caseId }).trimEnd(),
+    [ATTESTED_CASE_ID_ENV]: caseId,
+    PEAS_LOCAL_VALIDATION_CASE_ID: caseId,
+  };
+}
 
 function directoryHasEntries(path) {
   try {
@@ -207,7 +276,7 @@ export function executeResourceBoundaryVectors(ceilings) {
   });
 }
 
-function runExecutableCase(caseEntry, runtimeRoot, preload, order, bindings) {
+function runExecutableCase(caseEntry, runtimeRoot, preload, order, bindings, candidateAttestation) {
   if (!existsSync(caseEntry.executable.compiledPath)) {
     throw new Error(`compiled-case-missing:${caseEntry.executable.compiledPath}`);
   }
@@ -236,12 +305,11 @@ function runExecutableCase(caseEntry, runtimeRoot, preload, order, bindings) {
       timeout: 180_000,
       maxBuffer: 16 * 1024 * 1024,
       env: {
-        ...caseEnvironment,
+        ...attestedCaseEnvironment(caseEnvironment, candidateAttestation, caseEntry.id),
         NODE_OPTIONS: `--require ${JSON.stringify(preload)}`,
         PEAS_NETWORK_DENIAL_INHERITED: "1",
         PEAS_RUNTIME_ROOT: runtimeRoot,
         PEAS_EFFECTS_ALLOWED: "false",
-        PEAS_LOCAL_VALIDATION_CASE_ID: caseEntry.id,
         PEAS_NETWORK_DENIAL_AUDIT_PATH: auditPath,
         TEMP: caseTemporaryRoot,
         TMP: caseTemporaryRoot,
@@ -284,6 +352,15 @@ function runExecutableCase(caseEntry, runtimeRoot, preload, order, bindings) {
 }
 
 export function executeSyntheticMatrix(runtimeRoot, manifest, options = {}) {
+  if (
+    options.candidateAttestation === undefined &&
+    globalThis.__PEAS_NETWORK_DENIAL__?.installed === true
+  ) {
+    throw new Error("local-validation-checkout-attestation-required");
+  }
+  const candidateAttestation = validateCheckoutAttestation(
+    options.candidateAttestation ?? environmentAttestation(),
+  );
   const cases =
     options.limit === undefined ? manifest.cases : manifest.cases.slice(0, options.limit);
   const preload = resolve("scripts/local-validation/network-deny.cjs");
@@ -306,7 +383,14 @@ export function executeSyntheticMatrix(runtimeRoot, manifest, options = {}) {
     for (const caseEntry of orderedCases) {
       executions.push({
         order,
-        ...runExecutableCase(caseEntry, runtimeRoot, preload, order, bindingsFor(caseEntry.id)),
+        ...runExecutableCase(
+          caseEntry,
+          runtimeRoot,
+          preload,
+          order,
+          bindingsFor(caseEntry.id),
+          candidateAttestation,
+        ),
       });
     }
   }

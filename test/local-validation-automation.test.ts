@@ -9,11 +9,23 @@ import test from "node:test";
 const probe = "test/fixtures/local-validation-probe.mjs";
 const preload = resolve("scripts/local-validation/network-deny.cjs");
 
-function runProbe(args: readonly string[], options: { preload?: boolean } = {}) {
+function runProbe(
+  args: readonly string[],
+  options: { preload?: boolean; env?: NodeJS.ProcessEnv } = {},
+) {
   return spawnSync(
     process.execPath,
     [...(options.preload === true ? ["--require", preload] : []), probe, ...args],
-    { cwd: process.cwd(), encoding: "utf8", windowsHide: true },
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      windowsHide: true,
+      env: {
+        ...process.env,
+        PEAS_LOCAL_VALIDATION_CHECKOUT_ATTESTATION: checkoutAttestationJson,
+        ...options.env,
+      },
+    },
   );
 }
 
@@ -36,6 +48,25 @@ function canonicalize(value: unknown): unknown {
 function canonicalBytes(value: unknown): string {
   return `${JSON.stringify(canonicalize(value), null, 2)}\n`;
 }
+
+const checkoutIdentity = {
+  sha: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", windowsHide: true }).trim(),
+  tree: execFileSync("git", ["rev-parse", "HEAD^{tree}"], {
+    encoding: "utf8",
+    windowsHide: true,
+  }).trim(),
+  status: "",
+};
+const checkoutAttestation = {
+  schemaVersion: 1,
+  kind: "peas-local-validation-verified-checkout",
+  ...checkoutIdentity,
+  origin: execFileSync("git", ["remote", "get-url", "origin"], {
+    encoding: "utf8",
+    windowsHide: true,
+  }).trim(),
+};
+const checkoutAttestationJson = canonicalBytes(checkoutAttestation).trimEnd();
 
 test("the frozen local-validation manifest compiles deterministically with 200+ unique cases", () => {
   const first = runProbe(["manifest"]);
@@ -231,6 +262,36 @@ test("network denial is mandatory and blocks outbound APIs before cases", () => 
     );
     assert.notEqual(escaped.status, 0);
     assert.match(escaped.stderr, /peas-outbound-network-denied/u);
+    const forbiddenExecutables = [
+      ["git", ["--version"]],
+      ["curl", ["--version"]],
+      ...(process.platform === "win32"
+        ? [
+            ["fsutil", ["/?"]],
+            ["cmd", ["/c", "exit", "0"]],
+            ["powershell", ["-NoProfile", "-Command", "exit 0"]],
+          ]
+        : [["sh", ["-c", "true"]]]),
+    ] as Array<[string, string[]]>;
+    for (const [command, args] of forbiddenExecutables) {
+      const blocked = spawnSync(
+        process.execPath,
+        [
+          "--require",
+          preload,
+          "-e",
+          `require('node:child_process').execFileSync(${JSON.stringify(command)},${JSON.stringify(args)})`,
+        ],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          windowsHide: true,
+          env: { ...process.env, PEAS_NETWORK_DENIAL_INHERITED: "1" },
+        },
+      );
+      assert.notEqual(blocked.status, 0, command);
+      assert.match(blocked.stderr, /peas-outbound-network-denied/u, command);
+    }
     const surfaces = spawnSync(
       process.execPath,
       [
@@ -258,6 +319,150 @@ test("network denial is mandatory and blocks outbound APIs before cases", () => 
       "child_process.execSync",
     ])
       assert.ok(deniedSurfaces.includes(required), required);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("checkout attestation is strict, case-bound, and immune to inherited spoofing", () => {
+  const directory = mkdtempSync(join(tmpdir(), "peas-lv-attestation-"));
+  try {
+    const workerInputPath = join(directory, "worker-input.json");
+    const runWorker = (input: unknown) => {
+      writeFileSync(workerInputPath, canonicalBytes(input), "utf8");
+      return spawnSync(
+        process.execPath,
+        ["--require", preload, "scripts/local-validation/worker.mjs"],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          windowsHide: true,
+          env: {
+            ...process.env,
+            PEAS_LOCAL_VALIDATION_WORKER_INPUT: workerInputPath,
+            PEAS_NETWORK_DENIAL_INHERITED: "1",
+          },
+        },
+      );
+    };
+    const missing = runWorker({ identity: checkoutIdentity });
+    assert.notEqual(missing.status, 0);
+    assert.match(missing.stderr, /local-validation-checkout-attestation-required/u);
+    const malformed = runWorker({
+      identity: checkoutIdentity,
+      candidateAttestation: "not-an-attestation",
+    });
+    assert.notEqual(malformed.status, 0);
+    assert.match(malformed.stderr, /local-validation-checkout-attestation-invalid/u);
+    const mismatch = runWorker({
+      identity: checkoutIdentity,
+      candidateAttestation: { ...checkoutAttestation, sha: "0".repeat(40) },
+    });
+    assert.notEqual(mismatch.status, 0);
+    assert.match(mismatch.stderr, /local-validation-checkout-attestation-mismatch/u);
+
+    const caseId = "lv-v1-052-753e5bc5e9c9cd20";
+    const validAndSpoofed = spawnSync(
+      process.execPath,
+      [
+        "--require",
+        preload,
+        "--input-type=module",
+        "-e",
+        `import { attestedCaseEnvironment } from './scripts/local-validation/runtime.mjs';
+         const attestation = ${JSON.stringify(checkoutAttestation)};
+         const environment = attestedCaseEnvironment({
+           PEAS_LOCAL_VALIDATION_CHECKOUT_ATTESTATION: 'spoofed',
+           PEAS_LOCAL_VALIDATION_ATTESTED_CASE_ID: 'spoofed',
+           PEAS_LOCAL_VALIDATION_CASE_ID: 'spoofed'
+         }, attestation, ${JSON.stringify(caseId)});
+         process.stdout.write(JSON.stringify(environment));`,
+      ],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        windowsHide: true,
+        env: { ...process.env, PEAS_NETWORK_DENIAL_INHERITED: "1" },
+      },
+    );
+    assert.equal(validAndSpoofed.status, 0, validAndSpoofed.stderr);
+    const environment = JSON.parse(validAndSpoofed.stdout) as Record<string, string>;
+    const attested = JSON.parse(
+      environment["PEAS_LOCAL_VALIDATION_CHECKOUT_ATTESTATION"] ?? "null",
+    ) as Record<string, unknown>;
+    assert.deepEqual(attested, { ...checkoutAttestation, caseId });
+    assert.equal(environment["PEAS_LOCAL_VALIDATION_ATTESTED_CASE_ID"], caseId);
+    assert.equal(environment["PEAS_LOCAL_VALIDATION_CASE_ID"], caseId);
+
+    const runDeniedEvidenceCase = (
+      attestationValue: string | undefined,
+      attestedCaseId: string | undefined,
+    ) => {
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        PEAS_NETWORK_DENIAL_INHERITED: "1",
+      };
+      delete env["PEAS_LOCAL_VALIDATION_CHECKOUT_ATTESTATION"];
+      delete env["PEAS_LOCAL_VALIDATION_ATTESTED_CASE_ID"];
+      delete env["PEAS_LOCAL_VALIDATION_CASE_ID"];
+      delete env["NODE_TEST_CONTEXT"];
+      if (attestationValue !== undefined) {
+        env["PEAS_LOCAL_VALIDATION_CHECKOUT_ATTESTATION"] = attestationValue;
+      }
+      if (attestedCaseId !== undefined) {
+        env["PEAS_LOCAL_VALIDATION_ATTESTED_CASE_ID"] = attestedCaseId;
+        env["PEAS_LOCAL_VALIDATION_CASE_ID"] = attestedCaseId;
+      }
+      return spawnSync(
+        process.execPath,
+        [
+          "--require",
+          preload,
+          "--test",
+          "--test-name-pattern=^release reconciliation accepts label and dispatch evidence bound to the candidate$",
+          "dist/test/evidence-reconciliation.test.js",
+        ],
+        { cwd: process.cwd(), encoding: "utf8", windowsHide: true, env },
+      );
+    };
+    const missingDeniedCase = runDeniedEvidenceCase(undefined, undefined);
+    assert.notEqual(
+      missingDeniedCase.status,
+      0,
+      `${missingDeniedCase.stdout}${missingDeniedCase.stderr}`,
+    );
+    assert.match(
+      `${missingDeniedCase.stdout}${missingDeniedCase.stderr}`,
+      /local-validation-checkout-attestation-required/u,
+    );
+    assert.doesNotMatch(
+      `${missingDeniedCase.stdout}${missingDeniedCase.stderr}`,
+      /peas-outbound-network-denied/u,
+    );
+    const malformedDeniedCase = runDeniedEvidenceCase("{", caseId);
+    assert.notEqual(malformedDeniedCase.status, 0);
+    assert.match(
+      `${malformedDeniedCase.stdout}${malformedDeniedCase.stderr}`,
+      /local-validation-checkout-attestation-invalid/u,
+    );
+    assert.doesNotMatch(
+      `${malformedDeniedCase.stdout}${malformedDeniedCase.stderr}`,
+      /peas-outbound-network-denied/u,
+    );
+    const wrongCaseId = "lv-v1-053-400e1964e8c867bc";
+    const mismatchedDeniedCase = runDeniedEvidenceCase(
+      canonicalBytes({ ...checkoutAttestation, caseId: wrongCaseId }).trimEnd(),
+      caseId,
+    );
+    assert.notEqual(mismatchedDeniedCase.status, 0);
+    assert.match(
+      `${mismatchedDeniedCase.stdout}${mismatchedDeniedCase.stderr}`,
+      /local-validation-checkout-attestation-invalid/u,
+    );
+    assert.doesNotMatch(
+      `${mismatchedDeniedCase.stdout}${mismatchedDeniedCase.stderr}`,
+      /peas-outbound-network-denied/u,
+    );
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

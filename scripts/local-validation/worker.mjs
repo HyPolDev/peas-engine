@@ -2,7 +2,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { assertCredentialAndAccountAbsence, canonicalBytes, readJson } from "./contract.mjs";
-import { executeSyntheticMatrix, provisionValidationRuntime } from "./runtime.mjs";
+import {
+  executeSyntheticMatrix,
+  provisionValidationRuntime,
+  validateCheckoutAttestation,
+} from "./runtime.mjs";
 
 const input = readJson(process.env.PEAS_LOCAL_VALIDATION_WORKER_INPUT);
 const credentialProof = assertCredentialAndAccountAbsence();
@@ -17,9 +21,14 @@ try {
   denialProbe = "blocked";
 }
 if (denialProbe !== "blocked") throw new Error("outbound-network-denial-probe-failed");
+const candidateAttestation = validateCheckoutAttestation(
+  input.candidateAttestation,
+  input.identity,
+);
 const firstBoot = provisionValidationRuntime(input.runtimeRoot, input.identity);
 const result = executeSyntheticMatrix(input.runtimeRoot, input.manifest, {
   ...(input.limit === null ? {} : { limit: input.limit }),
+  candidateAttestation,
   credentialPresentCount: credentialProof.present.length,
 });
 mkdirSync(dirname(input.outputPath), { recursive: true });

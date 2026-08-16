@@ -52,8 +52,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#reconciliation hard-kill boundary matrix replays one deterministic action",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-003-8388b539c98a4348",
       "identitySha256": "1c5e8caec3ac1c0ea67eb10f60649de53836368fd7d7b1baa9bf37fbba0a96ee"
@@ -71,8 +71,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#store and lease hard-kill boundary matrix converges with exact evidence",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-004-d9a85f5bda87dcfe",
       "identitySha256": "0c90210eb92305b1cca59d76cb2c630d76df0c9883ccd0802a26fa39333a7c78"
@@ -90,8 +90,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#verified-read hard-kill boundaries leave only recoverable snapshots",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-005-d8084fa0ffd45309",
       "identitySha256": "8be76aa54a5faf8271a698d62848eadc1e71b8c193e212467ba9e8a7d29367ed"
@@ -508,8 +508,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#a contender cannot rename a stale snapshot after the live owner renews its SQLite fence",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-027-cec06ea193426ff6",
       "identitySha256": "78bc7ef21c949f9adc4d4f2b01329cb7eec3505a8658ab04ada52f8f8370551c"
@@ -527,8 +527,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#a hard-killed install intent cannot resurrect content after a durable digest denial",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-028-d4ce6f1282d8d92f",
       "identitySha256": "6eb5b2b8afc2b1690796cb81dbf89b3374301d7c38a7b300f3d635cff72dc1f2"
@@ -546,8 +546,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#cancellation after source removal preserves the exact quarantine copy and restart recovery",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-029-a2b0154ce86ff956",
       "identitySha256": "35330b1f04e3a0e8ec5e996dcf5ebb626d3cb08b97c5e5bc4d7284afc0fe6308"
@@ -565,8 +565,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#clean release clears its durable fence and immediate fail-mode reopen does not spin",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-030-c60ada9ca1cb3204",
       "identitySha256": "b50691b0e649e64870c0749c3125dbff605c2aeaf734138c644e564af0fb4e75"
@@ -584,8 +584,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#database-only competing fence honors fail mode without ENOENT retry churn",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-031-e2695f4a62d9bf61",
       "identitySha256": "83f1669089984e8d0440424d8e521852c56d2241abeddcd56b8d6212fb47fd4f"
@@ -603,8 +603,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#exact redelivery returns the committed result without fabricating evidence",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-032-7bfb8b971b25b741",
       "identitySha256": "325cebf310517d60d2bd64be5b8e35ba28232369ca189d58acf1c68df2eb2bc1"
@@ -622,8 +622,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#exact redelivery verifies the joined terminal outcome before retry decisions",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-033-c77c75a5cc3e6344",
       "identitySha256": "3f579d700f4ced50e8e675363ea877e95203ee44e691ef59bce623ffa16e2d4d"
@@ -641,8 +641,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#expired takeover fences a still-live stale writer before install and SQLite commit",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-034-cb8c9368983e3d62",
       "identitySha256": "cf188dd4b2bfd2de24c3d58bb871a4e26a246229c7ccfd39648a36a7496ac514"
@@ -660,8 +660,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#hard kill after cursor advancement resumes from the durable generation",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-035-1432b682087661fd",
       "identitySha256": "557c1d0b849dd9928f69d6e37662e983671c6ffa71940e603b464e0ed72e1f7b"
@@ -679,8 +679,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#hard kill after install intent converges from durable intent without fabricated evidence",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-036-8fe380c0fe464bbf",
       "identitySha256": "02201841ad7ef08b44da754deddc9f8e07352b2f661ebd8693c40e5c08b21864"
@@ -698,8 +698,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#hard-killed staged writer leaves only recoverable evidence for fenced reconciliation",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-037-3d3061d9e733cfde",
       "identitySha256": "3a9e548ab859afcdfa13a4eff116c63859080a3e7c6f873a0912457f5dea7f3f"
@@ -717,8 +717,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#invalid orphans are quarantined without false artifact metadata",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-038-27a3e734539a5377",
       "identitySha256": "60c46175a8e6a9ce5c0d0afa9401d2a2df7179968eca4fa354bc321360d60512"
@@ -736,8 +736,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#reconciliation adopts valid orphans without fabricating observations",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-039-9ed00969f382dfa1",
       "identitySha256": "3e717566ffd259fc735ccd11d34ab08b34d3e2c07c9e231caafd2366e4fd3fe3"
@@ -755,8 +755,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#reconciliation expires attempts and quarantines unowned stages",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-040-afaedc984ed23ed1",
       "identitySha256": "ab23c91aedb93e9736ace35ebd66da55588d3bb18165c6e13a38f9283dbde1e5"
@@ -774,8 +774,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#same-clock incidents and quarantine objects remain distinct",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-041-74164a2d645a0964",
       "identitySha256": "4cb73a7a66a3fc8047f0b49c38de55d7c19458610fbf8d388c26b86f346b7c64"
@@ -793,8 +793,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#same-owner heartbeat and foreground renewal coalesce around slow lease I/O",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-042-653082aea7077f84",
       "identitySha256": "764bb890d72593164cb2442527e700ca3674fb37de63399fa4c0d078c972dbc1"
@@ -812,8 +812,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#same-stack renewal reentrancy shares one rewrite and release waits for it",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-043-1cbe0a80c625a855",
       "identitySha256": "60c63b07590ae589e280f43b4a11e007d99356cf90cabd4057a9ddd2aa604f2d"
@@ -831,8 +831,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#stores entity bytes, separates evidence, deduplicates, and reads verified snapshots",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-044-df2176d17f4418e9",
       "identitySha256": "b22a6bc536359835b9a6462d943523c534ea36fbde43fbbd89b5622711d1f951"
@@ -850,8 +850,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#transaction mutations evaluate lease expiry from a fresh clock reading",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-045-ec6b4321e1cb55b0",
       "identitySha256": "9f6a3ce5883c1ca438f05f68b9a97ec1075928e060e5d5b2ecc6afd887dba752"
@@ -983,8 +983,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation accepts label and dispatch evidence bound to the candidate",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "5506cd225df608ab4c1802eeb06928a791b298a8a1cfa219fac09032d2e5c849",
-        "sizeBytes": 28329
+        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
+        "sizeBytes": 30622
       },
       "id": "lv-v1-052-753e5bc5e9c9cd20",
       "identitySha256": "8ff401f43fc3b60f90723938b3bd4f3761faf1c565d51c4f321c793d0735bb5d"
@@ -1002,8 +1002,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation binds repository and run IDs to trusted orchestration",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "5506cd225df608ab4c1802eeb06928a791b298a8a1cfa219fac09032d2e5c849",
-        "sizeBytes": 28329
+        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
+        "sizeBytes": 30622
       },
       "id": "lv-v1-053-400e1964e8c867bc",
       "identitySha256": "8eecaf0ee677aff1617d27ce9aa9d7d6463ba8b8ba7637e352bfc41af57b87d2"
@@ -1021,8 +1021,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation binds runtime and source identities to the checkout",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "5506cd225df608ab4c1802eeb06928a791b298a8a1cfa219fac09032d2e5c849",
-        "sizeBytes": 28329
+        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
+        "sizeBytes": 30622
       },
       "id": "lv-v1-054-7a1beb2781617587",
       "identitySha256": "4bc4d2dcca4728c20b3d273e3d4b38d8be005ead5e09c22dabcf33767cef968c"
@@ -1040,8 +1040,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation binds scale metrics to the committed policy",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "5506cd225df608ab4c1802eeb06928a791b298a8a1cfa219fac09032d2e5c849",
-        "sizeBytes": 28329
+        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
+        "sizeBytes": 30622
       },
       "id": "lv-v1-055-68de57dc4dc1871a",
       "identitySha256": "f601c079c1a71fc384a2b7614ecebb8a105add7efcf5e3620106b90aca4dbfc4"
@@ -1059,8 +1059,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation binds the complete CI and label-run identity",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "5506cd225df608ab4c1802eeb06928a791b298a8a1cfa219fac09032d2e5c849",
-        "sizeBytes": 28329
+        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
+        "sizeBytes": 30622
       },
       "id": "lv-v1-056-d7c2b5c0f0bc0dd0",
       "identitySha256": "649a5f1839eb47cb381a4929c7f5beba6fb99232bc19b7785e5689a31c859d79"
@@ -1078,8 +1078,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation recomputes every embedded evidence-file hash and value",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "5506cd225df608ab4c1802eeb06928a791b298a8a1cfa219fac09032d2e5c849",
-        "sizeBytes": 28329
+        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
+        "sizeBytes": 30622
       },
       "id": "lv-v1-057-723beef9895e1453",
       "identitySha256": "8495c818687814b4edbb38b3d425773063a1ded30fa43b3eaa2973d95147c41c"
@@ -1097,8 +1097,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation refuses symlinked raw evidence",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "5506cd225df608ab4c1802eeb06928a791b298a8a1cfa219fac09032d2e5c849",
-        "sizeBytes": 28329
+        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
+        "sizeBytes": 30622
       },
       "id": "lv-v1-058-90e09e3a7fe126eb",
       "identitySha256": "d23da8c353c81ece39b704abeafb25a511e13f3d0855161dedaa2d0873e9f7c6"
@@ -1116,8 +1116,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation rejects failed gates, checks, and integrity",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "5506cd225df608ab4c1802eeb06928a791b298a8a1cfa219fac09032d2e5c849",
-        "sizeBytes": 28329
+        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
+        "sizeBytes": 30622
       },
       "id": "lv-v1-059-b96ebad91919a4d5",
       "identitySha256": "850041a3c7ea215f9bd5eefc6987b13a394e072d50ba8c6291fcbff6b4e8ae60"
@@ -1135,8 +1135,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation rejects malformed evidence",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "5506cd225df608ab4c1802eeb06928a791b298a8a1cfa219fac09032d2e5c849",
-        "sizeBytes": 28329
+        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
+        "sizeBytes": 30622
       },
       "id": "lv-v1-060-945477328201507f",
       "identitySha256": "b4575e9c8eb39c15394348c1fa24b41c8be5154eaaa7d3c9d27fb9b4824c709b"
@@ -1154,8 +1154,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation rejects the wrong candidate SHA",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "5506cd225df608ab4c1802eeb06928a791b298a8a1cfa219fac09032d2e5c849",
-        "sizeBytes": 28329
+        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
+        "sizeBytes": 30622
       },
       "id": "lv-v1-061-189041974b7f9498",
       "identitySha256": "878287ff4d4b4041534cd5ac12db8ccee2b5c25438dbc7a75d1b089a7363fce2"
@@ -1173,8 +1173,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation rejects wrong runner identity",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "5506cd225df608ab4c1802eeb06928a791b298a8a1cfa219fac09032d2e5c849",
-        "sizeBytes": 28329
+        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
+        "sizeBytes": 30622
       },
       "id": "lv-v1-062-937aecf5b303c002",
       "identitySha256": "73fdb7c9882adf72d6c8a5a81b304767402461db1931628e6e3240a10f901442"
@@ -1192,8 +1192,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation requires a genuine manual 100k trigger",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "5506cd225df608ab4c1802eeb06928a791b298a8a1cfa219fac09032d2e5c849",
-        "sizeBytes": 28329
+        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
+        "sizeBytes": 30622
       },
       "id": "lv-v1-063-a17fe7be91e34554",
       "identitySha256": "ffbceab3df110e055734c59aa3b449eb432bd67b3ee96d54df695bf8b1ddb85e"
@@ -1211,8 +1211,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation requires exactly one of every gate",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "5506cd225df608ab4c1802eeb06928a791b298a8a1cfa219fac09032d2e5c849",
-        "sizeBytes": 28329
+        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
+        "sizeBytes": 30622
       },
       "id": "lv-v1-064-d50ace163acd702c",
       "identitySha256": "c2d38de6b0626211e19a8f09001fd4bc9b282aeef466029c87bca6eaaf200665"
@@ -1230,8 +1230,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation requires unique location-independent evidence basenames",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "5506cd225df608ab4c1802eeb06928a791b298a8a1cfa219fac09032d2e5c849",
-        "sizeBytes": 28329
+        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
+        "sizeBytes": 30622
       },
       "id": "lv-v1-065-0cad02d2575a4389",
       "identitySha256": "e8d4d978ea668bd5a181cd3e24b84dacbf1ee1d13ad3052f2112d491bdab08f2"
@@ -2389,8 +2389,8 @@
       "fixture": {
         "identity": "test/persistence-scale.test.ts#SQLite 1k-cluster scale gate records latency, memory, and storage metrics",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "c29f9d75fcdcfda428f3100518b4e325bdfc10af0fd80224dde76da01c185700",
-        "sizeBytes": 22067
+        "sha256": "f12bacf193661f5fae7e069cb65ad6c83d313ce6abcf8c858b4e25285f484ee6",
+        "sizeBytes": 23792
       },
       "id": "lv-v1-126-9091b3afdf1f87e0",
       "identitySha256": "c174b2a7485a88fd63384296102d95bfd2b2a01f9fd71834132c82612a2fb839"
@@ -2655,8 +2655,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#a runtime-root junction or symlink is rejected as a redirected root",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-140-214bbfcd2f69107d",
       "identitySha256": "4b8cb437934a442e9c1cb2de10f034876abf51907cff05bb22c305eac1b40859"
@@ -2674,8 +2674,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#a second writer process boundary is explicit",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-141-02e80639b06ea855",
       "identitySha256": "d8c9f7eafeedb243afe85f3b8fdf3b0386b179a9d2a171f80b457f773b2633db"
@@ -2693,8 +2693,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#a separate-process stale writer cannot append outcomes or mutate staging after takeover",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-142-89c85460a8ff53ab",
       "identitySha256": "9e1b004e38288cf53dcea25be37c085f9083902fa3467d5922558eac5e94f5e2"
@@ -2712,8 +2712,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#attempt identity rejects metadata, content, and incomplete replay conflicts",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-143-aa5315c1e3835d9d",
       "identitySha256": "90d5977355ea56e92ed32bf20ab3291d17984247b06ea54b45f5ff63063bfc24"
@@ -2731,8 +2731,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#cancellation before source removal leaves both owned links for deterministic restart",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-144-fdd4c68edff19966",
       "identitySha256": "48bd5f75427f39290a327bd1c29107ff54d14399f19c50b9477b9525cdc4793a"
@@ -2750,8 +2750,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#canonical evidence reads fail closed on relational-only forgery",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-145-31f60036943ef1f7",
       "identitySha256": "129af38106a79e867a1d3f8fb91d4e2d26a1970374da042e0a89965609556dc9"
@@ -2769,8 +2769,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#direct repository writes reject raw or prefix-forged external identities without leakage",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-146-22f6510540eea572",
       "identitySha256": "3962b14a053cc4cb66eaf3148149b887049e2de0d676897b0792a5b24a760c8f"
@@ -2788,8 +2788,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#does not persist raw paths or query secrets",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-147-be83042efea94232",
       "identitySha256": "2623306665b5c9ce3f8ddce587f989c8c076cedd93d3c49603e034b4f0fae762"
@@ -2807,8 +2807,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#enforces the global vault quota independently of the artifact limit",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-148-4d9fcfd3605fafca",
       "identitySha256": "c1a5358215d28d1b726e7878eb7ec11eab9e952dec9b419726f467361fb06882"
@@ -2826,8 +2826,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#failed filesystem handling never advances the durable reconciliation cursor",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-149-afc28809be3f82f8",
       "identitySha256": "af74dd027d4e3bc7492fa149e9bf9fb6f83d1363ad757e9d29a0166a611564e2"
@@ -2845,8 +2845,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#grammar-valid external identifiers are irreversibly hashed before persistence",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-150-4b1ee63c83dabc02",
       "identitySha256": "7e56c5c5b9fd8207fd2c5ff0f77e66e47b9a8764e27e681c435e79741b9519b6"
@@ -2864,8 +2864,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#hard links from outside the trusted tree never become readable artifact content",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-151-424e243c321e5f62",
       "identitySha256": "9e9c79f813bb5d26e6f2befcff69563f55e1e67f7252a8beb3cadc82834c2042"
@@ -2883,8 +2883,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#immutable artifact evidence rejects updates and deletes",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-152-e2d762cf818d2afa",
       "identitySha256": "45ec9ccc31cdb267e196f9b1a946e029ddee5f490d7e5744413ed755639d956f"
@@ -2902,8 +2902,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#junctions or symlinks above existing and missing runtime roots fail before target mutation",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-153-00a701dcef9562eb",
       "identitySha256": "4767a807dc19c53d7cb95f4d2226cc037de98c14fe9de77c689278c5c45dfbb4"
@@ -2921,8 +2921,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#Linux file symlinks cannot replace committed content",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-154-8048af4f5e6d846a",
       "identitySha256": "16db3ede0cc2127889b3208b66abddd7032a74bf374bcea5f978d614ee661f95"
@@ -2940,8 +2940,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#one-item directory reconciliation has a fixed enumeration bound",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-155-131383a820fd43d0",
       "identitySha256": "5109e3c0af6d6a5357d0db78ca0ed9b3a92e941358231e7abf3f480e2068121f"
@@ -2959,8 +2959,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#one-item reconciliation bounds database rows, bytes, elapsed time, and memory",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-156-3e160d3790867560",
       "identitySha256": "2c93247aa275bf2dfc19076f0fda0581627b68376138e6509a1efa3ea5913005"
@@ -2978,8 +2978,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#oversized corrupt reads stop after one bounded chunk",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-157-bd9e574fdc72e192",
       "identitySha256": "f4da373a485cdaeaf8dbc2d3a4b35222c0a05d0dd558c763909f4dcaa69ad2ce"
@@ -2997,8 +2997,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#persistence boundary rejects unsafe strings without leaking sentinel secrets",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-158-3d806506e9e89e9a",
       "identitySha256": "c79b479d43a90e7df8cea98037368f4187fb65b460a0d5b490e9f8c46ba0870b"
@@ -3016,8 +3016,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#real platform ancestor links cannot redirect staging outside the vault",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-159-bc8c7e51d9112714",
       "identitySha256": "ec488bb4de31be0263f86b0e860eaf97914d68983e7b0dd68c06129fad9881b1"
@@ -3035,8 +3035,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#reconciliation fails closed on directory replacement and fanout overflow without cursor advance",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-160-753c1dbab61b9ebc",
       "identitySha256": "f4f6e0d4bdcf0d0e4ece8f854432113f859b1b062373673a9412b240340390c9"
@@ -3054,8 +3054,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#reconciliation obeys item budgets and converges across restart cursors",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-161-3a5ede297bc7291a",
       "identitySha256": "9176f329b5a6a843433d184b805ae077cc87bc3f330f209ca636ffb64cbded2e"
@@ -3073,8 +3073,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#reconciliation rejects stale, tampered, and generation-mismatched cursors",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-162-e0c691890f9d614f",
       "identitySha256": "707ff3b83a5c7f6c32036809818440a252312c3221c4d50a49f9d314ba802e33"
@@ -3092,8 +3092,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#rejects oversized streams with a terminal outcome and no artifact",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-163-146d414785faa90c",
       "identitySha256": "15767f39e73a3f308c6338e07cff74bc3338ae083ca8d5eb085fbb8804ac538e"
@@ -3111,8 +3111,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#runtime roots require explicit local absolute configuration",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-164-09fbd5d497e360bb",
       "identitySha256": "8a0ce57ed944aca57ed6d5461f0b82adbdc27ea75af7d70faf8f82ff5caa8b28"
@@ -3130,8 +3130,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#successful evidence commit is atomic when observation insertion aborts",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-165-74dfabb7588394db",
       "identitySha256": "15abcbf57e72ceb220aa89dff91d47f3f64e54994723de273361529ad2f05f18"
@@ -3149,8 +3149,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#tampered and missing committed content fails before consumer bytes",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-166-3dae695dc06ea03e",
       "identitySha256": "498ab472a2987168d60fb81e2bd16ad3a2b8eabc2dbae885ffb5a09e8d065820"
@@ -3168,8 +3168,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#terminal reconciliation is recoverable and a new run is explicit",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-167-15036b4c540f57ab",
       "identitySha256": "c8377bf79bc4de3b0e84e73680eb407e41c151a5482dd6734ce0931e90091978"
@@ -3187,8 +3187,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#vault refuses a SQLite database outside its configured runtime root",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-168-29443e713248b7b1",
       "identitySha256": "627b2a64e61cc51d21d78961ac67d4f0d65f956c967686ce011381e5ab9f57d3"
@@ -3206,8 +3206,8 @@
       "fixture": {
         "identity": "test/artifact-vault.test.ts#verified reads acknowledge destroy with one terminal close",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
-        "sizeBytes": 86910
+        "sha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
+        "sizeBytes": 88771
       },
       "id": "lv-v1-169-f57a637c1b9890fd",
       "identitySha256": "844e32dc91b31acd791ade9f9370c9832c3291a10637f8872897ffbc26db67d5"
@@ -3605,8 +3605,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#nightly audit records dispatch and schedule provenance from the actual event",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "5506cd225df608ab4c1802eeb06928a791b298a8a1cfa219fac09032d2e5c849",
-        "sizeBytes": 28329
+        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
+        "sizeBytes": 30622
       },
       "id": "lv-v1-190-a229aceecce81dd3",
       "identitySha256": "7aa34c35b42a9522abfc95b1ff0e7587df67e11e651cbc880d841cdc7769b09d"
@@ -4613,7 +4613,7 @@
         "failure-abort-transaction"
       ],
       "sourcePath": "test/artifact-vault.test.ts",
-      "sourceSha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
+      "sourceSha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
       "supportsPointFilter": true,
       "testName": "store and lease hard-kill boundary matrix converges with exact evidence"
     },
@@ -4633,7 +4633,7 @@
         "reconciliation-terminal-receipt-commit"
       ],
       "sourcePath": "test/artifact-vault.test.ts",
-      "sourceSha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
+      "sourceSha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
       "supportsPointFilter": true,
       "testName": "reconciliation hard-kill boundary matrix replays one deterministic action"
     },
@@ -4646,7 +4646,7 @@
         "snapshot-removal"
       ],
       "sourcePath": "test/artifact-vault.test.ts",
-      "sourceSha256": "42af89e106d94e541c968387645d08281f2b5347f530489b42d7584019ac7322",
+      "sourceSha256": "cc3b4d658877ced95a30e937ff5ecfc901243361462ddad85b79d9f08702f45b",
       "supportsPointFilter": true,
       "testName": "verified-read hard-kill boundaries leave only recoverable snapshots"
     },
