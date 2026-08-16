@@ -62,7 +62,15 @@ const SNAPSHOT_KEYS = Object.freeze([
 ] as const);
 
 function sortedOwnStringKeys(value: object): string[] {
-  return Object.keys(value).sort();
+  const ownKeys = Reflect.ownKeys(value);
+  const symbolKeys = ownKeys.filter((key): key is symbol => typeof key === "symbol");
+  assert.deepEqual(symbolKeys, [], "surface must not expose symbol keys");
+  const stringKeys = ownKeys.filter((key): key is string => typeof key === "string");
+  const nonEnumerableKeys = stringKeys.filter(
+    (key) => Object.getOwnPropertyDescriptor(value, key)?.enumerable !== true,
+  );
+  assert.deepEqual(nonEnumerableKeys, [], "surface must not expose non-enumerable keys");
+  return stringKeys.sort();
 }
 
 function assertZeroEffects(value: typeof P1_03_EFFECTS_ZERO): void {
@@ -450,6 +458,191 @@ test("session receiver is branded by private state", () => {
   assert.throws(() => capture.readRaw.call({}, "0".repeat(64)), TypeError);
 });
 
+test("surface assertions reject symbol and non-enumerable escape hatches", () => {
+  const symbolSurface = { visible: 0 };
+  Object.defineProperty(symbolSurface, Symbol("hidden-effect"), {
+    enumerable: true,
+    value: 1,
+  });
+  assert.throws(() => sortedOwnStringKeys(symbolSurface), /surface must not expose symbol keys/u);
+
+  const nonEnumerableSurface = { visible: 0 };
+  Object.defineProperty(nonEnumerableSurface, "hiddenEffect", {
+    enumerable: false,
+    value: 1,
+  });
+  assert.throws(
+    () => sortedOwnStringKeys(nonEnumerableSurface),
+    /surface must not expose non-enumerable keys/u,
+  );
+});
+
+type SourceToken = Readonly<{ kind: SyntaxKind; text: string; value: string }>;
+
+type SourceBoundaryScan = Readonly<{
+  callableSurfaces: ReadonlySet<string>;
+  constructorSurfaces: ReadonlySet<string>;
+  dynamicImportSpecifiers: readonly string[];
+  exportSpecifiers: readonly string[];
+  identifierSurfaces: ReadonlyMap<string, number>;
+  moduleSpecifiers: readonly string[];
+  requireSpecifiers: readonly string[];
+  sensitiveStringSurfaces: ReadonlySet<string>;
+}>;
+
+function callableSurfaceBefore(tokens: readonly SourceToken[], openParenIndex: number): string {
+  let cursor = openParenIndex - 1;
+  const parts: string[] = [];
+
+  if (tokens[cursor]?.kind === SyntaxKind.QuestionDotToken) cursor -= 1;
+  while (cursor >= 0) {
+    const token = tokens[cursor];
+    if (
+      token?.kind === SyntaxKind.Identifier ||
+      token?.kind === SyntaxKind.PrivateIdentifier ||
+      token?.kind === SyntaxKind.RequireKeyword
+    ) {
+      parts.unshift(token.text);
+      cursor -= 1;
+      continue;
+    }
+    if (token?.kind === SyntaxKind.DotToken || token?.kind === SyntaxKind.QuestionDotToken) {
+      parts.unshift(".");
+      cursor -= 1;
+      continue;
+    }
+    if (token?.kind === SyntaxKind.CloseBracketToken) {
+      const property = tokens[cursor - 1];
+      const openingBracket = tokens[cursor - 2];
+      if (
+        openingBracket?.kind !== SyntaxKind.OpenBracketToken ||
+        (property?.kind !== SyntaxKind.Identifier && property?.kind !== SyntaxKind.StringLiteral)
+      ) {
+        break;
+      }
+      parts.unshift(property.kind === SyntaxKind.StringLiteral ? property.value : property.text);
+      parts.unshift(".");
+      cursor -= 3;
+      if (tokens[cursor]?.kind === SyntaxKind.QuestionDotToken) cursor -= 1;
+      continue;
+    }
+    break;
+  }
+
+  return parts.join("");
+}
+
+function scanSourceBoundary(relative: string, source: string): SourceBoundaryScan {
+  const scanner = createScanner(true, LanguageVariant.Standard, source);
+  const tokens: SourceToken[] = [];
+  for (let kind = scanner.scan(); kind !== SyntaxKind.EndOfFile; kind = scanner.scan()) {
+    tokens.push({ kind, text: scanner.getTokenText(), value: scanner.getTokenValue() });
+  }
+  assert.ok(tokens.length > 0, `${relative} must produce tokens`);
+
+  const moduleSpecifiers: string[] = [];
+  const dynamicImportSpecifiers: string[] = [];
+  const exportSpecifiers: string[] = [];
+  const requireSpecifiers: string[] = [];
+  const callableSurfaces = new Set<string>();
+  const constructorSurfaces = new Set<string>();
+  const identifierSurfaces = new Map<string, number>();
+  const sensitiveStringSurfaces = new Set<string>();
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    assert.ok(token);
+    if (token.kind === SyntaxKind.Identifier || token.kind === SyntaxKind.RequireKeyword) {
+      identifierSurfaces.set(token.text, (identifierSurfaces.get(token.text) ?? 0) + 1);
+    }
+    if (
+      token.kind === SyntaxKind.StringLiteral &&
+      (token.value === "fetch" || token.value === "require")
+    ) {
+      sensitiveStringSurfaces.add(token.value);
+    }
+
+    if (token.kind === SyntaxKind.ImportKeyword) {
+      if (tokens[index + 1]?.kind === SyntaxKind.OpenParenToken) {
+        const specifier = tokens[index + 2];
+        assert.equal(specifier?.kind, SyntaxKind.StringLiteral, `${relative}: dynamic import`);
+        dynamicImportSpecifiers.push(specifier?.value ?? "");
+      } else {
+        const declarationSpecifiers: string[] = [];
+        for (let cursor = index + 1; cursor < tokens.length; cursor += 1) {
+          const candidate = tokens[cursor];
+          if (candidate?.kind === SyntaxKind.SemicolonToken) break;
+          if (candidate?.kind === SyntaxKind.StringLiteral) {
+            declarationSpecifiers.push(candidate.value);
+          }
+        }
+        assert.equal(declarationSpecifiers.length, 1, `${relative}: import declaration`);
+        moduleSpecifiers.push(declarationSpecifiers[0] ?? "");
+      }
+    }
+
+    if (token.kind === SyntaxKind.ExportKeyword) {
+      for (let cursor = index + 1; cursor < tokens.length; cursor += 1) {
+        const candidate = tokens[cursor];
+        if (candidate?.kind === SyntaxKind.SemicolonToken) break;
+        if (candidate?.kind !== SyntaxKind.FromKeyword) continue;
+        const specifier = tokens[cursor + 1];
+        assert.equal(specifier?.kind, SyntaxKind.StringLiteral, `${relative}: export-from`);
+        exportSpecifiers.push(specifier?.value ?? "");
+        break;
+      }
+    }
+
+    if (token.kind === SyntaxKind.NewKeyword) {
+      const target = tokens[index + 1];
+      assert.equal(target?.kind, SyntaxKind.Identifier, `${relative}: constructor target`);
+      constructorSurfaces.add(target?.text ?? "");
+    }
+
+    if (token.kind === SyntaxKind.OpenParenToken) {
+      const callableSurface = callableSurfaceBefore(tokens, index);
+      if (callableSurface.length > 0) callableSurfaces.add(callableSurface);
+      if (callableSurface.split(".").at(-1) === "require") {
+        const specifier = tokens[index + 1];
+        assert.equal(specifier?.kind, SyntaxKind.StringLiteral, `${relative}: require call`);
+        requireSpecifiers.push(specifier?.value ?? "");
+      }
+    }
+  }
+
+  return {
+    callableSurfaces,
+    constructorSurfaces,
+    dynamicImportSpecifiers,
+    exportSpecifiers,
+    identifierSurfaces,
+    moduleSpecifiers,
+    requireSpecifiers,
+    sensitiveStringSurfaces,
+  };
+}
+
+test("source boundary scan exposes export-from, optional, computed, and string canaries", () => {
+  const scan = scanSourceBoundary(
+    "boundary-canary.ts",
+    [
+      'export { readFile } from "node:fs";',
+      'export * from "node:https";',
+      'fetch?.("https://forbidden.invalid");',
+      'globalThis?.["fetch"]?.("https://forbidden.invalid");',
+      'require?.("node:path");',
+      'globalThis["require"]("node:fs");',
+    ].join("\n"),
+  );
+  assert.deepEqual([...scan.exportSpecifiers].sort(), ["node:fs", "node:https"]);
+  assert.deepEqual([...scan.requireSpecifiers].sort(), ["node:fs", "node:path"]);
+  assert.deepEqual([...scan.sensitiveStringSurfaces].sort(), ["fetch", "require"]);
+  assert.equal(scan.callableSurfaces.has("fetch"), true);
+  assert.equal(scan.callableSurfaces.has("globalThis.fetch"), true);
+  assert.equal(scan.callableSurfaces.has("require"), true);
+  assert.equal(scan.callableSurfaces.has("globalThis.require"), true);
+});
+
 test("production sources satisfy closed import, callable, and prohibited-effect allowlists", async () => {
   const testDir = path.dirname(fileURLToPath(import.meta.url));
   const repositoryRoot = path.resolve(testDir, "../..");
@@ -464,75 +657,24 @@ test("production sources satisfy closed import, callable, and prohibited-effect 
   );
   const moduleSpecifiers: string[] = [];
   const dynamicImportSpecifiers: string[] = [];
+  const exportSpecifiers: string[] = [];
   const requireSpecifiers: string[] = [];
   const callableSurfaces = new Set<string>();
   const constructorSurfaces = new Set<string>();
   const identifierSurfaces = new Map<string, number>();
+  const sensitiveStringSurfaces = new Set<string>();
 
   for (const { relative, source } of sourceRecords) {
-    const scanner = createScanner(true, LanguageVariant.Standard, source);
-    const tokens: Array<{ kind: SyntaxKind; text: string; value: string }> = [];
-    for (let kind = scanner.scan(); kind !== SyntaxKind.EndOfFile; kind = scanner.scan()) {
-      tokens.push({ kind, text: scanner.getTokenText(), value: scanner.getTokenValue() });
-    }
-    assert.ok(tokens.length > 0, `${relative} must produce tokens`);
-
-    for (let index = 0; index < tokens.length; index += 1) {
-      const token = tokens[index];
-      assert.ok(token);
-      if (token.kind === SyntaxKind.Identifier) {
-        identifierSurfaces.set(token.text, (identifierSurfaces.get(token.text) ?? 0) + 1);
-      }
-
-      if (token.kind === SyntaxKind.ImportKeyword) {
-        if (tokens[index + 1]?.kind === SyntaxKind.OpenParenToken) {
-          const specifier = tokens[index + 2];
-          assert.equal(specifier?.kind, SyntaxKind.StringLiteral, `${relative}: dynamic import`);
-          dynamicImportSpecifiers.push(specifier?.value ?? "");
-        } else {
-          const declarationSpecifiers: string[] = [];
-          for (let cursor = index + 1; cursor < tokens.length; cursor += 1) {
-            const candidate = tokens[cursor];
-            if (candidate?.kind === SyntaxKind.SemicolonToken) break;
-            if (candidate?.kind === SyntaxKind.StringLiteral) {
-              declarationSpecifiers.push(candidate.value);
-            }
-          }
-          assert.equal(declarationSpecifiers.length, 1, `${relative}: import declaration`);
-          moduleSpecifiers.push(declarationSpecifiers[0] ?? "");
-        }
-      }
-
-      if (
-        token.kind === SyntaxKind.Identifier &&
-        token.text === "require" &&
-        tokens[index + 1]?.kind === SyntaxKind.OpenParenToken
-      ) {
-        const specifier = tokens[index + 2];
-        assert.equal(specifier?.kind, SyntaxKind.StringLiteral, `${relative}: require call`);
-        requireSpecifiers.push(specifier?.value ?? "");
-      }
-
-      if (token.kind === SyntaxKind.NewKeyword) {
-        const target = tokens[index + 1];
-        assert.equal(target?.kind, SyntaxKind.Identifier, `${relative}: constructor target`);
-        constructorSurfaces.add(target?.text ?? "");
-      }
-
-      if (token.kind === SyntaxKind.OpenParenToken) {
-        let cursor = index - 1;
-        const parts: string[] = [];
-        while (
-          cursor >= 0 &&
-          (tokens[cursor]?.kind === SyntaxKind.Identifier ||
-            tokens[cursor]?.kind === SyntaxKind.PrivateIdentifier ||
-            tokens[cursor]?.kind === SyntaxKind.DotToken)
-        ) {
-          parts.unshift(tokens[cursor]?.text ?? "");
-          cursor -= 1;
-        }
-        if (parts.length > 0) callableSurfaces.add(parts.join(""));
-      }
+    const scan = scanSourceBoundary(relative, source);
+    moduleSpecifiers.push(...scan.moduleSpecifiers);
+    dynamicImportSpecifiers.push(...scan.dynamicImportSpecifiers);
+    exportSpecifiers.push(...scan.exportSpecifiers);
+    requireSpecifiers.push(...scan.requireSpecifiers);
+    for (const surface of scan.callableSurfaces) callableSurfaces.add(surface);
+    for (const surface of scan.constructorSurfaces) constructorSurfaces.add(surface);
+    for (const surface of scan.sensitiveStringSurfaces) sensitiveStringSurfaces.add(surface);
+    for (const [identifier, count] of scan.identifierSurfaces) {
+      identifierSurfaces.set(identifier, (identifierSurfaces.get(identifier) ?? 0) + count);
     }
   }
 
@@ -543,7 +685,9 @@ test("production sources satisfy closed import, callable, and prohibited-effect 
     "node:crypto",
   ]);
   assert.deepEqual(dynamicImportSpecifiers, []);
+  assert.deepEqual(exportSpecifiers, []);
   assert.deepEqual(requireSpecifiers, []);
+  assert.deepEqual([...sensitiveStringSurfaces], []);
   assert.deepEqual([...constructorSurfaces].sort(), [
     "Map",
     "P103CaptureContractError",
