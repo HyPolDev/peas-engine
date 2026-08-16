@@ -44,7 +44,7 @@ test("the frozen local-validation manifest compiles deterministically with 200+ 
   assert.equal(second.status, 0, second.stderr);
   assert.equal(first.stdout, second.stdout);
   const result = JSON.parse(first.stdout) as { count: number; digest: string };
-  assert.equal(result.count, 216);
+  assert.equal(result.count, 219);
   assert.match(result.digest, /^[0-9a-f]{64}$/u);
   const manifest = JSON.parse(readFileSync("config/local-validation/manifest.v1.json", "utf8")) as {
     cases: Array<{
@@ -58,7 +58,7 @@ test("the frozen local-validation manifest compiles deterministically with 200+ 
     hardKillBindings: Array<{ points: string[] }>;
     permutationBindings: Array<{ vectors: Record<string, unknown> }>;
   };
-  assert.equal(new Set(manifest.cases.map(({ id }) => id)).size, 216);
+  assert.equal(new Set(manifest.cases.map(({ id }) => id)).size, 219);
   assert.ok(manifest.cases.every(({ fixture }) => /^[0-9a-f]{64}$/u.test(fixture.sha256)));
   assert.ok(
     manifest.cases.every(
