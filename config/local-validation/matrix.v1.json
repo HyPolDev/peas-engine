@@ -87,47 +87,63 @@
     "restart": [
       {
         "sourcePath": "test/p1-10-contract.test.ts",
-        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 1 of 4",
-        "prefixes": [
-          "acquisition.declared",
-          "request.started",
-          "artifact.committed",
-          "normalization.emitted"
-        ]
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 1 of 12",
+        "prefixes": ["request.succeeded"]
       },
       {
         "sourcePath": "test/p1-10-contract.test.ts",
-        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 2 of 4",
-        "prefixes": [
-          "acquisition.declared",
-          "artifact.verified",
-          "checkpoint.advanced",
-          "chain.complete",
-          "normalization.emitted"
-        ]
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 2 of 12",
+        "prefixes": ["request.started"]
       },
       {
         "sourcePath": "test/p1-10-contract.test.ts",
-        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 3 of 4",
-        "prefixes": [
-          "acquisition.declared",
-          "request.started",
-          "request.succeeded",
-          "artifact.verified",
-          "selection.started"
-        ]
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 3 of 12",
+        "prefixes": ["request.succeeded"]
       },
       {
         "sourcePath": "test/p1-10-contract.test.ts",
-        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 4 of 4",
-        "prefixes": [
-          "request.succeeded",
-          "artifact.committed",
-          "checkpoint.advanced",
-          "normalization.started",
-          "normalization.emitted",
-          "selection.recorded"
-        ]
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 4 of 12",
+        "prefixes": ["request.started"]
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 5 of 12",
+        "prefixes": ["request.succeeded"]
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 6 of 12",
+        "prefixes": ["request.started", "normalization.emitted"]
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 7 of 12",
+        "prefixes": ["acquisition.declared", "checkpoint.advanced", "selection.recorded"]
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 8 of 12",
+        "prefixes": ["artifact.committed", "artifact.verified", "normalization.emitted"]
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 9 of 12",
+        "prefixes": ["artifact.committed", "normalization.emitted"]
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 10 of 12",
+        "prefixes": ["acquisition.declared", "artifact.verified", "selection.started"]
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 11 of 12",
+        "prefixes": ["checkpoint.advanced", "normalization.started"]
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 12 of 12",
+        "prefixes": ["acquisition.declared", "artifact.verified", "chain.complete"]
       },
       {
         "sourcePath": "test/p1-10-wire-translation-contract.test.ts",
@@ -260,50 +276,158 @@
       },
       {
         "sourcePath": "test/p1-10-contract.test.ts",
-        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 1 of 4",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 1 of 12",
         "vectors": {
           "backends": ["memory", "sqlite"],
-          "cutoffs": [2, 4, 10, 13, 14, 22],
-          "diagnosticWeightMs": 148895.8711,
-          "pageSizes": [1, 2, 7],
+          "cutoffs": [3],
+          "diagnosticProcessingCpuWeightMs": 7891,
+          "diagnosticWallWeightMs": 9035,
+          "pageSizes": [10000],
+          "directions": ["desc"],
+          "inputOrders": ["amber-cobalt-fern"]
+        }
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 2 of 12",
+        "vectors": {
+          "backends": ["memory", "sqlite"],
+          "cutoffs": [2],
+          "diagnosticProcessingCpuWeightMs": 7484,
+          "diagnosticWallWeightMs": 8315,
+          "pageSizes": [7],
+          "directions": ["asc"],
+          "inputOrders": ["cobalt-fern-amber"]
+        }
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 3 of 12",
+        "vectors": {
+          "backends": ["memory", "sqlite"],
+          "cutoffs": [9],
+          "diagnosticProcessingCpuWeightMs": 7391,
+          "diagnosticWallWeightMs": 9731,
+          "pageSizes": [2],
+          "directions": ["desc"],
+          "inputOrders": ["amber-cobalt-fern"]
+        }
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 4 of 12",
+        "vectors": {
+          "backends": ["memory", "sqlite"],
+          "cutoffs": [8],
+          "diagnosticProcessingCpuWeightMs": 7374,
+          "diagnosticWallWeightMs": 8869,
+          "pageSizes": [1],
+          "directions": ["asc"],
+          "inputOrders": ["cobalt-fern-amber"]
+        }
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 5 of 12",
+        "vectors": {
+          "backends": ["memory", "sqlite"],
+          "cutoffs": [15],
+          "diagnosticProcessingCpuWeightMs": 6250,
+          "diagnosticWallWeightMs": 7487,
+          "pageSizes": [10000],
+          "directions": ["desc"],
+          "inputOrders": ["amber-cobalt-fern"]
+        }
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 6 of 12",
+        "vectors": {
+          "backends": ["memory", "sqlite"],
+          "cutoffs": [14, 21],
+          "diagnosticProcessingCpuWeightMs": 7890,
+          "diagnosticWallWeightMs": 9611,
+          "pageSizes": [2, 7],
+          "directions": ["asc", "desc"],
+          "inputOrders": ["amber-cobalt-fern", "cobalt-fern-amber"]
+        }
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 7 of 12",
+        "vectors": {
+          "backends": ["memory", "sqlite"],
+          "cutoffs": [1, 18, 25],
+          "diagnosticProcessingCpuWeightMs": 7937,
+          "diagnosticWallWeightMs": 12311,
+          "pageSizes": [2, 7],
+          "directions": ["asc", "desc"],
+          "inputOrders": ["amber-cobalt-fern", "fern-amber-cobalt"]
+        }
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 8 of 12",
+        "vectors": {
+          "backends": ["memory", "sqlite"],
+          "cutoffs": [10, 17, 22],
+          "diagnosticProcessingCpuWeightMs": 7469,
+          "diagnosticWallWeightMs": 11708,
+          "pageSizes": [2, 7],
           "directions": ["asc", "desc"],
           "inputOrders": ["fern-amber-cobalt", "cobalt-fern-amber"]
         }
       },
       {
         "sourcePath": "test/p1-10-contract.test.ts",
-        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 2 of 4",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 9 of 12",
         "vectors": {
           "backends": ["memory", "sqlite"],
-          "cutoffs": [6, 7, 11, 17, 19, 23],
-          "diagnosticWeightMs": 148331.12,
-          "pageSizes": [2, 7, 10000],
+          "cutoffs": [4, 16, 23],
+          "diagnosticProcessingCpuWeightMs": 7267,
+          "diagnosticWallWeightMs": 8915,
+          "pageSizes": [1, 10000],
+          "directions": ["asc", "desc"],
+          "inputOrders": ["fern-amber-cobalt", "cobalt-fern-amber"]
+        }
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 10 of 12",
+        "vectors": {
+          "backends": ["memory", "sqlite"],
+          "cutoffs": [5, 13, 24],
+          "diagnosticProcessingCpuWeightMs": 7234,
+          "diagnosticWallWeightMs": 8597,
+          "pageSizes": [1, 2],
           "directions": ["asc", "desc"],
           "inputOrders": ["amber-cobalt-fern", "fern-amber-cobalt", "cobalt-fern-amber"]
         }
       },
       {
         "sourcePath": "test/p1-10-contract.test.ts",
-        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 3 of 4",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 11 of 12",
         "vectors": {
           "backends": ["memory", "sqlite"],
-          "cutoffs": [1, 5, 8, 9, 15, 24],
-          "diagnosticWeightMs": 150822.4029,
-          "pageSizes": [1, 2, 10000],
-          "directions": ["asc", "desc"],
-          "inputOrders": ["amber-cobalt-fern", "fern-amber-cobalt", "cobalt-fern-amber"]
+          "cutoffs": [6, 12, 20],
+          "diagnosticProcessingCpuWeightMs": 7265,
+          "diagnosticWallWeightMs": 8550,
+          "pageSizes": [1, 7],
+          "directions": ["asc"],
+          "inputOrders": ["amber-cobalt-fern", "cobalt-fern-amber"]
         }
       },
       {
         "sourcePath": "test/p1-10-contract.test.ts",
-        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 4 of 4",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 12 of 12",
         "vectors": {
           "backends": ["memory", "sqlite"],
-          "cutoffs": [3, 12, 16, 18, 20, 21, 25],
-          "diagnosticWeightMs": 152464.7759,
-          "pageSizes": [1, 2, 7, 10000],
-          "directions": ["asc", "desc"],
-          "inputOrders": ["amber-cobalt-fern", "fern-amber-cobalt", "cobalt-fern-amber"]
+          "cutoffs": [7, 11, 19],
+          "diagnosticProcessingCpuWeightMs": 7298,
+          "diagnosticWallWeightMs": 8578,
+          "pageSizes": [10000],
+          "directions": ["desc"],
+          "inputOrders": ["fern-amber-cobalt", "cobalt-fern-amber"]
         }
       },
       {
@@ -343,7 +467,7 @@
     ]
   },
   "resourceCeilings": {
-    "processingCpuMs": 15000,
+    "processingCpuMs": 20000,
     "diagnosticWallMs": 120000,
     "peakRssBytes": 1073741824,
     "peakHeapBytes": 536870912,

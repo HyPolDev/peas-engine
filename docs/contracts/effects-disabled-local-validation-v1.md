@@ -10,7 +10,7 @@ Frozen corpus: `config/local-validation/manifest.v1.json` and its adjacent SHA-2
 
 ## Scope and authority
 
-The manifest freezes 216 unique, project-authored, offline software-validation test identities. It
+The manifest freezes 227 unique, project-authored, offline software-validation test identities. It
 does not contain issuers, observed earnings, provider records, or the later 180 prospective earnings
 clusters. This milestone does not authorize provider access, prospective recording, P1-03, P1-04,
 P1-06, or any financial effect.
@@ -25,7 +25,7 @@ the exact candidate SHA and tree.
 
 The canonical compiler discovers repository `test/**/*.test.ts` files, excludes local-automation
 self-tests and named provider suites, extracts literal `node:test` identities, prioritizes the
-durability/equivalence/resource/effects cases, and freezes exactly 216 selectors. Each case contains:
+durability/equivalence/resource/effects cases, and freezes exactly 227 selectors. Each case contains:
 
 - a unique case ID and identity SHA-256;
 - source-module category and the observed terminal disposition `executable-assertions-passed`;
@@ -48,7 +48,7 @@ bound page sizes are 1, 2, 7, and 10,000. The runner records claims only after t
 selector passes; it does not manufacture expected PEAS rows or multiply coverage claims.
 
 `npm run manifest:local-validation` recompiles the manifest, compares its exact canonical bytes,
-verifies the adjacent digest, enforces 216 unique identities, re-hashes every source fixture and
+verifies the adjacent digest, enforces 227 unique identities, re-hashes every source fixture and
 checks all required coverage classes.
 
 ## Candidate and platform identity
@@ -85,7 +85,7 @@ reported separately and do not count as activity. Injected credential presence m
 ## Execution, restarts, hard kills and resources
 
 `gate:integration` compiles the production and test artifacts and runs two real acceptance selectors
-under the denial boundary. It is not the corpus. A separately authorized corpus runs all 216 exact
+under the denial boundary. It is not the corpus. A separately authorized corpus runs all 227 exact
 selectors in canonical, reverse and seeded order. Each invocation must exit zero with exactly one
 selected test pass; the transcript is hashed. The selected production tests themselves execute the
 memory/SQLite, pagination, duplicate, correction, restart-prefix, reconciliation, retention,

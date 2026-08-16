@@ -8113,7 +8113,7 @@ test("abstract replay is invariant at page sizes 1, 2, 7, and 10,000", () => {
 });
 
 async function assertMemorySqliteCheckpointShard(shardIndex: number): Promise<void> {
-  const shardCount = 4;
+  const shardCount = 12;
   assert.ok(Number.isSafeInteger(shardIndex) && shardIndex >= 0 && shardIndex < shardCount);
   const request = exactBoundaryRequest(0n);
   const computationCache: JournalComputationCache = {
@@ -8221,10 +8221,18 @@ async function assertMemorySqliteCheckpointShard(shardIndex: number): Promise<vo
   };
   const allCutoffs = Array.from({ length: baselineRows.length }, (_, index) => index + 1);
   const shardCutoffs: readonly (readonly number[])[] = [
-    [2, 4, 10, 13, 14, 22],
-    [6, 7, 11, 17, 19, 23],
-    [1, 5, 8, 9, 15, 24],
-    [3, 12, 16, 18, 20, 21, 25],
+    [3],
+    [2],
+    [9],
+    [8],
+    [15],
+    [14, 21],
+    [1, 18, 25],
+    [10, 17, 22],
+    [4, 16, 23],
+    [5, 13, 24],
+    [6, 12, 20],
+    [7, 11, 19],
   ];
   const flattenedCutoffs = shardCutoffs.flat();
   assert.equal(new Set(flattenedCutoffs).size, baselineRows.length);
@@ -8314,14 +8322,30 @@ async function assertMemorySqliteCheckpointShard(shardIndex: number): Promise<vo
   }
 }
 
-test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 1 of 4", () =>
+test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 1 of 12", () =>
   assertMemorySqliteCheckpointShard(0));
-test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 2 of 4", () =>
+test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 2 of 12", () =>
   assertMemorySqliteCheckpointShard(1));
-test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 3 of 4", () =>
+test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 3 of 12", () =>
   assertMemorySqliteCheckpointShard(2));
-test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 4 of 4", () =>
+test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 4 of 12", () =>
   assertMemorySqliteCheckpointShard(3));
+test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 5 of 12", () =>
+  assertMemorySqliteCheckpointShard(4));
+test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 6 of 12", () =>
+  assertMemorySqliteCheckpointShard(5));
+test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 7 of 12", () =>
+  assertMemorySqliteCheckpointShard(6));
+test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 8 of 12", () =>
+  assertMemorySqliteCheckpointShard(7));
+test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 9 of 12", () =>
+  assertMemorySqliteCheckpointShard(8));
+test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 10 of 12", () =>
+  assertMemorySqliteCheckpointShard(9));
+test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 11 of 12", () =>
+  assertMemorySqliteCheckpointShard(10));
+test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 12 of 12", () =>
+  assertMemorySqliteCheckpointShard(11));
 
 test("response order, repeat run, replay page size, and post-return activity are invariant", async () => {
   const outputs: string[] = [];
