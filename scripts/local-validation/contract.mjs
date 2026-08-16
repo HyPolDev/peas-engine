@@ -118,8 +118,8 @@ export function compileManifest(matrix) {
     ...bound,
     ...priority,
     ...sorted.filter((entry) => !priorityKeys.has(`${entry.sourcePath}\0${entry.testName}`)),
-  ].slice(0, 216);
-  if (selected.length !== 216) throw new Error("local-validation-executable-case-count-invalid");
+  ].slice(0, 219);
+  if (selected.length !== 219) throw new Error("local-validation-executable-case-count-invalid");
   const cases = selected.map((entry, index) => {
     const preimage = `${matrix.seed}:${entry.sourcePath}:${entry.testName}`;
     const category = entry.sourcePath

@@ -3405,28 +3405,101 @@ function validateImmutableReceiptSidecars(
   );
 }
 
+type JournalComputationCache = Readonly<{
+  finalizedCheckpoints: Map<string, DurableCheckpoint>;
+  validatedRows: Set<string>;
+}>;
+
+function validateJournalRowsWithCache(
+  rows: readonly JournalRow[],
+  expectedRequest: Preflight,
+  cache: JournalComputationCache | null,
+): void {
+  if (cache === null) {
+    validateJournalRows(rows, expectedRequest);
+    return;
+  }
+  const key = `${requestIdentity(expectedRequest)}\n${canonicalJson(rows as unknown as JsonValue)}`;
+  if (cache.validatedRows.has(key)) return;
+  validateJournalRows(rows, expectedRequest);
+  cache.validatedRows.add(key);
+}
+
+function finalizeCheckpointWithCache(
+  rows: readonly JournalRow[],
+  event: ContractEvent,
+  checkpoint: DurableCheckpoint,
+  expectedRequest: Preflight,
+  cache: JournalComputationCache | null,
+): DurableCheckpoint {
+  if (cache === null) return finalizeCheckpoint(rows, event, checkpoint, expectedRequest);
+  const prefix = rows.at(-1)?.checkpoint.journalEntryHash ?? "genesis";
+  const key = `${requestIdentity(expectedRequest)}:${rows.length}:${prefix}:${event}\n${canonicalJson(
+    checkpoint as unknown as JsonValue,
+  )}`;
+  const cached = cache.finalizedCheckpoints.get(key);
+  if (cached !== undefined) return structuredClone(cached);
+  const finalized = finalizeCheckpoint(rows, event, checkpoint, expectedRequest);
+  cache.finalizedCheckpoints.set(key, structuredClone(finalized));
+  return finalized;
+}
+
 class MemoryContractJournal implements ContractJournal {
   readonly #rows: JournalRow[] = [];
+  readonly #computationCache: JournalComputationCache | null;
   #expectedRequest = exactBoundaryRequest(0n);
+  #validationBatchStartLength: number | null = null;
+
+  constructor(computationCache: JournalComputationCache | null = null) {
+    this.#computationCache = computationCache;
+  }
 
   bindRequest(request: Preflight): void {
     this.#expectedRequest = request;
-    if (this.#rows.length > 0) validateJournalRows(this.#rows, request);
+    if (this.#rows.length > 0) {
+      validateJournalRowsWithCache(this.#rows, request, this.#computationCache);
+    }
   }
 
   append(event: ContractEvent, checkpoint: DurableCheckpoint): void {
     validateJournalAppend(this.#rows, event);
-    const finalized = finalizeCheckpoint(this.#rows, event, checkpoint, this.#expectedRequest);
+    const finalized = finalizeCheckpointWithCache(
+      this.#rows,
+      event,
+      checkpoint,
+      this.#expectedRequest,
+      this.#computationCache,
+    );
     const prospective = [
       ...this.#rows,
       { sequence: this.#rows.length, event, checkpoint: finalized },
     ];
-    validateJournalRows(prospective, this.#expectedRequest);
+    if (this.#validationBatchStartLength === null) {
+      validateJournalRowsWithCache(prospective, this.#expectedRequest, this.#computationCache);
+    }
     this.#rows.push(prospective.at(-1) as JournalRow);
   }
 
   rows(): readonly JournalRow[] {
     return structuredClone(this.#rows);
+  }
+
+  beginValidationBatch(): void {
+    if (this.#validationBatchStartLength !== null) throw rejection("journal-batch-active");
+    validateJournalRowsWithCache(this.#rows, this.#expectedRequest, this.#computationCache);
+    this.#validationBatchStartLength = this.#rows.length;
+  }
+
+  commitValidationBatch(): void {
+    if (this.#validationBatchStartLength === null) throw rejection("journal-batch-inactive");
+    validateJournalRowsWithCache(this.#rows, this.#expectedRequest, this.#computationCache);
+    this.#validationBatchStartLength = null;
+  }
+
+  rollbackValidationBatch(): void {
+    if (this.#validationBatchStartLength === null) return;
+    this.#rows.splice(this.#validationBatchStartLength);
+    this.#validationBatchStartLength = null;
   }
 
   close(): void {}
@@ -3437,17 +3510,21 @@ class SqliteContractJournal implements ContractJournal {
   readonly #enumerationPageSize: number;
   readonly #enumerationDirection: "asc" | "desc";
   #expectedRequest = exactBoundaryRequest(0n);
+  #durableBatchRows: JournalRow[] | null = null;
+  readonly #computationCache: JournalComputationCache | null;
 
   constructor(
     filename: string,
     enumerationPageSize = 10_000,
     enumerationDirection: "asc" | "desc" = "asc",
+    computationCache: JournalComputationCache | null = null,
   ) {
     if (!Number.isSafeInteger(enumerationPageSize) || enumerationPageSize < 1) {
       throw rejection("sqlite-enumeration-page-size");
     }
     this.#enumerationPageSize = enumerationPageSize;
     this.#enumerationDirection = enumerationDirection;
+    this.#computationCache = computationCache;
     this.#database = new Database(filename);
     this.#database.pragma("foreign_keys = ON");
     this.#database.pragma("journal_mode = WAL");
@@ -3464,18 +3541,27 @@ class SqliteContractJournal implements ContractJournal {
   }
 
   append(event: ContractEvent, checkpoint: DurableCheckpoint): void {
-    const rows = this.rows();
+    const rows = this.#durableBatchRows ?? this.rows();
     validateJournalAppend(rows, event);
-    const finalized = finalizeCheckpoint(rows, event, checkpoint, this.#expectedRequest);
-    validateJournalRows(
-      [...rows, { sequence: rows.length, event, checkpoint: finalized }],
+    const finalized = finalizeCheckpointWithCache(
+      rows,
+      event,
+      checkpoint,
       this.#expectedRequest,
+      this.#computationCache,
     );
+    const prospective = [...rows, { sequence: rows.length, event, checkpoint: finalized }];
+    if (this.#durableBatchRows === null) {
+      validateJournalRowsWithCache(prospective, this.#expectedRequest, this.#computationCache);
+    }
     this.#database
       .prepare(
         "INSERT INTO acquisition_journal (sequence, event, checkpoint_json) VALUES (?, ?, ?)",
       )
       .run(rows.length, event, canonicalJson(finalized as unknown as JsonValue));
+    if (this.#durableBatchRows !== null) {
+      this.#durableBatchRows.push(prospective.at(-1) as JournalRow);
+    }
   }
 
   rows(): readonly JournalRow[] {
@@ -3502,8 +3588,40 @@ class SqliteContractJournal implements ContractJournal {
         event: row.event,
         checkpoint: JSON.parse(row.checkpointJson) as DurableCheckpoint,
       }));
-    validateJournalRows(rows, this.#expectedRequest);
+    validateJournalRowsWithCache(rows, this.#expectedRequest, this.#computationCache);
     return rows;
+  }
+
+  beginDurableBatch(): void {
+    if (this.#durableBatchRows !== null) throw rejection("journal-batch-active");
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      this.#durableBatchRows = [...this.rows()];
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  commitDurableBatch(): void {
+    if (this.#durableBatchRows === null) throw rejection("journal-batch-inactive");
+    try {
+      validateJournalRowsWithCache(
+        this.#durableBatchRows,
+        this.#expectedRequest,
+        this.#computationCache,
+      );
+      this.#database.exec("COMMIT");
+      this.#durableBatchRows = null;
+    } catch (error) {
+      this.rollbackDurableBatch();
+      throw error;
+    }
+  }
+
+  rollbackDurableBatch(): void {
+    if (this.#database.inTransaction) this.#database.exec("ROLLBACK");
+    this.#durableBatchRows = null;
   }
 
   close(): void {
@@ -7994,9 +8112,15 @@ test("abstract replay is invariant at page sizes 1, 2, 7, and 10,000", () => {
   }
 });
 
-test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state", async () => {
+async function assertMemorySqliteCheckpointShard(shardIndex: number): Promise<void> {
+  const shardCount = 4;
+  assert.ok(Number.isSafeInteger(shardIndex) && shardIndex >= 0 && shardIndex < shardCount);
   const request = exactBoundaryRequest(0n);
-  const baselineJournal = new MemoryContractJournal();
+  const computationCache: JournalComputationCache = {
+    finalizedCheckpoints: new Map(),
+    validatedRows: new Set(),
+  };
+  const baselineJournal = new MemoryContractJournal(computationCache);
   const baselineArtifact = new ArtifactDouble();
   const baselineModel = new AcquisitionContractModel(
     request,
@@ -8067,17 +8191,60 @@ test("memory and SQLite close/reopen agree after every durable checkpoint with f
     if (events.has("artifact.committed")) return "reverify-no-dispatch";
     return "new-attempt-after-reconciliation";
   };
+  const inValidationBatch = async <Result>(
+    journal: MemoryContractJournal,
+    operation: () => Result | Promise<Result>,
+  ): Promise<Result> => {
+    journal.beginValidationBatch();
+    try {
+      const result = await operation();
+      journal.commitValidationBatch();
+      return result;
+    } catch (error) {
+      journal.rollbackValidationBatch();
+      throw error;
+    }
+  };
+  const inDurableBatch = async <Result>(
+    journal: SqliteContractJournal,
+    operation: () => Result | Promise<Result>,
+  ): Promise<Result> => {
+    journal.beginDurableBatch();
+    try {
+      const result = await operation();
+      journal.commitDurableBatch();
+      return result;
+    } catch (error) {
+      journal.rollbackDurableBatch();
+      throw error;
+    }
+  };
+  const allCutoffs = Array.from({ length: baselineRows.length }, (_, index) => index + 1);
+  const shardCutoffs: readonly (readonly number[])[] = [
+    [2, 4, 10, 13, 14, 22],
+    [6, 7, 11, 17, 19, 23],
+    [1, 5, 8, 9, 15, 24],
+    [3, 12, 16, 18, 20, 21, 25],
+  ];
+  const flattenedCutoffs = shardCutoffs.flat();
+  assert.equal(new Set(flattenedCutoffs).size, baselineRows.length);
+  assert.deepEqual(
+    [...flattenedCutoffs].sort((left, right) => left - right),
+    allCutoffs,
+  );
 
   const directory = mkdtempSync(join(tmpdir(), "peas-p1-10-journal-"));
   try {
-    for (let cutoff = 1; cutoff <= baselineRows.length; cutoff += 1) {
+    for (const cutoff of shardCutoffs[shardIndex] as readonly number[]) {
       const prefix = baselineRows.slice(0, cutoff);
       const backendPageSize = [1, 2, 7, 10_000][cutoff % 4] as number;
       const order = orders[cutoff % orders.length] as readonly string[];
       const direction = cutoff % 2 === 0 ? "asc" : "desc";
 
-      const memoryJournal = new MemoryContractJournal();
-      appendRows(memoryJournal, prefix, backendPageSize);
+      const memoryJournal = new MemoryContractJournal(computationCache);
+      await inValidationBatch(memoryJournal, () =>
+        appendRows(memoryJournal, prefix, backendPageSize),
+      );
       const memoryProvider = new ProviderDouble(order);
       const memoryArtifact = restoreArtifact(prefix, backendPageSize, direction);
       const memoryModel = new AcquisitionContractModel(
@@ -8087,13 +8254,23 @@ test("memory and SQLite close/reopen agree after every durable checkpoint with f
         memoryJournal,
       );
       const expectedDecision = restartDecision(prefix);
-      await memoryModel.resume(configurationHash(request));
+      await inValidationBatch(memoryJournal, () => memoryModel.resume(configurationHash(request)));
 
       const filename = join(directory, `checkpoint-${cutoff}.sqlite`);
-      let sqliteJournal = new SqliteContractJournal(filename, backendPageSize, direction);
-      appendRows(sqliteJournal, prefix, backendPageSize);
+      let sqliteJournal = new SqliteContractJournal(
+        filename,
+        backendPageSize,
+        direction,
+        computationCache,
+      );
+      await inDurableBatch(sqliteJournal, () => appendRows(sqliteJournal, prefix, backendPageSize));
       sqliteJournal.close();
-      sqliteJournal = new SqliteContractJournal(filename, backendPageSize, direction);
+      sqliteJournal = new SqliteContractJournal(
+        filename,
+        backendPageSize,
+        direction,
+        computationCache,
+      );
       assert.equal(restartDecision(sqliteJournal.rows()), expectedDecision);
       const sqliteProvider = new ProviderDouble(order);
       const sqliteArtifact = restoreArtifact(
@@ -8107,7 +8284,7 @@ test("memory and SQLite close/reopen agree after every durable checkpoint with f
         sqliteArtifact,
         sqliteJournal,
       );
-      await sqliteModel.resume(configurationHash(request));
+      await inDurableBatch(sqliteJournal, () => sqliteModel.resume(configurationHash(request)));
       assert.equal(
         canonicalJson(sqliteJournal.rows() as unknown as JsonValue),
         canonicalJson(memoryJournal.rows() as unknown as JsonValue),
@@ -8135,7 +8312,16 @@ test("memory and SQLite close/reopen agree after every durable checkpoint with f
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
-});
+}
+
+test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 1 of 4", () =>
+  assertMemorySqliteCheckpointShard(0));
+test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 2 of 4", () =>
+  assertMemorySqliteCheckpointShard(1));
+test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 3 of 4", () =>
+  assertMemorySqliteCheckpointShard(2));
+test("memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 4 of 4", () =>
+  assertMemorySqliteCheckpointShard(3));
 
 test("response order, repeat run, replay page size, and post-return activity are invariant", async () => {
   const outputs: string[] = [];

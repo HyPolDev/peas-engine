@@ -87,18 +87,45 @@
     "restart": [
       {
         "sourcePath": "test/p1-10-contract.test.ts",
-        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 1 of 4",
+        "prefixes": [
+          "acquisition.declared",
+          "request.started",
+          "artifact.committed",
+          "normalization.emitted"
+        ]
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 2 of 4",
+        "prefixes": [
+          "acquisition.declared",
+          "artifact.verified",
+          "checkpoint.advanced",
+          "chain.complete",
+          "normalization.emitted"
+        ]
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 3 of 4",
         "prefixes": [
           "acquisition.declared",
           "request.started",
           "request.succeeded",
-          "artifact.committed",
           "artifact.verified",
+          "selection.started"
+        ]
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 4 of 4",
+        "prefixes": [
+          "request.succeeded",
+          "artifact.committed",
           "checkpoint.advanced",
-          "chain.complete",
           "normalization.started",
           "normalization.emitted",
-          "selection.started",
           "selection.recorded"
         ]
       },
@@ -233,9 +260,47 @@
       },
       {
         "sourcePath": "test/p1-10-contract.test.ts",
-        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 1 of 4",
         "vectors": {
           "backends": ["memory", "sqlite"],
+          "cutoffs": [2, 4, 10, 13, 14, 22],
+          "diagnosticWeightMs": 148895.8711,
+          "pageSizes": [1, 2, 7],
+          "directions": ["asc", "desc"],
+          "inputOrders": ["fern-amber-cobalt", "cobalt-fern-amber"]
+        }
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 2 of 4",
+        "vectors": {
+          "backends": ["memory", "sqlite"],
+          "cutoffs": [6, 7, 11, 17, 19, 23],
+          "diagnosticWeightMs": 148331.12,
+          "pageSizes": [2, 7, 10000],
+          "directions": ["asc", "desc"],
+          "inputOrders": ["amber-cobalt-fern", "fern-amber-cobalt", "cobalt-fern-amber"]
+        }
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 3 of 4",
+        "vectors": {
+          "backends": ["memory", "sqlite"],
+          "cutoffs": [1, 5, 8, 9, 15, 24],
+          "diagnosticWeightMs": 150822.4029,
+          "pageSizes": [1, 2, 10000],
+          "directions": ["asc", "desc"],
+          "inputOrders": ["amber-cobalt-fern", "fern-amber-cobalt", "cobalt-fern-amber"]
+        }
+      },
+      {
+        "sourcePath": "test/p1-10-contract.test.ts",
+        "testName": "memory and SQLite close/reopen agree after every durable checkpoint with fresh state - shard 4 of 4",
+        "vectors": {
+          "backends": ["memory", "sqlite"],
+          "cutoffs": [3, 12, 16, 18, 20, 21, 25],
+          "diagnosticWeightMs": 152464.7759,
           "pageSizes": [1, 2, 7, 10000],
           "directions": ["asc", "desc"],
           "inputOrders": ["amber-cobalt-fern", "fern-amber-cobalt", "cobalt-fern-amber"]
