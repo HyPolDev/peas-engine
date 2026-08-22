@@ -49,6 +49,52 @@ function canonicalBytes(value: unknown): string {
   return `${JSON.stringify(canonicalize(value), null, 2)}\n`;
 }
 
+function runNodeTestSummaryParser(transcript: string) {
+  return spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import { parseNodeTestSummary } from './scripts/local-validation/runtime.mjs';
+       let transcript = '';
+       for await (const chunk of process.stdin) transcript += chunk;
+       try {
+         process.stdout.write(JSON.stringify(parseNodeTestSummary(transcript)));
+       } catch (error) {
+         process.stderr.write(error instanceof Error ? error.message : String(error));
+         process.exitCode = 1;
+       }`,
+    ],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      windowsHide: true,
+      input: transcript,
+    },
+  );
+}
+
+function nodeTestSummary(values: {
+  tests: number;
+  pass: number;
+  fail?: number;
+  cancelled?: number;
+  skipped?: number;
+  todo?: number;
+}): string {
+  return [
+    `ℹ tests ${values.tests}`,
+    "ℹ suites 0",
+    `ℹ pass ${values.pass}`,
+    `ℹ fail ${values.fail ?? 0}`,
+    `ℹ cancelled ${values.cancelled ?? 0}`,
+    `ℹ skipped ${values.skipped ?? 0}`,
+    `ℹ todo ${values.todo ?? 0}`,
+    "ℹ duration_ms 1",
+    "",
+  ].join("\n");
+}
+
 const checkoutIdentity = {
   sha: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", windowsHide: true }).trim(),
   tree: execFileSync("git", ["rev-parse", "HEAD^{tree}"], {
@@ -465,6 +511,37 @@ test("checkout attestation is strict, case-bound, and immune to inherited spoofi
     );
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("runtime accepts passing nested subtests and rejects incomplete terminal summaries", () => {
+  for (const count of [1, 6, 13]) {
+    const accepted = runNodeTestSummaryParser(nodeTestSummary({ tests: count, pass: count }));
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.deepEqual(JSON.parse(accepted.stdout), {
+      tests: count,
+      pass: count,
+      fail: 0,
+      cancelled: 0,
+      skipped: 0,
+      todo: 0,
+    });
+  }
+
+  const rejected = [
+    nodeTestSummary({ tests: 0, pass: 0 }),
+    nodeTestSummary({ tests: 6, pass: 5, fail: 1 }),
+    nodeTestSummary({ tests: 6, pass: 5, cancelled: 1 }),
+    nodeTestSummary({ tests: 6, pass: 5, skipped: 1 }),
+    nodeTestSummary({ tests: 6, pass: 5, todo: 1 }),
+    nodeTestSummary({ tests: 6, pass: 5 }),
+    nodeTestSummary({ tests: 1, pass: 1 }).replace("ℹ todo 0\n", ""),
+    `${nodeTestSummary({ tests: 1, pass: 1 })}ℹ pass 1\n`,
+  ];
+  for (const transcript of rejected) {
+    const result = runNodeTestSummaryParser(transcript);
+    assert.notEqual(result.status, 0, transcript);
+    assert.match(result.stderr, /node-test-summary-(?:invalid|todo-ambiguous|pass-ambiguous)/u);
   }
 });
 

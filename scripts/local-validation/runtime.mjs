@@ -276,6 +276,39 @@ export function executeResourceBoundaryVectors(ceilings) {
   });
 }
 
+const NODE_TEST_SUMMARY_FIELDS = Object.freeze([
+  "tests",
+  "pass",
+  "fail",
+  "cancelled",
+  "skipped",
+  "todo",
+]);
+
+export function parseNodeTestSummary(transcript) {
+  if (typeof transcript !== "string") throw new Error("node-test-summary-invalid");
+  const summary = {};
+  for (const field of NODE_TEST_SUMMARY_FIELDS) {
+    const pattern = new RegExp(`(?:^|\\r?\\n)(?:ℹ|#) ${field} (\\d+)(?=\\r?\\n|$)`, "gu");
+    const matches = [...transcript.matchAll(pattern)];
+    if (matches.length !== 1) throw new Error(`node-test-summary-${field}-ambiguous`);
+    const value = Number(matches[0][1]);
+    if (!Number.isSafeInteger(value) || value < 0) throw new Error("node-test-summary-invalid");
+    summary[field] = value;
+  }
+  if (
+    summary.tests < 1 ||
+    summary.pass !== summary.tests ||
+    summary.fail !== 0 ||
+    summary.cancelled !== 0 ||
+    summary.skipped !== 0 ||
+    summary.todo !== 0
+  ) {
+    throw new Error("node-test-summary-invalid");
+  }
+  return Object.freeze(summary);
+}
+
 function runExecutableCase(caseEntry, runtimeRoot, preload, order, bindings, candidateAttestation) {
   if (!existsSync(caseEntry.executable.compiledPath)) {
     throw new Error(`compiled-case-missing:${caseEntry.executable.compiledPath}`);
@@ -318,8 +351,17 @@ function runExecutableCase(caseEntry, runtimeRoot, preload, order, bindings, can
     },
   );
   const transcript = `${child.stdout ?? ""}\n${child.stderr ?? ""}`;
-  if (child.status !== 0 || !/(?:ℹ pass 1|# pass 1)/u.test(transcript)) {
+  if (child.status !== 0) {
     throw new Error(`executable-case-failed:${caseEntry.id}:${child.status}:${transcript}`);
+  }
+  let nodeTestSummary;
+  try {
+    nodeTestSummary = parseNodeTestSummary(transcript);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `executable-case-failed:${caseEntry.id}:${child.status}:${reason}:${transcript}`,
+    );
   }
   const boundaryAudits = readFileSync(auditPath, "utf8")
     .trim()
@@ -345,6 +387,7 @@ function runExecutableCase(caseEntry, runtimeRoot, preload, order, bindings, can
       vectors,
     })),
     exitCode: child.status,
+    nodeTestSummary,
     pid: child.pid,
     elapsedMs: Math.ceil(performance.now() - started),
     transcriptSha256: sha256(transcript),
