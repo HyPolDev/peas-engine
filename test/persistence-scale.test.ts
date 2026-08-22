@@ -226,6 +226,41 @@ function verifiedCandidateGitIdentity(): {
   candidateCommitSha: string;
   worktreeClean: boolean;
 } {
+  const denial = globalThis as typeof globalThis & {
+    __PEAS_NETWORK_DENIAL__?: { installed?: boolean };
+  };
+  if (denial.__PEAS_NETWORK_DENIAL__?.installed === true) {
+    const raw = process.env["PEAS_LOCAL_VALIDATION_CHECKOUT_ATTESTATION"];
+    if (raw === undefined) throw new Error("local-validation-checkout-attestation-required");
+    let value: unknown;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      throw new Error("local-validation-checkout-attestation-invalid");
+    }
+    const attestation = value as Record<string, unknown> | null;
+    const expectedKeys = ["caseId", "kind", "origin", "schemaVersion", "sha", "status", "tree"];
+    if (
+      attestation === null ||
+      typeof attestation !== "object" ||
+      Array.isArray(attestation) ||
+      JSON.stringify(Object.keys(attestation).sort()) !== JSON.stringify(expectedKeys) ||
+      attestation["schemaVersion"] !== 1 ||
+      attestation["kind"] !== "peas-local-validation-verified-checkout" ||
+      !/^[0-9a-f]{40}$/u.test(String(attestation["sha"] ?? "")) ||
+      !/^[0-9a-f]{40}$/u.test(String(attestation["tree"] ?? "")) ||
+      attestation["status"] !== "" ||
+      typeof attestation["origin"] !== "string" ||
+      attestation["origin"].length === 0 ||
+      /[\0\r\n]/u.test(attestation["origin"]) ||
+      !/^lv-v1-\d{3}-[0-9a-f]{16}$/u.test(String(attestation["caseId"] ?? "")) ||
+      attestation["caseId"] !== process.env["PEAS_LOCAL_VALIDATION_ATTESTED_CASE_ID"] ||
+      attestation["caseId"] !== process.env["PEAS_LOCAL_VALIDATION_CASE_ID"]
+    ) {
+      throw new Error("local-validation-checkout-attestation-invalid");
+    }
+    return { candidateCommitSha: String(attestation["sha"]), worktreeClean: true };
+  }
   const actualSha = execFileSync("git", ["rev-parse", "HEAD"], {
     encoding: "utf8",
     windowsHide: true,

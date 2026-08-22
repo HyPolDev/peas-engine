@@ -7,6 +7,7 @@
       "!!dist",
       "!!node_modules",
       "!!coverage",
+      "!!config/local-validation/manifest.v1.json",
       "!!fixtures/sec/v1/bodies",
       "!!fixtures/fmp/v1/bodies",
       "!!fixtures/ir/nvidia/v1/bodies",

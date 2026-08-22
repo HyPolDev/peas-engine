@@ -49,8 +49,39 @@ function requiredEnvironment(name) {
   return value;
 }
 
-function repositoryFromOrigin() {
-  const origin = git("remote", "get-url", "origin");
+function localValidationCheckoutAttestation() {
+  if (globalThis.__PEAS_NETWORK_DENIAL__?.installed !== true) return null;
+  const raw = process.env.PEAS_LOCAL_VALIDATION_CHECKOUT_ATTESTATION;
+  if (raw === undefined) throw new Error("local-validation-checkout-attestation-required");
+  let attestation;
+  try {
+    attestation = JSON.parse(raw);
+  } catch {
+    throw new Error("local-validation-checkout-attestation-invalid");
+  }
+  const expectedKeys = ["caseId", "kind", "origin", "schemaVersion", "sha", "status", "tree"];
+  if (
+    !isObject(attestation) ||
+    JSON.stringify(Object.keys(attestation).sort()) !== JSON.stringify(expectedKeys) ||
+    attestation.schemaVersion !== 1 ||
+    attestation.kind !== "peas-local-validation-verified-checkout" ||
+    !GIT_SHA_PATTERN.test(attestation.sha) ||
+    !GIT_SHA_PATTERN.test(attestation.tree) ||
+    attestation.status !== "" ||
+    typeof attestation.origin !== "string" ||
+    attestation.origin.length === 0 ||
+    /[\0\r\n]/u.test(attestation.origin) ||
+    !/^lv-v1-\d{3}-[0-9a-f]{16}$/u.test(attestation.caseId) ||
+    attestation.caseId !== process.env.PEAS_LOCAL_VALIDATION_ATTESTED_CASE_ID ||
+    attestation.caseId !== process.env.PEAS_LOCAL_VALIDATION_CASE_ID
+  ) {
+    throw new Error("local-validation-checkout-attestation-invalid");
+  }
+  return attestation;
+}
+
+function repositoryFromOrigin(attestedOrigin) {
+  const origin = attestedOrigin ?? git("remote", "get-url", "origin");
   if (origin.startsWith("https://")) {
     let parsed;
     try {
@@ -399,7 +430,9 @@ if (inputPaths.length === 0) {
   throw new Error("Usage: npm run reconcile:evidence -- <evidence-file-or-directory> [...]");
 }
 
-const expectedSha = process.env.PEAS_CANDIDATE_SHA ?? git("rev-parse", "HEAD");
+const checkoutAttestation = localValidationCheckoutAttestation();
+const expectedSha =
+  checkoutAttestation?.sha ?? process.env.PEAS_CANDIDATE_SHA ?? git("rev-parse", "HEAD");
 const expectedRepository = requiredEnvironment("PEAS_EXPECTED_REPOSITORY");
 const expectedCiRunId = requiredEnvironment("PEAS_EXPECTED_CI_RUN_ID");
 const expected100kRunId = requiredEnvironment("PEAS_EXPECTED_100K_RUN_ID");
@@ -412,11 +445,11 @@ for (const [name, value] of [
 ]) {
   if (!/^[1-9]\d*$/u.test(value)) throw new Error(`${name} must be a positive integer`);
 }
-const originRepository = repositoryFromOrigin();
+const originRepository = repositoryFromOrigin(checkoutAttestation?.origin);
 if (originRepository !== expectedRepository) {
   throw new Error(`Origin repository ${originRepository} does not match ${expectedRepository}`);
 }
-const checkoutSha = git("rev-parse", "HEAD");
+const checkoutSha = checkoutAttestation?.sha ?? git("rev-parse", "HEAD");
 if (expectedSha !== checkoutSha) {
   throw new Error(`Reconciliation candidate ${expectedSha} is not checked out at ${checkoutSha}`);
 }

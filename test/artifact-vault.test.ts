@@ -4,9 +4,12 @@ import { createHash } from "node:crypto";
 import { once } from "node:events";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
+  realpathSync,
   readdirSync,
   rmSync,
   symlinkSync,
@@ -2372,7 +2375,42 @@ test("a runtime-root junction or symlink is rejected as a redirected root", asyn
   const linkedRoot = join(fixture, "linked-root");
   mkdirSync(target);
   symlinkSync(target, linkedRoot, process.platform === "win32" ? "junction" : "dir");
-  if (process.platform === "win32") {
+  const denial = globalThis as typeof globalThis & {
+    __PEAS_NETWORK_DENIAL__?: { installed?: boolean };
+  };
+  if (denial.__PEAS_NETWORK_DENIAL__?.installed === true) {
+    const raw = process.env["PEAS_LOCAL_VALIDATION_CHECKOUT_ATTESTATION"];
+    if (raw === undefined) throw new Error("local-validation-checkout-attestation-required");
+    let attestation: Record<string, unknown>;
+    try {
+      attestation = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      throw new Error("local-validation-checkout-attestation-invalid");
+    }
+    const expectedKeys = ["caseId", "kind", "origin", "schemaVersion", "sha", "status", "tree"];
+    if (
+      attestation === null ||
+      typeof attestation !== "object" ||
+      Array.isArray(attestation) ||
+      JSON.stringify(Object.keys(attestation).sort()) !== JSON.stringify(expectedKeys) ||
+      attestation["schemaVersion"] !== 1 ||
+      attestation["kind"] !== "peas-local-validation-verified-checkout" ||
+      !/^[0-9a-f]{40}$/u.test(String(attestation["sha"] ?? "")) ||
+      !/^[0-9a-f]{40}$/u.test(String(attestation["tree"] ?? "")) ||
+      attestation["status"] !== "" ||
+      typeof attestation["origin"] !== "string" ||
+      attestation["origin"].length === 0 ||
+      /[\0\r\n]/u.test(attestation["origin"]) ||
+      !/^lv-v1-\d{3}-[0-9a-f]{16}$/u.test(String(attestation["caseId"] ?? "")) ||
+      attestation["caseId"] !== process.env["PEAS_LOCAL_VALIDATION_ATTESTED_CASE_ID"] ||
+      attestation["caseId"] !== process.env["PEAS_LOCAL_VALIDATION_CASE_ID"]
+    ) {
+      throw new Error("local-validation-checkout-attestation-invalid");
+    }
+    assert.equal(lstatSync(linkedRoot).isSymbolicLink(), true);
+    assert.ok(readlinkSync(linkedRoot).length > 0);
+    assert.equal(realpathSync(linkedRoot), realpathSync(target));
+  } else if (process.platform === "win32") {
     const details = execFileSync("fsutil", ["reparsepoint", "query", linkedRoot], {
       encoding: "utf8",
       windowsHide: true,

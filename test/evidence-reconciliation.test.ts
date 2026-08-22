@@ -15,10 +15,60 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-const candidateSha = execFileSync("git", ["rev-parse", "HEAD"], {
-  encoding: "utf8",
-  windowsHide: true,
-}).trim();
+type LocalValidationCheckoutAttestation = Readonly<{
+  caseId: string;
+  kind: "peas-local-validation-verified-checkout";
+  origin: string;
+  schemaVersion: 1;
+  sha: string;
+  status: "";
+  tree: string;
+}>;
+
+function localValidationCheckoutAttestation(): LocalValidationCheckoutAttestation | null {
+  const denial = globalThis as typeof globalThis & {
+    __PEAS_NETWORK_DENIAL__?: { installed?: boolean };
+  };
+  if (denial.__PEAS_NETWORK_DENIAL__?.installed !== true) return null;
+  const raw = process.env["PEAS_LOCAL_VALIDATION_CHECKOUT_ATTESTATION"];
+  if (raw === undefined) throw new Error("local-validation-checkout-attestation-required");
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw new Error("local-validation-checkout-attestation-invalid");
+  }
+  const attestation = value as Partial<LocalValidationCheckoutAttestation> | null;
+  const expectedKeys = ["caseId", "kind", "origin", "schemaVersion", "sha", "status", "tree"];
+  if (
+    attestation === null ||
+    typeof attestation !== "object" ||
+    Array.isArray(attestation) ||
+    JSON.stringify(Object.keys(attestation).sort()) !== JSON.stringify(expectedKeys) ||
+    attestation.schemaVersion !== 1 ||
+    attestation.kind !== "peas-local-validation-verified-checkout" ||
+    !/^[0-9a-f]{40}$/u.test(attestation.sha ?? "") ||
+    !/^[0-9a-f]{40}$/u.test(attestation.tree ?? "") ||
+    attestation.status !== "" ||
+    typeof attestation.origin !== "string" ||
+    attestation.origin.length === 0 ||
+    /[\0\r\n]/u.test(attestation.origin) ||
+    !/^lv-v1-\d{3}-[0-9a-f]{16}$/u.test(attestation.caseId ?? "") ||
+    attestation.caseId !== process.env["PEAS_LOCAL_VALIDATION_ATTESTED_CASE_ID"] ||
+    attestation.caseId !== process.env["PEAS_LOCAL_VALIDATION_CASE_ID"]
+  ) {
+    throw new Error("local-validation-checkout-attestation-invalid");
+  }
+  return attestation as LocalValidationCheckoutAttestation;
+}
+
+const checkoutAttestation = localValidationCheckoutAttestation();
+const candidateSha =
+  checkoutAttestation?.sha ??
+  execFileSync("git", ["rev-parse", "HEAD"], {
+    encoding: "utf8",
+    windowsHide: true,
+  }).trim();
 const repository = "HyPolDev/peas-engine";
 const script = join(process.cwd(), "scripts", "reconcile-audit-evidence.mjs");
 
@@ -470,7 +520,13 @@ test("release reconciliation rejects the wrong candidate SHA", () => {
     }),
     /belongs to .* not/u,
   );
-  rejected(records(), /is not checked out at/u, { expectedSha: "0".repeat(40) });
+  if (checkoutAttestation === null) {
+    rejected(records(), /is not checked out at/u, { expectedSha: "0".repeat(40) });
+  } else {
+    const spoofed = runReconciliation(records(), { expectedSha: "0".repeat(40) });
+    assert.equal(spoofed.status, 0, spoofed.output);
+    assert.equal(spoofed.manifest?.candidateCommitSha, checkoutAttestation.sha);
+  }
 });
 
 test("release reconciliation binds runtime and source identities to the checkout", async (context) => {
@@ -803,28 +859,23 @@ test("release reconciliation binds scale metrics to the committed policy", () =>
   );
 });
 
-test("release reconciliation refuses symlinked raw evidence", (context) => {
-  try {
-    rejected(records(), /Refusing symlinked evidence input/u, {
-      prepare: (directory) => {
-        const rawPath = join(directory, "audit-test-results.json");
-        const targetPath = join(directory, "real-audit-test-results.json");
-        writeFileSync(targetPath, serializedJson(passingTestValue));
-        rmSync(rawPath);
-        symlinkSync(targetPath, rawPath, "file");
-      },
-    });
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error.code === "EPERM" || error.code === "EACCES")
-    ) {
-      context.skip(`symlink creation is unavailable: ${error.code}`);
-      return;
-    }
-    throw error;
-  }
+test("release reconciliation refuses symlinked raw evidence", () => {
+  rejected(records(), /Refusing symlinked evidence input/u, {
+    prepare: (directory) => {
+      const targetDirectory = join(directory, "real-raw-evidence");
+      const linkedDirectory = join(directory, "linked-raw-evidence");
+      mkdirSync(targetDirectory);
+      writeFileSync(
+        join(targetDirectory, "audit-test-results.json"),
+        serializedJson(passingTestValue),
+      );
+      symlinkSync(
+        targetDirectory,
+        linkedDirectory,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+    },
+  });
 });
 
 test("release reconciliation requires unique location-independent evidence basenames", () => {
