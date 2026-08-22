@@ -983,8 +983,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation accepts label and dispatch evidence bound to the candidate",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
-        "sizeBytes": 30622
+        "sha256": "16b85cafd8bbdf13b78059f4e20cb2330f1ad7977beb1fb0eed846255770ae04",
+        "sizeBytes": 30487
       },
       "id": "lv-v1-052-753e5bc5e9c9cd20",
       "identitySha256": "8ff401f43fc3b60f90723938b3bd4f3761faf1c565d51c4f321c793d0735bb5d"
@@ -1002,8 +1002,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation binds repository and run IDs to trusted orchestration",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
-        "sizeBytes": 30622
+        "sha256": "16b85cafd8bbdf13b78059f4e20cb2330f1ad7977beb1fb0eed846255770ae04",
+        "sizeBytes": 30487
       },
       "id": "lv-v1-053-400e1964e8c867bc",
       "identitySha256": "8eecaf0ee677aff1617d27ce9aa9d7d6463ba8b8ba7637e352bfc41af57b87d2"
@@ -1021,8 +1021,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation binds runtime and source identities to the checkout",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
-        "sizeBytes": 30622
+        "sha256": "16b85cafd8bbdf13b78059f4e20cb2330f1ad7977beb1fb0eed846255770ae04",
+        "sizeBytes": 30487
       },
       "id": "lv-v1-054-7a1beb2781617587",
       "identitySha256": "4bc4d2dcca4728c20b3d273e3d4b38d8be005ead5e09c22dabcf33767cef968c"
@@ -1040,8 +1040,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation binds scale metrics to the committed policy",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
-        "sizeBytes": 30622
+        "sha256": "16b85cafd8bbdf13b78059f4e20cb2330f1ad7977beb1fb0eed846255770ae04",
+        "sizeBytes": 30487
       },
       "id": "lv-v1-055-68de57dc4dc1871a",
       "identitySha256": "f601c079c1a71fc384a2b7614ecebb8a105add7efcf5e3620106b90aca4dbfc4"
@@ -1059,8 +1059,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation binds the complete CI and label-run identity",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
-        "sizeBytes": 30622
+        "sha256": "16b85cafd8bbdf13b78059f4e20cb2330f1ad7977beb1fb0eed846255770ae04",
+        "sizeBytes": 30487
       },
       "id": "lv-v1-056-d7c2b5c0f0bc0dd0",
       "identitySha256": "649a5f1839eb47cb381a4929c7f5beba6fb99232bc19b7785e5689a31c859d79"
@@ -1078,8 +1078,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation recomputes every embedded evidence-file hash and value",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
-        "sizeBytes": 30622
+        "sha256": "16b85cafd8bbdf13b78059f4e20cb2330f1ad7977beb1fb0eed846255770ae04",
+        "sizeBytes": 30487
       },
       "id": "lv-v1-057-723beef9895e1453",
       "identitySha256": "8495c818687814b4edbb38b3d425773063a1ded30fa43b3eaa2973d95147c41c"
@@ -1097,8 +1097,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation refuses symlinked raw evidence",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
-        "sizeBytes": 30622
+        "sha256": "16b85cafd8bbdf13b78059f4e20cb2330f1ad7977beb1fb0eed846255770ae04",
+        "sizeBytes": 30487
       },
       "id": "lv-v1-058-90e09e3a7fe126eb",
       "identitySha256": "d23da8c353c81ece39b704abeafb25a511e13f3d0855161dedaa2d0873e9f7c6"
@@ -1116,8 +1116,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation rejects failed gates, checks, and integrity",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
-        "sizeBytes": 30622
+        "sha256": "16b85cafd8bbdf13b78059f4e20cb2330f1ad7977beb1fb0eed846255770ae04",
+        "sizeBytes": 30487
       },
       "id": "lv-v1-059-b96ebad91919a4d5",
       "identitySha256": "850041a3c7ea215f9bd5eefc6987b13a394e072d50ba8c6291fcbff6b4e8ae60"
@@ -1135,8 +1135,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation rejects malformed evidence",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
-        "sizeBytes": 30622
+        "sha256": "16b85cafd8bbdf13b78059f4e20cb2330f1ad7977beb1fb0eed846255770ae04",
+        "sizeBytes": 30487
       },
       "id": "lv-v1-060-945477328201507f",
       "identitySha256": "b4575e9c8eb39c15394348c1fa24b41c8be5154eaaa7d3c9d27fb9b4824c709b"
@@ -1154,8 +1154,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation rejects the wrong candidate SHA",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
-        "sizeBytes": 30622
+        "sha256": "16b85cafd8bbdf13b78059f4e20cb2330f1ad7977beb1fb0eed846255770ae04",
+        "sizeBytes": 30487
       },
       "id": "lv-v1-061-189041974b7f9498",
       "identitySha256": "878287ff4d4b4041534cd5ac12db8ccee2b5c25438dbc7a75d1b089a7363fce2"
@@ -1173,8 +1173,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation rejects wrong runner identity",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
-        "sizeBytes": 30622
+        "sha256": "16b85cafd8bbdf13b78059f4e20cb2330f1ad7977beb1fb0eed846255770ae04",
+        "sizeBytes": 30487
       },
       "id": "lv-v1-062-937aecf5b303c002",
       "identitySha256": "73fdb7c9882adf72d6c8a5a81b304767402461db1931628e6e3240a10f901442"
@@ -1192,8 +1192,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation requires a genuine manual 100k trigger",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
-        "sizeBytes": 30622
+        "sha256": "16b85cafd8bbdf13b78059f4e20cb2330f1ad7977beb1fb0eed846255770ae04",
+        "sizeBytes": 30487
       },
       "id": "lv-v1-063-a17fe7be91e34554",
       "identitySha256": "ffbceab3df110e055734c59aa3b449eb432bd67b3ee96d54df695bf8b1ddb85e"
@@ -1211,8 +1211,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation requires exactly one of every gate",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
-        "sizeBytes": 30622
+        "sha256": "16b85cafd8bbdf13b78059f4e20cb2330f1ad7977beb1fb0eed846255770ae04",
+        "sizeBytes": 30487
       },
       "id": "lv-v1-064-d50ace163acd702c",
       "identitySha256": "c2d38de6b0626211e19a8f09001fd4bc9b282aeef466029c87bca6eaaf200665"
@@ -1230,8 +1230,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#release reconciliation requires unique location-independent evidence basenames",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
-        "sizeBytes": 30622
+        "sha256": "16b85cafd8bbdf13b78059f4e20cb2330f1ad7977beb1fb0eed846255770ae04",
+        "sizeBytes": 30487
       },
       "id": "lv-v1-065-0cad02d2575a4389",
       "identitySha256": "e8d4d978ea668bd5a181cd3e24b84dacbf1ee1d13ad3052f2112d491bdab08f2"
@@ -3605,8 +3605,8 @@
       "fixture": {
         "identity": "test/evidence-reconciliation.test.ts#nightly audit records dispatch and schedule provenance from the actual event",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "2d0360d86c52c6e2c810c2ab1081cf1bce87c452c75c3238e50af6e2a501ae50",
-        "sizeBytes": 30622
+        "sha256": "16b85cafd8bbdf13b78059f4e20cb2330f1ad7977beb1fb0eed846255770ae04",
+        "sizeBytes": 30487
       },
       "id": "lv-v1-190-a229aceecce81dd3",
       "identitySha256": "7aa34c35b42a9522abfc95b1ff0e7587df67e11e651cbc880d841cdc7769b09d"

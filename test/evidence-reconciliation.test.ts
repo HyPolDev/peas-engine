@@ -859,28 +859,23 @@ test("release reconciliation binds scale metrics to the committed policy", () =>
   );
 });
 
-test("release reconciliation refuses symlinked raw evidence", (context) => {
-  try {
-    rejected(records(), /Refusing symlinked evidence input/u, {
-      prepare: (directory) => {
-        const rawPath = join(directory, "audit-test-results.json");
-        const targetPath = join(directory, "real-audit-test-results.json");
-        writeFileSync(targetPath, serializedJson(passingTestValue));
-        rmSync(rawPath);
-        symlinkSync(targetPath, rawPath, "file");
-      },
-    });
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error.code === "EPERM" || error.code === "EACCES")
-    ) {
-      context.skip(`symlink creation is unavailable: ${error.code}`);
-      return;
-    }
-    throw error;
-  }
+test("release reconciliation refuses symlinked raw evidence", () => {
+  rejected(records(), /Refusing symlinked evidence input/u, {
+    prepare: (directory) => {
+      const targetDirectory = join(directory, "real-raw-evidence");
+      const linkedDirectory = join(directory, "linked-raw-evidence");
+      mkdirSync(targetDirectory);
+      writeFileSync(
+        join(targetDirectory, "audit-test-results.json"),
+        serializedJson(passingTestValue),
+      );
+      symlinkSync(
+        targetDirectory,
+        linkedDirectory,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+    },
+  });
 });
 
 test("release reconciliation requires unique location-independent evidence basenames", () => {
