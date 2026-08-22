@@ -5,6 +5,13 @@
   "seed": "peas-local-validation-v1-seed-2026-08-10",
   "orderPermutations": ["canonical", "reverse", "seeded-shuffle"],
   "pageSizes": [1, 2, 7, 10000],
+  "platformApplicability": [
+    {
+      "sourcePath": "test/artifact-vault.test.ts",
+      "testName": "Linux file symlinks cannot replace committed content",
+      "platforms": ["linux"]
+    }
+  ],
   "durableCheckpointPrefixes": [
     "acquisition.declared",
     "request.started",

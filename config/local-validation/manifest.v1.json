@@ -2909,6 +2909,9 @@
       "identitySha256": "4767a807dc19c53d7cb95f4d2226cc037de98c14fe9de77c689278c5c45dfbb4"
     },
     {
+      "applicablePlatforms": [
+        "linux"
+      ],
       "category": "artifact-vault",
       "deterministicSeed": "5704672349b03d2100a796700c3175576a59433baafe9b3bf6b4c32fc7706154",
       "executable": {
@@ -2917,7 +2920,7 @@
         "sourcePath": "test/artifact-vault.test.ts",
         "testName": "Linux file symlinks cannot replace committed content"
       },
-      "expectedTerminalDisposition": "executable-assertions-passed",
+      "expectedTerminalDisposition": "platform-conditional",
       "fixture": {
         "identity": "test/artifact-vault.test.ts#Linux file symlinks cannot replace committed content",
         "mediaType": "text/vnd.peas.executable-test+typescript",
@@ -5393,6 +5396,6 @@
   "scientificStudy": false,
   "sourceMatrix": {
     "path": "config/local-validation/matrix.v1.json",
-    "sha256": "dea7a0b9d769c0d6768d1d0f657d76b6c51f4d76dbd859867add156c20451794"
+    "sha256": "ce85ed54eef3a43132c341fa952b6b27a19c8cfdebb3d45c8c7b717279765e2f"
   }
 }

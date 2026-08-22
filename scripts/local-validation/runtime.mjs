@@ -285,7 +285,10 @@ const NODE_TEST_SUMMARY_FIELDS = Object.freeze([
   "todo",
 ]);
 
-export function parseNodeTestSummary(transcript) {
+export function parseNodeTestSummary(
+  transcript,
+  expectedDisposition = "executable-assertions-passed",
+) {
   if (typeof transcript !== "string") throw new Error("node-test-summary-invalid");
   const summary = {};
   for (const field of NODE_TEST_SUMMARY_FIELDS) {
@@ -296,17 +299,52 @@ export function parseNodeTestSummary(transcript) {
     if (!Number.isSafeInteger(value) || value < 0) throw new Error("node-test-summary-invalid");
     summary[field] = value;
   }
+  const assertionsPassed =
+    summary.tests >= 1 &&
+    summary.pass === summary.tests &&
+    summary.fail === 0 &&
+    summary.cancelled === 0 &&
+    summary.skipped === 0 &&
+    summary.todo === 0;
+  const platformInapplicable =
+    summary.tests === 1 &&
+    summary.pass === 0 &&
+    summary.fail === 0 &&
+    summary.cancelled === 0 &&
+    summary.skipped === 1 &&
+    summary.todo === 0;
   if (
-    summary.tests < 1 ||
-    summary.pass !== summary.tests ||
-    summary.fail !== 0 ||
-    summary.cancelled !== 0 ||
-    summary.skipped !== 0 ||
-    summary.todo !== 0
+    (expectedDisposition === "executable-assertions-passed" && !assertionsPassed) ||
+    (expectedDisposition === "platform-inapplicable" && !platformInapplicable) ||
+    !["executable-assertions-passed", "platform-inapplicable"].includes(expectedDisposition)
   ) {
     throw new Error("node-test-summary-invalid");
   }
   return Object.freeze(summary);
+}
+
+export function resolveCaseDisposition(caseEntry, runtimePlatform = process.platform) {
+  if (caseEntry?.expectedTerminalDisposition === "executable-assertions-passed") {
+    if (caseEntry.applicablePlatforms !== undefined) {
+      throw new Error("local-validation-platform-applicability-invalid");
+    }
+    return "executable-assertions-passed";
+  }
+  const platforms = caseEntry?.applicablePlatforms;
+  if (
+    caseEntry?.expectedTerminalDisposition !== "platform-conditional" ||
+    !Array.isArray(platforms) ||
+    platforms.length === 0 ||
+    new Set(platforms).size !== platforms.length ||
+    platforms.some((platformName) => typeof platformName !== "string") ||
+    typeof runtimePlatform !== "string" ||
+    runtimePlatform.length === 0
+  ) {
+    throw new Error("local-validation-platform-applicability-invalid");
+  }
+  return platforms.includes(runtimePlatform)
+    ? "executable-assertions-passed"
+    : "platform-inapplicable";
 }
 
 function runExecutableCase(caseEntry, runtimeRoot, preload, order, bindings, candidateAttestation) {
@@ -317,6 +355,7 @@ function runExecutableCase(caseEntry, runtimeRoot, preload, order, bindings, can
   if (sha256(sourceBytes) !== caseEntry.fixture.sha256) {
     throw new Error(`executable-fixture-digest-mismatch:${caseEntry.id}`);
   }
+  const disposition = resolveCaseDisposition(caseEntry);
   const started = performance.now();
   const caseTemporaryRoot = join(runtimeRoot, "case-runtime", order, caseEntry.id);
   mkdirSync(caseTemporaryRoot, { recursive: true });
@@ -356,7 +395,7 @@ function runExecutableCase(caseEntry, runtimeRoot, preload, order, bindings, can
   }
   let nodeTestSummary;
   try {
-    nodeTestSummary = parseNodeTestSummary(transcript);
+    nodeTestSummary = parseNodeTestSummary(transcript, disposition);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(
@@ -380,7 +419,7 @@ function runExecutableCase(caseEntry, runtimeRoot, preload, order, bindings, can
     caseId: caseEntry.id,
     sourcePath: caseEntry.executable.sourcePath,
     testName: caseEntry.executable.testName,
-    disposition: caseEntry.expectedTerminalDisposition,
+    disposition,
     claimedRestartPrefixes: bindings.restart.flatMap(({ prefixes }) => prefixes),
     claimedPermutationVectors: bindings.permutations.map(({ vectors, sourceSha256 }) => ({
       sourceSha256,

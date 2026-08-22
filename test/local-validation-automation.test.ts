@@ -49,7 +49,10 @@ function canonicalBytes(value: unknown): string {
   return `${JSON.stringify(canonicalize(value), null, 2)}\n`;
 }
 
-function runNodeTestSummaryParser(transcript: string) {
+function runNodeTestSummaryParser(
+  transcript: string,
+  expectedDisposition = "executable-assertions-passed",
+) {
   return spawnSync(
     process.execPath,
     [
@@ -59,17 +62,44 @@ function runNodeTestSummaryParser(transcript: string) {
        let transcript = '';
        for await (const chunk of process.stdin) transcript += chunk;
        try {
-         process.stdout.write(JSON.stringify(parseNodeTestSummary(transcript)));
+         process.stdout.write(JSON.stringify(parseNodeTestSummary(transcript, process.argv[1])));
        } catch (error) {
          process.stderr.write(error instanceof Error ? error.message : String(error));
          process.exitCode = 1;
        }`,
+      expectedDisposition,
     ],
     {
       cwd: process.cwd(),
       encoding: "utf8",
       windowsHide: true,
       input: transcript,
+    },
+  );
+}
+
+function runCaseDispositionResolver(caseEntry: unknown, runtimePlatform: string) {
+  return spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import { resolveCaseDisposition } from './scripts/local-validation/runtime.mjs';
+       let input = '';
+       for await (const chunk of process.stdin) input += chunk;
+       try {
+         process.stdout.write(resolveCaseDisposition(JSON.parse(input), process.argv[1]));
+       } catch (error) {
+         process.stderr.write(error instanceof Error ? error.message : String(error));
+         process.exitCode = 1;
+       }`,
+      runtimePlatform,
+    ],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      windowsHide: true,
+      input: JSON.stringify(caseEntry),
     },
   );
 }
@@ -127,6 +157,8 @@ test("the frozen local-validation manifest compiles deterministically with 200+ 
     cases: Array<{
       id: string;
       expectedTerminalDisposition: string;
+      applicablePlatforms?: string[];
+      executable: { testName: string };
       fixture: { sha256: string };
     }>;
     durableCheckpointPrefixes: string[];
@@ -137,10 +169,26 @@ test("the frozen local-validation manifest compiles deterministically with 200+ 
   };
   assert.equal(new Set(manifest.cases.map(({ id }) => id)).size, 227);
   assert.ok(manifest.cases.every(({ fixture }) => /^[0-9a-f]{64}$/u.test(fixture.sha256)));
+  const platformConditional = manifest.cases.filter(
+    ({ expectedTerminalDisposition }) => expectedTerminalDisposition === "platform-conditional",
+  );
+  assert.deepEqual(
+    platformConditional.map(({ applicablePlatforms, executable }) => ({
+      applicablePlatforms,
+      testName: executable.testName,
+    })),
+    [
+      {
+        applicablePlatforms: ["linux"],
+        testName: "Linux file symlinks cannot replace committed content",
+      },
+    ],
+  );
   assert.ok(
     manifest.cases.every(
       ({ expectedTerminalDisposition }) =>
-        expectedTerminalDisposition === "executable-assertions-passed",
+        expectedTerminalDisposition === "executable-assertions-passed" ||
+        expectedTerminalDisposition === "platform-conditional",
     ),
   );
   assert.equal(manifest.durableCheckpointPrefixes.length, 22);
@@ -543,6 +591,55 @@ test("runtime accepts passing nested subtests and rejects incomplete terminal su
     assert.notEqual(result.status, 0, transcript);
     assert.match(result.stderr, /node-test-summary-(?:invalid|todo-ambiguous|pass-ambiguous)/u);
   }
+
+  const inapplicable = runNodeTestSummaryParser(
+    nodeTestSummary({ tests: 1, pass: 0, skipped: 1 }),
+    "platform-inapplicable",
+  );
+  assert.equal(inapplicable.status, 0, inapplicable.stderr);
+  assert.deepEqual(JSON.parse(inapplicable.stdout), {
+    tests: 1,
+    pass: 0,
+    fail: 0,
+    cancelled: 0,
+    skipped: 1,
+    todo: 0,
+  });
+  for (const transcript of [
+    nodeTestSummary({ tests: 1, pass: 1 }),
+    nodeTestSummary({ tests: 2, pass: 0, skipped: 2 }),
+    nodeTestSummary({ tests: 1, pass: 0, fail: 1, skipped: 1 }),
+  ]) {
+    const result = runNodeTestSummaryParser(transcript, "platform-inapplicable");
+    assert.notEqual(result.status, 0, transcript);
+    assert.match(result.stderr, /node-test-summary-invalid/u);
+  }
+  const unknownDisposition = runNodeTestSummaryParser(
+    nodeTestSummary({ tests: 1, pass: 0, skipped: 1 }),
+    "skip-allowed",
+  );
+  assert.notEqual(unknownDisposition.status, 0);
+
+  const universal = { expectedTerminalDisposition: "executable-assertions-passed" };
+  const conditional = {
+    expectedTerminalDisposition: "platform-conditional",
+    applicablePlatforms: ["linux"],
+  };
+  assert.equal(
+    runCaseDispositionResolver(universal, "win32").stdout,
+    "executable-assertions-passed",
+  );
+  assert.equal(
+    runCaseDispositionResolver(conditional, "linux").stdout,
+    "executable-assertions-passed",
+  );
+  assert.equal(runCaseDispositionResolver(conditional, "win32").stdout, "platform-inapplicable");
+  const invalidBinding = runCaseDispositionResolver(
+    { ...universal, applicablePlatforms: ["linux"] },
+    "win32",
+  );
+  assert.notEqual(invalidBinding.status, 0);
+  assert.match(invalidBinding.stderr, /local-validation-platform-applicability-invalid/u);
 });
 
 test("runtime first boot is owned and missing authority with primary state is corruption", () => {

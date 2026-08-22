@@ -120,8 +120,35 @@ export function compileManifest(matrix) {
     ...sorted.filter((entry) => !priorityKeys.has(`${entry.sourcePath}\0${entry.testName}`)),
   ].slice(0, 227);
   if (selected.length !== 227) throw new Error("local-validation-executable-case-count-invalid");
+  if (!Array.isArray(matrix.platformApplicability)) {
+    throw new Error("local-validation-platform-applicability-invalid");
+  }
+  const supportedPlatforms = new Set(["darwin", "linux", "win32"]);
+  const platformApplicability = new Map();
+  for (const binding of matrix.platformApplicability) {
+    const key = `${binding?.sourcePath}\0${binding?.testName}`;
+    if (
+      typeof binding?.sourcePath !== "string" ||
+      typeof binding?.testName !== "string" ||
+      !Array.isArray(binding?.platforms) ||
+      binding.platforms.length === 0 ||
+      new Set(binding.platforms).size !== binding.platforms.length ||
+      binding.platforms.some((platformName) => !supportedPlatforms.has(platformName)) ||
+      platformApplicability.has(key)
+    ) {
+      throw new Error("local-validation-platform-applicability-invalid");
+    }
+    platformApplicability.set(key, [...binding.platforms].sort());
+  }
+  const selectedKeys = new Set(
+    selected.map(({ sourcePath, testName }) => `${sourcePath}\0${testName}`),
+  );
+  if ([...platformApplicability.keys()].some((key) => !selectedKeys.has(key))) {
+    throw new Error("local-validation-platform-applicability-source-missing");
+  }
   const cases = selected.map((entry, index) => {
     const preimage = `${matrix.seed}:${entry.sourcePath}:${entry.testName}`;
+    const applicablePlatforms = platformApplicability.get(`${entry.sourcePath}\0${entry.testName}`);
     const category = entry.sourcePath
       .replace(/^test\//u, "")
       .replace(/\.test\.ts$/u, "")
@@ -130,7 +157,9 @@ export function compileManifest(matrix) {
       id: `lv-v1-${String(index + 1).padStart(3, "0")}-${sha256(preimage).slice(0, 16)}`,
       identitySha256: sha256(`case:${preimage}`),
       category,
-      expectedTerminalDisposition: "executable-assertions-passed",
+      expectedTerminalDisposition:
+        applicablePlatforms === undefined ? "executable-assertions-passed" : "platform-conditional",
+      ...(applicablePlatforms === undefined ? {} : { applicablePlatforms }),
       fixture: {
         identity: `${entry.sourcePath}#${entry.testName}`,
         sha256: entry.sourceSha256,
