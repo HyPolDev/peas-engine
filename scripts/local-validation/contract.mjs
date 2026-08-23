@@ -19,6 +19,23 @@ export const CREDENTIAL_ENVIRONMENT_NAMES = Object.freeze([
   "ALPACA_SECRET_KEY",
   "FMP_API_KEY",
 ]);
+const INHERITED_TEST_CONTROL_NAMES = new Set([
+  "PEAS_SKIP_HARD_KILL_MATRIX",
+  "PEAS_TEST_BOUNDARY",
+  "PEAS_SCALE_METRICS_PATH",
+]);
+
+export function sanitizedLocalValidationChildEnvironment(environment = process.env) {
+  if (environment === null || typeof environment !== "object" || Array.isArray(environment)) {
+    throw new Error("local-validation-child-environment-invalid");
+  }
+  const sanitized = {};
+  for (const name of Object.keys(environment)) {
+    if (INHERITED_TEST_CONTROL_NAMES.has(name.toUpperCase())) continue;
+    sanitized[name] = environment[name];
+  }
+  return sanitized;
+}
 
 export function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");

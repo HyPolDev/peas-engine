@@ -13,7 +13,7 @@ import process from "node:process";
 
 import Database from "better-sqlite3";
 
-import { canonicalBytes, sha256 } from "./contract.mjs";
+import { canonicalBytes, sanitizedLocalValidationChildEnvironment, sha256 } from "./contract.mjs";
 
 export const RUNTIME_LAYOUT = Object.freeze([
   "sqlite",
@@ -361,7 +361,7 @@ function runExecutableCase(caseEntry, runtimeRoot, preload, order, bindings, can
   mkdirSync(caseTemporaryRoot, { recursive: true });
   const auditPath = join(runtimeRoot, "evidence", `${order}-${caseEntry.id}.boundary-audit.jsonl`);
   rmSync(auditPath, { force: true });
-  const caseEnvironment = { ...process.env };
+  const caseEnvironment = sanitizedLocalValidationChildEnvironment();
   delete caseEnvironment.NODE_TEST_CONTEXT;
   const child = spawnSync(
     process.execPath,

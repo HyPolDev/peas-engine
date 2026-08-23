@@ -7,6 +7,11 @@
   "pageSizes": [1, 2, 7, 10000],
   "platformApplicability": [
     {
+      "sourcePath": "test/persistence-scale.test.ts",
+      "testName": "SQLite 1k-cluster scale gate records latency, memory, and storage metrics",
+      "platforms": ["linux"]
+    },
+    {
       "sourcePath": "test/artifact-vault.test.ts",
       "testName": "Linux file symlinks cannot replace committed content",
       "platforms": ["linux"]

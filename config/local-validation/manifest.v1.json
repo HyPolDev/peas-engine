@@ -2377,6 +2377,9 @@
       "identitySha256": "df69c0b7e6d9297eb1fb739ca59832e03ef5473d3387697969e73f269b554a4d"
     },
     {
+      "applicablePlatforms": [
+        "linux"
+      ],
       "category": "persistence-scale",
       "deterministicSeed": "3d6270914f8f5e5100fb6aa5b5ee6604d35d3ea150b40d92b66fa8cca3f3a3ff",
       "executable": {
@@ -2385,12 +2388,12 @@
         "sourcePath": "test/persistence-scale.test.ts",
         "testName": "SQLite 1k-cluster scale gate records latency, memory, and storage metrics"
       },
-      "expectedTerminalDisposition": "executable-assertions-passed",
+      "expectedTerminalDisposition": "platform-conditional",
       "fixture": {
         "identity": "test/persistence-scale.test.ts#SQLite 1k-cluster scale gate records latency, memory, and storage metrics",
         "mediaType": "text/vnd.peas.executable-test+typescript",
-        "sha256": "f12bacf193661f5fae7e069cb65ad6c83d313ce6abcf8c858b4e25285f484ee6",
-        "sizeBytes": 23792
+        "sha256": "33662e45cf3c56b18d76a395deb458edb747ea925294ad34d4acd8b268031546",
+        "sizeBytes": 23898
       },
       "id": "lv-v1-126-9091b3afdf1f87e0",
       "identitySha256": "c174b2a7485a88fd63384296102d95bfd2b2a01f9fd71834132c82612a2fb839"
@@ -5396,6 +5399,6 @@
   "scientificStudy": false,
   "sourceMatrix": {
     "path": "config/local-validation/matrix.v1.json",
-    "sha256": "ce85ed54eef3a43132c341fa952b6b27a19c8cfdebb3d45c8c7b717279765e2f"
+    "sha256": "038ced7773f8ed6f0983cadae44eb69bbb297c6aa4d8033d8391050b64271cb9"
   }
 }

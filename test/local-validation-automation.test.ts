@@ -180,6 +180,10 @@ test("the frozen local-validation manifest compiles deterministically with 200+ 
     [
       {
         applicablePlatforms: ["linux"],
+        testName: "SQLite 1k-cluster scale gate records latency, memory, and storage metrics",
+      },
+      {
+        applicablePlatforms: ["linux"],
         testName: "Linux file symlinks cannot replace committed content",
       },
     ],
@@ -415,6 +419,45 @@ test("network denial is mandatory and blocks outbound APIs before cases", () => 
       assert.ok(deniedSurfaces.includes(required), required);
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("case child environments ignore inherited skip, boundary, and metrics controls", () => {
+  const controls = ["PEAS_SKIP_HARD_KILL_MATRIX", "PEAS_TEST_BOUNDARY", "PEAS_SCALE_METRICS_PATH"];
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import { sanitizedLocalValidationChildEnvironment } from './scripts/local-validation/contract.mjs';
+       const controls = ${JSON.stringify(controls)};
+       const inherited = { PEAS_ALLOWED_SENTINEL: 'preserved' };
+       for (const name of controls.flatMap((control) => [control, control.toLowerCase()])) {
+         Object.defineProperty(inherited, name, {
+           enumerable: true,
+           get() { throw new Error('forbidden-control-value-read:' + name); }
+         });
+       }
+       const sanitized = sanitizedLocalValidationChildEnvironment(inherited);
+       process.stdout.write(JSON.stringify({ keys: Object.keys(sanitized).sort(), sanitized }));`,
+    ],
+    { cwd: process.cwd(), encoding: "utf8", windowsHide: true },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    keys: ["PEAS_ALLOWED_SENTINEL"],
+    sanitized: { PEAS_ALLOWED_SENTINEL: "preserved" },
+  });
+  for (const path of [
+    "scripts/local-validation/gate.mjs",
+    "scripts/local-validation/hard-kill.mjs",
+    "scripts/local-validation/runtime.mjs",
+  ]) {
+    assert.match(
+      readFileSync(path, "utf8"),
+      /sanitizedLocalValidationChildEnvironment\(\)/u,
+      `${path} must sanitize inherited controls before spawning a child`,
+    );
   }
 });
 

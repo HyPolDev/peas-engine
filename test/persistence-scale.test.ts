@@ -608,7 +608,9 @@ test("poison and unknown event flood advances without wedging and matches memory
   }
 });
 
-test("SQLite 1k-cluster scale gate records latency, memory, and storage metrics", async (context) => {
+test("SQLite 1k-cluster scale gate records latency, memory, and storage metrics", {
+  skip: process.platform !== "linux" ? "Linux timing and SQLite filesystem budget evidence" : false,
+}, async (context) => {
   await runSqliteScale(context, 1_000, "1k");
 });
 

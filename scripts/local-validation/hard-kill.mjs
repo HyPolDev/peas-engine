@@ -3,7 +3,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import process from "node:process";
 
-import { canonicalBytes, sha256 } from "./contract.mjs";
+import { canonicalBytes, sanitizedLocalValidationChildEnvironment, sha256 } from "./contract.mjs";
 
 function processExists(pid) {
   try {
@@ -24,12 +24,11 @@ function executeBinding(workspace, manifest, binding, point) {
   ) {
     throw new Error(`hard-kill-source-binding-mismatch:${caseEntry.id}`);
   }
-  const caseEnvironment = { ...process.env };
+  const caseEnvironment = sanitizedLocalValidationChildEnvironment();
   delete caseEnvironment.NODE_TEST_CONTEXT;
   // Process-kill contracts deliberately refuse V8 coverage instrumentation.
   // A coverage parent must not turn an owned hard-kill execution into a skip.
   delete caseEnvironment.NODE_V8_COVERAGE;
-  delete caseEnvironment.PEAS_SKIP_HARD_KILL_MATRIX;
   const executionId = `${caseEntry.id}-${sha256(point ?? "all-points").slice(0, 12)}`;
   const auditPath = join(workspace, `${executionId}.hard-kill-boundary-audit.jsonl`);
   rmSync(auditPath, { force: true });

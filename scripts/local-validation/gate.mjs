@@ -14,6 +14,7 @@ import {
   readJson,
   repositoryIdentity,
   safeTemporaryRuntime,
+  sanitizedLocalValidationChildEnvironment,
   verifyCandidate,
   verifyFrozenManifest,
 } from "./contract.mjs";
@@ -105,7 +106,7 @@ async function run() {
         encoding: "utf8",
         windowsHide: true,
         env: {
-          ...process.env,
+          ...sanitizedLocalValidationChildEnvironment(),
           PEAS_LOCAL_VALIDATION_WORKER_INPUT: inputPath,
           PEAS_NETWORK_DENIAL_INHERITED: "1",
           PEAS_RUNTIME_ROOT: runtimeRoot,
