@@ -16,6 +16,10 @@ import {
   type P103ReasonCode,
 } from "../src/adapters/read-only-capture/contracts.js";
 import { createProviderFreeCaptureSession } from "../src/adapters/read-only-capture/provider-free.js";
+import { runProviderFreeCapturePipeline } from "../src/adapters/read-only-capture/offline-pipeline.js";
+import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
+import { SqliteEventLog } from "../src/adapters/sqlite/event-log.js";
+import { ManualClock } from "../src/core/clock.js";
 
 const allowlist = Object.freeze([
   { sourceId: "sec", issuerId: "issuer-a", resourceId: "filings" },
@@ -170,6 +174,90 @@ test("captures all three closed source lanes with deterministic provenance and z
   }
   assertSnapshotSurface(capture.snapshot());
   assert.deepEqual(Reflect.ownKeys(capture), ["kind"]);
+});
+
+test("provider-free bytes normalize into SQLite with exact capture provenance", async () => {
+  const body = Buffer.from('{"headline":"synthetic earnings fixture"}', "utf8");
+  const capturedFixture = fixture("issuer-ir", "rss", "revision-sqlite", [...body]);
+  const captureSession = session([capturedFixture]);
+  const database = openSqliteDatabase(
+    ":memory:",
+    loadMigrations(path.join(process.cwd(), "migrations")),
+  );
+  const eventLog = new SqliteEventLog(database, { clock: new ManualClock(1_800_000_000_200) });
+
+  try {
+    const result = await runProviderFreeCapturePipeline({
+      session: captureSession,
+      request: request(capturedFixture),
+      eventLog,
+      normalize: (bytes, receipt) => ({
+        envelopeVersion: 2,
+        type: "earnings.source.observed",
+        schemaVersion: 1,
+        source: "p1-03-provider-free-fixture",
+        subject: receipt.issuerId,
+        occurredAtMs: receipt.publishedAtMs,
+        correlationId: receipt.captureId,
+        provider: {
+          provider: receipt.sourceId,
+          recordId: receipt.recordId,
+          revisionId: receipt.revisionId,
+          artifactHash: receipt.rawSha256,
+        },
+        payload: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
+      }),
+    });
+
+    assert.equal(result.capture.disposition, "appended");
+    assert.equal(result.capture.event.provider.artifactHash, result.receipt.rawSha256);
+    assert.deepEqual(result.capture.event.payload, { headline: "synthetic earnings fixture" });
+    assert.deepEqual(result.effects, P1_03_EFFECTS_ZERO);
+    assert.equal((await eventLog.readAfter("0", 10)).events.length, 1);
+    assert.equal(database.pragma("integrity_check", { simple: true }), "ok");
+  } finally {
+    database.close();
+  }
+});
+
+test("provider-free pipeline rejects mismatched normalized provenance before SQLite append", async () => {
+  const capturedFixture = fixture("sec", "filings", "revision-mismatch", [1, 2, 3]);
+  const captureSession = session([capturedFixture]);
+  const database = openSqliteDatabase(
+    ":memory:",
+    loadMigrations(path.join(process.cwd(), "migrations")),
+  );
+  const eventLog = new SqliteEventLog(database, { clock: new ManualClock(1_800_000_000_200) });
+
+  try {
+    await assert.rejects(
+      runProviderFreeCapturePipeline({
+        session: captureSession,
+        request: request(capturedFixture),
+        eventLog,
+        normalize: (_bytes, receipt) => ({
+          envelopeVersion: 2,
+          type: "earnings.source.observed",
+          schemaVersion: 1,
+          source: "p1-03-provider-free-fixture",
+          subject: receipt.issuerId,
+          occurredAtMs: receipt.publishedAtMs,
+          correlationId: receipt.captureId,
+          provider: {
+            provider: receipt.sourceId,
+            recordId: receipt.recordId,
+            revisionId: receipt.revisionId,
+            artifactHash: "0".repeat(64),
+          },
+          payload: { synthetic: true },
+        }),
+      }),
+      /p1-03\.normalized-provenance-mismatch/u,
+    );
+    assert.equal((await eventLog.readAfter("0", 10)).events.length, 0);
+  } finally {
+    database.close();
+  }
 });
 
 test("closed allowlist and fixture identity fail before lookup", () => {

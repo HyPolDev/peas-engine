@@ -356,12 +356,13 @@ working days**. They cannot weaken or self-authorize a gate, shorten the mandato
 prospective lead, or shorten the exactly 65-regular-session recording window. This documentation
 change implements none of them.
 
-The next decision is therefore to approve or reject that exact local-validation manifest. Only a
-clean `LOCAL_TEST_GO` may unblock the separately frozen P1-03/P1-04 source-capture and calendar
-work. Those tasks still require their own implementation, restart, provenance, and independent
-acceptance evidence. Only after P1-03 and P1-04 are independently complete may a separately
-authorized P1-06 readiness drill begin. P2 remains blocked until P1-06 receives an independent
-readiness `GO`.
+The local-validation gate remains mandatory before a live provider-backed forward run and before
+P1-06. It does not block provider-free P1-03/P1-04 implementation with original synthetic fixtures,
+network denial, and zero provider, credential, account, spending, trading, or financial effects.
+Live acquisition still requires a separate human authorization, exact-candidate evidence, and the
+applicable local-validation decision. P1-03/P1-04 still require their own restart, provenance, and
+independent acceptance evidence before a separately authorized P1-06 readiness drill may begin.
+P2 remains blocked until P1-06 receives an independent readiness `GO`.
 
 ### Post-PR 2D next actions
 
@@ -377,7 +378,7 @@ P2 collection. Parallel implementation does not waive a gate.
 | 4     | Resolve the retention architecture authorization gate          | Human owner                                       | Complete for the exact frozen architecture                                                         | Preserve the owner-authorized maintenance port, additive migration, controlled vault-root erasure, tombstone/use-denial semantics, and exact retention sequence; no scope expansion                                                               |
 | 5     | Implement PR 2F against merged PR 2E                           | Current sole PR 2F implementation owner           | Complete and merged as PR #9 at `e1d9c1a...`                                                        | Exact candidate `d513da9...`, tree `bc067d9...`, passed unchanged local and hosted gates, internal/external `CONTRACT_GO`, and `FINAL_PREMERGE_GO`; reviewed bytes merged unchanged                                                             |
 | 6     | Freeze and execute the effects-disabled 200+ event local gate  | Integration owner plus fresh auditor              | Planning may complete; execution is blocked pending approval of the exact corpus/runtime/configuration manifest       | At least 200 frozen local cases; exact replay/restart/integrity/resource/effects evidence; independent `LOCAL_TEST_GO`; no provider call or scientific outcome                                                                                    |
-| 7     | Complete live read-only source capture and calendar prewarming | Non-overlapping source and calendar owners        | Blocked pending `LOCAL_TEST_GO` and a separately frozen human authorization for exact P1-03/P1-04   | Bounded SEC/FMP/issuer-IR capture as authorized, issuer allowlist, schedule provenance, restart/backfill evidence, independent acceptance, and no dispatchable financial effects                                                               |
+| 7     | Complete live read-only source capture and calendar prewarming | Non-overlapping source and calendar owners        | Provider-free implementation may proceed; live acquisition remains blocked pending the applicable local-validation decision and separate human authorization | Bounded SEC/FMP/issuer-IR capture as authorized, issuer allowlist, schedule provenance, restart/backfill evidence, independent acceptance, and no dispatchable financial effects                                                               |
 | 8     | Run P1-06 integrated readiness drill                           | Integration owner plus fresh auditor              | After P1-03, P1-04, P1-05, and P1-10 are independently complete                                    | Same-SHA Linux/Windows and 10k evidence; complete synthetic matrix; retention enforcement; restart/replay and memory/SQLite equivalence; binary readiness `GO`                                                                                    |
 | 9     | Collect and freeze P2                                          | Collection agents, then research owner            | After P1-06 independent `GO`, derive S1, freeze the frame through S5, publish before S6, rehearse S6-S14, and begin collection at S15 | Exactly 180 prospectively frozen clusters with fixed 120/40/20 membership across exactly 65 regular sessions; immutable dataset manifest, code/config/entitlement identities, and completeness report before conclusions |
 | 10    | Execute the event-validation analysis                          | Research owner plus independent reviewer          | Blocked until the dataset freeze                                                                   | Reproducible frozen-metric report and binary decision on whether the evidence justifies any later data, model, or market-access investment                                                                                                        |
