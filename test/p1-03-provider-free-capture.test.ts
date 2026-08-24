@@ -260,6 +260,53 @@ test("provider-free pipeline rejects mismatched normalized provenance before SQL
   }
 });
 
+test("provider-free pipeline binds source and capture identity before SQLite append", async () => {
+  const capturedFixture = fixture("sec", "filings", "revision-identity", [4, 5, 6]);
+  const mismatches = [
+    { provider: "fmp", correlationId: null },
+    { provider: null, correlationId: "unrelated-capture" },
+  ] as const;
+
+  for (const mismatch of mismatches) {
+    const captureSession = session([capturedFixture]);
+    const database = openSqliteDatabase(
+      ":memory:",
+      loadMigrations(path.join(process.cwd(), "migrations")),
+    );
+    const eventLog = new SqliteEventLog(database, { clock: new ManualClock(1_800_000_000_200) });
+
+    try {
+      await assert.rejects(
+        runProviderFreeCapturePipeline({
+          session: captureSession,
+          request: request(capturedFixture),
+          eventLog,
+          normalize: (_bytes, receipt) => ({
+            envelopeVersion: 2,
+            type: "earnings.source.observed",
+            schemaVersion: 1,
+            source: "p1-03-provider-free-fixture",
+            subject: receipt.issuerId,
+            occurredAtMs: receipt.publishedAtMs,
+            correlationId: mismatch.correlationId ?? receipt.captureId,
+            provider: {
+              provider: mismatch.provider ?? receipt.sourceId,
+              recordId: receipt.recordId,
+              revisionId: receipt.revisionId,
+              artifactHash: receipt.rawSha256,
+            },
+            payload: { synthetic: true },
+          }),
+        }),
+        /p1-03\.normalized-provenance-mismatch/u,
+      );
+      assert.equal((await eventLog.readAfter("0", 10)).events.length, 0);
+    } finally {
+      database.close();
+    }
+  }
+});
+
 test("closed allowlist and fixture identity fail before lookup", () => {
   const capture = session();
   const unknown = request(fixture("sec", "filings"));

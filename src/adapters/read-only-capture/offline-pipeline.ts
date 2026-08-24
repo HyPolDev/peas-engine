@@ -23,9 +23,11 @@ export type P103OfflinePipelineResult = Readonly<{
 
 function assertCapturedProvenance(receipt: P103CaptureReceipt, draft: EventDraft): void {
   if (
+    draft.provider.provider !== receipt.sourceId ||
     draft.provider.artifactHash !== receipt.rawSha256 ||
     draft.provider.recordId !== receipt.recordId ||
-    draft.provider.revisionId !== receipt.revisionId
+    draft.provider.revisionId !== receipt.revisionId ||
+    draft.correlationId !== receipt.captureId
   ) {
     throw new Error("p1-03.normalized-provenance-mismatch");
   }
