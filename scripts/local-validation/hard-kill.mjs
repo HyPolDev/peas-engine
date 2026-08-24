@@ -1,17 +1,82 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, rmSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { appendFileSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import process from "node:process";
 
 import { canonicalBytes, sanitizedLocalValidationChildEnvironment, sha256 } from "./contract.mjs";
+import { measureWorkerOwnership } from "./worker-accounting.mjs";
 
-function processExists(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error?.code === "EPERM";
+export function validateHardKillWorkerEvidence({
+  boundaryAudits,
+  lifecycleEvents,
+  rootClaims,
+  rootOwnerToken,
+  rootOwnerPid,
+  platform,
+}) {
+  if (
+    !Array.isArray(boundaryAudits) ||
+    !Array.isArray(lifecycleEvents) ||
+    !Array.isArray(rootClaims) ||
+    rootClaims.length === 0
+  ) {
+    throw new Error("hard-kill-worker-evidence-schema-invalid");
   }
+  if (boundaryAudits.length < 2) throw new Error("hard-kill-worker-audit-count-invalid");
+  if (
+    boundaryAudits.some(
+      ({ childDenialInherited, successfulOutboundTransports }) =>
+        childDenialInherited !== true || successfulOutboundTransports !== 0,
+    )
+  )
+    throw new Error("hard-kill-worker-capability-audit-invalid");
+  const workerOwnership = measureWorkerOwnership({
+    groupId: rootClaims[0]?.groupId,
+    rootOwnerToken,
+    rootOwnerPid,
+    directClaims: rootClaims,
+    audits: boundaryAudits,
+    lifecycleEvents,
+    platform,
+  });
+  if (workerOwnership.measuredWorkers !== 0) {
+    throw new Error(
+      `hard-kill-worker-residue:${JSON.stringify({
+        measuredWorkers: workerOwnership.measuredWorkers,
+        liveOwnedCount: workerOwnership.liveOwnedCount,
+        orphanCount: workerOwnership.orphanCount,
+        unownedCount: workerOwnership.unownedCount,
+        ambiguousCount: workerOwnership.ambiguousCount,
+        accountingErrorCount: workerOwnership.accountingErrorCount,
+        liveOwnedEvidence: workerOwnership.liveOwnedEvidence.slice(0, 8),
+        issues: workerOwnership.issues.slice(0, 16),
+        ownershipEvidenceSha256: workerOwnership.ownershipEvidenceSha256,
+      })}`,
+    );
+  }
+  return workerOwnership;
+}
+
+function appendParentLifecycle(lifecyclePath, claim, transition) {
+  appendFileSync(
+    lifecyclePath,
+    `${JSON.stringify({
+      schemaVersion: 1,
+      kind: "worker-lifecycle",
+      transition,
+      groupId: claim.groupId,
+      ownerToken: claim.ownerToken,
+      ownerPid: claim.ownerPid,
+      childToken: claim.childToken,
+      pid: claim.pid,
+      surface: claim.surface,
+      exitCode: claim.exitCode,
+      signalCode: claim.signalCode,
+      errorCode: claim.errorCode,
+    })}\n`,
+    "utf8",
+  );
 }
 
 function executeBinding(workspace, manifest, binding, point) {
@@ -31,7 +96,24 @@ function executeBinding(workspace, manifest, binding, point) {
   delete caseEnvironment.NODE_V8_COVERAGE;
   const executionId = `${caseEntry.id}-${sha256(point ?? "all-points").slice(0, 12)}`;
   const auditPath = join(workspace, `${executionId}.hard-kill-boundary-audit.jsonl`);
+  const lifecyclePath = join(workspace, `${executionId}.hard-kill-worker-lifecycle.jsonl`);
   rmSync(auditPath, { force: true });
+  rmSync(lifecyclePath, { force: true });
+  const rootOwnerToken = randomUUID();
+  const rootClaim = {
+    schemaVersion: 1,
+    groupId: randomUUID(),
+    ownerToken: rootOwnerToken,
+    ownerPid: process.pid,
+    childToken: randomUUID(),
+    pid: null,
+    surface: "child_process.spawnSync",
+    state: "live",
+    exitCode: null,
+    signalCode: null,
+    errorCode: null,
+  };
+  appendParentLifecycle(lifecyclePath, rootClaim, "spawn-intent");
   const child = spawnSync(
     process.execPath,
     [
@@ -52,10 +134,37 @@ function executeBinding(workspace, manifest, binding, point) {
         PEAS_EFFECTS_ALLOWED: "false",
         PEAS_LOCAL_VALIDATION_CASE_ID: caseEntry.id,
         PEAS_NETWORK_DENIAL_AUDIT_PATH: auditPath,
+        PEAS_LOCAL_VALIDATION_WORKER_LIFECYCLE_PATH: lifecyclePath,
+        PEAS_LOCAL_VALIDATION_WORKER_GROUP_ID: rootClaim.groupId,
+        PEAS_LOCAL_VALIDATION_WORKER_TOKEN: rootClaim.childToken,
+        PEAS_LOCAL_VALIDATION_WORKER_OWNER_TOKEN: rootOwnerToken,
+        PEAS_LOCAL_VALIDATION_WORKER_EXPECTED_PARENT_PID: String(process.pid),
+        PEAS_LOCAL_VALIDATION_WORKER_SURFACE: rootClaim.surface,
         ...(point === null ? {} : { PEAS_TEST_BOUNDARY: point }),
       },
     },
   );
+  rootClaim.pid = Number.isSafeInteger(child.pid) && child.pid > 0 ? child.pid : null;
+  if (rootClaim.pid !== null) appendParentLifecycle(lifecyclePath, rootClaim, "claimed");
+  const childExitCode = Number.isInteger(child.status) ? child.status : null;
+  const childSignalCode = typeof child.signal === "string" ? child.signal : null;
+  const childErrorCode = typeof child.error?.code === "string" ? child.error.code : null;
+  if (
+    rootClaim.pid === null ||
+    childErrorCode !== null ||
+    (childExitCode === null) === (childSignalCode === null)
+  ) {
+    rootClaim.state = "accounting-error";
+    rootClaim.exitCode = null;
+    rootClaim.signalCode = null;
+    rootClaim.errorCode = childErrorCode ?? "spawn-result-terminal-invalid";
+    appendParentLifecycle(lifecyclePath, rootClaim, "accounting-error");
+  } else {
+    rootClaim.state = "settled";
+    rootClaim.exitCode = childExitCode;
+    rootClaim.signalCode = childSignalCode;
+    appendParentLifecycle(lifecyclePath, rootClaim, "settled");
+  }
   const transcript = `${child.stdout ?? ""}\n${child.stderr ?? ""}`;
   if (child.status !== 0 || !/(?:ℹ pass 1|# pass 1)/u.test(transcript)) {
     throw new Error(
@@ -66,14 +175,26 @@ function executeBinding(workspace, manifest, binding, point) {
     .trim()
     .split(/\r?\n/u)
     .map((line) => JSON.parse(line));
-  if (
-    boundaryAudits.length < 2 ||
-    boundaryAudits.some(
-      ({ pid, childDenialInherited, successfulOutboundTransports }) =>
-        childDenialInherited !== true || successfulOutboundTransports !== 0 || processExists(pid),
-    )
-  ) {
-    throw new Error(`hard-kill-boundary-audit-invalid:${caseEntry.id}:${point}`);
+  const lifecycleEvents = readFileSync(lifecyclePath, "utf8")
+    .trim()
+    .split(/\r?\n/u)
+    .map((line) => JSON.parse(line));
+  let workerOwnership;
+  try {
+    workerOwnership = validateHardKillWorkerEvidence({
+      boundaryAudits,
+      lifecycleEvents,
+      rootClaims: [rootClaim],
+      rootOwnerToken,
+      rootOwnerPid: process.pid,
+      platform: process.platform,
+    });
+  } catch (error) {
+    const boundedReason =
+      error instanceof Error ? error.message : "hard-kill-worker-evidence-unknown";
+    throw new Error(`hard-kill-boundary-audit-invalid:${caseEntry.id}:${point}:${boundedReason}`, {
+      cause: error,
+    });
   }
   return {
     auditedProcessCount: boundaryAudits.length,
@@ -85,6 +206,7 @@ function executeBinding(workspace, manifest, binding, point) {
     sourceSha256: binding.sourceSha256,
     testName: binding.testName,
     transcriptSha256: sha256(transcript),
+    workerOwnershipSha256: workerOwnership.ownershipEvidenceSha256,
   };
 }
 

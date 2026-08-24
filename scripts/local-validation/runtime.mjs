@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -14,6 +14,7 @@ import process from "node:process";
 import Database from "better-sqlite3";
 
 import { canonicalBytes, sanitizedLocalValidationChildEnvironment, sha256 } from "./contract.mjs";
+import { measureWorkerOwnership, workerResourceFailureEvidence } from "./worker-accounting.mjs";
 
 export const RUNTIME_LAYOUT = Object.freeze([
   "sqlite",
@@ -152,24 +153,40 @@ export function provisionValidationRuntime(runtimeRoot, identity) {
   return Object.freeze({ created: false, authorityPath });
 }
 
+function settledOwnedChildHandle(handle) {
+  return globalThis.__PEAS_NETWORK_DENIAL__?.settledOwnedChildHandle?.(handle) === true;
+}
+
+function accountableActiveHandles() {
+  const handles =
+    typeof process._getActiveHandles === "function" ? process._getActiveHandles() : [];
+  return handles.filter((handle) => !settledOwnedChildHandle(handle));
+}
+
 function activeHandleCount() {
-  return typeof process._getActiveHandles === "function" ? process._getActiveHandles().length : 0;
+  return accountableActiveHandles().length;
 }
 
 function activeHandleKinds() {
-  const handles =
-    typeof process._getActiveHandles === "function" ? process._getActiveHandles() : [];
-  return handles.map((handle) => handle?.constructor?.name ?? "Unknown");
+  return accountableActiveHandles().map((handle) => handle?.constructor?.name ?? "Unknown");
 }
 
-function processExists(pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error?.code === "EPERM";
+function workerOwnershipBoundary() {
+  const evidence = globalThis.__PEAS_NETWORK_DENIAL__?.workerOwnership?.();
+  if (
+    evidence?.schemaVersion !== 1 ||
+    typeof evidence.groupId !== "string" ||
+    evidence.groupId.length === 0 ||
+    typeof evidence.token !== "string" ||
+    evidence.token.length === 0 ||
+    evidence.ownerToken !== null ||
+    !Number.isSafeInteger(evidence.pid) ||
+    evidence.pid <= 0 ||
+    !Array.isArray(evidence.claims)
+  ) {
+    throw new Error("worker-accounting-boundary-unavailable");
   }
+  return evidence;
 }
 
 function directoryBytes(root) {
@@ -241,12 +258,28 @@ function seededOrder(cases, seed) {
   );
 }
 
-export function enforceResourceCeilings(resources, ceilings) {
+export function enforceResourceCeilings(resources, ceilings, options = {}) {
   for (const [name, maximum] of Object.entries(ceilings)) {
     if (!Number.isFinite(resources[name]) || resources[name] < 0) {
       throw new Error(`resource-measurement-invalid:${name}`);
     }
-    if (resources[name] > maximum) throw new Error(`resource-ceiling-exceeded:${name}`);
+    if (resources[name] > maximum) {
+      const detail =
+        name === "workers" && options.workerOwnership !== undefined
+          ? `:${JSON.stringify(workerResourceFailureEvidence(options.workerOwnership, maximum))}`
+          : "";
+      throw new Error(`resource-ceiling-exceeded:${name}${detail}`);
+    }
+  }
+}
+
+export function enforceWorkerCleanup(workerOwnership, maximum) {
+  if (workerOwnership.measuredWorkers > 0) {
+    throw new Error(
+      `runtime-durable-residue-detected:workers:${JSON.stringify(
+        workerResourceFailureEvidence(workerOwnership, maximum),
+      )}`,
+    );
   }
 }
 
@@ -347,7 +380,59 @@ export function resolveCaseDisposition(caseEntry, runtimePlatform = process.plat
     : "platform-inapplicable";
 }
 
-function runExecutableCase(caseEntry, runtimeRoot, preload, order, bindings, candidateAttestation) {
+function runBufferedChild(args, options) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn(process.execPath, args, {
+      ...options,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const output = { stdout: "", stderr: "", totalBytes: 0 };
+    let bufferExceeded = false;
+    let timedOut = false;
+    const append = (name, chunk) => {
+      output.totalBytes += Buffer.byteLength(chunk);
+      if (output.totalBytes <= options.maxBuffer) output[name] += chunk;
+      else if (!bufferExceeded) {
+        bufferExceeded = true;
+        child.kill("SIGKILL");
+      }
+    };
+    child.stdout.setEncoding("utf8").on("data", (chunk) => append("stdout", chunk));
+    child.stderr.setEncoding("utf8").on("data", (chunk) => append("stderr", chunk));
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, options.timeout);
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      rejectPromise(error);
+    });
+    child.once("close", (status, signal) => {
+      clearTimeout(timeout);
+      resolvePromise({
+        pid: child.pid,
+        status,
+        signal,
+        stdout: output.stdout,
+        stderr: output.stderr,
+        failureReason: bufferExceeded
+          ? "max-buffer-exceeded"
+          : timedOut
+            ? "timeout-exceeded"
+            : null,
+      });
+    });
+  });
+}
+
+async function runExecutableCase(
+  caseEntry,
+  runtimeRoot,
+  preload,
+  order,
+  bindings,
+  candidateAttestation,
+) {
   if (!existsSync(caseEntry.executable.compiledPath)) {
     throw new Error(`compiled-case-missing:${caseEntry.executable.compiledPath}`);
   }
@@ -360,11 +445,17 @@ function runExecutableCase(caseEntry, runtimeRoot, preload, order, bindings, can
   const caseTemporaryRoot = join(runtimeRoot, "case-runtime", order, caseEntry.id);
   mkdirSync(caseTemporaryRoot, { recursive: true });
   const auditPath = join(runtimeRoot, "evidence", `${order}-${caseEntry.id}.boundary-audit.jsonl`);
+  const lifecyclePath = join(
+    runtimeRoot,
+    "evidence",
+    `${order}-${caseEntry.id}.worker-lifecycle.jsonl`,
+  );
   rmSync(auditPath, { force: true });
+  rmSync(lifecyclePath, { force: true });
   const caseEnvironment = sanitizedLocalValidationChildEnvironment();
   delete caseEnvironment.NODE_TEST_CONTEXT;
-  const child = spawnSync(
-    process.execPath,
+  const ownershipBefore = workerOwnershipBoundary();
+  const child = await runBufferedChild(
     [
       "--test",
       `--test-name-pattern=${caseEntry.executable.nodeTestNamePattern}`,
@@ -372,7 +463,6 @@ function runExecutableCase(caseEntry, runtimeRoot, preload, order, bindings, can
     ],
     {
       cwd: process.cwd(),
-      encoding: "utf8",
       windowsHide: true,
       timeout: 180_000,
       maxBuffer: 16 * 1024 * 1024,
@@ -383,15 +473,27 @@ function runExecutableCase(caseEntry, runtimeRoot, preload, order, bindings, can
         PEAS_RUNTIME_ROOT: runtimeRoot,
         PEAS_EFFECTS_ALLOWED: "false",
         PEAS_NETWORK_DENIAL_AUDIT_PATH: auditPath,
+        PEAS_LOCAL_VALIDATION_WORKER_LIFECYCLE_PATH: lifecyclePath,
         TEMP: caseTemporaryRoot,
         TMP: caseTemporaryRoot,
         TMPDIR: caseTemporaryRoot,
       },
     },
   );
+  const ownershipAfter = workerOwnershipBoundary();
+  if (
+    ownershipAfter.groupId !== ownershipBefore.groupId ||
+    ownershipAfter.token !== ownershipBefore.token ||
+    ownershipAfter.claims.length !== ownershipBefore.claims.length + 1
+  ) {
+    throw new Error("worker-accounting-direct-claim-ambiguous");
+  }
+  const directClaims = ownershipAfter.claims.slice(ownershipBefore.claims.length);
   const transcript = `${child.stdout ?? ""}\n${child.stderr ?? ""}`;
-  if (child.status !== 0) {
-    throw new Error(`executable-case-failed:${caseEntry.id}:${child.status}:${transcript}`);
+  if (child.status !== 0 || child.failureReason !== null) {
+    throw new Error(
+      `executable-case-failed:${caseEntry.id}:${child.status}:${child.failureReason}:${transcript}`,
+    );
   }
   let nodeTestSummary;
   try {
@@ -406,6 +508,10 @@ function runExecutableCase(caseEntry, runtimeRoot, preload, order, bindings, can
     .trim()
     .split(/\r?\n/u)
     .map((line) => JSON.parse(line));
+  const workerLifecycleEvents = readFileSync(lifecyclePath, "utf8")
+    .trim()
+    .split(/\r?\n/u)
+    .map((line) => JSON.parse(line));
   if (
     boundaryAudits.length === 0 ||
     boundaryAudits.some(
@@ -416,6 +522,8 @@ function runExecutableCase(caseEntry, runtimeRoot, preload, order, bindings, can
   }
   return {
     boundaryAudits,
+    workerDirectClaims: directClaims,
+    workerLifecycleEvents,
     caseId: caseEntry.id,
     sourcePath: caseEntry.executable.sourcePath,
     testName: caseEntry.executable.testName,
@@ -433,7 +541,7 @@ function runExecutableCase(caseEntry, runtimeRoot, preload, order, bindings, can
   };
 }
 
-export function executeSyntheticMatrix(runtimeRoot, manifest, options = {}) {
+export async function executeSyntheticMatrix(runtimeRoot, manifest, options = {}) {
   if (
     options.candidateAttestation === undefined &&
     globalThis.__PEAS_NETWORK_DENIAL__?.installed === true
@@ -465,22 +573,33 @@ export function executeSyntheticMatrix(runtimeRoot, manifest, options = {}) {
     for (const caseEntry of orderedCases) {
       executions.push({
         order,
-        ...runExecutableCase(
+        ...(await runExecutableCase(
           caseEntry,
           runtimeRoot,
           preload,
           order,
           bindingsFor(caseEntry.id),
           candidateAttestation,
-        ),
+        )),
       });
     }
   }
+  // A ChildProcess emits "close" before libuv removes its settled process handle.
+  // Measure cleanup on the next turn so historical children are excluded while
+  // genuinely live handles remain visible to the unchanged resource ceilings.
+  await new Promise((resolvePromise) => setImmediate(resolvePromise));
   const handleKinds = activeHandleKinds();
   const childAudits = executions.flatMap(({ boundaryAudits }) => boundaryAudits);
-  const orphanPids = [
-    ...new Set([...executions.map(({ pid }) => pid), ...childAudits.map(({ pid }) => pid)]),
-  ].filter(processExists);
+  const workerBoundary = workerOwnershipBoundary();
+  const workerOwnership = measureWorkerOwnership({
+    groupId: workerBoundary.groupId,
+    rootOwnerToken: workerBoundary.token,
+    rootOwnerPid: workerBoundary.pid,
+    directClaims: executions.flatMap(({ workerDirectClaims }) => workerDirectClaims),
+    audits: childAudits,
+    lifecycleEvents: executions.flatMap(({ workerLifecycleEvents }) => workerLifecycleEvents),
+    platform: process.platform,
+  });
   const childCpuMs = Math.max(
     ...executions.map(({ boundaryAudits }) =>
       Math.ceil(
@@ -514,7 +633,7 @@ export function executeSyntheticMatrix(runtimeRoot, manifest, options = {}) {
     peakHeapBytes: Math.max(childPeakHeapBytes, process.memoryUsage().heapUsed),
     runtimeStorageBytes: directoryBytes(runtimeRoot),
     openHandles: activeHandleCount(),
-    workers: orphanPids.length,
+    workers: workerOwnership.measuredWorkers,
     timers: handleKinds.filter((name) => name === "Timeout").length,
     streams: handleKinds.filter((name) => /Stream|Socket/u.test(name)).length,
     readers: handleKinds.filter((name) => /Watcher|Read/u.test(name)).length,
@@ -523,7 +642,7 @@ export function executeSyntheticMatrix(runtimeRoot, manifest, options = {}) {
     activeRetentionOperations: residue.activeRetentionRows,
     cleanupLatencyMs,
   };
-  enforceResourceCeilings(resources, manifest.resourceCeilings);
+  enforceResourceCeilings(resources, manifest.resourceCeilings, { workerOwnership });
   const resourceBoundaryResults = executeResourceBoundaryVectors(manifest.resourceCeilings);
   const productionResourceProofs = executions.filter(({ testName }) =>
     /(?:ceiling|one-over|bound)/iu.test(testName),
@@ -556,8 +675,8 @@ export function executeSyntheticMatrix(runtimeRoot, manifest, options = {}) {
   for (const [name, maximum] of Object.entries(manifest.effectsCeilings)) {
     if (effects[name] > maximum) throw new Error(`effects-ceiling-exceeded:${name}`);
   }
+  enforceWorkerCleanup(workerOwnership, manifest.resourceCeilings.workers);
   if (
-    orphanPids.length > 0 ||
     residue.leaseRows + residue.lockFiles > 0 ||
     residue.fenceRows > 0 ||
     residue.activeRetentionRows > 0
@@ -589,6 +708,7 @@ export function executeSyntheticMatrix(runtimeRoot, manifest, options = {}) {
     executableProofSha256: sha256(canonicalBytes(executions)),
     totalDiagnosticWallMs: Math.ceil(performance.now() - startedWall),
     resources,
+    workerOwnership,
     productionResourceProofs,
     resourceBoundaryResults,
     restartClaims,
@@ -609,9 +729,9 @@ export function executeSyntheticMatrix(runtimeRoot, manifest, options = {}) {
     },
     durableResidue: residue,
     cleanup: {
-      orphanProcesses: orphanPids.length,
+      orphanProcesses: workerOwnership.orphanCount,
       extraHandles: Math.max(0, finalHandles - baselineHandles),
-      workers: orphanPids.length,
+      workers: workerOwnership.measuredWorkers,
       leases: residue.leaseRows + residue.lockFiles,
       sqliteFences: residue.fenceRows,
       activeRetentionOperations: residue.activeRetentionRows,

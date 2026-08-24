@@ -26,7 +26,7 @@ const candidateAttestation = validateCheckoutAttestation(
   input.identity,
 );
 const firstBoot = provisionValidationRuntime(input.runtimeRoot, input.identity);
-const result = executeSyntheticMatrix(input.runtimeRoot, input.manifest, {
+const result = await executeSyntheticMatrix(input.runtimeRoot, input.manifest, {
   ...(input.limit === null ? {} : { limit: input.limit }),
   candidateAttestation,
   credentialPresentCount: credentialProof.present.length,

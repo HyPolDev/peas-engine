@@ -107,6 +107,7 @@ async function run() {
         windowsHide: true,
         env: {
           ...sanitizedLocalValidationChildEnvironment(),
+          NODE_OPTIONS: "",
           PEAS_LOCAL_VALIDATION_WORKER_INPUT: inputPath,
           PEAS_NETWORK_DENIAL_INHERITED: "1",
           PEAS_RUNTIME_ROOT: runtimeRoot,

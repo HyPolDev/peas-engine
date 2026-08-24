@@ -18,10 +18,33 @@ import {
 import {
   executeSyntheticMatrix,
   provisionValidationRuntime,
+  validateCheckoutAttestation,
 } from "../../scripts/local-validation/runtime.mjs";
 import { executeHardKillMatrix } from "../../scripts/local-validation/hard-kill.mjs";
 
 const [operation, argument] = process.argv.slice(2);
+
+function injectedCandidateIdentity() {
+  const raw = process.env.PEAS_LOCAL_VALIDATION_CHECKOUT_ATTESTATION;
+  if (typeof raw !== "string" || raw.length === 0) return repositoryIdentity();
+  const attestation = JSON.parse(raw);
+  if (
+    typeof attestation?.sha !== "string" ||
+    typeof attestation?.tree !== "string" ||
+    attestation?.status !== ""
+  ) {
+    throw new Error("local-validation-probe-attestation-invalid");
+  }
+  return { sha: attestation.sha, tree: attestation.tree, status: attestation.status };
+}
+
+function injectedCheckoutAttestation() {
+  const raw = process.env.PEAS_LOCAL_VALIDATION_CHECKOUT_ATTESTATION;
+  if (typeof raw !== "string" || raw.length === 0) {
+    throw new Error("local-validation-probe-attestation-required");
+  }
+  return validateCheckoutAttestation(JSON.parse(raw));
+}
 
 if (operation === "manifest") {
   const { manifest, digest } = verifyFrozenManifest();
@@ -141,20 +164,28 @@ if (operation === "manifest") {
 } else if (operation === "execute") {
   const root = argument;
   const { manifest } = verifyFrozenManifest();
-  provisionValidationRuntime(root, repositoryIdentity());
-  const result = executeSyntheticMatrix(root, manifest, { limit: 2 });
+  provisionValidationRuntime(root, injectedCandidateIdentity());
+  const result = await executeSyntheticMatrix(root, manifest, {
+    limit: 2,
+    candidateAttestation: injectedCheckoutAttestation(),
+  });
   process.stdout.write(`${JSON.stringify(result)}\n`);
 } else if (operation === "execute-credential-effect") {
   const root = argument;
   const { manifest } = verifyFrozenManifest();
-  provisionValidationRuntime(root, repositoryIdentity());
-  executeSyntheticMatrix(root, manifest, { limit: 1, credentialPresentCount: 1 });
+  provisionValidationRuntime(root, injectedCandidateIdentity());
+  await executeSyntheticMatrix(root, manifest, {
+    limit: 1,
+    credentialPresentCount: 1,
+    candidateAttestation: injectedCheckoutAttestation(),
+  });
 } else if (operation === "execute-residue") {
   const root = argument;
   const { manifest } = verifyFrozenManifest();
-  provisionValidationRuntime(root, repositoryIdentity());
-  executeSyntheticMatrix(root, manifest, {
+  provisionValidationRuntime(root, injectedCandidateIdentity());
+  await executeSyntheticMatrix(root, manifest, {
     limit: 1,
+    candidateAttestation: injectedCheckoutAttestation(),
     beforeResidueInspection(caseRoot) {
       const lockDirectory = join(caseRoot, "injected", "locks");
       mkdirSync(lockDirectory, { recursive: true });
