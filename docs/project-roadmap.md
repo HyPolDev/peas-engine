@@ -270,7 +270,26 @@ role, commercial capability, hardware counter, external signing service, network
 financial effect, P1-03/P1-04 implementation, P1-06 execution, P2 collection/outcomes, or later
 model/trading work.
 
-### Effects-disabled 200+ event local validation gate
+### Lean SEC-first live-entry gate
+
+The shortest current product path is one post-activation SEC filing for one allowlisted issuer:
+scheduled window -> bounded SEC read -> immutable raw artifact -> existing SEC normalization ->
+SQLite provenance -> zero prohibited effects. The offline readiness candidate may prepare this path,
+but it keeps transport disabled and grants no authority to contact SEC.
+
+Live entry requires one exact candidate and configuration, targeted provider-free integration tests,
+destination and credential-denial tests, restart and duplicate-delivery checks, raw-artifact and
+SQLite provenance checks, successful Linux and Windows CI, zero prohibited effects, and one fresh
+independent binary review. After those checks pass, a human must separately authorize the exact
+SEC request and observation window. Any identity drift, unexpected destination, credential access,
+or prohibited effect is a STOP.
+
+The prior 216/227-case local-validation work remains preserved historical evidence. It is not the
+live-entry gate for this narrow SEC observation and must not be rerun or promoted without a new
+exact-candidate authorization. Broader P1-06/P2 readiness can define stronger evidence when its
+actual scope is authorized.
+
+### Historical effects-disabled 200+ event local validation gate (superseded)
 
 This is a planning gate only. It does not authorize provisioning, corpus execution, provider
 access, or later implementation. The 200+ objects are local **event validation cases**, including
@@ -356,19 +375,18 @@ working days**. They cannot weaken or self-authorize a gate, shorten the mandato
 prospective lead, or shorten the exactly 65-regular-session recording window. This documentation
 change implements none of them.
 
-The local-validation gate remains mandatory before a live provider-backed forward run and before
-P1-06. It does not block provider-free P1-03/P1-04 implementation with original synthetic fixtures,
-network denial, and zero provider, credential, account, spending, trading, or financial effects.
-Live acquisition still requires a separate human authorization, exact-candidate evidence, and the
-applicable local-validation decision. P1-03/P1-04 still require their own restart, provenance, and
-independent acceptance evidence before a separately authorized P1-06 readiness drill may begin.
-P2 remains blocked until P1-06 receives an independent readiness `GO`.
+The historical local-validation gate is no longer mandatory for the narrow SEC-first live-entry
+decision. P1-03/P1-04 still require targeted restart, provenance, zero-effects, CI, and independent
+acceptance evidence. Live acquisition requires a separate human authorization tied to the exact
+candidate, configuration, issuer, and observation window. P1-06 and P2 remain separately blocked
+until explicitly authorized and accepted.
 
 ### Post-PR 2D next actions
 
-PR 2D, P1-09, and P1-10 are complete and merged. The active critical path is the effects-disabled
-local gate -> P1-03/P1-04 -> P1-06 readiness and `readyAtMs` -> mandatory S1-S15 prospective lead ->
-P2 collection. Parallel implementation does not waive a gate.
+PR 2D, P1-09, P1-10, and the provider-free P1-03 vertical slice in PR #11 are complete and merged.
+The active critical path is the lean SEC-first offline candidate -> exact merge decision -> separate
+exact live-run authorization -> one read-only observation. P1-06 and P2 remain outside this path and
+blocked. Parallel implementation does not waive a gate.
 
 | Order | Work item                                                      | Owner                                             | May start now                                                                                      | Required output and exit condition                                                                                                                                                                                                                |
 | ----- | -------------------------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -377,8 +395,8 @@ P2 collection. Parallel implementation does not waive a gate.
 | 3     | Prepare PR 2E, the P1-10 contract package                      | Agents with non-overlapping ownership             | Complete and merged at `bda45d8e...`                                                               | Exact candidate `f16ea4f...`, tree `f2fb2b35...`, passed complete local/hosted gates, external `CONTRACT_GO`, and `FINAL_PREMERGE_GO`; accepted contract and audit bytes are immutable in PR 2F                                                   |
 | 4     | Resolve the retention architecture authorization gate          | Human owner                                       | Complete for the exact frozen architecture                                                         | Preserve the owner-authorized maintenance port, additive migration, controlled vault-root erasure, tombstone/use-denial semantics, and exact retention sequence; no scope expansion                                                               |
 | 5     | Implement PR 2F against merged PR 2E                           | Current sole PR 2F implementation owner           | Complete and merged as PR #9 at `e1d9c1a...`                                                        | Exact candidate `d513da9...`, tree `bc067d9...`, passed unchanged local and hosted gates, internal/external `CONTRACT_GO`, and `FINAL_PREMERGE_GO`; reviewed bytes merged unchanged                                                             |
-| 6     | Freeze and execute the effects-disabled 200+ event local gate  | Integration owner plus fresh auditor              | Planning may complete; execution is blocked pending approval of the exact corpus/runtime/configuration manifest       | At least 200 frozen local cases; exact replay/restart/integrity/resource/effects evidence; independent `LOCAL_TEST_GO`; no provider call or scientific outcome                                                                                    |
-| 7     | Complete live read-only source capture and calendar prewarming | Non-overlapping source and calendar owners        | Provider-free implementation may proceed; live acquisition remains blocked pending the applicable local-validation decision and separate human authorization | Bounded SEC/FMP/issuer-IR capture as authorized, issuer allowlist, schedule provenance, restart/backfill evidence, independent acceptance, and no dispatchable financial effects                                                               |
+| 6     | Freeze the lean SEC-first offline readiness candidate          | One implementation owner plus one fresh reviewer  | Authorized offline against main `15b3ad7f...`; transport remains disabled                                             | Exact candidate/configuration; targeted provider-free integration, denial, restart, duplicate, artifact/SQLite provenance, Linux/Windows CI, zero-effects, and binary independent review                                                           |
+| 7     | Authorize one exact SEC read-only observation                  | Human owner                                        | Only after item 6 is merged unchanged                                                                                | Exact issuer, CIK, candidate SHA/tree, configuration digest, observation window, SEC destinations, and STOP conditions; no credential, account, spending, broker, trading, or financial effect                                                     |
 | 8     | Run P1-06 integrated readiness drill                           | Integration owner plus fresh auditor              | After P1-03, P1-04, P1-05, and P1-10 are independently complete                                    | Same-SHA Linux/Windows and 10k evidence; complete synthetic matrix; retention enforcement; restart/replay and memory/SQLite equivalence; binary readiness `GO`                                                                                    |
 | 9     | Collect and freeze P2                                          | Collection agents, then research owner            | After P1-06 independent `GO`, derive S1, freeze the frame through S5, publish before S6, rehearse S6-S14, and begin collection at S15 | Exactly 180 prospectively frozen clusters with fixed 120/40/20 membership across exactly 65 regular sessions; immutable dataset manifest, code/config/entitlement identities, and completeness report before conclusions |
 | 10    | Execute the event-validation analysis                          | Research owner plus independent reviewer          | Blocked until the dataset freeze                                                                   | Reproducible frozen-metric report and binary decision on whether the evidence justifies any later data, model, or market-access investment                                                                                                        |

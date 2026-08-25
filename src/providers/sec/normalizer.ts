@@ -39,6 +39,7 @@ import {
   type SecContentKind,
 } from "./parsers/decoder.js";
 import { SecParserError, secParserFailure } from "./parsers/errors.js";
+import { parseSecFilingIndexDocuments } from "./parsers/filing-index-html.js";
 import {
   parseSecFilingIndexJson,
   parseSecSubmissionsJson,
@@ -229,13 +230,17 @@ function string(value: unknown, maxBytes = 512): string {
   return value;
 }
 
-function contentKind(role: string): SecContentKind | null {
-  if (role === "sec.submissions" || role === "sec.filing-index") return "json";
-  if (role === "sec.xbrl-instance") return "xml";
+function contentKind(member: DetachedMember): SecContentKind | null {
+  if (member.role === "sec.submissions") return "json";
+  if (member.role === "sec.filing-index") {
+    const first = member.bytes.find((byte) => ![9, 10, 12, 13, 32].includes(byte));
+    return first === 0x7b ? "json" : "html";
+  }
+  if (member.role === "sec.xbrl-instance") return "xml";
   if (
-    role === "sec.primary-document" ||
-    role === "sec.exhibit-99.1" ||
-    role === "sec.periodic-report"
+    member.role === "sec.primary-document" ||
+    member.role === "sec.exhibit-99.1" ||
+    member.role === "sec.periodic-report"
   ) {
     return "html";
   }
@@ -405,9 +410,14 @@ function detachBundle(value: unknown): {
 function parseMembers(
   members: readonly DetachedMember[],
   transcript: SecTranscriptEvidence[],
+  context: Readonly<{
+    accession: string;
+    subjectCik: string;
+    submissions?: SecSubmissions;
+  }>,
 ): ParsedMember[] {
   return members.map((member) => {
-    const kind = contentKind(member.role);
+    const kind = contentKind(member);
     if (kind === null) return failure("sec.bundle-invalid");
     const decoded = decodeSecMember(member.bytes, kind);
     const index = transcript.findIndex((entry) => entry.artifactHash === member.artifactHash);
@@ -424,7 +434,10 @@ function parseMembers(
         member,
         contentKind: kind,
         encoding: decoded.encoding,
-        submissions: parseSecSubmissionsJson(decoded.text),
+        submissions: parseSecSubmissionsJson(decoded.text, {
+          accession: context.accession,
+          subjectCik: context.subjectCik,
+        }),
         filingIndex: null,
         markup: null,
       };
@@ -435,7 +448,25 @@ function parseMembers(
         contentKind: kind,
         encoding: decoded.encoding,
         submissions: null,
-        filingIndex: parseSecFilingIndexJson(decoded.text),
+        filingIndex:
+          kind === "json"
+            ? parseSecFilingIndexJson(decoded.text)
+            : (() => {
+                if (context.submissions === undefined) return failure("sec.bundle-invalid");
+                return {
+                  accession: context.accession,
+                  subjectCik: context.subjectCik,
+                  form: context.submissions.form,
+                  items: context.submissions.items,
+                  exhibits: parseSecFilingIndexDocuments(decoded.text)
+                    .filter((document) => document.type === SEC_QUALIFYING_EXHIBIT_TYPE)
+                    .map((document) => ({
+                      memberKey: document.filename,
+                      type: document.type,
+                      sequence: document.sequence,
+                    })),
+                } as SecFilingIndex;
+              })(),
         markup: null,
       };
     }
@@ -877,17 +908,26 @@ export function normalizeSecBundle(
       role: member.role,
       artifactHash: member.artifactHash,
       sizeBytes: member.sizeBytes,
-      contentKind: contentKind(member.role),
+      contentKind: contentKind(member),
       encoding: null,
     }));
-    const parsedJson = parseMembers(
-      detached.members.filter(
-        (member) => member.role === "sec.submissions" || member.role === "sec.filing-index",
-      ),
+    const parsedSubmissions = parseMembers(
+      detached.members.filter((member) => member.role === "sec.submissions"),
       selectedEvidence,
+      { accession: detached.bundle.accession, subjectCik: detached.bundle.subjectCik },
     );
-    const submissions = only(parsedJson.map((member) => member.submissions));
-    const filingIndex = only(parsedJson.map((member) => member.filingIndex));
+    const submissions = only(parsedSubmissions.map((member) => member.submissions));
+    const parsedIndex = parseMembers(
+      detached.members.filter((member) => member.role === "sec.filing-index"),
+      selectedEvidence,
+      {
+        accession: detached.bundle.accession,
+        subjectCik: detached.bundle.subjectCik,
+        submissions,
+      },
+    );
+    const filingIndex = only(parsedIndex.map((member) => member.filingIndex));
+    const parsedJson = [...parsedSubmissions, ...parsedIndex];
     validateClassification(detached.bundle.sourceKind, submissions, filingIndex);
     if (
       submissions.accession !== filingIndex.accession ||
@@ -900,6 +940,7 @@ export function normalizeSecBundle(
         (member) => member.role !== "sec.submissions" && member.role !== "sec.filing-index",
       ),
       selectedEvidence,
+      { accession: detached.bundle.accession, subjectCik: detached.bundle.subjectCik },
     );
     const parsed = [...parsedJson, ...parsedMarkup];
     const primaryHash = detached.bundle.primaryArtifactHash;
