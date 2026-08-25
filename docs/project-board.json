@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "project": "PEAS Engine",
-  "lastReviewed": "2026-08-10",
+  "lastReviewed": "2026-08-25",
   "operatingModel": {
     "execution": "GitHub Issues/Projects",
     "specification": "Repository docs, ADRs, fixtures, and evidence",
@@ -12,7 +12,7 @@
     "stage": "P1",
     "status": "in-progress",
     "branch": "main",
-    "codeBaselineCommit": "e1d9c1a1cab6f9c1b974fac79b9c6c6ab4af6b3a",
+    "codeBaselineCommit": "15b3ad7f563e4012355113a87e8fa8bbb4f1f6da",
     "planningBaselineCommit": "c51758a1058b86730e19185b98fcd448d9ff533a",
     "pr2cAuditPublicationCommit": "aaabdb416368aa349872bc5f1d6621362f6f3cde",
     "readinessIntegrationCommit": "e42300a42743143db4979d7103a31e9957c48b58",
@@ -21,10 +21,10 @@
     "pr2dPublishedHead": "fb150828c0fe5e1272c246f1889be02aab8b0d90",
     "pr2dMergeCommit": "ebe959324e48faf73c325a97ed9200bd6c76c9a6",
     "release": "v0.2.0-kernel-rc.2",
-    "focus": "P1-10 is complete and merged; freeze the compressed parallel planning path from the effects-disabled 200+ local validation through P1-06 readiness and the mandatory S1-S15 lead to real 180-cluster collection without executing any later scope",
-    "nextGate": "Human authorization must approve one exact local-validation manifest covering the corpus, runtime root, configuration, thresholds, replay/restart matrix, integrity checks, and resource ceilings before any corpus run; successful execution must end in an independently reviewed LOCAL_TEST_GO before P1-06 or P2 may begin",
+    "focus": "Prepare one disabled-by-default SEC-first P1-03/P1-04 offline readiness candidate for a future exact, read-only Costco filing observation; P1-06 and P2 remain blocked",
+    "nextGate": "Freeze the exact offline candidate, pass targeted provider-free local and Linux/Windows CI gates, and obtain one fresh independent SEC_FIRST_OFFLINE_REVIEW_GO before requesting merge authorization; live SEC access remains a later exact human gate",
     "compressedParallelPath": {
-      "status": "planning-only-no-execution-authority",
+      "status": "historical-superseded-by-lean-sec-first-live-entry-path",
       "targetEngineeringWorkingDaysToP106ReadinessAndReadyAtMs": {
         "minimum": 16,
         "maximum": 20
@@ -92,7 +92,7 @@
       "The P2 observation period itself"
     ],
     "effectsDisabledLocalValidation": {
-      "status": "planning-only-not-authorized-to-run",
+      "status": "historical-superseded-not-authorized-to-rerun",
       "minimumEventCases": 200,
       "corpusDefinition": [
         "Freeze one canonical manifest containing at least 200 unique event-case identities, source/artifact identities, expected disposition, session/calendar authority, and deterministic ordering before execution.",
@@ -292,20 +292,26 @@
         {
           "id": "P1-03",
           "title": "Live read-only capture",
-          "status": "planned",
+          "status": "in-progress",
           "owner": "agent",
           "dependsOn": ["P1-02"],
-          "acceptance": "SEC, FMP, and a small issuer-IR allowlist fetch, retain raw artifacts, normalize, and capture with provenance.",
-          "evidence": []
+          "acceptance": "The lean first slice supports one configuration-bound SEC issuer through a disabled-by-default bounded read boundary, immutable raw artifacts, existing SEC normalization, SQLite provenance, stable missing/duplicate behavior, zero prohibited effects, CI, and independent review. Live SEC access remains separately authorized.",
+          "evidence": [
+            "pr-11-merge@15b3ad7f563e4012355113a87e8fa8bbb4f1f6da",
+            "branch@codex/sec-first-offline-readiness"
+          ]
         },
         {
           "id": "P1-04",
           "title": "Calendar prewarming",
-          "status": "planned",
+          "status": "in-progress",
           "owner": "agent",
           "dependsOn": ["P1-03"],
-          "acceptance": "Known issuer calendars prewarm the capture window without creating financial effects.",
-          "evidence": []
+          "acceptance": "A static or original-synthetic, configuration-bound window deterministically returns before-window, poll, or stable expired/missing results and creates zero prohibited effects. Live timing and SEC access remain separately authorized.",
+          "evidence": [
+            "config/sec-first/costco-2026-09-24.disabled.json",
+            "branch@codex/sec-first-offline-readiness"
+          ]
         },
         {
           "id": "P1-05",
@@ -546,8 +552,8 @@
           "status": "blocked",
           "owner": "integration-owner",
           "dependsOn": ["P1-03", "P1-04", "P1-05", "P1-10"],
-          "blocker": "PR 2E and PR 2F exact-SHA evidence, retention enforcement, and same-SHA Ubuntu/Windows/10k/100k gates are complete. P1-06 remains blocked until the effects-disabled 200+ event local-validation manifest is separately authorized and receives LOCAL_TEST_GO, and P1-03/P1-04 receive frozen authority, complete their own implementation and independent acceptance, and the readiness drill is explicitly authorized.",
-          "acceptance": "Before any scheduled-window drill, an independently reviewed effects-disabled local run covers at least 200 frozen event cases with exact runtime/configuration identity, zero effects, complete deterministic memory/SQLite replay, every-prefix restart coverage, exact integrity/reconciliation, resource evidence, and LOCAL_TEST_GO. The later sustained read-only drill must also survive restart, reconciliation, missed-window backfill, provider corrections, and clock regression; export complete telemetry; respect quotas; and record stable missing reasons.",
+          "blocker": "P1-06 remains outside the lean SEC-first live-entry path and requires separate authorization after P1-03/P1-04 acceptance. The historical 216/227-case route is preserved but is not the narrow SEC-first live-entry gate.",
+          "acceptance": "A separately authorized readiness drill must define evidence proportional to its actual scope and prove restart, reconciliation, missed-window backfill, provider corrections, clock regression, bounded quotas, stable missing reasons, and zero prohibited effects.",
           "evidence": [
             "pr-2f-final-candidate@d513da9b98c77f662929e2b792abca8d828841bb",
             "pr-2f-merge@e1d9c1a1cab6f9c1b974fac79b9c6c6ab4af6b3a"

@@ -1,0 +1,16 @@
+{
+  "enabled": false,
+  "issuer": "Costco Wholesale Corporation",
+  "issuerCik": "0000909832",
+  "expectedFiscalPeriod": "2026-FY",
+  "windowStartMs": 1790280000000,
+  "windowEndMs": 1790308800000,
+  "pollIntervalMs": 60000,
+  "origins": ["https://data.sec.gov", "https://www.sec.gov"],
+  "submissionsPath": "/submissions/CIK0000909832.json",
+  "forms": ["8-K", "8-K/A"],
+  "requiredItems": ["2.02"],
+  "userAgent": "PEAS offline readiness contact-pending@example.invalid",
+  "timeoutMs": 10000,
+  "maxResponseBytes": 10485760
+}
