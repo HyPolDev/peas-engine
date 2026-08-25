@@ -319,6 +319,10 @@ test("synthetic SEC submissions and filing index produce the existing normalizer
   );
   assert.equal(new Set(members.map((member) => member.memberKey)).size, members.length);
   assert.ok(members.every((member) => member.url.startsWith("https://")));
+  assert.equal(
+    members.find((member) => member.role === "sec.filing-index")?.url,
+    "https://www.sec.gov/Archives/edgar/data/909832/000090983226000101/0000909832-26-000101-index.htm",
+  );
 });
 
 test("no qualifying post-activation filing returns stable absence", () => {

@@ -180,7 +180,7 @@ export function planSecBundleMembers(
     {
       role: "sec.filing-index",
       memberKey: "filing-index",
-      url: `${base}/${candidate.accession}-index.html`,
+      url: `${base}/${candidate.accession}-index.htm`,
     },
     {
       role: "sec.primary-document",
