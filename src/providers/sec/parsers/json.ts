@@ -30,6 +30,11 @@ export type SecFilingIndex = Readonly<{
   exhibits: readonly SecIndexExhibit[];
 }>;
 
+export type SecSubmissionsSelector = Readonly<{
+  accession: string;
+  subjectCik: string;
+}>;
+
 function fail(): never {
   return secParserFailure("sec.malformed-json", "SEC JSON is malformed or structurally invalid");
 }
@@ -88,8 +93,43 @@ function frozen<T extends JsonValue>(value: T): Readonly<T> {
   return deepFreezeJson(inertJsonSnapshot(value));
 }
 
-export function parseSecSubmissionsJson(serialized: string): SecSubmissions {
+function selectedArray(value: JsonValue | undefined, index: number): JsonValue | undefined {
+  if (!Array.isArray(value) || value.length > 10_000) return fail();
+  return value[index];
+}
+
+function parseLiveSubmissions(value: JsonObject, selector: SecSubmissionsSelector): SecSubmissions {
+  const cikValue = value["cik"];
+  const cik = typeof cikValue === "number" ? String(cikValue).padStart(10, "0") : string(cikValue);
+  if (cik !== selector.subjectCik) return fail();
+  const filings = object(value["filings"] as JsonValue);
+  const recent = object(filings["recent"] as JsonValue);
+  const accessions = recent["accessionNumber"];
+  if (!Array.isArray(accessions) || accessions.length > 10_000) return fail();
+  const index = accessions.indexOf(selector.accession);
+  if (index < 0) return fail();
+  const rawItems = string(selectedArray(recent["items"], index), 512);
+  return frozen({
+    accession: selector.accession,
+    cik,
+    form: string(selectedArray(recent["form"], index), 32),
+    items: rawItems
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0),
+    acceptanceDateTime: string(selectedArray(recent["acceptanceDateTime"], index)),
+  }) as SecSubmissions;
+}
+
+export function parseSecSubmissionsJson(
+  serialized: string,
+  selector?: SecSubmissionsSelector,
+): SecSubmissions {
   const value = object(parse(serialized));
+  if (!Object.hasOwn(value, "accession")) {
+    if (selector === undefined) return fail();
+    return parseLiveSubmissions(value, selector);
+  }
   exactKeys(value, ["accession", "form", "items"], ["cik", "acceptanceDateTime"]);
   return frozen({
     accession: string(value["accession"]),

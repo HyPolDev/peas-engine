@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
+import { DurableArtifactStore } from "../src/adapters/artifacts/durable-artifact-store.js";
+import { artifactRuntimePaths } from "../src/adapters/artifacts/runtime-root.js";
+import { SqliteArtifactRepository } from "../src/adapters/artifacts/sqlite-artifact-repository.js";
 import {
   createSecSourceClient,
   SEC_READ_EFFECTS_ZERO,
@@ -14,7 +21,12 @@ import {
   type SecForwardConfig,
 } from "../src/adapters/read-only-capture/sec-forward-plan.js";
 import { retainSecSourceResult } from "../src/adapters/read-only-capture/sec-artifact-bridge.js";
+import { retainSecForwardOfflineBundle } from "../src/adapters/read-only-capture/sec-forward-offline-pipeline.js";
+import { runRecordedSecPipeline } from "../src/adapters/sec/recorded-sec-pipeline.js";
+import { loadMigrations, openSqliteDatabase } from "../src/adapters/sqlite/database.js";
+import { SqliteEventLog } from "../src/adapters/sqlite/event-log.js";
 import type { ArtifactStore, StoreArtifactResult } from "../src/artifacts/artifact-store.js";
+import { ManualClock } from "../src/core/clock.js";
 
 const CONFIG: SecForwardConfig = Object.freeze({
   enabled: false,
@@ -288,17 +300,12 @@ test("synthetic SEC submissions and filing index produce the existing normalizer
     primaryDocument: "cost-20260924.htm",
   });
   assert.ok(candidate);
-  const index = Buffer.from(
-    JSON.stringify({
-      directory: {
-        item: [
-          { name: "cost-20260924.htm", type: "8-K" },
-          { name: "exhibit991.htm", type: "EX-99.1" },
-          { name: "cost-20260830.xml", type: "EX-101.INS" },
-        ],
-      },
-    }),
-  );
+  const index = Buffer.from(`<!doctype html><table>
+    <tr><th>Seq</th><th>Description</th><th>Document</th><th>Type</th><th>Size</th></tr>
+    <tr><td>1</td><td>8-K</td><td><a href="cost-20260924.htm">cost-20260924.htm</a></td><td>8-K</td><td>1</td></tr>
+    <tr><td>2</td><td>release</td><td><a href="exhibit991.htm">exhibit991.htm</a></td><td>EX-99.1</td><td>1</td></tr>
+    <tr><td>3</td><td>instance</td><td><a href="cost-20260830.xml">cost-20260830.xml</a></td><td>EX-101.INS</td><td>1</td></tr>
+  </table>`);
   const members = planSecBundleMembers(index, CONFIG, candidate);
   assert.deepEqual(
     members.map((member) => member.role),
@@ -331,4 +338,155 @@ test("no qualifying post-activation filing returns stable absence", () => {
   );
   assert.equal(selectSec8kCandidate(submissions, CONFIG), undefined);
   assert.equal(selectSec8kCandidate(submissions, CONFIG), undefined);
+});
+
+test("live-shaped synthetic SEC bytes survive vault restart and normalize once into SQLite", async (context) => {
+  const root = mkdtempSync(path.join(tmpdir(), "peas-sec-first-"));
+  context.after(async () =>
+    rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }),
+  );
+  const retrievedAtMs = Date.parse("2026-09-24T20:16:00Z");
+  const submissions = Buffer.from(
+    JSON.stringify({
+      cik: 909832,
+      name: "Costco Wholesale Corporation",
+      filings: {
+        recent: {
+          accessionNumber: ["0000909832-26-000101"],
+          form: ["8-K"],
+          items: ["2.02,9.01"],
+          acceptanceDateTime: ["2026-09-24T20:15:00Z"],
+          primaryDocument: ["cost-20260924.htm"],
+        },
+      },
+    }),
+  );
+  const filingIndex = Buffer.from(`<!doctype html><html><body><table>
+    <tr><th>Seq</th><th>Description</th><th>Document</th><th>Type</th><th>Size</th></tr>
+    <tr><td>1</td><td>8-K</td><td><a href="cost-20260924.htm">cost-20260924.htm</a></td><td>8-K</td><td>1</td></tr>
+    <tr><td>2</td><td>EX-99.1</td><td><a href="exhibit991.htm">exhibit991.htm</a></td><td>EX-99.1</td><td>1</td></tr>
+    <tr><td>3</td><td>instance</td><td><a href="cost-20260830_htm.xml">cost-20260830_htm.xml</a></td><td>XML</td><td>1</td></tr>
+  </table></body></html>`);
+  const candidate = selectSec8kCandidate(submissions, CONFIG);
+  assert.ok(candidate);
+  const members = planSecBundleMembers(filingIndex, CONFIG, candidate);
+  const bodies = new Map<string, Uint8Array>();
+  for (const member of members) {
+    if (member.role === "sec.submissions") bodies.set(member.url, submissions);
+    if (member.role === "sec.filing-index") bodies.set(member.url, filingIndex);
+    if (member.role === "sec.primary-document") {
+      bodies.set(
+        member.url,
+        Buffer.from(
+          "<html><body><DOCUMENT-TYPE>8-K</DOCUMENT-TYPE><SUBJECT-CIK>0000909832</SUBJECT-CIK><ACCEPTANCE-DATETIME>20260924161500</ACCEPTANCE-DATETIME></body></html>",
+        ),
+      );
+    }
+    if (member.role === "sec.exhibit-99.1") {
+      bodies.set(
+        member.url,
+        Buffer.from("<!doctype html><p>synthetic Costco earnings release</p>"),
+      );
+    }
+    if (member.role === "sec.xbrl-instance") {
+      bodies.set(
+        member.url,
+        Buffer.from(
+          '<?xml version="1.0" encoding="UTF-8"?><xbrl><dei:EntityCentralIndexKey>0000909832</dei:EntityCentralIndexKey><dei:DocumentFiscalYearFocus>2026</dei:DocumentFiscalYearFocus><dei:DocumentFiscalPeriodFocus>FY</dei:DocumentFiscalPeriodFocus></xbrl>',
+        ),
+      );
+    }
+  }
+  const client = createSecSourceClient(
+    {
+      enabled: true,
+      issuerCik: CONFIG.issuerCik,
+      userAgent: "PEAS offline test test@example.invalid",
+      timeoutMs: 1_000,
+      maxResponseBytes: 1024 * 1024,
+    },
+    {
+      fetch: async (input) => {
+        const body = bodies.get(String(input));
+        return body === undefined
+          ? new Response(null, { status: 404 })
+          : new Response(Buffer.from(body), {
+              status: 200,
+              headers: {
+                "content-type": String(input).endsWith(".xml")
+                  ? "application/xml"
+                  : String(input).includes("submissions")
+                    ? "application/json"
+                    : "text/html",
+                "content-length": String(body.byteLength),
+              },
+            });
+      },
+      nowMs: () => retrievedAtMs,
+    },
+  );
+  const results = new Map<string, Awaited<ReturnType<typeof client.read>>>();
+  for (const member of members) results.set(member.url, await client.read(member.url));
+
+  const paths = artifactRuntimePaths(root);
+  mkdirSync(paths.databaseDirectory, { recursive: true });
+  const migrations = loadMigrations(path.join(process.cwd(), "migrations"));
+  const open = async () => {
+    const database = openSqliteDatabase(paths.databasePath, migrations);
+    const clock = new ManualClock(retrievedAtMs);
+    const store = await DurableArtifactStore.open({
+      repository: new SqliteArtifactRepository(database),
+      clock,
+      config: {
+        runtimeRootMode: "ci-temporary",
+        runtimeRoot: root,
+        maxArtifactBytes: 10 * 1024 * 1024,
+        maxVaultBytes: 64 * 1024 * 1024,
+        maxConcurrentWrites: 2,
+        streamHighWaterMarkBytes: 257,
+        stageExpiryMs: 60_000,
+        writerLeaseBehavior: "fail",
+        writerLeaseWaitMs: 0,
+        writerLeaseDurationMs: 30_000,
+        writerLeaseRenewalMs: 10_000,
+      },
+    });
+    return { database, store, eventLog: new SqliteEventLog(database, { clock }) };
+  };
+
+  let vault = await open();
+  const retained = await retainSecForwardOfflineBundle({
+    config: CONFIG,
+    candidate,
+    members,
+    results,
+    artifactStore: vault.store,
+  });
+  assert.equal(retained.status, "complete");
+  if (retained.status !== "complete") assert.fail("expected complete SEC bundle");
+  await vault.store.close();
+  vault.database.close();
+
+  vault = await open();
+  const first = await runRecordedSecPipeline({
+    artifactStore: vault.store,
+    eventLog: vault.eventLog,
+    manifest: retained.manifest,
+  });
+  assert.equal(first.status, "emitted");
+  assert.equal((await vault.eventLog.readAfter("0", 10)).events.length, 1);
+  await vault.store.close();
+  vault.database.close();
+
+  vault = await open();
+  const restarted = await runRecordedSecPipeline({
+    artifactStore: vault.store,
+    eventLog: vault.eventLog,
+    manifest: retained.manifest,
+  });
+  assert.equal(restarted.status, "emitted");
+  assert.equal((await vault.eventLog.readAfter("0", 10)).events.length, 1);
+  assert.equal(vault.database.pragma("integrity_check", { simple: true }), "ok");
+  await vault.store.close();
+  vault.database.close();
 });

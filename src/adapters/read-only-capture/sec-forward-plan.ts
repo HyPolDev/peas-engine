@@ -1,4 +1,5 @@
 import type { SecEvidenceRole } from "../../providers/sec/contracts.js";
+import { parseSecFilingIndexDocuments } from "../../providers/sec/parsers/filing-index-html.js";
 
 export type SecForwardConfig = Readonly<{
   enabled: false;
@@ -150,26 +151,24 @@ export function planSecBundleMembers(
   candidate: SecFilingCandidate,
 ): readonly SecPlannedMember[] {
   validateSecForwardConfig(config);
-  const root = record(parseJson(indexBytes));
-  const items = record(root["directory"])["item"];
-  if (!Array.isArray(items)) fail("sec-forward.index-invalid");
   const accessionPath = candidate.accession.replaceAll("-", "");
   const base = `https://www.sec.gov/Archives/edgar/data/${Number.parseInt(config.issuerCik, 10)}/${accessionPath}`;
-  const files = items.map((item) => {
-    const entry = record(item);
-    const name = entry["name"];
-    const type = entry["type"];
-    if (
-      typeof name !== "string" ||
-      typeof type !== "string" ||
-      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/u.test(name)
-    )
-      fail("sec-forward.index-invalid");
-    return { name, type };
-  });
-  const primary = files.find((file) => file.name === candidate.primaryDocument);
+  let files: ReturnType<typeof parseSecFilingIndexDocuments>;
+  try {
+    files = parseSecFilingIndexDocuments(
+      new TextDecoder("utf-8", { fatal: true }).decode(indexBytes),
+    );
+  } catch {
+    return fail("sec-forward.index-invalid");
+  }
+  const primary = files.find((file) => file.filename === candidate.primaryDocument);
   const exhibits = files.filter((file) => file.type.toUpperCase() === "EX-99.1");
-  const xbrl = files.find((file) => file.type.toUpperCase() === "EX-101.INS");
+  const xbrl = files.find(
+    (file) =>
+      (file.type.toUpperCase() === "EX-101.INS" || file.type.toUpperCase() === "XML") &&
+      file.filename.endsWith(".xml") &&
+      !/_(?:cal|def|lab|pre)\.xml$/iu.test(file.filename),
+  );
   if (primary === undefined || exhibits.length === 0 || xbrl === undefined)
     fail("sec-forward.required-member-missing");
   const members: SecPlannedMember[] = [
@@ -178,14 +177,26 @@ export function planSecBundleMembers(
       memberKey: "submissions",
       url: `https://data.sec.gov/submissions/CIK${config.issuerCik}.json`,
     },
-    { role: "sec.filing-index", memberKey: "filing-index", url: `${base}/index.json` },
-    { role: "sec.primary-document", memberKey: "primary-document", url: `${base}/${primary.name}` },
-    ...exhibits.map((file, index) => ({
+    {
+      role: "sec.filing-index",
+      memberKey: "filing-index",
+      url: `${base}/${candidate.accession}-index.html`,
+    },
+    {
+      role: "sec.primary-document",
+      memberKey: primary.filename,
+      url: `${base}/${primary.filename}`,
+    },
+    ...exhibits.map((file) => ({
       role: "sec.exhibit-99.1" as const,
-      memberKey: `exhibit-${index + 1}`,
-      url: `${base}/${file.name}`,
+      memberKey: file.filename,
+      url: `${base}/${file.filename}`,
     })),
-    { role: "sec.xbrl-instance", memberKey: "xbrl-instance", url: `${base}/${xbrl.name}` },
+    {
+      role: "sec.xbrl-instance",
+      memberKey: xbrl.filename,
+      url: `${base}/${xbrl.filename}`,
+    },
   ];
   return Object.freeze(members.map((member) => Object.freeze(member)));
 }

@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { Readable } from "node:stream";
 import type { ArtifactStore, StoreArtifactResult } from "../../artifacts/artifact-store.js";
 import type { ReadOnlySourceResult } from "./source-client.js";
@@ -23,6 +24,6 @@ export async function retainSecSourceResult(
       request: options.result.request,
     },
     response: options.result.response,
-    entityBytes: Readable.from([options.result.bytes]),
+    entityBytes: Readable.from([Buffer.from(options.result.bytes)]),
   });
 }
