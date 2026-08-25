@@ -378,7 +378,7 @@ test("live-shaped synthetic SEC bytes survive vault restart and normalize once i
       bodies.set(
         member.url,
         Buffer.from(
-          "<html><body><DOCUMENT-TYPE>8-K</DOCUMENT-TYPE><SUBJECT-CIK>0000909832</SUBJECT-CIK><ACCEPTANCE-DATETIME>20260924161500</ACCEPTANCE-DATETIME></body></html>",
+          '<html><body><ix:nonNumeric name="dei:DocumentType">8-K</ix:nonNumeric><ix:nonNumeric name="dei:EntityCentralIndexKey">0000909832</ix:nonNumeric><ACCEPTANCE-DATETIME>20260924161500</ACCEPTANCE-DATETIME></body></html>',
         ),
       );
     }

@@ -60,6 +60,7 @@ function frameTarget(frame: Frame): Target | null {
   if (tag === "documentfiscalperiodfocus") return "fiscal-period";
   if (tag !== "nonnumeric" || frame.nameAttribute === null) return null;
   const fact = localName(frame.nameAttribute);
+  if (fact === "documenttype") return "document-type";
   if (fact === "documentfiscalyearfocus") return "fiscal-year";
   if (fact === "documentfiscalperiodfocus") return "fiscal-period";
   if (fact === "entitycentralindexkey") return "cik";
