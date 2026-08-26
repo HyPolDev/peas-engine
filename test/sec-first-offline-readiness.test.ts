@@ -17,6 +17,7 @@ import {
 import {
   decideSecWindow,
   planSecBundleMembers,
+  SecForwardPlanError,
   selectSec8kCandidate,
   type SecForwardConfig,
 } from "../src/adapters/read-only-capture/sec-forward-plan.js";
@@ -342,6 +343,52 @@ test("no qualifying post-activation filing returns stable absence", () => {
   );
   assert.equal(selectSec8kCandidate(submissions, CONFIG), undefined);
   assert.equal(selectSec8kCandidate(submissions, CONFIG), undefined);
+});
+
+test("historical third-party accession prefixes do not block an in-window issuer filing", () => {
+  const submissions = Buffer.from(
+    JSON.stringify({
+      cik: CONFIG.issuerCik,
+      filings: {
+        recent: {
+          accessionNumber: ["0001104659-25-045244", "0000909832-26-000101"],
+          form: ["8-K", "8-K"],
+          items: ["2.02,9.01", "2.02,9.01"],
+          acceptanceDateTime: ["2025-05-07T10:03:11.000Z", "2026-09-24T20:15:00.000Z"],
+          primaryDocument: ["tm2514190d1_8k.htm", "cost-20260924.htm"],
+        },
+      },
+    }),
+  );
+
+  assert.deepEqual(selectSec8kCandidate(submissions, CONFIG), {
+    accession: "0000909832-26-000101",
+    acceptedAtMs: Date.parse("2026-09-24T20:15:00.000Z"),
+    primaryDocument: "cost-20260924.htm",
+  });
+});
+
+test("an in-window third-party accession prefix remains invalid", () => {
+  const submissions = Buffer.from(
+    JSON.stringify({
+      cik: CONFIG.issuerCik,
+      filings: {
+        recent: {
+          accessionNumber: ["0001104659-26-045244"],
+          form: ["8-K"],
+          items: ["2.02,9.01"],
+          acceptanceDateTime: ["2026-09-24T20:15:00.000Z"],
+          primaryDocument: ["tm2614190d1_8k.htm"],
+        },
+      },
+    }),
+  );
+
+  assert.throws(
+    () => selectSec8kCandidate(submissions, CONFIG),
+    (error: unknown) =>
+      error instanceof SecForwardPlanError && error.code === "sec-forward.filing-invalid",
+  );
 });
 
 test("live-shaped synthetic SEC bytes survive vault restart and normalize once into SQLite", async (context) => {
