@@ -297,7 +297,7 @@ test("synthetic SEC submissions and filing index produce the existing normalizer
   const candidate = selectSec8kCandidate(submissions, CONFIG);
   assert.deepEqual(candidate, {
     accession: "0000909832-26-000101",
-    acceptedAtMs: Date.parse("2026-09-24T20:15:00Z"),
+    acceptedAtMs: Date.parse("2026-09-25T00:15:00Z"),
     primaryDocument: "cost-20260924.htm",
   });
   assert.ok(candidate);
@@ -382,9 +382,165 @@ test("historical third-party accession prefixes do not block an in-window issuer
 
   assert.deepEqual(selectSec8kCandidate(submissions, CONFIG), {
     accession: "0000909832-26-000101",
-    acceptedAtMs: Date.parse("2026-09-24T20:15:00.000Z"),
+    acceptedAtMs: Date.parse("2026-09-25T00:15:00.000Z"),
     primaryDocument: "cost-20260924.htm",
   });
+});
+
+test("preserved Autodesk submission uses SEC New York civil time", async () => {
+  const submissions = await readFile("fixtures/sec/autodesk-2026-08-27-submissions-preserved.json");
+  const config: SecForwardConfig = {
+    ...CONFIG,
+    issuerCik: "0000769397",
+    windowStartMs: Date.parse("2026-08-27T20:05:06.000Z"),
+    windowEndMs: Date.parse("2026-08-27T20:05:07.000Z"),
+  };
+
+  assert.deepEqual(selectSec8kCandidate(submissions, config), {
+    accession: "0000769397-26-000059",
+    acceptedAtMs: Date.parse("2026-08-27T20:05:06.000Z"),
+    primaryDocument: "adsk-20260827.htm",
+  });
+});
+
+test("SEC acceptance civil time follows summer EDT and winter EST", () => {
+  const candidateAt = (acceptanceDateTime: string, windowStart: string, windowEnd: string) =>
+    selectSec8kCandidate(
+      Buffer.from(
+        JSON.stringify({
+          cik: CONFIG.issuerCik,
+          filings: {
+            recent: {
+              accessionNumber: ["0000909832-26-000101"],
+              form: ["8-K"],
+              items: ["2.02"],
+              acceptanceDateTime: [acceptanceDateTime],
+              primaryDocument: ["cost.htm"],
+            },
+          },
+        }),
+      ),
+      {
+        ...CONFIG,
+        windowStartMs: Date.parse(windowStart),
+        windowEndMs: Date.parse(windowEnd),
+      },
+    );
+
+  assert.equal(
+    candidateAt("2026-07-15T16:05:06.000Z", "2026-07-15T20:05:06.000Z", "2026-07-15T20:05:07.000Z")
+      ?.acceptedAtMs,
+    Date.parse("2026-07-15T20:05:06.000Z"),
+  );
+  assert.equal(
+    candidateAt("2026-01-15T16:05:06.000Z", "2026-01-15T21:05:06.000Z", "2026-01-15T21:05:07.000Z")
+      ?.acceptedAtMs,
+    Date.parse("2026-01-15T21:05:06.000Z"),
+  );
+});
+
+test("SEC acceptance observation-window boundaries are inclusive and exclude adjacent instants", () => {
+  const submissions = Buffer.from(
+    JSON.stringify({
+      cik: CONFIG.issuerCik,
+      filings: {
+        recent: {
+          accessionNumber: ["0000909832-26-000101"],
+          form: ["8-K"],
+          items: ["2.02"],
+          acceptanceDateTime: ["2026-07-15T16:05:06.000Z"],
+          primaryDocument: ["cost.htm"],
+        },
+      },
+    }),
+  );
+  const acceptedAtMs = Date.parse("2026-07-15T20:05:06.000Z");
+  const select = (windowStartMs: number, windowEndMs: number) =>
+    selectSec8kCandidate(submissions, { ...CONFIG, windowStartMs, windowEndMs });
+
+  assert.equal(select(acceptedAtMs, acceptedAtMs + 1)?.acceptedAtMs, acceptedAtMs);
+  assert.equal(select(acceptedAtMs - 1, acceptedAtMs)?.acceptedAtMs, acceptedAtMs);
+  assert.equal(select(acceptedAtMs + 1, acceptedAtMs + 2), undefined);
+  assert.equal(select(acceptedAtMs - 2, acceptedAtMs - 1), undefined);
+});
+
+test("SEC acceptance rejects malformed, nonexistent, and ambiguous New York civil times", () => {
+  const submissions = (acceptanceDateTime: string) =>
+    Buffer.from(
+      JSON.stringify({
+        cik: CONFIG.issuerCik,
+        filings: {
+          recent: {
+            accessionNumber: ["0000909832-26-000101"],
+            form: ["8-K"],
+            items: ["2.02"],
+            acceptanceDateTime: [acceptanceDateTime],
+            primaryDocument: ["cost.htm"],
+          },
+        },
+      }),
+    );
+  const invalid = (value: string) =>
+    assert.throws(
+      () => selectSec8kCandidate(submissions(value), CONFIG),
+      (error: unknown) =>
+        error instanceof SecForwardPlanError && error.code === "sec-forward.accepted-at-invalid",
+    );
+
+  invalid("2026-02-30T16:05:06.000Z");
+  invalid("2026-03-08T02:30:00.000Z");
+  invalid("2026-11-01T01:30:00.000Z");
+});
+
+test("SEC candidate restrictions remain exact for issuer, form, item, and accession", () => {
+  const submissions = (cik: string, accession: string, form: string, items: string) =>
+    Buffer.from(
+      JSON.stringify({
+        cik,
+        filings: {
+          recent: {
+            accessionNumber: [accession],
+            form: [form],
+            items: [items],
+            acceptanceDateTime: ["2026-09-24T20:15:00.000Z"],
+            primaryDocument: ["cost.htm"],
+          },
+        },
+      }),
+    );
+
+  assert.throws(
+    () =>
+      selectSec8kCandidate(
+        submissions("0000769397", "0000769397-26-000059", "8-K", "2.02"),
+        CONFIG,
+      ),
+    (error: unknown) =>
+      error instanceof SecForwardPlanError && error.code === "sec-forward.cik-mismatch",
+  );
+  assert.equal(
+    selectSec8kCandidate(
+      submissions(CONFIG.issuerCik, "0000909832-26-000101", "10-Q", "2.02"),
+      CONFIG,
+    ),
+    undefined,
+  );
+  assert.equal(
+    selectSec8kCandidate(
+      submissions(CONFIG.issuerCik, "0000909832-26-000101", "8-K", "7.01,9.01"),
+      CONFIG,
+    ),
+    undefined,
+  );
+  assert.throws(
+    () =>
+      selectSec8kCandidate(
+        submissions(CONFIG.issuerCik, "0001104659-26-045244", "8-K", "2.02"),
+        CONFIG,
+      ),
+    (error: unknown) =>
+      error instanceof SecForwardPlanError && error.code === "sec-forward.filing-invalid",
+  );
 });
 
 test("an in-window third-party accession prefix remains invalid", () => {

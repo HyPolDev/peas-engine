@@ -1,0 +1,12 @@
+{
+  "cik": "0000769397",
+  "filings": {
+    "recent": {
+      "accessionNumber": ["0000769397-26-000059"],
+      "form": ["8-K"],
+      "items": ["2.02,7.01,9.01"],
+      "acceptanceDateTime": ["2026-08-27T16:05:06.000Z"],
+      "primaryDocument": ["adsk-20260827.htm"]
+    }
+  }
+}

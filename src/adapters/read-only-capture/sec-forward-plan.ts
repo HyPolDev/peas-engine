@@ -59,6 +59,113 @@ function parseJson(bytes: Uint8Array): unknown {
   }
 }
 
+const SEC_ACCEPTANCE_TIME_ZONE = "America/New_York";
+const SEC_ACCEPTANCE_FORMATTER = new Intl.DateTimeFormat("en-US-u-ca-gregory-nu-latn", {
+  timeZone: SEC_ACCEPTANCE_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+});
+
+type CivilDateTime = Readonly<{
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+  millisecond: number;
+}>;
+
+function civilDateTime(epochMs: number): Omit<CivilDateTime, "millisecond"> {
+  const values = new Map(
+    SEC_ACCEPTANCE_FORMATTER.formatToParts(epochMs).map((part) => [part.type, part.value]),
+  );
+  return {
+    year: Number(values.get("year")),
+    month: Number(values.get("month")),
+    day: Number(values.get("day")),
+    hour: Number(values.get("hour")),
+    minute: Number(values.get("minute")),
+    second: Number(values.get("second")),
+  };
+}
+
+function civilEpochMs(value: CivilDateTime): number {
+  const date = new Date(0);
+  date.setUTCFullYear(value.year, value.month - 1, value.day);
+  date.setUTCHours(value.hour, value.minute, value.second, value.millisecond);
+  return date.getTime();
+}
+
+function parseSecAcceptanceDateTime(value: string): number {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?Z?$/u.exec(value);
+  if (match === null) return fail("sec-forward.accepted-at-invalid");
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, millisText] = match;
+  if (
+    yearText === undefined ||
+    monthText === undefined ||
+    dayText === undefined ||
+    hourText === undefined ||
+    minuteText === undefined ||
+    secondText === undefined
+  )
+    return fail("sec-forward.accepted-at-invalid");
+  const civil: CivilDateTime = {
+    year: Number(yearText),
+    month: Number(monthText),
+    day: Number(dayText),
+    hour: Number(hourText),
+    minute: Number(minuteText),
+    second: Number(secondText),
+    millisecond: millisText === undefined ? 0 : Number(millisText),
+  };
+  const civilMs = civilEpochMs(civil);
+  const normalized = new Date(civilMs);
+  if (
+    normalized.getUTCFullYear() !== civil.year ||
+    normalized.getUTCMonth() + 1 !== civil.month ||
+    normalized.getUTCDate() !== civil.day ||
+    normalized.getUTCHours() !== civil.hour ||
+    normalized.getUTCMinutes() !== civil.minute ||
+    normalized.getUTCSeconds() !== civil.second ||
+    normalized.getUTCMilliseconds() !== civil.millisecond
+  )
+    return fail("sec-forward.accepted-at-invalid");
+
+  const offsets = new Set<number>();
+  for (let deltaHours = -48; deltaHours <= 48; deltaHours += 6) {
+    const sampleMs = Math.trunc((civilMs + deltaHours * 3_600_000) / 1_000) * 1_000;
+    const local = civilDateTime(sampleMs);
+    offsets.add(
+      Date.UTC(local.year, local.month - 1, local.day, local.hour, local.minute, local.second) -
+        sampleMs,
+    );
+  }
+  const matches = [...offsets]
+    .map((offsetMs) => civilMs - offsetMs)
+    .filter((candidateMs) => {
+      const candidate = civilDateTime(candidateMs);
+      return (
+        candidate.year === civil.year &&
+        candidate.month === civil.month &&
+        candidate.day === civil.day &&
+        candidate.hour === civil.hour &&
+        candidate.minute === civil.minute &&
+        candidate.second === civil.second &&
+        ((candidateMs % 1_000) + 1_000) % 1_000 === civil.millisecond
+      );
+    });
+  const selected = matches[0];
+  if (matches.length !== 1 || selected === undefined || !Number.isSafeInteger(selected))
+    return fail("sec-forward.accepted-at-invalid");
+  return selected;
+}
+
 export function validateSecForwardConfig(config: SecForwardConfig): void {
   if (config.enabled !== false) fail("sec-forward.must-remain-disabled");
   if (!/^\d{10}$/u.test(config.issuerCik)) fail("sec-forward.cik-invalid");
@@ -124,10 +231,7 @@ export function selectSec8kCandidate(
     )
       fail("sec-forward.array-mismatch");
     if (!/^(?:8-K|8-K\/A)$/u.test(form) || !/(?:^|,)\s*2\.02(?:\s*,|$)/u.test(item)) continue;
-    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z?$/u.test(acceptedText))
-      fail("sec-forward.accepted-at-invalid");
-    const acceptedAtMs = Date.parse(acceptedText.endsWith("Z") ? acceptedText : `${acceptedText}Z`);
-    if (!Number.isSafeInteger(acceptedAtMs)) fail("sec-forward.accepted-at-invalid");
+    const acceptedAtMs = parseSecAcceptanceDateTime(acceptedText);
     if (acceptedAtMs < config.windowStartMs || acceptedAtMs > config.windowEndMs) continue;
     if (
       !/^\d{10}-\d{2}-\d{6}$/u.test(accession) ||
