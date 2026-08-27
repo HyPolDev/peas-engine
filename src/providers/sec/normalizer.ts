@@ -17,13 +17,13 @@ import {
   deriveSecProviderEnvelope,
   isSecCurrentForm,
   isSecPeriodicForm,
+  isSecQualifyingExhibitType,
   SEC_EVIDENCE_ROLES,
   SEC_MAX_BUNDLE_BYTES,
   SEC_MAX_MEMBER_BYTES,
   SEC_MAX_TRANSCRIPT_BYTES,
   SEC_NORMALIZER_SOURCE,
   SEC_PROVIDER,
-  SEC_QUALIFYING_EXHIBIT_TYPE,
   SEC_REVISION_ID,
   SecContractError,
   type SecEvidenceRole,
@@ -459,7 +459,7 @@ function parseMembers(
                   form: context.submissions.form,
                   items: context.submissions.items,
                   exhibits: parseSecFilingIndexDocuments(decoded.text)
-                    .filter((document) => document.type === SEC_QUALIFYING_EXHIBIT_TYPE)
+                    .filter((document) => isSecQualifyingExhibitType(document.type))
                     .map((document) => ({
                       memberKey: document.filename,
                       type: document.type,
@@ -503,7 +503,7 @@ function selectPrimary(
   const exhibits = members.filter((member) => member.role === "sec.exhibit-99.1");
   const sequences = exhibits.map((member) => {
     const entries = index.exhibits.filter(
-      (entry) => entry.memberKey === member.memberKey && entry.type === SEC_QUALIFYING_EXHIBIT_TYPE,
+      (entry) => entry.memberKey === member.memberKey && isSecQualifyingExhibitType(entry.type),
     );
     if (entries.length !== 1) failure("sec.bundle-invalid");
     const entry = entries[0];
@@ -517,7 +517,7 @@ function selectPrimary(
   const qualifyingKeys = new Set(exhibits.map((member) => member.memberKey));
   if (
     index.exhibits.some(
-      (entry) => entry.type === SEC_QUALIFYING_EXHIBIT_TYPE && !qualifyingKeys.has(entry.memberKey),
+      (entry) => isSecQualifyingExhibitType(entry.type) && !qualifyingKeys.has(entry.memberKey),
     )
   ) {
     failure("sec.bundle-invalid");

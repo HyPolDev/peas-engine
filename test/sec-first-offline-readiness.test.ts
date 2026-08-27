@@ -326,6 +326,25 @@ test("synthetic SEC submissions and filing index produce the existing normalizer
   );
 });
 
+test("SEC EX-99 earnings releases map to the canonical exhibit evidence role", () => {
+  const candidate = {
+    accession: "0000764478-26-000099",
+    acceptedAtMs: Date.parse("2026-09-24T20:15:00Z"),
+    primaryDocument: "bby-20260924.htm",
+  };
+  const config = { ...CONFIG, issuerCik: "0000764478" };
+  const index = Buffer.from(`<!doctype html><table>
+    <tr><th>Seq</th><th>Description</th><th>Document</th><th>Type</th><th>Size</th></tr>
+    <tr><td>1</td><td>8-K</td><td><a href="bby-20260924.htm">bby-20260924.htm</a></td><td>8-K</td><td>1</td></tr>
+    <tr><td>2</td><td>release</td><td><a href="bby-release.htm">bby-release.htm</a></td><td>EX-99</td><td>1</td></tr>
+    <tr><td>3</td><td>instance</td><td><a href="bby-20260924.xml">bby-20260924.xml</a></td><td>EX-101.INS</td><td>1</td></tr>
+  </table>`);
+
+  const members = planSecBundleMembers(index, config, candidate);
+  const exhibit = members.find((member) => member.role === "sec.exhibit-99.1");
+  assert.equal(exhibit?.memberKey, "bby-release.htm");
+});
+
 test("no qualifying post-activation filing returns stable absence", () => {
   const submissions = Buffer.from(
     JSON.stringify({

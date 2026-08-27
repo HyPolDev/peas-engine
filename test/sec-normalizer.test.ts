@@ -155,7 +155,11 @@ function assembleBundle(
   };
 }
 
-function customSec8k(exhibitBytes: Uint8Array, exhibitCount = 1): VerifiedSecBundle {
+function customSec8k(
+  exhibitBytes: Uint8Array,
+  exhibitCount = 1,
+  exhibitType: "EX-99" | "EX-99.1" = "EX-99.1",
+): VerifiedSecBundle {
   const exhibits = Array.from({ length: exhibitCount }, (_, index) =>
     member(
       "sec.exhibit-99.1",
@@ -171,7 +175,7 @@ function customSec8k(exhibitBytes: Uint8Array, exhibitCount = 1): VerifiedSecBun
       subjectCik: "0000123456",
       exhibits: exhibits.map((entry, index) => ({
         memberKey: entry.memberKey,
-        type: "EX-99.1",
+        type: exhibitType,
         sequence: index + 1,
       })),
     }),
@@ -220,6 +224,15 @@ function customSec8k(exhibitBytes: Uint8Array, exhibitCount = 1): VerifiedSecBun
     exhibits[0]?.artifactHash ?? "",
   );
 }
+
+test("EX-99 and EX-99.1 filing labels normalize through the same canonical evidence role", () => {
+  for (const exhibitType of ["EX-99", "EX-99.1"] as const) {
+    assert.equal(
+      normalizeSecBundle(customSec8k(Buffer.from("<p>earnings</p>"), 1, exhibitType)).status,
+      "emitted",
+    );
+  }
+});
 
 function customFiling(primaryFocus: string, xbrlFocus: string | null): VerifiedSecBundle {
   const accession = "0000123456-26-000101";

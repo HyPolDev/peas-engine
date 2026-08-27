@@ -1,4 +1,4 @@
-import type { SecEvidenceRole } from "../../providers/sec/contracts.js";
+import { isSecQualifyingExhibitType, type SecEvidenceRole } from "../../providers/sec/contracts.js";
 import { parseSecFilingIndexDocuments } from "../../providers/sec/parsers/filing-index-html.js";
 
 export type SecForwardConfig = Readonly<{
@@ -161,7 +161,7 @@ export function planSecBundleMembers(
     return fail("sec-forward.index-invalid");
   }
   const primary = files.find((file) => file.filename === candidate.primaryDocument);
-  const exhibits = files.filter((file) => file.type.toUpperCase() === "EX-99.1");
+  const exhibits = files.filter((file) => isSecQualifyingExhibitType(file.type));
   const xbrl = files.find(
     (file) =>
       (file.type.toUpperCase() === "EX-101.INS" || file.type.toUpperCase() === "XML") &&
