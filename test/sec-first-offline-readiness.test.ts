@@ -566,36 +566,29 @@ test("an in-window third-party accession prefix remains invalid", () => {
   );
 });
 
-test("live-shaped synthetic SEC bytes survive vault restart and normalize once into SQLite", async (context) => {
+test("preserved Autodesk submissions normalize New York acceptance time without conflict", async (context) => {
   const root = mkdtempSync(path.join(tmpdir(), "peas-sec-first-"));
   context.after(async () =>
     rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }),
   );
-  const retrievedAtMs = Date.parse("2026-09-24T20:16:00Z");
-  const submissions = Buffer.from(
-    JSON.stringify({
-      cik: 909832,
-      name: "Costco Wholesale Corporation",
-      filings: {
-        recent: {
-          accessionNumber: ["0000909832-26-000101"],
-          form: ["8-K"],
-          items: ["2.02,9.01"],
-          acceptanceDateTime: ["2026-09-24T20:15:00Z"],
-          primaryDocument: ["cost-20260924.htm"],
-        },
-      },
-    }),
-  );
+  const retrievedAtMs = Date.parse("2026-08-27T20:10:26.971Z");
+  const acceptedAtMs = Date.parse("2026-08-27T20:05:06.000Z");
+  const config: SecForwardConfig = {
+    ...CONFIG,
+    issuerCik: "0000769397",
+    windowStartMs: acceptedAtMs,
+    windowEndMs: retrievedAtMs,
+  };
+  const submissions = await readFile("fixtures/sec/autodesk-2026-08-27-submissions-preserved.json");
   const filingIndex = Buffer.from(`<!doctype html><html><body><table>
     <tr><th>Seq</th><th>Description</th><th>Document</th><th>Type</th><th>Size</th></tr>
-    <tr><td>1</td><td>8-K</td><td><a href="cost-20260924.htm">cost-20260924.htm</a></td><td>8-K</td><td>1</td></tr>
-    <tr><td>2</td><td>EX-99.1</td><td><a href="exhibit991.htm">exhibit991.htm</a></td><td>EX-99.1</td><td>1</td></tr>
-    <tr><td>3</td><td>instance</td><td><a href="cost-20260830_htm.xml">cost-20260830_htm.xml</a></td><td>XML</td><td>1</td></tr>
+    <tr><td>1</td><td>8-K</td><td><a href="adsk-20260827.htm">adsk-20260827.htm</a></td><td>8-K</td><td>1</td></tr>
+    <tr><td>2</td><td>EX-99.1</td><td><a href="adsk-exhibit991.htm">adsk-exhibit991.htm</a></td><td>EX-99.1</td><td>1</td></tr>
+    <tr><td>3</td><td>instance</td><td><a href="adsk-20260827_htm.xml">adsk-20260827_htm.xml</a></td><td>XML</td><td>1</td></tr>
   </table></body></html>`);
-  const candidate = selectSec8kCandidate(submissions, CONFIG);
+  const candidate = selectSec8kCandidate(submissions, config);
   assert.ok(candidate);
-  const members = planSecBundleMembers(filingIndex, CONFIG, candidate);
+  const members = planSecBundleMembers(filingIndex, config, candidate);
   const bodies = new Map<string, Uint8Array>();
   for (const member of members) {
     if (member.role === "sec.submissions") bodies.set(member.url, submissions);
@@ -604,21 +597,21 @@ test("live-shaped synthetic SEC bytes survive vault restart and normalize once i
       bodies.set(
         member.url,
         Buffer.from(
-          '<html><body><ix:nonNumeric name="dei:DocumentType">8-K</ix:nonNumeric><ix:nonNumeric name="dei:EntityCentralIndexKey">0000909832</ix:nonNumeric><ACCEPTANCE-DATETIME>20260924161500</ACCEPTANCE-DATETIME></body></html>',
+          '<html><body><ix:nonNumeric name="dei:DocumentType">8-K</ix:nonNumeric><ix:nonNumeric name="dei:EntityCentralIndexKey">0000769397</ix:nonNumeric><ACCEPTANCE-DATETIME>20260827160506</ACCEPTANCE-DATETIME></body></html>',
         ),
       );
     }
     if (member.role === "sec.exhibit-99.1") {
       bodies.set(
         member.url,
-        Buffer.from("<!doctype html><p>synthetic Costco earnings release</p>"),
+        Buffer.from("<!doctype html><p>synthetic Autodesk earnings release</p>"),
       );
     }
     if (member.role === "sec.xbrl-instance") {
       bodies.set(
         member.url,
         Buffer.from(
-          '<?xml version="1.0" encoding="UTF-8"?><xbrl><dei:EntityCentralIndexKey>0000909832</dei:EntityCentralIndexKey><dei:DocumentFiscalYearFocus>2026</dei:DocumentFiscalYearFocus><dei:DocumentFiscalPeriodFocus>FY</dei:DocumentFiscalPeriodFocus></xbrl>',
+          '<?xml version="1.0" encoding="UTF-8"?><xbrl><dei:EntityCentralIndexKey>0000769397</dei:EntityCentralIndexKey><dei:DocumentFiscalYearFocus>2026</dei:DocumentFiscalYearFocus><dei:DocumentFiscalPeriodFocus>FY</dei:DocumentFiscalPeriodFocus></xbrl>',
         ),
       );
     }
@@ -626,7 +619,7 @@ test("live-shaped synthetic SEC bytes survive vault restart and normalize once i
   const client = createSecSourceClient(
     {
       enabled: true,
-      issuerCik: CONFIG.issuerCik,
+      issuerCik: config.issuerCik,
       userAgent: "PEAS offline test test@example.invalid",
       timeoutMs: 1_000,
       maxResponseBytes: 1024 * 1024,
@@ -682,7 +675,7 @@ test("live-shaped synthetic SEC bytes survive vault restart and normalize once i
 
   let vault = await open();
   const retained = await retainSecForwardOfflineBundle({
-    config: CONFIG,
+    config,
     candidate,
     members,
     results,
@@ -700,6 +693,10 @@ test("live-shaped synthetic SEC bytes survive vault restart and normalize once i
     manifest: retained.manifest,
   });
   assert.equal(first.status, "emitted");
+  if (first.status !== "emitted") assert.fail("expected emitted Autodesk normalization");
+  assert.equal(first.normalization.draft.occurredAtMs, acceptedAtMs);
+  assert.equal(first.normalization.draft.payload["publishedAtMs"], acceptedAtMs);
+  assert.equal(first.normalization.draft.payload["originalTimestamp"], "2026-08-27T16:05:06.000Z");
   assert.equal((await vault.eventLog.readAfter("0", 10)).events.length, 1);
   await vault.store.close();
   vault.database.close();

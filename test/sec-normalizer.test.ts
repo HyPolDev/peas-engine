@@ -26,6 +26,7 @@ import {
   computeSecNormalizationTranscriptHash,
   convertSecEasternAcceptanceDateTime,
   normalizeSecBundle,
+  parseSecEasternCivilAcceptanceDateTime,
   parseSecRfc3339AcceptanceDateTime,
   SEC_NORMALIZED_DRAFT_HASH_DOMAIN,
   SEC_NORMALIZER_POLICY,
@@ -410,6 +411,14 @@ test("HTML decoder skips complete bounded declarations and DOCTYPE internal subs
 });
 
 test("RFC 3339 and post-2007 Eastern conversion are host-timezone independent at DST edges", () => {
+  assert.equal(
+    parseSecRfc3339AcceptanceDateTime("2026-08-27T16:05:06.000Z"),
+    Date.UTC(2026, 7, 27, 16, 5, 6),
+  );
+  assert.equal(
+    parseSecEasternCivilAcceptanceDateTime("2026-08-27T16:05:06.000Z"),
+    Date.UTC(2026, 7, 27, 20, 5, 6),
+  );
   assert.equal(
     parseSecRfc3339AcceptanceDateTime("2026-05-07T20:15:30-04:00"),
     Date.UTC(2026, 4, 8, 0, 15, 30),

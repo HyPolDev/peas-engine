@@ -793,6 +793,28 @@ export function convertSecEasternAcceptanceDateTime(value: string): SecEasternCo
   };
 }
 
+export function parseSecEasternCivilAcceptanceDateTime(value: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?Z?$/u.exec(value);
+  if (match === null) return null;
+  const [, year, month, day, hour, minute, second, fraction] = match;
+  if (
+    year === undefined ||
+    month === undefined ||
+    day === undefined ||
+    hour === undefined ||
+    minute === undefined ||
+    second === undefined
+  ) {
+    return null;
+  }
+  const converted = convertSecEasternAcceptanceDateTime(
+    `${year}${month}${day}${hour}${minute}${second}`,
+  );
+  if (converted.kind !== "valid") return null;
+  const epochMs = converted.epochMs + Number(fraction ?? "0");
+  return Number.isSafeInteger(epochMs) && epochMs >= 0 ? epochMs : null;
+}
+
 function resolveTimestamp(
   submissions: SecSubmissions,
   primary: SecMarkupExtraction,
@@ -804,7 +826,10 @@ function resolveTimestamp(
   const candidates: Array<{ epoch: number; source: "header" | "submissions"; original: string }> =
     [];
   if (submissions.acceptanceDateTime !== null) {
-    const epoch = parseSecRfc3339AcceptanceDateTime(submissions.acceptanceDateTime);
+    const epoch =
+      submissions.acceptanceDateTimeSemantics === "america-new-york-civil"
+        ? parseSecEasternCivilAcceptanceDateTime(submissions.acceptanceDateTime)
+        : parseSecRfc3339AcceptanceDateTime(submissions.acceptanceDateTime);
     if (epoch === null) return failure("sec.timestamp-invalid");
     candidates.push({ epoch, source: "submissions", original: submissions.acceptanceDateTime });
   }
