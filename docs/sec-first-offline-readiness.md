@@ -1,5 +1,10 @@
 # SEC-first offline readiness
 
+> Historical implementation packet. PR #13 merged this disabled-by-default path, but Costco is no
+> longer an active observation target or fallback. Current product direction is the provider-free
+> calendar-driven EventPlan/EventCluster beta in `docs/NEXT-STEPS-EVENT-CLUSTER.md`. Any future
+> issuer and live provider window require a new exact authorization.
+
 ## Product outcome
 
 Prepare one future read-only observation of a new Costco Wholesale Corporation filing after the
