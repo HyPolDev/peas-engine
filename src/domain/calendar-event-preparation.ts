@@ -4,7 +4,7 @@ import { canonicalHash } from "../core/hash.js";
 import { canonicalJson, inertJsonSnapshot, type JsonValue } from "../core/json.js";
 import {
   amendEventPlan,
-  compileCalendarCandidates,
+  compileEventPlan,
   EVENT_CLUSTER_EFFECTS_ZERO,
   EVENT_CLUSTER_LANES,
   type CalendarCandidate,
@@ -375,6 +375,10 @@ function stablePrettyJson(value: unknown): string {
   return `${JSON.stringify(JSON.parse(canonical), null, 2)}\n`;
 }
 
+function ordinalCompare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function readiness(binding: CalendarSourceBinding): Readonly<{
   status: ReadinessStatus;
   reason: string | null;
@@ -481,7 +485,7 @@ function checklistFor(
 ): readonly ReadinessChecklistRow[] {
   return Object.freeze(
     [...bindings]
-      .sort((left, right) => left.sourceId.localeCompare(right.sourceId))
+      .sort((left, right) => ordinalCompare(left.sourceId, right.sourceId))
       .map((binding) => {
         const definition = SOURCE_DEFINITIONS[binding.sourceId];
         const result = readiness(binding);
@@ -509,13 +513,11 @@ function providerInputs(bindings: readonly CalendarSourceBinding[]): Readonly<{
   const registryByKey = new Map<string, ProviderCapabilityEntry>();
   for (const binding of bindings) {
     const key = `${binding.providerId}:${binding.capability}`;
-    const result = readiness(binding);
     const next: ProviderCapabilityEntry = {
       providerId: binding.providerId,
       capability: binding.capability,
-      available: result.status !== "missing" && result.status !== "blocked",
-      credentialRequirement:
-        result.status === "separately-authorized" ? "separately-authorized" : "none",
+      available: binding.available,
+      credentialRequirement: binding.credentialRequirement,
     };
     const prior = registryByKey.get(key);
     if (
@@ -526,6 +528,25 @@ function providerInputs(bindings: readonly CalendarSourceBinding[]): Readonly<{
       fail("calendar-preparation.provider-declaration-conflict");
     }
     registryByKey.set(key, next);
+  }
+
+  // Provider capability declarations are shared, while configured identities and
+  // source readiness are source-specific. Apply mandatory source blockers only
+  // after validating that the shared declarations themselves are consistent.
+  for (const binding of bindings) {
+    if (SOURCE_DEFINITIONS[binding.sourceId].requirement !== "mandatory") continue;
+    const key = `${binding.providerId}:${binding.capability}`;
+    const declared = registryByKey.get(key);
+    if (declared === undefined) fail("calendar-preparation.provider-declaration-missing");
+    const status = readiness(binding).status;
+    if (status === "missing" || status === "blocked") {
+      registryByKey.set(key, { ...declared, available: false });
+    } else if (status === "separately-authorized") {
+      registryByKey.set(key, {
+        ...declared,
+        credentialRequirement: "separately-authorized",
+      });
+    }
   }
 
   const assignments = EVENT_CLUSTER_LANES.map((lane) => {
@@ -549,14 +570,17 @@ function providerInputs(bindings: readonly CalendarSourceBinding[]): Readonly<{
     return {
       lane,
       providerId,
-      capabilities: [...new Set(selected.map((binding) => binding.capability))].sort(),
+      capabilities: [...new Set(selected.map((binding) => binding.capability))].sort(
+        ordinalCompare,
+      ),
     } as EventPlanSpec["sourceAssignments"][number];
   });
 
   return {
     assignments,
     registry: [...registryByKey.values()].sort((left, right) =>
-      `${left.providerId}:${left.capability}`.localeCompare(
+      ordinalCompare(
+        `${left.providerId}:${left.capability}`,
         `${right.providerId}:${right.capability}`,
       ),
     ),
@@ -669,18 +693,20 @@ export function prepareCalendarEvent(
   const corroborating = input.corroboratingCalendarCandidates.map((calendar) =>
     candidateFrom(input, calendar),
   );
-  let plans: readonly EventPlan[];
-  try {
-    plans = compileCalendarCandidates([primary, ...corroborating], spec, registry);
-  } catch (error) {
-    if (error instanceof Error && error.message === "event-plan.calendar-conflict") {
-      fail("calendar-preparation.calendar-conflict");
-    }
-    throw error;
+  const candidates = [primary, ...corroborating];
+  const dates = new Set(candidates.map((candidate) => candidate.expectedEventDate));
+  const sessions = new Set(candidates.map((candidate) => candidate.expectedSession));
+  if (dates.size !== 1 || sessions.size !== 1) {
+    fail("calendar-preparation.calendar-conflict");
   }
-  let eventPlan = plans[0];
-  if (eventPlan === undefined || plans.length !== 1)
-    fail("calendar-preparation.plan-count-invalid");
+  const selectedCandidate = candidates.sort((left, right) =>
+    ordinalCompare(
+      `${left.calendarSourceId}:${left.calendarRevisionId}`,
+      `${right.calendarSourceId}:${right.calendarRevisionId}`,
+    ),
+  )[0];
+  if (selectedCandidate === undefined) fail("calendar-preparation.plan-count-invalid");
+  let eventPlan: EventPlan = compileEventPlan(selectedCandidate, spec, registry);
 
   for (const amendment of input.amendments.filter((value) => value.phase === "after-freeze")) {
     const amendedDate =
@@ -733,7 +759,7 @@ export function prepareCalendarEvent(
       transcriptMaterials: ["prepared-remarks", "transcript"] as const,
     },
     permittedProviderCapabilities: [...input.sourceBindings]
-      .sort((left, right) => left.sourceId.localeCompare(right.sourceId))
+      .sort((left, right) => ordinalCompare(left.sourceId, right.sourceId))
       .map((binding) => ({
         sourceId: binding.sourceId,
         providerId: binding.providerId,

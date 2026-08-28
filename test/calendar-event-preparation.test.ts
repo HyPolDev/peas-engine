@@ -23,6 +23,18 @@ const fixturePath = path.join(
   "fixtures",
   "calendar-event-preparation.synthetic.json",
 );
+const goldenPreparationPath = path.join(
+  process.cwd(),
+  "test",
+  "fixtures",
+  "calendar-event-preparation.golden.json.txt",
+);
+const goldenChecklistPath = path.join(
+  process.cwd(),
+  "examples",
+  "calendar-event-preparation",
+  "provider-readiness.md",
+);
 
 function fixture(): CalendarEventPreparationInput {
   return JSON.parse(readFileSync(fixturePath, "utf8")) as CalendarEventPreparationInput;
@@ -249,6 +261,26 @@ test("unavailable and authorization-required capabilities remain explicit", () =
   assert.equal(estimates?.blockerReason, "credential-and-entitlement-authorization-required");
 });
 
+test("shared capability preserves per-source partial mapping and blocks its lane", () => {
+  let input = withOfflineLane(fixture(), [
+    "estimates-snapshot",
+    "issuer-market-bars",
+    "spy-market-bars",
+    "sector-market-bars",
+  ]);
+  input = withBinding(input, "sector-market-bars", { configuredIdentityOrPath: null });
+  const result = prepareCalendarEvent(input);
+  assert.equal(result.checklist.find((row) => row.sourceId === "spy-market-bars")?.status, "ready");
+  assert.equal(
+    result.checklist.find((row) => row.sourceId === "sector-market-bars")?.status,
+    "missing",
+  );
+  assert.equal(
+    result.preparation.eventPlan.acquisitionPlans.find((plan) => plan.lane === "market")?.readiness,
+    "capability-unavailable",
+  );
+});
+
 test("before-freeze amendments change the initial identity without mutating history", () => {
   const baseline = prepareCalendarEvent(fixture()).preparation;
   const amended = prepareCalendarEvent({
@@ -321,10 +353,12 @@ test("issuer, SPY, and sector market windows are deterministic coarse evidence",
   assert.equal(preparation.marketEvidence.interpretation, "coarse-bar-movement-not-tradability");
 });
 
-test("CLI output is byte-identical across host timezone settings", () => {
+test("CLI output matches committed golden bytes across host timezone settings", () => {
   const root = mkdtempSync(path.join(tmpdir(), "peas-calendar-preparation-"));
   try {
     const script = path.join(process.cwd(), "scripts", "prepare-calendar-event.mjs");
+    const expectedPreparation = readFileSync(goldenPreparationPath, "utf8");
+    const expectedChecklist = readFileSync(goldenChecklistPath, "utf8");
     const utc = path.join(root, "utc");
     const tokyo = path.join(root, "tokyo");
     for (const [timezone, output] of [
@@ -338,14 +372,16 @@ test("CLI output is byte-identical across host timezone settings", () => {
       );
       assert.equal(run.status, 0, run.stderr);
     }
-    assert.equal(
-      readFileSync(path.join(utc, "event-preparation.json"), "utf8"),
-      readFileSync(path.join(tokyo, "event-preparation.json"), "utf8"),
-    );
-    assert.equal(
-      readFileSync(path.join(utc, "provider-readiness.md"), "utf8"),
-      readFileSync(path.join(tokyo, "provider-readiness.md"), "utf8"),
-    );
+    for (const output of [utc, tokyo]) {
+      assert.equal(
+        readFileSync(path.join(output, "event-preparation.json"), "utf8"),
+        expectedPreparation,
+      );
+      assert.equal(
+        readFileSync(path.join(output, "provider-readiness.md"), "utf8"),
+        expectedChecklist,
+      );
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
