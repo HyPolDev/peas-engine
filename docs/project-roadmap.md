@@ -78,6 +78,18 @@ Do not maintain task state independently in Linear, Notion, and GitHub.
   [`#9`](https://github.com/HyPolDev/peas-engine/pull/9) merged as
   `e1d9c1a1cab6f9c1b974fac79b9c6c6ab4af6b3a` with the reviewed tree unchanged. All rejected
   candidates and their `CONTRACT_NO_GO` decisions remain historical evidence.
+- PR #13 merged the disabled-by-default SEC-first P1-03/P1-04 implementation as
+  `7827704a370d7b73cce8f298e04f078586497a57`. The implementation is complete; operational
+  acceptance is not. The Autodesk pilot detected raw submissions change for accession
+  `0000769397-26-000059` after launch, but terminally returned
+  `END_TO_END_FORWARD_NO_GO` because the then-running selector misinterpreted SEC New York civil
+  time. This is `RAW_FORWARD_DETECTION_GO`, not an end-to-end milestone.
+- PR #14 merged the complete reviewed selector, `EX-99`/`EX-99.1`, and New York timestamp repair
+  stack as `d4ffac5c08651189d808598d49fe3edf82e439b2`, tree
+  `2d09555b7fb0cf93e8d5d035b39dca75232b8ea2`. Provider-free preserved-response regression selects
+  the Autodesk accession, normalizes the correct UTC instant, and preserves SQLite provenance.
+- PR #10 is superseded historical corpus-automation work and is not on the active SEC-first path.
+  It remains open until a separate closure authorization.
 - PR 2D merged as pull request
   [`#6`](https://github.com/HyPolDev/peas-engine/pull/6) at
   `ebe959324e48faf73c325a97ed9200bd6c76c9a6`. Exact published head
@@ -86,7 +98,9 @@ Do not maintain task state independently in Linear, Notion, and GitHub.
   independent project-context audit returned `GO`; the initial 1k throughput failure remains
   preserved and was closed by an unchanged exact-head rerun. The merge changes no P1-09, spending,
   live-provider, P1-10, or P2 authorization.
-- No live SEC HTTP, FMP, issuer-IR, calendar, market-data, LLM, brokerage, or trading adapter exists.
+- The SEC production boundary remains disabled by default. Narrow, separately authorized SEC pilot
+  requests have occurred; no authorization exists for general SEC, FMP, issuer-IR, calendar,
+  transcript, market-data, LLM, brokerage, trading, credential, account, or spending activity.
 - The next product slice is explicitly read-only: no LLM dependency, no orders, no brokerage, and
   no portfolio mutation.
 
@@ -95,9 +109,9 @@ Do not maintain task state independently in Linear, Notion, and GitHub.
 | Stage                                    | Outcome                                                                                                                                 | Exit gate                                                                                                                                        |
 | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | P0 Foundation - complete                 | Deterministic kernel, durable artifacts, bounded ingress, replay evidence                                                               | RC.2 and PR 2A gates are satisfied                                                                                                               |
-| P1 Forward read-only slice - in progress | Live SEC/FMP/IR capture, calendar prewarming, and a zero-incremental-cost delayed market-reference path                                 | A readiness drill proves complete provenance, frozen market joins, restart recovery, replay equivalence, and zero dispatchable financial effects |
-| P2 Observation run                       | Exactly 180 forward earnings clusters with fixed 120 standard / 40 specialized / 20 prospective-control membership, collected across exactly 65 regular sessions | Dataset has source-level provenance and a reproducible measurement report                                                                        |
-| P3 Context snapshots                     | Prospective FMP estimates, regular/aftermarket market data, sector/SPY abnormal movement, session, halt, and first-tradable-quote state | Every decision input is timestamped, versioned, and replayable                                                                                   |
+| P1 Forward read-only slice - in progress | Provider-free EventPlan/EventCluster beta readiness, independently progressing source lanes, stable missing settlement, and an exact later live gate | A 3-5-cluster operational beta demonstrates complete provenance, restart recovery, lane isolation, amendments, and zero dispatchable financial effects |
+| P2 Observation run                       | Exactly 180 forward earnings clusters with fixed 120 standard / 40 specialized / 20 prospective-control membership, collected across exactly 65 regular sessions | Prospective expectation and market definitions are frozen before or alongside admission; the dataset has source-level provenance and a reproducible report |
+| P3 Context snapshots - prerequisite/parallel | Prospective expectations plus issuer/SPY/sector market windows; quote/trade evidence remains a later capability | Required snapshots are frozen before or alongside P2 collection and every decision input is timestamped, versioned, and replayable |
 | P4 Decision packets                      | Deterministic numbers first; evidence-backed language/guidance extraction second; explicit setup/no-trade classification                | Packets are reproducible, source-linked, and safe to compare in replay                                                                           |
 | P5 Historical research                   | Parquet datasets, latency assumptions, executable fills, benchmark-adjusted outcomes, MFE/MAE, and cost-aware walk-forward validation   | Research runs are isolated, auditable, and do not create dispatchable work                                                                       |
 | P6 Shadow and paper                      | Hypothetical intents, broker state, fills, and reconciliation without live capital                                                      | Shadow/paper invariants hold across restart, duplicate delivery, stale leases, and ambiguity                                                     |
@@ -383,10 +397,13 @@ until explicitly authorized and accepted.
 
 ### Post-PR 2D next actions
 
-PR 2D, P1-09, P1-10, and the provider-free P1-03 vertical slice in PR #11 are complete and merged.
-The active critical path is the lean SEC-first offline candidate -> exact merge decision -> separate
-exact live-run authorization -> one read-only observation. P1-06 and P2 remain outside this path and
-blocked. Parallel implementation does not waive a gate.
+PR 2D, P1-09, P1-10, PR #13, and the PR #14 SEC repair stack are complete and merged. The Autodesk
+pilot proved raw forward detection but not end-to-end operational acceptance. The active critical
+path is now provider-free EventPlan/EventCluster beta package -> exact merge decision -> 3-5-cluster
+operational beta preparation -> separately authorized source access and live packets. Costco is not
+an active target. P1-06 and formal P2 collection remain blocked. Prospective expectation and market
+snapshots must be defined before or alongside P2 admission rather than after observed outcomes.
+Parallel implementation does not waive a gate.
 
 | Order | Work item                                                      | Owner                                             | May start now                                                                                      | Required output and exit condition                                                                                                                                                                                                                |
 | ----- | -------------------------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -395,11 +412,11 @@ blocked. Parallel implementation does not waive a gate.
 | 3     | Prepare PR 2E, the P1-10 contract package                      | Agents with non-overlapping ownership             | Complete and merged at `bda45d8e...`                                                               | Exact candidate `f16ea4f...`, tree `f2fb2b35...`, passed complete local/hosted gates, external `CONTRACT_GO`, and `FINAL_PREMERGE_GO`; accepted contract and audit bytes are immutable in PR 2F                                                   |
 | 4     | Resolve the retention architecture authorization gate          | Human owner                                       | Complete for the exact frozen architecture                                                         | Preserve the owner-authorized maintenance port, additive migration, controlled vault-root erasure, tombstone/use-denial semantics, and exact retention sequence; no scope expansion                                                               |
 | 5     | Implement PR 2F against merged PR 2E                           | Current sole PR 2F implementation owner           | Complete and merged as PR #9 at `e1d9c1a...`                                                        | Exact candidate `d513da9...`, tree `bc067d9...`, passed unchanged local and hosted gates, internal/external `CONTRACT_GO`, and `FINAL_PREMERGE_GO`; reviewed bytes merged unchanged                                                             |
-| 6     | Freeze the lean SEC-first offline readiness candidate          | One implementation owner plus one fresh reviewer  | Authorized offline against main `15b3ad7f...`; transport remains disabled                                             | Exact candidate/configuration; targeted provider-free integration, denial, restart, duplicate, artifact/SQLite provenance, Linux/Windows CI, zero-effects, and binary independent review                                                           |
-| 7     | Authorize one exact SEC read-only observation                  | Human owner                                        | Only after item 6 is merged unchanged                                                                                | Exact issuer, CIK, candidate SHA/tree, configuration digest, observation window, SEC destinations, and STOP conditions; no credential, account, spending, broker, trading, or financial effect                                                     |
-| 8     | Run P1-06 integrated readiness drill                           | Integration owner plus fresh auditor              | After P1-03, P1-04, P1-05, and P1-10 are independently complete                                    | Same-SHA Linux/Windows and 10k evidence; complete synthetic matrix; retention enforcement; restart/replay and memory/SQLite equivalence; binary readiness `GO`                                                                                    |
-| 9     | Collect and freeze P2                                          | Collection agents, then research owner            | After P1-06 independent `GO`, derive S1, freeze the frame through S5, publish before S6, rehearse S6-S14, and begin collection at S15 | Exactly 180 prospectively frozen clusters with fixed 120/40/20 membership across exactly 65 regular sessions; immutable dataset manifest, code/config/entitlement identities, and completeness report before conclusions |
-| 10    | Execute the event-validation analysis                          | Research owner plus independent reviewer          | Blocked until the dataset freeze                                                                   | Reproducible frozen-metric report and binary decision on whether the evidence justifies any later data, model, or market-access investment                                                                                                        |
+| 6     | Freeze the provider-free EventPlan/EventCluster beta package   | One implementation owner plus one fresh reviewer  | Authorized from post-PR #14 main; every provider boundary remains disabled                          | Deterministic frozen plans, lane-scoped acquisition, amendments, stable missing, settlement inventory, restart/SQLite equivalence, Linux/Windows CI, zero effects, and `EVENT_CLUSTER_BETA_PACKAGE_GO` |
+| 7     | Prepare a 3-5-cluster operational beta                         | Product/integration owner                          | Only after item 6 is merged unchanged                                                               | Prospective plans, source capability matrix, estimate/market-window definitions, stable-missing expectations, and exact per-event live authorization requests |
+| 8     | Run P1-06 integrated readiness drill                           | Integration owner plus fresh auditor               | After P1-03, P1-04, P1-05, and P1-10 receive operational acceptance                                 | Proportional same-SHA evidence; restart/replay and memory/SQLite equivalence; provider corrections; stable missing; zero effects; binary readiness `GO` |
+| 9     | Freeze prospective context and collect P2                      | Collection agents, then research owner             | After P1-06 `GO`; freeze expectations and market definitions before or alongside cohort admission   | Exactly 180 prospectively frozen clusters with fixed 120/40/20 membership across exactly 65 regular sessions; immutable dataset/config/entitlement identities and completeness report before conclusions |
+| 10    | Execute the event-validation analysis                          | Research owner plus independent reviewer           | Blocked until the dataset freeze                                                                     | Reproducible frozen-metric report and binary decision on whether evidence justifies later data, model, or market-access investment |
 
 Immediate agent-safe preparation in item 3 must remain a separate recorded/offline change. It may
 define interfaces around the frozen Alpaca historical REST `feed=sip` boundary, but it must not add

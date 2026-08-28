@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "project": "PEAS Engine",
-  "lastReviewed": "2026-08-25",
+  "lastReviewed": "2026-08-28",
   "operatingModel": {
     "execution": "GitHub Issues/Projects",
     "specification": "Repository docs, ADRs, fixtures, and evidence",
@@ -12,7 +12,10 @@
     "stage": "P1",
     "status": "in-progress",
     "branch": "main",
-    "codeBaselineCommit": "15b3ad7f563e4012355113a87e8fa8bbb4f1f6da",
+    "codeBaselineCommit": "d4ffac5c08651189d808598d49fe3edf82e439b2",
+    "pr13MergeCommit": "7827704a370d7b73cce8f298e04f078586497a57",
+    "pr14MergeCommit": "d4ffac5c08651189d808598d49fe3edf82e439b2",
+    "pr14MergeTree": "2d09555b7fb0cf93e8d5d035b39dca75232b8ea2",
     "planningBaselineCommit": "c51758a1058b86730e19185b98fcd448d9ff533a",
     "pr2cAuditPublicationCommit": "aaabdb416368aa349872bc5f1d6621362f6f3cde",
     "readinessIntegrationCommit": "e42300a42743143db4979d7103a31e9957c48b58",
@@ -21,8 +24,15 @@
     "pr2dPublishedHead": "fb150828c0fe5e1272c246f1889be02aab8b0d90",
     "pr2dMergeCommit": "ebe959324e48faf73c325a97ed9200bd6c76c9a6",
     "release": "v0.2.0-kernel-rc.2",
-    "focus": "Prepare one disabled-by-default SEC-first P1-03/P1-04 offline readiness candidate for a future exact, read-only Costco filing observation; P1-06 and P2 remain blocked",
-    "nextGate": "Freeze the exact offline candidate, pass targeted provider-free local and Linux/Windows CI gates, and obtain one fresh independent SEC_FIRST_OFFLINE_REVIEW_GO before requesting merge authorization; live SEC access remains a later exact human gate",
+    "focus": "Freeze and independently review a provider-free EventPlan/EventCluster operational-beta package for 3-5 future clusters; P1-03/P1-04 implementation is merged, operational acceptance remains incomplete, and P1-06/P2 remain blocked",
+    "nextGate": "Pass provider-free local and exact-head Linux/Windows CI for the EventPlan/EventCluster package and obtain EVENT_CLUSTER_BETA_PACKAGE_GO before requesting merge authorization; live provider access remains a later exact human gate",
+    "pr10Disposition": "superseded-historical-open-pending-separate-closure-authorization",
+    "autodeskOperationalEvidence": {
+      "accession": "0000769397-26-000059",
+      "rawForwardDetection": "GO",
+      "endToEndForward": "NO_GO",
+      "terminalReason": "The live controller expired without a qualifying normalized 8-K because the then-running acceptance-time interpretation was defective; PR #14 repaired the preserved-response path provider-free."
+    },
     "compressedParallelPath": {
       "status": "historical-superseded-by-lean-sec-first-live-entry-path",
       "targetEngineeringWorkingDaysToP106ReadinessAndReadyAtMs": {
@@ -295,10 +305,13 @@
           "status": "in-progress",
           "owner": "agent",
           "dependsOn": ["P1-02"],
-          "acceptance": "The lean first slice supports one configuration-bound SEC issuer through a disabled-by-default bounded read boundary, immutable raw artifacts, existing SEC normalization, SQLite provenance, stable missing/duplicate behavior, zero prohibited effects, CI, and independent review. Live SEC access remains separately authorized.",
+          "acceptance": "Implementation is merged through PR #13 and the PR #14 selector/exhibit/timestamp repair stack. Autodesk proved raw forward detection for accession 0000769397-26-000059, but terminal end-to-end forward acceptance remains NO_GO; operational acceptance requires a future exact live run that completes normalization and SQLite provenance. Live provider access remains separately authorized.",
           "evidence": [
             "pr-11-merge@15b3ad7f563e4012355113a87e8fa8bbb4f1f6da",
-            "branch@codex/sec-first-offline-readiness"
+            "pr-13-merge@7827704a370d7b73cce8f298e04f078586497a57",
+            "autodesk-raw-forward-detection@0000769397-26-000059",
+            "autodesk-end-to-end-forward-no-go@2026-08-27T22:30:00.010Z",
+            "pr-14-merge@d4ffac5c08651189d808598d49fe3edf82e439b2"
           ]
         },
         {
@@ -307,10 +320,10 @@
           "status": "in-progress",
           "owner": "agent",
           "dependsOn": ["P1-03"],
-          "acceptance": "A static or original-synthetic, configuration-bound window deterministically returns before-window, poll, or stable expired/missing results and creates zero prohibited effects. Live timing and SEC access remain separately authorized.",
+          "acceptance": "The disabled scheduling/window implementation is merged. Operational acceptance now requires deterministic calendar-candidate compilation into a prospectively frozen EventPlan, explicit amendments, lane-scoped readiness and stable missing settlement; live timing and provider access remain separately authorized.",
           "evidence": [
-            "config/sec-first/costco-2026-09-24.disabled.json",
-            "branch@codex/sec-first-offline-readiness"
+            "pr-13-merge@7827704a370d7b73cce8f298e04f078586497a57",
+            "event-cluster-product-direction@docs/NEXT-STEPS-EVENT-CLUSTER.md"
           ]
         },
         {
@@ -565,7 +578,7 @@
       "id": "P2",
       "name": "Forward observation run",
       "status": "blocked",
-      "blocker": "P2 collection and outcome calculation remain prohibited until P1-06 receives its independent readiness GO",
+      "blocker": "P2 collection and outcome calculation remain prohibited until P1-06 receives its independent readiness GO and prospective expectation and market snapshot contracts are frozen before or alongside cohort admission",
       "goal": "Collect and freeze exactly 180 prospectively selected forward clusters with fixed 120 standard, 40 specialized, and 20 prospective-control membership across exactly 65 regular sessions, then validate source quality, first-observation latency, and reproducible event-time price movement before authorizing new data spend.",
       "tasks": [
         {
@@ -573,7 +586,7 @@
           "title": "Exact 180-cluster prospective collection",
           "status": "planned",
           "owner": "agent",
-          "dependsOn": ["P1-06", "P1-09"],
+          "dependsOn": ["P1-06", "P1-09", "P3-01", "P3-02"],
           "acceptance": "Exactly 180 precommitted clusters with fixed 120 standard, 40 specialized, and 20 prospective-control membership are collected across exactly 65 regular sessions. Every cluster has source timestamps, raw artifact identities, duplicates, revisions, a prospectively frozen stratum/control assignment, an event-time data-quality snapshot, and a frozen marketReferenceJoinKey or stable missing-reference reason; missing cases remain in the denominator and later trade eligibility remains out of scope.",
           "evidence": [
             "docs/research/no-trade-policy-disposition.md",
@@ -603,7 +616,8 @@
     {
       "id": "P3",
       "name": "Expectation & market snapshots",
-      "status": "planned",
+      "status": "blocked",
+      "blocker": "Provider-free definitions may proceed, but any prospective provider snapshot requires separate access, credential, entitlement, and spending authorization where applicable",
       "goal": "Freeze the context required to interpret an earnings event at the time it was knowable.",
       "tasks": [
         {
@@ -611,8 +625,8 @@
           "title": "Prospective expectation snapshots",
           "status": "planned",
           "owner": "agent",
-          "dependsOn": ["P2-01"],
-          "acceptance": "FMP estimates are snapshotted prospectively with regular and aftermarket separation.",
+          "dependsOn": ["P1-06", "P1-09"],
+          "acceptance": "Expectation snapshots are frozen prospectively before or alongside P2 cohort admission, with reporting-session, source, revision, period, currency, entitlement, and first-observation identities.",
           "evidence": []
         },
         {
@@ -620,8 +634,8 @@
           "title": "Market-state snapshots",
           "status": "planned",
           "owner": "agent",
-          "dependsOn": ["P2-01"],
-          "acceptance": "Sector/SPY abnormal movement, session, halts, and first-tradable-quote state are replayable.",
+          "dependsOn": ["P1-06", "P1-09"],
+          "acceptance": "Issuer, SPY, and sector one-minute market windows are frozen prospectively before or alongside P2 cohort admission. Bar-based coarse movement remains explicitly distinct from quote/trade/spread-based tradability evidence.",
           "evidence": []
         }
       ]
