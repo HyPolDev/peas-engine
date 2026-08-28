@@ -22,6 +22,7 @@
     "package:rc-evidence": "node scripts/package-rc-evidence.mjs",
     "clean": "node scripts/clean-dist.mjs",
     "build": "tsc -p tsconfig.build.json",
+    "prepare:event": "npm run build && node scripts/prepare-calendar-event.mjs",
     "build:test": "tsc -p tsconfig.production-artifact.json && tsc -p tsconfig.test-build.json && node scripts/activate-test-authority.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run clean && npm run build:test && node --test --test-concurrency=1 dist/test/**/*.test.js",
