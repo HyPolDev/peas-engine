@@ -530,25 +530,7 @@ function providerInputs(bindings: readonly CalendarSourceBinding[]): Readonly<{
     registryByKey.set(key, next);
   }
 
-  // Provider capability declarations are shared, while configured identities and
-  // source readiness are source-specific. Apply mandatory source blockers only
-  // after validating that the shared declarations themselves are consistent.
-  for (const binding of bindings) {
-    if (SOURCE_DEFINITIONS[binding.sourceId].requirement !== "mandatory") continue;
-    const key = `${binding.providerId}:${binding.capability}`;
-    const declared = registryByKey.get(key);
-    if (declared === undefined) fail("calendar-preparation.provider-declaration-missing");
-    const status = readiness(binding).status;
-    if (status === "missing" || status === "blocked") {
-      registryByKey.set(key, { ...declared, available: false });
-    } else if (status === "separately-authorized") {
-      registryByKey.set(key, {
-        ...declared,
-        credentialRequirement: "separately-authorized",
-      });
-    }
-  }
-
+  const selectedSourceIds = new Set<CalendarPreparationSourceId>();
   const assignments = EVENT_CLUSTER_LANES.map((lane) => {
     const laneBindings = bindings.filter(
       (binding) => SOURCE_DEFINITIONS[binding.sourceId].lane === lane,
@@ -567,6 +549,7 @@ function providerInputs(bindings: readonly CalendarSourceBinding[]): Readonly<{
       );
     });
     const selected = planned.length > 0 ? planned : laneBindings.slice(0, 1);
+    for (const binding of selected) selectedSourceIds.add(binding.sourceId);
     return {
       lane,
       providerId,
@@ -575,6 +558,25 @@ function providerInputs(bindings: readonly CalendarSourceBinding[]): Readonly<{
       ),
     } as EventPlanSpec["sourceAssignments"][number];
   });
+
+  // Provider capability declarations are shared, while configured identities and
+  // source readiness are source-specific. Mandatory missing/blocked sources stop
+  // their lane; every source selected into a plan preserves its authorization gate.
+  for (const binding of bindings) {
+    const definition = SOURCE_DEFINITIONS[binding.sourceId];
+    const status = readiness(binding).status;
+    const key = `${binding.providerId}:${binding.capability}`;
+    const declared = registryByKey.get(key);
+    if (declared === undefined) fail("calendar-preparation.provider-declaration-missing");
+    if (definition.requirement === "mandatory" && (status === "missing" || status === "blocked")) {
+      registryByKey.set(key, { ...declared, available: false });
+    } else if (selectedSourceIds.has(binding.sourceId) && status === "separately-authorized") {
+      registryByKey.set(key, {
+        ...declared,
+        credentialRequirement: "separately-authorized",
+      });
+    }
+  }
 
   return {
     assignments,

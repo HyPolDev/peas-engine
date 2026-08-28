@@ -208,6 +208,23 @@ test("issuer release can be ready while transcript material remains missing", ()
   );
 });
 
+test("selected optional transcript preserves its separate authorization gate", () => {
+  const input = withBinding(fixture(), "transcript", {
+    configuredIdentityOrPath: "issuer/example/transcript",
+    available: true,
+  });
+  const result = prepareCalendarEvent(input);
+  assert.equal(
+    result.checklist.find((row) => row.sourceId === "transcript")?.status,
+    "separately-authorized",
+  );
+  assert.equal(
+    result.preparation.eventPlan.acquisitionPlans.find((plan) => plan.lane === "transcript")
+      ?.readiness,
+    "authorization-required",
+  );
+});
+
 test("EX-99 aliases and later periodic follow-up policy are explicit", () => {
   const preparation = prepareCalendarEvent(fixture()).preparation;
   assert.deepEqual(preparation.eventPlan.exhibitAliases, ["EX-99", "EX-99.1"]);
