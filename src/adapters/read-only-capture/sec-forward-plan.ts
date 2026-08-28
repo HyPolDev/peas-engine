@@ -1,4 +1,5 @@
-import type { SecEvidenceRole } from "../../providers/sec/contracts.js";
+import { isSecQualifyingExhibitType, type SecEvidenceRole } from "../../providers/sec/contracts.js";
+import { parseSecEasternCivilAcceptanceDateTime } from "../../providers/sec/normalizer.js";
 import { parseSecFilingIndexDocuments } from "../../providers/sec/parsers/filing-index-html.js";
 
 export type SecForwardConfig = Readonly<{
@@ -124,19 +125,16 @@ export function selectSec8kCandidate(
     )
       fail("sec-forward.array-mismatch");
     if (!/^(?:8-K|8-K\/A)$/u.test(form) || !/(?:^|,)\s*2\.02(?:\s*,|$)/u.test(item)) continue;
+    const acceptedAtMs = parseSecEasternCivilAcceptanceDateTime(acceptedText);
+    if (acceptedAtMs === null) fail("sec-forward.accepted-at-invalid");
+    if (acceptedAtMs < config.windowStartMs || acceptedAtMs > config.windowEndMs) continue;
     if (
       !/^\d{10}-\d{2}-\d{6}$/u.test(accession) ||
       accession.slice(0, 10) !== config.issuerCik ||
       !/^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/u.test(primaryDocument)
     )
       fail("sec-forward.filing-invalid");
-    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z?$/u.test(acceptedText))
-      fail("sec-forward.accepted-at-invalid");
-    const acceptedAtMs = Date.parse(acceptedText.endsWith("Z") ? acceptedText : `${acceptedText}Z`);
-    if (!Number.isSafeInteger(acceptedAtMs)) fail("sec-forward.accepted-at-invalid");
-    if (acceptedAtMs >= config.windowStartMs && acceptedAtMs <= config.windowEndMs) {
-      matches.push(Object.freeze({ accession, acceptedAtMs, primaryDocument }));
-    }
+    matches.push(Object.freeze({ accession, acceptedAtMs, primaryDocument }));
   }
   matches.sort(
     (left, right) =>
@@ -162,7 +160,7 @@ export function planSecBundleMembers(
     return fail("sec-forward.index-invalid");
   }
   const primary = files.find((file) => file.filename === candidate.primaryDocument);
-  const exhibits = files.filter((file) => file.type.toUpperCase() === "EX-99.1");
+  const exhibits = files.filter((file) => isSecQualifyingExhibitType(file.type));
   const xbrl = files.find(
     (file) =>
       (file.type.toUpperCase() === "EX-101.INS" || file.type.toUpperCase() === "XML") &&

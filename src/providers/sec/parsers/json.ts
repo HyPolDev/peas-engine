@@ -14,6 +14,7 @@ export type SecSubmissions = Readonly<{
   form: string;
   items: readonly string[];
   acceptanceDateTime: string | null;
+  acceptanceDateTimeSemantics: "rfc3339" | "america-new-york-civil";
 }>;
 
 export type SecIndexExhibit = Readonly<{
@@ -118,6 +119,7 @@ function parseLiveSubmissions(value: JsonObject, selector: SecSubmissionsSelecto
       .map((item) => item.trim())
       .filter((item) => item.length > 0),
     acceptanceDateTime: string(selectedArray(recent["acceptanceDateTime"], index)),
+    acceptanceDateTimeSemantics: "america-new-york-civil",
   }) as SecSubmissions;
 }
 
@@ -137,6 +139,7 @@ export function parseSecSubmissionsJson(
     form: string(value["form"], 32),
     items: stringArray(value["items"]),
     acceptanceDateTime: nullableString(value["acceptanceDateTime"]),
+    acceptanceDateTimeSemantics: "rfc3339",
   }) as SecSubmissions;
 }
 

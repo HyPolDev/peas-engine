@@ -40,6 +40,8 @@ export const SEC_CURRENT_FORMS = Object.freeze(["8-K", "8-K/A"] as const);
 export const SEC_PERIODIC_FORMS = Object.freeze(["10-Q", "10-Q/A", "10-K", "10-K/A"] as const);
 export type SecCurrentForm = (typeof SEC_CURRENT_FORMS)[number];
 export type SecPeriodicForm = (typeof SEC_PERIODIC_FORMS)[number];
+export const SEC_QUALIFYING_EXHIBIT_TYPES = Object.freeze(["EX-99", "EX-99.1"] as const);
+/** Canonical internal evidence role retained for both SEC EX-99 and EX-99.1 labels. */
 export const SEC_QUALIFYING_EXHIBIT_TYPE = "EX-99.1";
 
 export const SEC_EVIDENCE_BUNDLE_MIN_MEMBERS = 1;
@@ -238,6 +240,13 @@ export function isSecCurrentForm(value: unknown): value is SecCurrentForm {
 
 export function isSecPeriodicForm(value: unknown): value is SecPeriodicForm {
   return typeof value === "string" && (SEC_PERIODIC_FORMS as readonly string[]).includes(value);
+}
+
+export function isSecQualifyingExhibitType(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    (SEC_QUALIFYING_EXHIBIT_TYPES as readonly string[]).includes(value.toUpperCase())
+  );
 }
 
 /** Canonicalizes the subject-company CIK only; accession prefixes are never consulted. */

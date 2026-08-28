@@ -17,6 +17,7 @@ import {
 import {
   decideSecWindow,
   planSecBundleMembers,
+  SecForwardPlanError,
   selectSec8kCandidate,
   type SecForwardConfig,
 } from "../src/adapters/read-only-capture/sec-forward-plan.js";
@@ -296,7 +297,7 @@ test("synthetic SEC submissions and filing index produce the existing normalizer
   const candidate = selectSec8kCandidate(submissions, CONFIG);
   assert.deepEqual(candidate, {
     accession: "0000909832-26-000101",
-    acceptedAtMs: Date.parse("2026-09-24T20:15:00Z"),
+    acceptedAtMs: Date.parse("2026-09-25T00:15:00Z"),
     primaryDocument: "cost-20260924.htm",
   });
   assert.ok(candidate);
@@ -325,6 +326,25 @@ test("synthetic SEC submissions and filing index produce the existing normalizer
   );
 });
 
+test("SEC EX-99 earnings releases map to the canonical exhibit evidence role", () => {
+  const candidate = {
+    accession: "0000764478-26-000099",
+    acceptedAtMs: Date.parse("2026-09-24T20:15:00Z"),
+    primaryDocument: "bby-20260924.htm",
+  };
+  const config = { ...CONFIG, issuerCik: "0000764478" };
+  const index = Buffer.from(`<!doctype html><table>
+    <tr><th>Seq</th><th>Description</th><th>Document</th><th>Type</th><th>Size</th></tr>
+    <tr><td>1</td><td>8-K</td><td><a href="bby-20260924.htm">bby-20260924.htm</a></td><td>8-K</td><td>1</td></tr>
+    <tr><td>2</td><td>release</td><td><a href="bby-release.htm">bby-release.htm</a></td><td>EX-99</td><td>1</td></tr>
+    <tr><td>3</td><td>instance</td><td><a href="bby-20260924.xml">bby-20260924.xml</a></td><td>EX-101.INS</td><td>1</td></tr>
+  </table>`);
+
+  const members = planSecBundleMembers(index, config, candidate);
+  const exhibit = members.find((member) => member.role === "sec.exhibit-99.1");
+  assert.equal(exhibit?.memberKey, "bby-release.htm");
+});
+
 test("no qualifying post-activation filing returns stable absence", () => {
   const submissions = Buffer.from(
     JSON.stringify({
@@ -344,36 +364,231 @@ test("no qualifying post-activation filing returns stable absence", () => {
   assert.equal(selectSec8kCandidate(submissions, CONFIG), undefined);
 });
 
-test("live-shaped synthetic SEC bytes survive vault restart and normalize once into SQLite", async (context) => {
-  const root = mkdtempSync(path.join(tmpdir(), "peas-sec-first-"));
-  context.after(async () =>
-    rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }),
-  );
-  const retrievedAtMs = Date.parse("2026-09-24T20:16:00Z");
+test("historical third-party accession prefixes do not block an in-window issuer filing", () => {
   const submissions = Buffer.from(
     JSON.stringify({
-      cik: 909832,
-      name: "Costco Wholesale Corporation",
+      cik: CONFIG.issuerCik,
       filings: {
         recent: {
-          accessionNumber: ["0000909832-26-000101"],
-          form: ["8-K"],
-          items: ["2.02,9.01"],
-          acceptanceDateTime: ["2026-09-24T20:15:00Z"],
-          primaryDocument: ["cost-20260924.htm"],
+          accessionNumber: ["0001104659-25-045244", "0000909832-26-000101"],
+          form: ["8-K", "8-K"],
+          items: ["2.02,9.01", "2.02,9.01"],
+          acceptanceDateTime: ["2025-05-07T10:03:11.000Z", "2026-09-24T20:15:00.000Z"],
+          primaryDocument: ["tm2514190d1_8k.htm", "cost-20260924.htm"],
         },
       },
     }),
   );
+
+  assert.deepEqual(selectSec8kCandidate(submissions, CONFIG), {
+    accession: "0000909832-26-000101",
+    acceptedAtMs: Date.parse("2026-09-25T00:15:00.000Z"),
+    primaryDocument: "cost-20260924.htm",
+  });
+});
+
+test("preserved Autodesk submission uses SEC New York civil time", async () => {
+  const submissions = await readFile("fixtures/sec/autodesk-2026-08-27-submissions-preserved.json");
+  const config: SecForwardConfig = {
+    ...CONFIG,
+    issuerCik: "0000769397",
+    windowStartMs: Date.parse("2026-08-27T20:05:06.000Z"),
+    windowEndMs: Date.parse("2026-08-27T20:05:07.000Z"),
+  };
+
+  assert.deepEqual(selectSec8kCandidate(submissions, config), {
+    accession: "0000769397-26-000059",
+    acceptedAtMs: Date.parse("2026-08-27T20:05:06.000Z"),
+    primaryDocument: "adsk-20260827.htm",
+  });
+});
+
+test("SEC acceptance civil time follows summer EDT and winter EST", () => {
+  const candidateAt = (acceptanceDateTime: string, windowStart: string, windowEnd: string) =>
+    selectSec8kCandidate(
+      Buffer.from(
+        JSON.stringify({
+          cik: CONFIG.issuerCik,
+          filings: {
+            recent: {
+              accessionNumber: ["0000909832-26-000101"],
+              form: ["8-K"],
+              items: ["2.02"],
+              acceptanceDateTime: [acceptanceDateTime],
+              primaryDocument: ["cost.htm"],
+            },
+          },
+        }),
+      ),
+      {
+        ...CONFIG,
+        windowStartMs: Date.parse(windowStart),
+        windowEndMs: Date.parse(windowEnd),
+      },
+    );
+
+  assert.equal(
+    candidateAt("2026-07-15T16:05:06.000Z", "2026-07-15T20:05:06.000Z", "2026-07-15T20:05:07.000Z")
+      ?.acceptedAtMs,
+    Date.parse("2026-07-15T20:05:06.000Z"),
+  );
+  assert.equal(
+    candidateAt("2026-01-15T16:05:06.000Z", "2026-01-15T21:05:06.000Z", "2026-01-15T21:05:07.000Z")
+      ?.acceptedAtMs,
+    Date.parse("2026-01-15T21:05:06.000Z"),
+  );
+});
+
+test("SEC acceptance observation-window boundaries are inclusive and exclude adjacent instants", () => {
+  const submissions = Buffer.from(
+    JSON.stringify({
+      cik: CONFIG.issuerCik,
+      filings: {
+        recent: {
+          accessionNumber: ["0000909832-26-000101"],
+          form: ["8-K"],
+          items: ["2.02"],
+          acceptanceDateTime: ["2026-07-15T16:05:06.000Z"],
+          primaryDocument: ["cost.htm"],
+        },
+      },
+    }),
+  );
+  const acceptedAtMs = Date.parse("2026-07-15T20:05:06.000Z");
+  const select = (windowStartMs: number, windowEndMs: number) =>
+    selectSec8kCandidate(submissions, { ...CONFIG, windowStartMs, windowEndMs });
+
+  assert.equal(select(acceptedAtMs, acceptedAtMs + 1)?.acceptedAtMs, acceptedAtMs);
+  assert.equal(select(acceptedAtMs - 1, acceptedAtMs)?.acceptedAtMs, acceptedAtMs);
+  assert.equal(select(acceptedAtMs + 1, acceptedAtMs + 2), undefined);
+  assert.equal(select(acceptedAtMs - 2, acceptedAtMs - 1), undefined);
+});
+
+test("SEC acceptance rejects malformed, nonexistent, and ambiguous New York civil times", () => {
+  const submissions = (acceptanceDateTime: string) =>
+    Buffer.from(
+      JSON.stringify({
+        cik: CONFIG.issuerCik,
+        filings: {
+          recent: {
+            accessionNumber: ["0000909832-26-000101"],
+            form: ["8-K"],
+            items: ["2.02"],
+            acceptanceDateTime: [acceptanceDateTime],
+            primaryDocument: ["cost.htm"],
+          },
+        },
+      }),
+    );
+  const invalid = (value: string) =>
+    assert.throws(
+      () => selectSec8kCandidate(submissions(value), CONFIG),
+      (error: unknown) =>
+        error instanceof SecForwardPlanError && error.code === "sec-forward.accepted-at-invalid",
+    );
+
+  invalid("2026-02-30T16:05:06.000Z");
+  invalid("2026-03-08T02:30:00.000Z");
+  invalid("2026-11-01T01:30:00.000Z");
+});
+
+test("SEC candidate restrictions remain exact for issuer, form, item, and accession", () => {
+  const submissions = (cik: string, accession: string, form: string, items: string) =>
+    Buffer.from(
+      JSON.stringify({
+        cik,
+        filings: {
+          recent: {
+            accessionNumber: [accession],
+            form: [form],
+            items: [items],
+            acceptanceDateTime: ["2026-09-24T20:15:00.000Z"],
+            primaryDocument: ["cost.htm"],
+          },
+        },
+      }),
+    );
+
+  assert.throws(
+    () =>
+      selectSec8kCandidate(
+        submissions("0000769397", "0000769397-26-000059", "8-K", "2.02"),
+        CONFIG,
+      ),
+    (error: unknown) =>
+      error instanceof SecForwardPlanError && error.code === "sec-forward.cik-mismatch",
+  );
+  assert.equal(
+    selectSec8kCandidate(
+      submissions(CONFIG.issuerCik, "0000909832-26-000101", "10-Q", "2.02"),
+      CONFIG,
+    ),
+    undefined,
+  );
+  assert.equal(
+    selectSec8kCandidate(
+      submissions(CONFIG.issuerCik, "0000909832-26-000101", "8-K", "7.01,9.01"),
+      CONFIG,
+    ),
+    undefined,
+  );
+  assert.throws(
+    () =>
+      selectSec8kCandidate(
+        submissions(CONFIG.issuerCik, "0001104659-26-045244", "8-K", "2.02"),
+        CONFIG,
+      ),
+    (error: unknown) =>
+      error instanceof SecForwardPlanError && error.code === "sec-forward.filing-invalid",
+  );
+});
+
+test("an in-window third-party accession prefix remains invalid", () => {
+  const submissions = Buffer.from(
+    JSON.stringify({
+      cik: CONFIG.issuerCik,
+      filings: {
+        recent: {
+          accessionNumber: ["0001104659-26-045244"],
+          form: ["8-K"],
+          items: ["2.02,9.01"],
+          acceptanceDateTime: ["2026-09-24T20:15:00.000Z"],
+          primaryDocument: ["tm2614190d1_8k.htm"],
+        },
+      },
+    }),
+  );
+
+  assert.throws(
+    () => selectSec8kCandidate(submissions, CONFIG),
+    (error: unknown) =>
+      error instanceof SecForwardPlanError && error.code === "sec-forward.filing-invalid",
+  );
+});
+
+test("preserved Autodesk submissions normalize New York acceptance time without conflict", async (context) => {
+  const root = mkdtempSync(path.join(tmpdir(), "peas-sec-first-"));
+  context.after(async () =>
+    rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }),
+  );
+  const retrievedAtMs = Date.parse("2026-08-27T20:10:26.971Z");
+  const acceptedAtMs = Date.parse("2026-08-27T20:05:06.000Z");
+  const config: SecForwardConfig = {
+    ...CONFIG,
+    issuerCik: "0000769397",
+    windowStartMs: acceptedAtMs,
+    windowEndMs: retrievedAtMs,
+  };
+  const submissions = await readFile("fixtures/sec/autodesk-2026-08-27-submissions-preserved.json");
   const filingIndex = Buffer.from(`<!doctype html><html><body><table>
     <tr><th>Seq</th><th>Description</th><th>Document</th><th>Type</th><th>Size</th></tr>
-    <tr><td>1</td><td>8-K</td><td><a href="cost-20260924.htm">cost-20260924.htm</a></td><td>8-K</td><td>1</td></tr>
-    <tr><td>2</td><td>EX-99.1</td><td><a href="exhibit991.htm">exhibit991.htm</a></td><td>EX-99.1</td><td>1</td></tr>
-    <tr><td>3</td><td>instance</td><td><a href="cost-20260830_htm.xml">cost-20260830_htm.xml</a></td><td>XML</td><td>1</td></tr>
+    <tr><td>1</td><td>8-K</td><td><a href="adsk-20260827.htm">adsk-20260827.htm</a></td><td>8-K</td><td>1</td></tr>
+    <tr><td>2</td><td>EX-99.1</td><td><a href="adsk-exhibit991.htm">adsk-exhibit991.htm</a></td><td>EX-99.1</td><td>1</td></tr>
+    <tr><td>3</td><td>instance</td><td><a href="adsk-20260827_htm.xml">adsk-20260827_htm.xml</a></td><td>XML</td><td>1</td></tr>
   </table></body></html>`);
-  const candidate = selectSec8kCandidate(submissions, CONFIG);
+  const candidate = selectSec8kCandidate(submissions, config);
   assert.ok(candidate);
-  const members = planSecBundleMembers(filingIndex, CONFIG, candidate);
+  const members = planSecBundleMembers(filingIndex, config, candidate);
   const bodies = new Map<string, Uint8Array>();
   for (const member of members) {
     if (member.role === "sec.submissions") bodies.set(member.url, submissions);
@@ -382,21 +597,21 @@ test("live-shaped synthetic SEC bytes survive vault restart and normalize once i
       bodies.set(
         member.url,
         Buffer.from(
-          '<html><body><ix:nonNumeric name="dei:DocumentType">8-K</ix:nonNumeric><ix:nonNumeric name="dei:EntityCentralIndexKey">0000909832</ix:nonNumeric><ACCEPTANCE-DATETIME>20260924161500</ACCEPTANCE-DATETIME></body></html>',
+          '<html><body><ix:nonNumeric name="dei:DocumentType">8-K</ix:nonNumeric><ix:nonNumeric name="dei:EntityCentralIndexKey">0000769397</ix:nonNumeric><ACCEPTANCE-DATETIME>20260827160506</ACCEPTANCE-DATETIME></body></html>',
         ),
       );
     }
     if (member.role === "sec.exhibit-99.1") {
       bodies.set(
         member.url,
-        Buffer.from("<!doctype html><p>synthetic Costco earnings release</p>"),
+        Buffer.from("<!doctype html><p>synthetic Autodesk earnings release</p>"),
       );
     }
     if (member.role === "sec.xbrl-instance") {
       bodies.set(
         member.url,
         Buffer.from(
-          '<?xml version="1.0" encoding="UTF-8"?><xbrl><dei:EntityCentralIndexKey>0000909832</dei:EntityCentralIndexKey><dei:DocumentFiscalYearFocus>2026</dei:DocumentFiscalYearFocus><dei:DocumentFiscalPeriodFocus>FY</dei:DocumentFiscalPeriodFocus></xbrl>',
+          '<?xml version="1.0" encoding="UTF-8"?><xbrl><dei:EntityCentralIndexKey>0000769397</dei:EntityCentralIndexKey><dei:DocumentFiscalYearFocus>2026</dei:DocumentFiscalYearFocus><dei:DocumentFiscalPeriodFocus>FY</dei:DocumentFiscalPeriodFocus></xbrl>',
         ),
       );
     }
@@ -404,7 +619,7 @@ test("live-shaped synthetic SEC bytes survive vault restart and normalize once i
   const client = createSecSourceClient(
     {
       enabled: true,
-      issuerCik: CONFIG.issuerCik,
+      issuerCik: config.issuerCik,
       userAgent: "PEAS offline test test@example.invalid",
       timeoutMs: 1_000,
       maxResponseBytes: 1024 * 1024,
@@ -460,7 +675,7 @@ test("live-shaped synthetic SEC bytes survive vault restart and normalize once i
 
   let vault = await open();
   const retained = await retainSecForwardOfflineBundle({
-    config: CONFIG,
+    config,
     candidate,
     members,
     results,
@@ -478,6 +693,10 @@ test("live-shaped synthetic SEC bytes survive vault restart and normalize once i
     manifest: retained.manifest,
   });
   assert.equal(first.status, "emitted");
+  if (first.status !== "emitted") assert.fail("expected emitted Autodesk normalization");
+  assert.equal(first.normalization.draft.occurredAtMs, acceptedAtMs);
+  assert.equal(first.normalization.draft.payload["publishedAtMs"], acceptedAtMs);
+  assert.equal(first.normalization.draft.payload["originalTimestamp"], "2026-08-27T16:05:06.000Z");
   assert.equal((await vault.eventLog.readAfter("0", 10)).events.length, 1);
   await vault.store.close();
   vault.database.close();
