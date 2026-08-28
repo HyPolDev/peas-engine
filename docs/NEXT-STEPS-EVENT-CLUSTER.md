@@ -13,8 +13,9 @@ Adopted: 2026-08-28
 - The Autodesk pilot produced `RAW_FORWARD_DETECTION_GO` for accession
   `0000769397-26-000059`, form `8-K`, items `2.02,7.01,9.01`. It terminally produced
   `END_TO_END_FORWARD_NO_GO`; the then-running selector did not interpret SEC New York civil time
-  correctly. The preserved-response path now converts `2026-08-27T16:05:06.000Z` as SEC civil
-  time to `2026-08-27T20:05:06.000Z`, normalizes it, and preserves SQLite provenance.
+  correctly. The preserved-response path now interprets the raw SEC civil value
+  `2026-08-27 16:05:06` in `America/New_York` as `2026-08-27T20:05:06.000Z`, normalizes it, and
+  preserves SQLite provenance.
 - PR #10 is superseded historical corpus-automation work. It is not on the active critical path and
   remains open pending separate closure authorization.
 - P1-03/P1-04 implementation exists, but operational acceptance remains incomplete.

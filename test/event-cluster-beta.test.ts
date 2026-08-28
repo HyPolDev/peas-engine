@@ -15,6 +15,7 @@ import {
   compileCalendarCandidates,
   compileEventPlan,
   createEventCluster,
+  deriveEventClusterRequestId,
   EVENT_CLUSTER_EFFECTS_ZERO,
   EventClusterBetaError,
   eventClusterSnapshotDraft,
@@ -65,7 +66,7 @@ const spec: EventPlanSpec = {
       capabilities: ["market-bars", "benchmark-market-data"],
     },
   ],
-  expectedForms: ["10-Q", "8-K"],
+  expectedForms: ["10-K", "10-Q", "8-K"],
   expectedItems: ["9.01", "2.02", "7.01"],
   exhibitAliases: ["EX-99.1", "EX-99"],
   rawRetention: "immutable",
@@ -136,13 +137,51 @@ function member(
   revisionId = "revision-1",
   options: Partial<EventClusterMember> = {},
 ): EventClusterMember {
+  const capability =
+    kind === "issuer-release"
+      ? "issuer-release"
+      : kind === "transcript"
+        ? "transcript"
+        : kind === "market-bars"
+          ? "market-bars"
+          : "sec-filing";
+  const form =
+    kind === "sec-8-k" ? "8-K" : kind === "sec-10-q" ? "10-Q" : kind === "sec-10-k" ? "10-K" : null;
+  const providerId =
+    lane === "issuer-ir"
+      ? "ir.recorded"
+      : lane === "market"
+        ? "market.synthetic"
+        : `${lane}.recorded`;
   return {
     lane,
     kind,
-    providerId: `${lane}.recorded`,
+    issuerId: candidate.issuerId,
+    cik: candidate.cik,
+    fiscalPeriod: candidate.fiscalPeriod,
+    providerId,
     recordId,
     revisionId,
     artifactDigest: artifact(`${recordId}:${revisionId}`),
+    requestIdentity: {
+      requestId: deriveEventClusterRequestId({
+        providerId,
+        capability,
+        recordId,
+        revisionId,
+      }),
+      providerId,
+      capability,
+    },
+    normalization: {
+      normalizerId: `${lane}.normalizer-v1`,
+      sourceArtifactDigest: artifact(`${recordId}:${revisionId}`),
+      normalizedEventId: artifact(`event:${recordId}:${revisionId}`),
+      normalizedEventHash: artifact(`event-hash:${recordId}:${revisionId}`),
+    },
+    form,
+    items: kind === "sec-8-k" ? ["2.02", "7.01", "9.01"] : [],
+    exhibitAlias: kind === "sec-8-k" ? "EX-99.1" : null,
     publicationOrAcceptanceAtMs: 2_500,
     firstObservedAtMs: 2_600,
     retrievedAtMs: 2_700,
@@ -160,7 +199,7 @@ test("calendar compilation is deterministic and rejects conflicting dates", () =
   assert.equal(first.planId, second.planId);
   assert.equal(first.revisionDigest, second.revisionDigest);
   assert.equal(Object.isFrozen(first), true);
-  assert.deepEqual(first.expectedForms, ["10-Q", "8-K"]);
+  assert.deepEqual(first.expectedForms, ["10-K", "10-Q", "8-K"]);
   assert.deepEqual(first.expectedItems, ["2.02", "7.01", "9.01"]);
   assert.deepEqual(first.exhibitAliases, ["EX-99", "EX-99.1"]);
   assert.deepEqual(first.marketSubjects, ["ADSK", "SPY", "IGV"]);
@@ -231,6 +270,7 @@ test("independent lanes allow issuer release without SEC and SEC without transcr
   let issuerFirst = activeCluster(eventPlan);
   issuerFirst = recordEventClusterMember(
     issuerFirst,
+    eventPlan,
     member("issuer-ir", "issuer-release", "issuer-release-1", "revision-1", {
       providerId: "ir.recorded",
     }),
@@ -244,6 +284,7 @@ test("independent lanes allow issuer release without SEC and SEC without transcr
   let secFirst = activeCluster(eventPlan);
   secFirst = recordEventClusterMember(
     secFirst,
+    eventPlan,
     member("sec", "sec-8-k", "0000769397-26-000059", "revision-1", { providerId: "sec.recorded" }),
   );
   assert.equal(secFirst.lanes.find((lane) => lane.lane === "sec")?.status, "observed");
@@ -256,17 +297,57 @@ test("EX-99 aliases normalize without broadening the exhibit vocabulary", () => 
   assert.equal(normalizeExhibitAlias("EX-101"), null);
 });
 
+test("member admission binds issuer, accession, form, item, provider request, and normalization provenance", () => {
+  const eventPlan = plan();
+  const cluster = activeCluster(eventPlan);
+  const accepted = member("sec", "sec-8-k", "0000769397-26-000059", "revision-1", {
+    providerId: "sec.recorded",
+    exhibitAlias: "EX-99",
+  });
+  assert.equal(recordEventClusterMember(cluster, eventPlan, accepted).members.length, 1);
+  const rejects = (value: EventClusterMember, code: string) =>
+    assert.throws(
+      () => recordEventClusterMember(cluster, eventPlan, value),
+      (error: unknown) => error instanceof EventClusterBetaError && error.code === code,
+    );
+  rejects(
+    { ...accepted, issuerId: "issuer-other", cik: "0000000001" },
+    "event-cluster.member-subject-invalid",
+  );
+  rejects(
+    member("sec", "sec-8-k", "0001104659-26-000059", "revision-1", {
+      providerId: "sec.recorded",
+      exhibitAlias: "EX-99",
+    }),
+    "event-cluster.member-accession-invalid",
+  );
+  rejects({ ...accepted, form: "10-Q" }, "event-cluster.member-form-invalid");
+  rejects({ ...accepted, items: ["1.01"] }, "event-cluster.member-item-invalid");
+  rejects(
+    { ...accepted, requestIdentity: { ...accepted.requestIdentity, providerId: "sec.other" } },
+    "event-cluster.member-capability-invalid",
+  );
+  rejects(
+    {
+      ...accepted,
+      normalization: { ...accepted.normalization, sourceArtifactDigest: artifact("other") },
+    },
+    "event-cluster.member-normalization-provenance-invalid",
+  );
+});
+
 test("later periodic filings link to the cluster and revisions require explicit ancestry", () => {
-  let cluster = activeCluster();
+  const eventPlan = plan();
+  let cluster = activeCluster(eventPlan);
   const filing = member("sec", "sec-10-q", "0000769397-26-000060", "revision-1", {
     providerId: "sec.recorded",
     retrievedAtMs: 3_000,
   });
-  cluster = recordEventClusterMember(cluster, filing);
+  cluster = recordEventClusterMember(cluster, eventPlan, filing);
   assert.equal(cluster.status, "follow-up");
   assert.equal(cluster.members[0]?.kind, "sec-10-q");
 
-  const duplicate = recordEventClusterMember(cluster, filing);
+  const duplicate = recordEventClusterMember(cluster, eventPlan, filing);
   assert.equal(duplicate.members.length, 1);
   assert.equal(duplicate.duplicateCount, 1);
 
@@ -274,6 +355,7 @@ test("later periodic filings link to the cluster and revisions require explicit 
     () =>
       recordEventClusterMember(
         duplicate,
+        eventPlan,
         member("sec", "sec-10-q", filing.recordId, "revision-2", { providerId: "sec.recorded" }),
       ),
     (error: unknown) =>
@@ -281,6 +363,7 @@ test("later periodic filings link to the cluster and revisions require explicit 
   );
   const amended = recordEventClusterMember(
     duplicate,
+    eventPlan,
     member("sec", "sec-10-q", filing.recordId, "revision-2", {
       providerId: "sec.recorded",
       relationship: "amendment",
@@ -290,8 +373,37 @@ test("later periodic filings link to the cluster and revisions require explicit 
   );
   assert.equal(amended.members.length, 2);
   assert.equal(amended.members[1]?.relationship, "amendment");
-  const annual = recordEventClusterMember(
+  const revisionTwo = amended.members.find((value) => value.revisionId === "revision-2");
+  assert.ok(revisionTwo);
+  assert.throws(
+    () =>
+      recordEventClusterMember(
+        amended,
+        eventPlan,
+        member("sec", "sec-10-q", filing.recordId, "revision-3", {
+          providerId: "sec.recorded",
+          relationship: "correction",
+          replacesArtifactDigest: filing.artifactDigest,
+          retrievedAtMs: 3_200,
+        }),
+      ),
+    (error: unknown) =>
+      error instanceof EventClusterBetaError && error.code === "event-cluster.revision-unlinked",
+  );
+  const corrected = recordEventClusterMember(
     amended,
+    eventPlan,
+    member("sec", "sec-10-q", filing.recordId, "revision-3", {
+      providerId: "sec.recorded",
+      relationship: "correction",
+      replacesArtifactDigest: revisionTwo.artifactDigest,
+      retrievedAtMs: 3_200,
+    }),
+  );
+  assert.equal(corrected.members.length, 3);
+  const annual = recordEventClusterMember(
+    corrected,
+    eventPlan,
     member("sec", "sec-10-k", "0000769397-27-000010", "revision-1", {
       providerId: "sec.recorded",
       retrievedAtMs: 3_200,
@@ -308,6 +420,7 @@ test("settlement freezes explicit stable-missing lanes and final inventory", () 
   let cluster = activeCluster(eventPlan);
   cluster = recordEventClusterMember(
     cluster,
+    eventPlan,
     member("market", "market-bars", "adsk-spy-igv-window", "revision-1", {
       providerId: "market.synthetic",
     }),
@@ -351,10 +464,12 @@ test("cluster snapshots are byte-identical through memory and SQLite restart", a
   let database = openSqliteDatabase(databasePath, migrations);
   let sqlite = new SqliteEventLog(database, { clock: sqliteClock });
 
-  let cluster = activeCluster();
+  const eventPlan = plan();
+  let cluster = activeCluster(eventPlan);
   const snapshots: EventCluster[] = [cluster];
   cluster = recordEventClusterMember(
     cluster,
+    eventPlan,
     member("issuer-ir", "issuer-release", "release-1", "revision-1", { providerId: "ir.recorded" }),
   );
   snapshots.push(cluster);

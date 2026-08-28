@@ -154,10 +154,27 @@ export type EventClusterMemberKind =
 export type EventClusterMember = Readonly<{
   lane: EventClusterLane;
   kind: EventClusterMemberKind;
+  issuerId: string;
+  cik: string;
+  fiscalPeriod: string;
   providerId: string;
   recordId: string;
   revisionId: string;
   artifactDigest: string;
+  requestIdentity: Readonly<{
+    requestId: string;
+    providerId: string;
+    capability: ProviderCapability;
+  }>;
+  normalization: Readonly<{
+    normalizerId: string;
+    sourceArtifactDigest: string;
+    normalizedEventId: string;
+    normalizedEventHash: string;
+  }>;
+  form: "8-K" | "8-K/A" | "10-Q" | "10-Q/A" | "10-K" | "10-K/A" | null;
+  items: readonly string[];
+  exhibitAlias: "EX-99" | "EX-99.1" | null;
   publicationOrAcceptanceAtMs: number | null;
   firstObservedAtMs: number;
   retrievedAtMs: number;
@@ -315,10 +332,31 @@ const memberSchema = z
       "transcript",
       "market-bars",
     ]),
+    issuerId: identifier,
+    cik: z.string().regex(/^\d{10}$/u),
+    fiscalPeriod: z.string().regex(/^\d{4}-(?:Q[1-4]|FY)$/u),
     providerId: identifier,
     recordId: identifier,
     revisionId: identifier,
     artifactDigest: digest,
+    requestIdentity: z
+      .object({
+        requestId: digest,
+        providerId: identifier,
+        capability: capabilitySchema,
+      })
+      .strict(),
+    normalization: z
+      .object({
+        normalizerId: identifier,
+        sourceArtifactDigest: digest,
+        normalizedEventId: digest,
+        normalizedEventHash: digest,
+      })
+      .strict(),
+    form: z.enum(["8-K", "8-K/A", "10-Q", "10-Q/A", "10-K", "10-K/A"]).nullable(),
+    items: z.array(z.string().regex(/^\d+\.\d+$/u)).max(16),
+    exhibitAlias: z.enum(["EX-99", "EX-99.1"]).nullable(),
     publicationOrAcceptanceAtMs: epoch.nullable(),
     firstObservedAtMs: epoch,
     retrievedAtMs: epoch,
@@ -435,6 +473,20 @@ function acquisitionPlans(
 
 export function normalizeExhibitAlias(value: string): "EX-99.1" | null {
   return value === "EX-99" || value === "EX-99.1" ? "EX-99.1" : null;
+}
+
+export function deriveEventClusterRequestId(
+  input: Readonly<{
+    providerId: string;
+    capability: ProviderCapability;
+    recordId: string;
+    revisionId: string;
+  }>,
+): string {
+  return canonicalHash(
+    "peas/event-cluster-request/v1",
+    inertJsonSnapshot(input as unknown as JsonValue),
+  );
 }
 
 export function compileEventPlan(
@@ -673,6 +725,97 @@ function expectedLane(kind: EventClusterMemberKind): EventClusterLane {
   return "sec";
 }
 
+function baseForm(form: NonNullable<EventClusterMember["form"]>): "8-K" | "10-Q" | "10-K" {
+  return form.replace(/\/A$/u, "") as "8-K" | "10-Q" | "10-K";
+}
+
+function requiredCapability(kind: EventClusterMemberKind): ProviderCapability {
+  if (kind === "issuer-release") return "issuer-release";
+  if (kind === "transcript") return "transcript";
+  if (kind === "market-bars") return "market-bars";
+  return "sec-filing";
+}
+
+function validateMemberAgainstPlan(
+  cluster: EventCluster,
+  plan: EventPlan,
+  member: EventClusterMember,
+): void {
+  if (cluster.planId !== plan.planId || cluster.planRevisionDigest !== plan.revisionDigest) {
+    fail("event-cluster.plan-identity-drift");
+  }
+  if (
+    member.issuerId !== plan.candidate.issuerId ||
+    member.cik !== plan.candidate.cik ||
+    member.fiscalPeriod !== plan.candidate.fiscalPeriod
+  ) {
+    fail("event-cluster.member-subject-invalid");
+  }
+  const acquisition = plan.acquisitionPlans.find((candidate) => candidate.lane === member.lane);
+  if (
+    acquisition === undefined ||
+    acquisition.readiness !== "ready" ||
+    acquisition.providerId !== member.providerId
+  ) {
+    fail("event-cluster.member-provider-invalid");
+  }
+  const capability = requiredCapability(member.kind);
+  if (
+    member.requestIdentity.providerId !== member.providerId ||
+    member.requestIdentity.capability !== capability ||
+    !acquisition.capabilities.includes(capability)
+  ) {
+    fail("event-cluster.member-capability-invalid");
+  }
+  if (
+    member.requestIdentity.requestId !==
+    deriveEventClusterRequestId({
+      providerId: member.providerId,
+      capability,
+      recordId: member.recordId,
+      revisionId: member.revisionId,
+    })
+  ) {
+    fail("event-cluster.member-request-invalid");
+  }
+  if (member.lane === "sec") {
+    if (
+      !/^\d{10}-\d{2}-\d{6}$/u.test(member.recordId) ||
+      !member.recordId.startsWith(`${member.cik}-`)
+    ) {
+      fail("event-cluster.member-accession-invalid");
+    }
+    if (member.form === null || !plan.expectedForms.includes(baseForm(member.form))) {
+      fail("event-cluster.member-form-invalid");
+    }
+    const expectedBase =
+      member.kind === "sec-8-k" ? "8-K" : member.kind === "sec-10-q" ? "10-Q" : "10-K";
+    if (baseForm(member.form) !== expectedBase) fail("event-cluster.member-form-invalid");
+    if (member.kind === "sec-8-k") {
+      if (
+        member.items.length === 0 ||
+        member.items.some((item) => !plan.expectedItems.includes(item))
+      ) {
+        fail("event-cluster.member-item-invalid");
+      }
+      if (
+        member.exhibitAlias !== null &&
+        (!plan.exhibitAliases.includes(member.exhibitAlias) ||
+          normalizeExhibitAlias(member.exhibitAlias) === null)
+      ) {
+        fail("event-cluster.member-exhibit-invalid");
+      }
+    } else if (member.items.length !== 0 || member.exhibitAlias !== null) {
+      fail("event-cluster.member-periodic-shape-invalid");
+    }
+  } else if (member.form !== null || member.items.length !== 0 || member.exhibitAlias !== null) {
+    fail("event-cluster.member-non-sec-shape-invalid");
+  }
+  if (member.normalization.sourceArtifactDigest !== member.artifactDigest) {
+    fail("event-cluster.member-normalization-provenance-invalid");
+  }
+}
+
 function memberOrder(left: EventClusterMember, right: EventClusterMember): number {
   return `${left.lane}:${left.providerId}:${left.recordId}:${left.revisionId}`.localeCompare(
     `${right.lane}:${right.providerId}:${right.recordId}:${right.revisionId}`,
@@ -681,6 +824,7 @@ function memberOrder(left: EventClusterMember, right: EventClusterMember): numbe
 
 export function recordEventClusterMember(
   cluster: EventCluster,
+  plan: EventPlan,
   memberInput: EventClusterMember,
 ): EventCluster {
   if (!["active", "primary-observed", "follow-up"].includes(cluster.status)) {
@@ -688,6 +832,7 @@ export function recordEventClusterMember(
   }
   const member = memberSchema.parse(inertJsonSnapshot(memberInput as unknown as JsonValue));
   if (member.lane !== expectedLane(member.kind)) fail("event-cluster.member-lane-invalid");
+  validateMemberAgainstPlan(cluster, plan, member);
   if (member.firstObservedAtMs > member.retrievedAtMs) fail("event-cluster.member-time-invalid");
   if (
     member.publicationOrAcceptanceAtMs !== null &&
@@ -714,10 +859,17 @@ export function recordEventClusterMember(
       updatedAtMs: member.retrievedAtMs,
     });
   }
-  const priorRecord = cluster.members.find(
-    (candidate) =>
-      candidate.providerId === member.providerId && candidate.recordId === member.recordId,
-  );
+  const priorRecord = cluster.members
+    .filter(
+      (candidate) =>
+        candidate.providerId === member.providerId && candidate.recordId === member.recordId,
+    )
+    .sort((left, right) =>
+      left.retrievedAtMs === right.retrievedAtMs
+        ? left.revisionId.localeCompare(right.revisionId)
+        : left.retrievedAtMs - right.retrievedAtMs,
+    )
+    .at(-1);
   if (priorRecord !== undefined) {
     if (
       member.relationship === "original" ||
