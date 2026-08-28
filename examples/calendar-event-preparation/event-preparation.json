@@ -1,0 +1,544 @@
+{
+  "activationAndObservation": {
+    "estimateSnapshotAtMs": 1793302200000,
+    "expectedReleaseAnchorMs": 1793304000000,
+    "followUpEndMs": 1793433600000,
+    "followUpForms": ["10-Q", "10-Q/A", "10-K", "10-K/A"],
+    "followUpStartMs": 1793332800000
+  },
+  "configurationDigest": "e5e0254a5a9f2041b990f45a4a220745002ccfcd21a1bfdc9fd3f1784a27cca9",
+  "eventPlan": {
+    "acquisitionPlans": [
+      {
+        "blocker": "authorization-required:issuer-release",
+        "capabilities": ["issuer-release", "issuer-slides", "webcast-metadata"],
+        "lane": "issuer-ir",
+        "providerId": "issuer.ir-placeholder",
+        "readiness": "authorization-required"
+      },
+      {
+        "blocker": "authorization-required:benchmark-market-data",
+        "capabilities": ["benchmark-market-data", "expectations-snapshot", "market-bars"],
+        "lane": "market",
+        "providerId": "market.placeholder",
+        "readiness": "authorization-required"
+      },
+      {
+        "blocker": "authorization-required:filing-exhibit",
+        "capabilities": ["filing-exhibit", "sec-filing"],
+        "lane": "sec",
+        "providerId": "sec.official-placeholder",
+        "readiness": "authorization-required"
+      },
+      {
+        "blocker": "capability-unavailable:prepared-remarks",
+        "capabilities": ["prepared-remarks"],
+        "lane": "transcript",
+        "providerId": "transcript.placeholder",
+        "readiness": "capability-unavailable"
+      }
+    ],
+    "amendments": [],
+    "candidate": {
+      "calendarRevisionId": "revision-1",
+      "calendarSourceId": "calendar.synthetic",
+      "cik": "0000000123",
+      "discoveredAtMs": 1780000000000,
+      "exchange": "NASDAQ",
+      "expectedEventDate": "2026-10-29",
+      "expectedSession": "after-market",
+      "fiscalPeriod": "2027-Q3",
+      "instrumentId": "instrument-example-common",
+      "issuerId": "issuer-example",
+      "sectorBenchmark": "XLK",
+      "ticker": "EXMPL"
+    },
+    "correctionPolicy": "explicit-replacement",
+    "duplicatePolicy": "provider-record-revision",
+    "exhibitAliases": ["EX-99", "EX-99.1"],
+    "expectedForms": ["10-K", "10-Q", "8-K"],
+    "expectedItems": ["2.02", "7.01", "9.01"],
+    "frozen": true,
+    "marketSubjects": ["EXMPL", "SPY", "XLK"],
+    "marketWindows": [
+      {
+        "anchor": "event-relative",
+        "endMinuteOffset": -1,
+        "evidenceClass": "coarse-movement-not-tradability",
+        "granularity": "one-minute-bars",
+        "id": "pre-event",
+        "startMinuteOffset": -30
+      },
+      {
+        "anchor": "event-relative",
+        "endMinuteOffset": 0,
+        "evidenceClass": "coarse-movement-not-tradability",
+        "granularity": "one-minute-bars",
+        "id": "release-gap",
+        "startMinuteOffset": 0
+      },
+      {
+        "anchor": "event-relative",
+        "endMinuteOffset": 1,
+        "evidenceClass": "coarse-movement-not-tradability",
+        "granularity": "one-minute-bars",
+        "id": "plus-1",
+        "startMinuteOffset": 1
+      },
+      {
+        "anchor": "event-relative",
+        "endMinuteOffset": 5,
+        "evidenceClass": "coarse-movement-not-tradability",
+        "granularity": "one-minute-bars",
+        "id": "plus-5",
+        "startMinuteOffset": 5
+      },
+      {
+        "anchor": "event-relative",
+        "endMinuteOffset": 30,
+        "evidenceClass": "coarse-movement-not-tradability",
+        "granularity": "one-minute-bars",
+        "id": "plus-30",
+        "startMinuteOffset": 30
+      },
+      {
+        "anchor": "session-close",
+        "endMinuteOffset": null,
+        "evidenceClass": "coarse-movement-not-tradability",
+        "granularity": "one-minute-bars",
+        "id": "close",
+        "startMinuteOffset": null
+      },
+      {
+        "anchor": "next-session",
+        "endMinuteOffset": null,
+        "evidenceClass": "coarse-movement-not-tradability",
+        "granularity": "one-minute-bars",
+        "id": "next-session",
+        "startMinuteOffset": null
+      }
+    ],
+    "planId": "f4d23bfc7b4766f836044f8972603ec41668e393fc971238d1270c3bd44938a6",
+    "prohibitedEffects": {
+      "account": 0,
+      "broker": 0,
+      "credential": 0,
+      "fill": 0,
+      "financialEffect": 0,
+      "network": 0,
+      "order": 0,
+      "portfolio": 0,
+      "position": 0,
+      "provider": 0,
+      "spending": 0,
+      "subscription": 0
+    },
+    "rawRetention": "immutable",
+    "revision": 1,
+    "revisionDigest": "e3be54ce69b2ca57444f1a90ff6d8a74cd5815b2d42017a58d79520aead14168",
+    "schemaVersion": 1,
+    "stableMissingPolicy": "lane-settlement",
+    "windows": {
+      "activationStartMs": 1793275200000,
+      "primaryEndMs": 1793332800000,
+      "primaryStartMs": 1793300400000,
+      "settlementEndMs": 1793433600000
+    }
+  },
+  "expectedMaterials": {
+    "exhibitAliases": ["EX-99", "EX-99.1"],
+    "issuerMaterials": ["press-release", "presentation", "webcast"],
+    "secForms": ["8-K", "8-K/A", "10-Q", "10-Q/A", "10-K", "10-K/A"],
+    "secItems": ["2.02", "7.01", "9.01"],
+    "transcriptMaterials": ["prepared-remarks", "transcript"]
+  },
+  "issuerName": "Example Systems, Inc.",
+  "marketEvidence": {
+    "interpretation": "coarse-bar-movement-not-tradability",
+    "subjects": ["EXMPL", "SPY", "XLK"],
+    "windows": [
+      {
+        "anchor": "event-relative",
+        "endMinuteOffset": -1,
+        "evidenceClass": "coarse-movement-not-tradability",
+        "granularity": "one-minute-bars",
+        "id": "pre-event",
+        "startMinuteOffset": -30
+      },
+      {
+        "anchor": "event-relative",
+        "endMinuteOffset": 0,
+        "evidenceClass": "coarse-movement-not-tradability",
+        "granularity": "one-minute-bars",
+        "id": "release-gap",
+        "startMinuteOffset": 0
+      },
+      {
+        "anchor": "event-relative",
+        "endMinuteOffset": 1,
+        "evidenceClass": "coarse-movement-not-tradability",
+        "granularity": "one-minute-bars",
+        "id": "plus-1",
+        "startMinuteOffset": 1
+      },
+      {
+        "anchor": "event-relative",
+        "endMinuteOffset": 5,
+        "evidenceClass": "coarse-movement-not-tradability",
+        "granularity": "one-minute-bars",
+        "id": "plus-5",
+        "startMinuteOffset": 5
+      },
+      {
+        "anchor": "event-relative",
+        "endMinuteOffset": 30,
+        "evidenceClass": "coarse-movement-not-tradability",
+        "granularity": "one-minute-bars",
+        "id": "plus-30",
+        "startMinuteOffset": 30
+      },
+      {
+        "anchor": "session-close",
+        "endMinuteOffset": null,
+        "evidenceClass": "coarse-movement-not-tradability",
+        "granularity": "one-minute-bars",
+        "id": "close",
+        "startMinuteOffset": null
+      },
+      {
+        "anchor": "next-session",
+        "endMinuteOffset": null,
+        "evidenceClass": "coarse-movement-not-tradability",
+        "granularity": "one-minute-bars",
+        "id": "next-session",
+        "startMinuteOffset": null
+      }
+    ]
+  },
+  "networkPolicy": {
+    "intervalSeconds": 300,
+    "requestCeiling": 64,
+    "responseSizeLimitBytes": 8388608,
+    "timeoutMs": 15000
+  },
+  "permittedProviderCapabilities": [
+    {
+      "capability": "calendar-discovery",
+      "officialHostPlaceholder": null,
+      "pathPlaceholder": "fixture://calendar/{issuer}/{fiscal-period}",
+      "providerId": "calendar.synthetic",
+      "sourceId": "calendar-identity"
+    },
+    {
+      "capability": "expectations-snapshot",
+      "officialHostPlaceholder": "market-provider.example.invalid",
+      "pathPlaceholder": "/expectations/{instrument}/{fiscal-period}",
+      "providerId": "market.placeholder",
+      "sourceId": "estimates-snapshot"
+    },
+    {
+      "capability": "market-bars",
+      "officialHostPlaceholder": "market-provider.example.invalid",
+      "pathPlaceholder": "/bars/{instrument}?timeframe=1Min",
+      "providerId": "market.placeholder",
+      "sourceId": "issuer-market-bars"
+    },
+    {
+      "capability": "issuer-slides",
+      "officialHostPlaceholder": "investors.example.invalid",
+      "pathPlaceholder": "/presentations/{event}",
+      "providerId": "issuer.ir-placeholder",
+      "sourceId": "issuer-presentation"
+    },
+    {
+      "capability": "issuer-release",
+      "officialHostPlaceholder": "investors.example.invalid",
+      "pathPlaceholder": "/news/{event}",
+      "providerId": "issuer.ir-placeholder",
+      "sourceId": "issuer-release"
+    },
+    {
+      "capability": "webcast-metadata",
+      "officialHostPlaceholder": "investors.example.invalid",
+      "pathPlaceholder": "/events/{event}",
+      "providerId": "issuer.ir-placeholder",
+      "sourceId": "issuer-webcast"
+    },
+    {
+      "capability": "prepared-remarks",
+      "officialHostPlaceholder": null,
+      "pathPlaceholder": null,
+      "providerId": "transcript.placeholder",
+      "sourceId": "prepared-remarks"
+    },
+    {
+      "capability": "filing-exhibit",
+      "officialHostPlaceholder": "www.sec.gov",
+      "pathPlaceholder": "/Archives/edgar/data/{cik}/{accession}/{document}",
+      "providerId": "sec.official-placeholder",
+      "sourceId": "sec-filing-exhibit"
+    },
+    {
+      "capability": "sec-filing",
+      "officialHostPlaceholder": "data.sec.gov",
+      "pathPlaceholder": "/submissions/CIK{cik}.json",
+      "providerId": "sec.official-placeholder",
+      "sourceId": "sec-submissions"
+    },
+    {
+      "capability": "benchmark-market-data",
+      "officialHostPlaceholder": "market-provider.example.invalid",
+      "pathPlaceholder": "/bars/XLK?timeframe=1Min",
+      "providerId": "market.placeholder",
+      "sourceId": "sector-market-bars"
+    },
+    {
+      "capability": "benchmark-market-data",
+      "officialHostPlaceholder": "market-provider.example.invalid",
+      "pathPlaceholder": "/bars/SPY?timeframe=1Min",
+      "providerId": "market.placeholder",
+      "sourceId": "spy-market-bars"
+    },
+    {
+      "capability": "transcript",
+      "officialHostPlaceholder": null,
+      "pathPlaceholder": null,
+      "providerId": "transcript.placeholder",
+      "sourceId": "transcript"
+    }
+  ],
+  "preparationHistory": {
+    "afterFreezeAmendments": [],
+    "beforeFreezeAmendments": []
+  },
+  "prohibitedEffects": {
+    "account": 0,
+    "broker": 0,
+    "credential": 0,
+    "fill": 0,
+    "financialEffect": 0,
+    "network": 0,
+    "order": 0,
+    "portfolio": 0,
+    "position": 0,
+    "provider": 0,
+    "spending": 0,
+    "subscription": 0
+  },
+  "schemaVersion": 1,
+  "sourceReadiness": [
+    {
+      "blockerReason": null,
+      "configuredIdentityOrPath": "fixture://calendar/example-2027-q3",
+      "credentialsRequired": false,
+      "entitlementRequired": false,
+      "liveAccessRequired": false,
+      "plannedProviderCapability": "calendar-discovery",
+      "providerId": "calendar.synthetic",
+      "requiredMaterial": "Deterministic calendar identity",
+      "requirement": "mandatory",
+      "sourceId": "calendar-identity",
+      "status": "ready"
+    },
+    {
+      "blockerReason": "credential-and-entitlement-authorization-required",
+      "configuredIdentityOrPath": "market://EXMPL/expectations",
+      "credentialsRequired": true,
+      "entitlementRequired": true,
+      "liveAccessRequired": true,
+      "plannedProviderCapability": "expectations-snapshot",
+      "providerId": "market.placeholder",
+      "requiredMaterial": "Prospective estimates snapshot",
+      "requirement": "mandatory",
+      "sourceId": "estimates-snapshot",
+      "status": "separately-authorized"
+    },
+    {
+      "blockerReason": "credential-and-entitlement-authorization-required",
+      "configuredIdentityOrPath": "instrument-example-common",
+      "credentialsRequired": true,
+      "entitlementRequired": true,
+      "liveAccessRequired": true,
+      "plannedProviderCapability": "market-bars",
+      "providerId": "market.placeholder",
+      "requiredMaterial": "Issuer one-minute market bars",
+      "requirement": "mandatory",
+      "sourceId": "issuer-market-bars",
+      "status": "separately-authorized"
+    },
+    {
+      "blockerReason": "live-access-authorization-required",
+      "configuredIdentityOrPath": "issuer-ir://EXMPL/presentations",
+      "credentialsRequired": false,
+      "entitlementRequired": false,
+      "liveAccessRequired": true,
+      "plannedProviderCapability": "issuer-slides",
+      "providerId": "issuer.ir-placeholder",
+      "requiredMaterial": "Issuer presentation or slides",
+      "requirement": "optional",
+      "sourceId": "issuer-presentation",
+      "status": "separately-authorized"
+    },
+    {
+      "blockerReason": "live-access-authorization-required",
+      "configuredIdentityOrPath": "issuer-ir://EXMPL/releases",
+      "credentialsRequired": false,
+      "entitlementRequired": false,
+      "liveAccessRequired": true,
+      "plannedProviderCapability": "issuer-release",
+      "providerId": "issuer.ir-placeholder",
+      "requiredMaterial": "Issuer press release",
+      "requirement": "mandatory",
+      "sourceId": "issuer-release",
+      "status": "separately-authorized"
+    },
+    {
+      "blockerReason": "live-access-authorization-required",
+      "configuredIdentityOrPath": "issuer-ir://EXMPL/webcasts",
+      "credentialsRequired": false,
+      "entitlementRequired": false,
+      "liveAccessRequired": true,
+      "plannedProviderCapability": "webcast-metadata",
+      "providerId": "issuer.ir-placeholder",
+      "requiredMaterial": "Issuer webcast metadata",
+      "requirement": "optional",
+      "sourceId": "issuer-webcast",
+      "status": "separately-authorized"
+    },
+    {
+      "blockerReason": "configured-identity-or-path-missing",
+      "configuredIdentityOrPath": null,
+      "credentialsRequired": false,
+      "entitlementRequired": true,
+      "liveAccessRequired": true,
+      "plannedProviderCapability": "prepared-remarks",
+      "providerId": "transcript.placeholder",
+      "requiredMaterial": "Prepared remarks",
+      "requirement": "optional",
+      "sourceId": "prepared-remarks",
+      "status": "missing"
+    },
+    {
+      "blockerReason": "live-access-authorization-required",
+      "configuredIdentityOrPath": "CIK0000000123/accession-placeholder",
+      "credentialsRequired": false,
+      "entitlementRequired": false,
+      "liveAccessRequired": true,
+      "plannedProviderCapability": "filing-exhibit",
+      "providerId": "sec.official-placeholder",
+      "requiredMaterial": "SEC filing and earnings exhibit",
+      "requirement": "mandatory",
+      "sourceId": "sec-filing-exhibit",
+      "status": "separately-authorized"
+    },
+    {
+      "blockerReason": "live-access-authorization-required",
+      "configuredIdentityOrPath": "CIK0000000123",
+      "credentialsRequired": false,
+      "entitlementRequired": false,
+      "liveAccessRequired": true,
+      "plannedProviderCapability": "sec-filing",
+      "providerId": "sec.official-placeholder",
+      "requiredMaterial": "SEC submissions feed",
+      "requirement": "mandatory",
+      "sourceId": "sec-submissions",
+      "status": "separately-authorized"
+    },
+    {
+      "blockerReason": "credential-and-entitlement-authorization-required",
+      "configuredIdentityOrPath": "XLK",
+      "credentialsRequired": true,
+      "entitlementRequired": true,
+      "liveAccessRequired": true,
+      "plannedProviderCapability": "benchmark-market-data",
+      "providerId": "market.placeholder",
+      "requiredMaterial": "Sector-benchmark one-minute bars",
+      "requirement": "mandatory",
+      "sourceId": "sector-market-bars",
+      "status": "separately-authorized"
+    },
+    {
+      "blockerReason": "credential-and-entitlement-authorization-required",
+      "configuredIdentityOrPath": "SPY",
+      "credentialsRequired": true,
+      "entitlementRequired": true,
+      "liveAccessRequired": true,
+      "plannedProviderCapability": "benchmark-market-data",
+      "providerId": "market.placeholder",
+      "requiredMaterial": "SPY one-minute benchmark bars",
+      "requirement": "mandatory",
+      "sourceId": "spy-market-bars",
+      "status": "separately-authorized"
+    },
+    {
+      "blockerReason": "configured-identity-or-path-missing",
+      "configuredIdentityOrPath": null,
+      "credentialsRequired": false,
+      "entitlementRequired": true,
+      "liveAccessRequired": true,
+      "plannedProviderCapability": "transcript",
+      "providerId": "transcript.placeholder",
+      "requiredMaterial": "Transcript",
+      "requirement": "optional",
+      "sourceId": "transcript",
+      "status": "missing"
+    }
+  ],
+  "unresolvedRequirements": [
+    {
+      "reason": "credential-and-entitlement-authorization-required",
+      "sourceId": "estimates-snapshot",
+      "status": "separately-authorized"
+    },
+    {
+      "reason": "credential-and-entitlement-authorization-required",
+      "sourceId": "issuer-market-bars",
+      "status": "separately-authorized"
+    },
+    {
+      "reason": "live-access-authorization-required",
+      "sourceId": "issuer-presentation",
+      "status": "separately-authorized"
+    },
+    {
+      "reason": "live-access-authorization-required",
+      "sourceId": "issuer-release",
+      "status": "separately-authorized"
+    },
+    {
+      "reason": "live-access-authorization-required",
+      "sourceId": "issuer-webcast",
+      "status": "separately-authorized"
+    },
+    {
+      "reason": "configured-identity-or-path-missing",
+      "sourceId": "prepared-remarks",
+      "status": "missing"
+    },
+    {
+      "reason": "live-access-authorization-required",
+      "sourceId": "sec-filing-exhibit",
+      "status": "separately-authorized"
+    },
+    {
+      "reason": "live-access-authorization-required",
+      "sourceId": "sec-submissions",
+      "status": "separately-authorized"
+    },
+    {
+      "reason": "credential-and-entitlement-authorization-required",
+      "sourceId": "sector-market-bars",
+      "status": "separately-authorized"
+    },
+    {
+      "reason": "credential-and-entitlement-authorization-required",
+      "sourceId": "spy-market-bars",
+      "status": "separately-authorized"
+    },
+    {
+      "reason": "configured-identity-or-path-missing",
+      "sourceId": "transcript",
+      "status": "missing"
+    }
+  ]
+}
