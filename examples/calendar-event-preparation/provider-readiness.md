@@ -1,11 +1,11 @@
 # Calendar Event Provider Readiness
 
-Configuration digest: `e5e0254a5a9f2041b990f45a4a220745002ccfcd21a1bfdc9fd3f1784a27cca9`
+Configuration digest: `791b2bdc50fb7edc6317d0ae573c5e555701166e071628eb14012e15c5c4f4c5`
 
 | Source | Material | Capability | Provider / identity | Requirement | Status | Blocker | Credentials | Entitlement | Live access |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | calendar-identity | Deterministic calendar identity | calendar-discovery | calendar.synthetic / fixture://calendar/example-2027-q3 | mandatory | ready | — | no | no | no |
-| estimates-snapshot | Prospective estimates snapshot | expectations-snapshot | market.placeholder / market://EXMPL/expectations | mandatory | separately-authorized | credential-and-entitlement-authorization-required | yes | yes | yes |
+| estimates-snapshot | Prospective estimates snapshot | expectations-snapshot | market.placeholder / market://EXMPL/expectations | optional | separately-authorized | credential-and-entitlement-authorization-required | yes | yes | yes |
 | issuer-market-bars | Issuer one-minute market bars | market-bars | market.placeholder / instrument-example-common | mandatory | separately-authorized | credential-and-entitlement-authorization-required | yes | yes | yes |
 | issuer-presentation | Issuer presentation or slides | issuer-slides | issuer.ir-placeholder / issuer-ir://EXMPL/presentations | optional | separately-authorized | live-access-authorization-required | no | no | yes |
 | issuer-release | Issuer press release | issuer-release | issuer.ir-placeholder / issuer-ir://EXMPL/releases | mandatory | separately-authorized | live-access-authorization-required | no | no | yes |

@@ -278,6 +278,42 @@ test("unavailable and authorization-required capabilities remain explicit", () =
   assert.equal(estimates?.blockerReason, "credential-and-entitlement-authorization-required");
 });
 
+test("an unavailable optional estimates provider does not make the Alpaca market lane ambiguous", () => {
+  let input = fixture();
+  for (const sourceId of ["issuer-market-bars", "spy-market-bars", "sector-market-bars"] as const) {
+    input = withBinding(input, sourceId, {
+      providerId: "alpaca.historical-sip",
+      available: true,
+      credentialRequirement: "separately-authorized",
+      entitlementRequirement: "separately-authorized",
+      liveAccessRequired: true,
+    });
+  }
+  input = withBinding(input, "estimates-snapshot", {
+    providerId: "fmp.estimates-unaccepted",
+    configuredIdentityOrPath: null,
+    available: false,
+  });
+
+  const result = prepareCalendarEvent(input);
+  const marketPlan = result.preparation.eventPlan.acquisitionPlans.find(
+    (plan) => plan.lane === "market",
+  );
+  assert.equal(marketPlan?.providerId, "alpaca.historical-sip");
+  assert.equal(marketPlan?.readiness, "authorization-required");
+  assert.equal(
+    result.checklist.find((row) => row.sourceId === "estimates-snapshot")?.status,
+    "missing",
+  );
+  assert.equal(
+    result.preparation.permittedProviderCapabilities.some(
+      (entry) =>
+        entry.sourceId === "estimates-snapshot" && entry.providerId === "fmp.estimates-unaccepted",
+    ),
+    true,
+  );
+});
+
 test("shared capability preserves per-source partial mapping and blocks its lane", () => {
   let input = withOfflineLane(fixture(), [
     "estimates-snapshot",

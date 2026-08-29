@@ -333,7 +333,7 @@ const SOURCE_DEFINITIONS: Readonly<
     material: "Prospective estimates snapshot",
     capability: "expectations-snapshot",
     lane: "market",
-    requirement: "mandatory",
+    requirement: "optional",
   },
   "issuer-market-bars": {
     material: "Issuer one-minute market bars",
@@ -535,10 +535,6 @@ function providerInputs(bindings: readonly CalendarSourceBinding[]): Readonly<{
     const laneBindings = bindings.filter(
       (binding) => SOURCE_DEFINITIONS[binding.sourceId].lane === lane,
     );
-    const providerIds = new Set(laneBindings.map((binding) => binding.providerId));
-    if (providerIds.size !== 1) fail("calendar-preparation.lane-provider-ambiguous");
-    const providerId = [...providerIds][0];
-    if (providerId === undefined) fail("calendar-preparation.lane-provider-missing");
     const planned = laneBindings.filter((binding) => {
       const definition = SOURCE_DEFINITIONS[binding.sourceId];
       const status = readiness(binding).status;
@@ -549,6 +545,10 @@ function providerInputs(bindings: readonly CalendarSourceBinding[]): Readonly<{
       );
     });
     const selected = planned.length > 0 ? planned : laneBindings.slice(0, 1);
+    const providerIds = new Set(selected.map((binding) => binding.providerId));
+    if (providerIds.size !== 1) fail("calendar-preparation.lane-provider-ambiguous");
+    const providerId = [...providerIds][0];
+    if (providerId === undefined) fail("calendar-preparation.lane-provider-missing");
     for (const binding of selected) selectedSourceIds.add(binding.sourceId);
     return {
       lane,

@@ -11,7 +11,7 @@
     ],
     "followUpStartMs": 1793332800000
   },
-  "configurationDigest": "e5e0254a5a9f2041b990f45a4a220745002ccfcd21a1bfdc9fd3f1784a27cca9",
+  "configurationDigest": "791b2bdc50fb7edc6317d0ae573c5e555701166e071628eb14012e15c5c4f4c5",
   "eventPlan": {
     "acquisitionPlans": [
       {
@@ -407,7 +407,7 @@
       "plannedProviderCapability": "expectations-snapshot",
       "providerId": "market.placeholder",
       "requiredMaterial": "Prospective estimates snapshot",
-      "requirement": "mandatory",
+      "requirement": "optional",
       "sourceId": "estimates-snapshot",
       "status": "separately-authorized"
     },

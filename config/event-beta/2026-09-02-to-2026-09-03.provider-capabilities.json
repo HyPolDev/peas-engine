@@ -1,0 +1,199 @@
+{
+  "schemaVersion": 1,
+  "enabled": false,
+  "authoritativeBase": {
+    "sha": "3de4a225f3e5a2f129a973ac8bf141dd4d887a0f",
+    "tree": "2ca88537394a01213280ab32bc6834c32c24b562"
+  },
+  "effectsMode": "provider-free-configuration-only",
+  "providers": {
+    "sec": {
+      "providerId": "sec.official-read-only-v1",
+      "documentation": "https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data",
+      "origins": ["https://data.sec.gov", "https://www.sec.gov"],
+      "endpointFamilies": [
+        "/submissions/CIK{cik}.json",
+        "/Archives/edgar/data/{cik}/{accession}/{document}"
+      ],
+      "credentialsRequired": false,
+      "entitlementAssumption": "public-edgar-scripted-access",
+      "retention": "immutable-project-artifact",
+      "externalRateLimit": "maximum-10-requests-per-second",
+      "projectPolicy": "five-minute-polling-shared-64-request-ceiling",
+      "stableMissing": "http-404-or-settlement-without-qualifying-filing",
+      "separateLiveAuthorizationRequired": true
+    },
+    "issuerOfficial": {
+      "providerId": "issuer.official-read-only-v1",
+      "documentation": "issuer-specific-official-investor-relations-announcement",
+      "endpointFamily": "one-exact-https-origin-and-declared-path-prefixes-per-issuer",
+      "credentialsRequired": false,
+      "entitlementAssumption": "public-official-investor-relations-material",
+      "retention": "immutable-project-artifact",
+      "externalRateLimit": "not-uniformly-published",
+      "projectPolicy": "five-minute-polling-shared-64-request-ceiling",
+      "stableMissing": "http-404-or-lane-settlement",
+      "separateLiveAuthorizationRequired": true
+    },
+    "alpacaHistoricalSipBars": {
+      "providerId": "mpv1_7a0d9dbb0982daebfdc6986ef4903b3c6388f83cbafa6c1b7af8bf92b5ec6d9c",
+      "datasetId": "mds1_d18d90386ef7b3ddff114dc552ca4561a3ee613f3bc501e60491e81d85f734d1",
+      "feedId": "mfd1_79bf3edbf4b7d87ab16edadaafca55d991bdc6962294abc2998f240838483023",
+      "channelId": "mec1_016928912d87c2fd5ae5eae163752f363d7b8deba66f4b08753cf9d80c891c9c",
+      "aliasAuthorityCatalogId": "maac1_529a0ff2c49ad3de2c1d4dd3d1170de8af108fca9f83fd3ca7a2fe797212230d",
+      "aliasAuthorityCatalogPath": "config/event-beta/2026-09-02-to-2026-09-03.alias-authority-catalog.json",
+      "documentation": "https://docs.alpaca.markets/us/reference/stockbars",
+      "origin": "https://data.alpaca.markets",
+      "endpointFamily": "/v2/stocks/bars",
+      "semanticParameters": {
+        "feed": "sip",
+        "timeframe": "1Min",
+        "adjustment": "raw",
+        "sort": "asc"
+      },
+      "sessionAndTimezone": "UTC timestamps; includes eligible premarket, regular, and after-hours bars",
+      "delay": "historical-only; query end must be at least 15 minutes old without real-time SIP entitlement",
+      "credentialsRequired": true,
+      "entitlementAssumption": "existing-project-entitlement-only-zero-incremental-spend-unverified-for-live-use",
+      "retention": "p1-10-alpaca-private-retention-v1-maximum-3650-days",
+      "externalRateLimitAssumption": "basic-plan-200-requests-per-minute",
+      "projectLimits": {
+        "attemptsPerRollingMinute": 30,
+        "maximumSuccessfulPages": 16,
+        "maximumRecordsPerPage": 10000,
+        "acquisitionDeadlineMs": 300000
+      },
+      "stableMissing": "successful-empty-window-or-lane-settlement",
+      "separateLiveAuthorizationRequired": true
+    },
+    "fmpEstimates": {
+      "providerId": "fmp.estimates-unaccepted-v1",
+      "documentation": "https://intelligence.financialmodelingprep.com/developer/docs/stable/financial-symbols-list",
+      "endpointFamily": null,
+      "status": "not-accepted-by-repository",
+      "credentialsRequired": true,
+      "entitlementAssumption": "unknown-and-not-authorized",
+      "retention": "unknown",
+      "rateLimit": "unknown",
+      "stableMissing": "optional-source-missing",
+      "separateLiveAuthorizationRequired": true
+    },
+    "transcript": {
+      "providerId": "transcript.unaccepted-v1",
+      "documentation": null,
+      "endpointFamily": null,
+      "status": "no-accepted-repository-capability",
+      "credentialsRequired": false,
+      "entitlementAssumption": "none-selected",
+      "retention": "not-applicable",
+      "rateLimit": "not-applicable",
+      "stableMissing": "optional-source-missing",
+      "separateLiveAuthorizationRequired": true
+    }
+  },
+  "candidates": [
+    {
+      "slug": "avgo",
+      "priority": 1,
+      "ticker": "AVGO",
+      "cik": "0001730168",
+      "exchange": "NASDAQ",
+      "instrumentId": "NASDAQ:AVGO:COMMON",
+      "marketSymbol": "AVGO",
+      "sectorSymbol": "XLK",
+      "officialAnnouncement": "https://investors.broadcom.com/news-releases/news-release-details/broadcom-inc-announce-third-quarter-fiscal-year-2026-financial",
+      "issuerOrigin": "https://investors.broadcom.com",
+      "issuerPathPrefixes": [
+        "/news-releases",
+        "/financial-information",
+        "/events-and-presentations"
+      ],
+      "barQueryWindow": {
+        "start": "2026-09-02T19:00:00.000000000Z",
+        "end": "2026-09-03T04:00:00.000000000Z"
+      },
+      "expectedOriginalPlanId": "f70c36378a7cd0e29d84769bf5b950ea597aeeeee3c9fc06cf0e1a011eea7d6d",
+      "expectedOriginalConfigurationDigest": "636627aa87cca1e08124c8ff5ede67b1dc8d2abc91042ab979215ef443395989"
+    },
+    {
+      "slug": "hpe",
+      "priority": 2,
+      "ticker": "HPE",
+      "cik": "0001645590",
+      "exchange": "NYSE",
+      "instrumentId": "NYSE:HPE:COMMON",
+      "marketSymbol": "HPE",
+      "sectorSymbol": "XLK",
+      "officialAnnouncement": "https://www.hpe.com/us/en/newsroom/press-release/2026/08/hpe-to-present-live-audio-webcast-of-fiscal-2026-third-quarter-earnings-conference-call.html",
+      "issuerOrigin": "https://investors.hpe.com",
+      "issuerPathPrefixes": ["/financial-information", "/news-and-events"],
+      "barQueryWindow": {
+        "start": "2026-09-02T19:00:00.000000000Z",
+        "end": "2026-09-03T04:00:00.000000000Z"
+      },
+      "expectedOriginalPlanId": "c545bc6f1614a22e34586f20269971bdc68506dc035eb3c445896207c23ca19f",
+      "expectedOriginalConfigurationDigest": "b43d8b2ac0323b20b3a4f47125c5d5dde4a830e6046845436b0f22bbd208dec3"
+    },
+    {
+      "slug": "cien",
+      "priority": 3,
+      "ticker": "CIEN",
+      "cik": "0000936395",
+      "exchange": "NYSE",
+      "instrumentId": "NYSE:CIEN:COMMON",
+      "marketSymbol": "CIEN",
+      "sectorSymbol": "XLK",
+      "officialAnnouncement": "https://investor.ciena.com/news/news-details/2026/Ciena-Announces-Reporting-Date-and-Web-Broadcast-for-Fiscal-Third-Quarter-2026-Results/default.aspx",
+      "issuerOrigin": "https://investor.ciena.com",
+      "issuerPathPrefixes": ["/news", "/financial-information", "/events-and-presentations"],
+      "barQueryWindow": {
+        "start": "2026-09-03T10:00:00.000000000Z",
+        "end": "2026-09-03T21:00:00.000000000Z"
+      },
+      "expectedOriginalPlanId": "2de558628c32fe45bcce910da3b4c7aeddf082fde20cfe0ae42f02f92ede9d55",
+      "expectedOriginalConfigurationDigest": "606a9da6153db7198ee22bade39f2cf06b34e8b9767adcd49db25e1c29fab9e5"
+    },
+    {
+      "slug": "docu",
+      "priority": 4,
+      "ticker": "DOCU",
+      "cik": "0001261333",
+      "exchange": "NASDAQ",
+      "instrumentId": "NASDAQ:DOCU:COMMON",
+      "marketSymbol": "DOCU",
+      "sectorSymbol": "XLK",
+      "officialAnnouncement": "https://www.docusign.com/company/news-center/docusign-to-announce-second-quarter-fiscal-2027-financial-results-on-september-3-2026",
+      "issuerOrigin": "https://investor.docusign.com",
+      "issuerPathPrefixes": [
+        "/news-releases",
+        "/results-and-financials",
+        "/events-and-presentations"
+      ],
+      "barQueryWindow": {
+        "start": "2026-09-03T19:00:00.000000000Z",
+        "end": "2026-09-04T04:00:00.000000000Z"
+      },
+      "expectedOriginalPlanId": "8bd74aabf23acc763b6a9fcdafd04df0d906cf95c85e820b0b76b8f29eab0c43",
+      "expectedOriginalConfigurationDigest": "a246d9a3a70fc5e2477b3171e0fd61dc5107dba899114ec307180345f556202e"
+    },
+    {
+      "slug": "lulu",
+      "priority": 5,
+      "ticker": "LULU",
+      "cik": "0001397187",
+      "exchange": "NASDAQ",
+      "instrumentId": "NASDAQ:LULU:COMMON",
+      "marketSymbol": "LULU",
+      "sectorSymbol": "XLY",
+      "officialAnnouncement": "https://corporate.lululemon.com/newsroom/press-releases/2026/08-20-2026-113008522",
+      "issuerOrigin": "https://corporate.lululemon.com",
+      "issuerPathPrefixes": ["/newsroom", "/investors"],
+      "barQueryWindow": {
+        "start": "2026-09-03T19:00:00.000000000Z",
+        "end": "2026-09-04T04:00:00.000000000Z"
+      },
+      "expectedOriginalPlanId": "773a55e9fb620870a1d32801dca45f62b0ff08c7ba9d8ea693f002b0a35e090e",
+      "expectedOriginalConfigurationDigest": "f7547500398fdf9d8ac43e3007e23a6cdbc90fbb110d9e01d6f32be00bf97c12"
+    }
+  ]
+}
