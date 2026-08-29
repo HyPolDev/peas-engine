@@ -7,6 +7,9 @@ import { prepareCalendarEvent } from "../dist/src/domain/calendar-event-preparat
 const CAPABILITY_CONFIG = path.resolve(
   "config/event-beta/2026-09-02-to-2026-09-03.provider-capabilities.json",
 );
+const ALIAS_CATALOG = path.resolve(
+  "config/event-beta/2026-09-02-to-2026-09-03.alias-authority-catalog.json",
+);
 
 function parseArguments(values) {
   const options = { source: null, output: null };
@@ -37,7 +40,7 @@ function writeExclusive(file, bytes) {
   writeFileSync(file, bytes, { encoding: "utf8", flag: "wx" });
 }
 
-function configuredBinding(binding, candidate, providers) {
+function configuredBinding(binding, candidate, providers, instrumentBySymbol) {
   if (binding.sourceId === "sec-submissions" || binding.sourceId === "sec-filing-exhibit") {
     return { ...binding, providerId: providers.sec.providerId };
   }
@@ -81,10 +84,14 @@ function configuredBinding(binding, candidate, providers) {
         : binding.sourceId === "spy-market-bars"
           ? "SPY"
           : candidate.sectorSymbol;
+    const instrumentId = instrumentBySymbol.get(symbol);
+    if (instrumentId === undefined) {
+      throw new Error(`event-beta-provider-config.instrument-mapping-missing:${symbol}`);
+    }
     return {
       ...binding,
       providerId: providers.alpacaHistoricalSipBars.providerId,
-      configuredIdentityOrPath: `ALPACA:SIP:${symbol}`,
+      configuredIdentityOrPath: `${instrumentId}|ALPACA:SIP:${symbol}`,
       officialHostPlaceholder: "data.alpaca.markets",
       pathPlaceholder: `/v2/stocks/bars?symbols=${symbol}&timeframe=1Min&feed=sip&adjustment=raw`,
       available: true,
@@ -100,10 +107,19 @@ const options = parseArguments(process.argv.slice(2));
 const sourceRoot = path.resolve(options.source);
 const outputRoot = path.resolve(options.output);
 const config = readJson(CAPABILITY_CONFIG);
+const aliasCatalog = readJson(ALIAS_CATALOG);
+if (aliasCatalog.catalogId !== config.providers.alpacaHistoricalSipBars.aliasAuthorityCatalogId) {
+  throw new Error("event-beta-provider-config.alias-catalog-identity-mismatch");
+}
+const instrumentBySymbol = new Map(
+  aliasCatalog.records.map((record) => [record.canonicalSymbol, record.instrumentId]),
+);
 const manifest = {
   schemaVersion: 1,
   authoritativeBase: config.authoritativeBase,
   capabilityCatalogDigest: digest(readFileSync(CAPABILITY_CONFIG)),
+  aliasAuthorityCatalogId: aliasCatalog.catalogId,
+  aliasAuthorityCatalogDigest: digest(readFileSync(ALIAS_CATALOG)),
   effects: {
     network: 0,
     provider: 0,
@@ -145,10 +161,16 @@ for (const candidate of [...config.candidates].sort(
   }
   const configuredInput = {
     ...input,
+    instrumentId: instrumentBySymbol.get(candidate.marketSymbol),
     sourceBindings: input.sourceBindings.map((binding) =>
-      configuredBinding(binding, candidate, config.providers),
+      configuredBinding(binding, candidate, config.providers, instrumentBySymbol),
     ),
   };
+  if (configuredInput.instrumentId === undefined) {
+    throw new Error(
+      `event-beta-provider-config.instrument-mapping-missing:${candidate.marketSymbol}`,
+    );
+  }
   const result = prepareCalendarEvent(configuredInput);
   const candidateRoot = path.join(outputRoot, candidate.slug);
   const inputBytes = pretty(configuredInput);

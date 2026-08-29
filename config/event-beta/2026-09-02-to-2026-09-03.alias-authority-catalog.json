@@ -1,0 +1,313 @@
+{
+  "schemaVersion": "peas-event-beta-alias-authority-catalog-v1",
+  "classification": "project-authored-provider-free-public-mapping",
+  "providerEvidence": false,
+  "networkAuthorized": false,
+  "records": [
+    {
+      "canonicalSymbol": "AVGO",
+      "issuerMappingPreimage": {
+        "issuerCik": "0001730168",
+        "symbols": ["AVGO"],
+        "selectedSymbol": "AVGO",
+        "mappingAuthority": "peas-event-beta-public-listing-research",
+        "mappingVersion": "2026-08-29-v1",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_b81404c849488cbe12c79e1e31ddbccff46858c4e46efa106c4b89a28222a03f",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_b81404c849488cbe12c79e1e31ddbccff46858c4e46efa106c4b89a28222a03f",
+        "securityAuthority": "peas-event-beta-public-listing-research",
+        "securityKey": "0001730168:AVGO:XNAS:USD",
+        "issueType": "common-share",
+        "shareClass": "common",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_b3ec5f279c63c7666f7a82d2ab9792240876386fc09cee7f5784db9d2fff7b38",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_b3ec5f279c63c7666f7a82d2ab9792240876386fc09cee7f5784db9d2fff7b38",
+        "symbol": "AVGO",
+        "mappingAuthority": "peas-event-beta-public-listing-research",
+        "mappingVersion": "2026-08-29-v1",
+        "mappingArtifactDigest": "b3c8e3509685e7ee122b029db33513a6352c52a9ceef4de32b674cec90499ea5",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_f06715abc228adfad8a1535558e6478d5e8f55fb8fdcb4007f9618144838b3de"
+    },
+    {
+      "canonicalSymbol": "CIEN",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000936395",
+        "symbols": ["CIEN"],
+        "selectedSymbol": "CIEN",
+        "mappingAuthority": "peas-event-beta-public-listing-research",
+        "mappingVersion": "2026-08-29-v1",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_92ddd75b890ef999db313eb0c991a397c24cd21feb23b0a49a57f2badb3964c6",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_92ddd75b890ef999db313eb0c991a397c24cd21feb23b0a49a57f2badb3964c6",
+        "securityAuthority": "peas-event-beta-public-listing-research",
+        "securityKey": "0000936395:CIEN:XNYS:USD",
+        "issueType": "common-share",
+        "shareClass": "common",
+        "primaryListingVenueCode": "XNYS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_c5f4127ee8b15ca6100b88f729bc503c015a9cfb382de588740fc0192f6e5649",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_c5f4127ee8b15ca6100b88f729bc503c015a9cfb382de588740fc0192f6e5649",
+        "symbol": "CIEN",
+        "mappingAuthority": "peas-event-beta-public-listing-research",
+        "mappingVersion": "2026-08-29-v1",
+        "mappingArtifactDigest": "1cdfb3069c4b3e51847c97c388addfe9f846422a61a88e2887f8fe4c17b170f1",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_f6e5070c9bbc00dbd322593b4318bec308579c5b0e9be8a52ce990de70822896"
+    },
+    {
+      "canonicalSymbol": "DOCU",
+      "issuerMappingPreimage": {
+        "issuerCik": "0001261333",
+        "symbols": ["DOCU"],
+        "selectedSymbol": "DOCU",
+        "mappingAuthority": "peas-event-beta-public-listing-research",
+        "mappingVersion": "2026-08-29-v1",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_5688475091f3a96e3d6420c2ae36a0065f17139c4d2f6f1962d9e4670ff85fcd",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_5688475091f3a96e3d6420c2ae36a0065f17139c4d2f6f1962d9e4670ff85fcd",
+        "securityAuthority": "peas-event-beta-public-listing-research",
+        "securityKey": "0001261333:DOCU:XNAS:USD",
+        "issueType": "common-share",
+        "shareClass": "common",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_f1376d450ff1fc9c54e9e10418ac09555c17b8bd5aeb83c38a0ffa465d766494",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_f1376d450ff1fc9c54e9e10418ac09555c17b8bd5aeb83c38a0ffa465d766494",
+        "symbol": "DOCU",
+        "mappingAuthority": "peas-event-beta-public-listing-research",
+        "mappingVersion": "2026-08-29-v1",
+        "mappingArtifactDigest": "9c8806a64a32106817f3f795f86b7d5652185a6a2ff30a73c4f59254001bf076",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_9e6e0f8202a33b47cd53a6f549e07137ad8d61a23fa6bf5b7eaffcd5edb320f5"
+    },
+    {
+      "canonicalSymbol": "HPE",
+      "issuerMappingPreimage": {
+        "issuerCik": "0001645590",
+        "symbols": ["HPE"],
+        "selectedSymbol": "HPE",
+        "mappingAuthority": "peas-event-beta-public-listing-research",
+        "mappingVersion": "2026-08-29-v1",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_453dd424d1d463f75e93b9197605e4ee881d5e8b9a955a21f64437f918041814",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_453dd424d1d463f75e93b9197605e4ee881d5e8b9a955a21f64437f918041814",
+        "securityAuthority": "peas-event-beta-public-listing-research",
+        "securityKey": "0001645590:HPE:XNYS:USD",
+        "issueType": "common-share",
+        "shareClass": "common",
+        "primaryListingVenueCode": "XNYS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_c62ad2fbc03894d214322ad2eee8ea438bb717383e9823865e23341492f2e21f",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_c62ad2fbc03894d214322ad2eee8ea438bb717383e9823865e23341492f2e21f",
+        "symbol": "HPE",
+        "mappingAuthority": "peas-event-beta-public-listing-research",
+        "mappingVersion": "2026-08-29-v1",
+        "mappingArtifactDigest": "f04a00ddc8ce7622b9aeff04d888ad2943aad637c3cd7cef709001ee4b93c3da",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_6b32c7b72e84a73b5b57d4b2ac45851e615920bffbcb89509977f393ced74a25"
+    },
+    {
+      "canonicalSymbol": "LULU",
+      "issuerMappingPreimage": {
+        "issuerCik": "0001397187",
+        "symbols": ["LULU"],
+        "selectedSymbol": "LULU",
+        "mappingAuthority": "peas-event-beta-public-listing-research",
+        "mappingVersion": "2026-08-29-v1",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_4a17043af36be31ec799f8dc557f2f6385eef5202bbdcbde5f891e405d659ed3",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_4a17043af36be31ec799f8dc557f2f6385eef5202bbdcbde5f891e405d659ed3",
+        "securityAuthority": "peas-event-beta-public-listing-research",
+        "securityKey": "0001397187:LULU:XNAS:USD",
+        "issueType": "common-share",
+        "shareClass": "common",
+        "primaryListingVenueCode": "XNAS",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_fe331b0a7010f386bd00e5d51aceea3db4d886cbb2aeada9b3c49f3ab0a1ef61",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_fe331b0a7010f386bd00e5d51aceea3db4d886cbb2aeada9b3c49f3ab0a1ef61",
+        "symbol": "LULU",
+        "mappingAuthority": "peas-event-beta-public-listing-research",
+        "mappingVersion": "2026-08-29-v1",
+        "mappingArtifactDigest": "5284e09707c1267353054179e804deff14f84b2f717758c5ef1a162212a86ac2",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_62153c1af03eeb12727cf5cf887f381d947df0669b695337e7662244e8048783"
+    },
+    {
+      "canonicalSymbol": "SPY",
+      "issuerMappingPreimage": {
+        "issuerCik": "0000884394",
+        "symbols": ["SPY"],
+        "selectedSymbol": "SPY",
+        "mappingAuthority": "peas-event-beta-public-listing-research",
+        "mappingVersion": "2026-08-29-v1",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_2329987805ac2161b8c3bacf619fe84301cd7fc9b26e92193989a50f62840bbc",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_2329987805ac2161b8c3bacf619fe84301cd7fc9b26e92193989a50f62840bbc",
+        "securityAuthority": "peas-event-beta-public-listing-research",
+        "securityKey": "0000884394:SPY:ARCX:USD",
+        "issueType": "exchange-traded-fund-share",
+        "shareClass": "common",
+        "primaryListingVenueCode": "ARCX",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_8466366f768cf1416b0b72e52c88fb2b0a9accb7802f7f8503f0feb9b9bb6374",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_8466366f768cf1416b0b72e52c88fb2b0a9accb7802f7f8503f0feb9b9bb6374",
+        "symbol": "SPY",
+        "mappingAuthority": "peas-event-beta-public-listing-research",
+        "mappingVersion": "2026-08-29-v1",
+        "mappingArtifactDigest": "64c112cb77fca38ec30505941727bda4e8adca975d03b2f877a493202766c8c8",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_a2999a408fe6c86877c7a9beb7e79d77bcc81f7627b66c19fd795e8fc6adfa8c"
+    },
+    {
+      "canonicalSymbol": "XLK",
+      "issuerMappingPreimage": {
+        "issuerCik": "0001064642",
+        "symbols": ["XLK"],
+        "selectedSymbol": "XLK",
+        "mappingAuthority": "peas-event-beta-public-listing-research",
+        "mappingVersion": "2026-08-29-v1",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_cd50444211b3a1ae491334de320ddc261c7bb92d86936a119e62192e36d52d6d",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_cd50444211b3a1ae491334de320ddc261c7bb92d86936a119e62192e36d52d6d",
+        "securityAuthority": "peas-event-beta-public-listing-research",
+        "securityKey": "0001064642:XLK:ARCX:USD",
+        "issueType": "exchange-traded-fund-share",
+        "shareClass": "common",
+        "primaryListingVenueCode": "ARCX",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_1ebdcc1f1f8b14a941c5a5b70f21b745ba57b5f69aeaef22012de36981983bcc",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_1ebdcc1f1f8b14a941c5a5b70f21b745ba57b5f69aeaef22012de36981983bcc",
+        "symbol": "XLK",
+        "mappingAuthority": "peas-event-beta-public-listing-research",
+        "mappingVersion": "2026-08-29-v1",
+        "mappingArtifactDigest": "d71d112621b82d0d2dcc13cc1fc794a9fce1ce2175f40a424f5b7ebbbf0dbc78",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_e258732fbd14633b77bdbe587dd6d95e9ea70392e7f6571d1720336aabf5f1ae"
+    },
+    {
+      "canonicalSymbol": "XLY",
+      "issuerMappingPreimage": {
+        "issuerCik": "0001064642",
+        "symbols": ["XLY"],
+        "selectedSymbol": "XLY",
+        "mappingAuthority": "peas-event-beta-public-listing-research",
+        "mappingVersion": "2026-08-29-v1",
+        "effectiveFromMs": 0,
+        "effectiveToMs": null
+      },
+      "issuerMappingId": "imap1_ea32a597f78f0214e26d4f5f9f71dbaa84ecd21f64c6e765fe7af5de47870258",
+      "instrumentPreimage": {
+        "issuerMappingId": "imap1_ea32a597f78f0214e26d4f5f9f71dbaa84ecd21f64c6e765fe7af5de47870258",
+        "securityAuthority": "peas-event-beta-public-listing-research",
+        "securityKey": "0001064642:XLY:ARCX:USD",
+        "issueType": "exchange-traded-fund-share",
+        "shareClass": "common",
+        "primaryListingVenueCode": "ARCX",
+        "currency": "USD",
+        "roundLotSize": 100,
+        "effectiveFromNs": "0",
+        "effectiveToNs": null,
+        "predecessorInstrumentId": null,
+        "transitionReason": null
+      },
+      "instrumentId": "min1_e634a65214cde4fe26508f6a1aeaae361d2400c9c059bca745e4ccbd7aeb9b22",
+      "symbolAliasPreimage": {
+        "instrumentId": "min1_e634a65214cde4fe26508f6a1aeaae361d2400c9c059bca745e4ccbd7aeb9b22",
+        "symbol": "XLY",
+        "mappingAuthority": "peas-event-beta-public-listing-research",
+        "mappingVersion": "2026-08-29-v1",
+        "mappingArtifactDigest": "56ef4fe78ca1af6bf34f876eca3301cafad8dcc62343730213d0d9542d3198a2",
+        "effectiveFromNs": "0",
+        "effectiveToNs": null
+      },
+      "symbolAliasId": "msa1_74693e2797642cfacd0e15b5031b7cf6a5050bee8ad63c67f1f71274870f8225"
+    }
+  ],
+  "catalogId": "maac1_529a0ff2c49ad3de2c1d4dd3d1170de8af108fca9f83fd3ca7a2fe797212230d"
+}

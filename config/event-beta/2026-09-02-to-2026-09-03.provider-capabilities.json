@@ -40,6 +40,8 @@
       "datasetId": "mds1_d18d90386ef7b3ddff114dc552ca4561a3ee613f3bc501e60491e81d85f734d1",
       "feedId": "mfd1_79bf3edbf4b7d87ab16edadaafca55d991bdc6962294abc2998f240838483023",
       "channelId": "mec1_016928912d87c2fd5ae5eae163752f363d7b8deba66f4b08753cf9d80c891c9c",
+      "aliasAuthorityCatalogId": "maac1_529a0ff2c49ad3de2c1d4dd3d1170de8af108fca9f83fd3ca7a2fe797212230d",
+      "aliasAuthorityCatalogPath": "config/event-beta/2026-09-02-to-2026-09-03.alias-authority-catalog.json",
       "documentation": "https://docs.alpaca.markets/us/reference/stockbars",
       "origin": "https://data.alpaca.markets",
       "endpointFamily": "/v2/stocks/bars",
@@ -106,6 +108,10 @@
         "/financial-information",
         "/events-and-presentations"
       ],
+      "barQueryWindow": {
+        "start": "2026-09-02T19:00:00.000000000Z",
+        "end": "2026-09-03T04:00:00.000000000Z"
+      },
       "expectedOriginalPlanId": "f70c36378a7cd0e29d84769bf5b950ea597aeeeee3c9fc06cf0e1a011eea7d6d",
       "expectedOriginalConfigurationDigest": "636627aa87cca1e08124c8ff5ede67b1dc8d2abc91042ab979215ef443395989"
     },
@@ -121,6 +127,10 @@
       "officialAnnouncement": "https://www.hpe.com/us/en/newsroom/press-release/2026/08/hpe-to-present-live-audio-webcast-of-fiscal-2026-third-quarter-earnings-conference-call.html",
       "issuerOrigin": "https://investors.hpe.com",
       "issuerPathPrefixes": ["/financial-information", "/news-and-events"],
+      "barQueryWindow": {
+        "start": "2026-09-02T19:00:00.000000000Z",
+        "end": "2026-09-03T04:00:00.000000000Z"
+      },
       "expectedOriginalPlanId": "c545bc6f1614a22e34586f20269971bdc68506dc035eb3c445896207c23ca19f",
       "expectedOriginalConfigurationDigest": "b43d8b2ac0323b20b3a4f47125c5d5dde4a830e6046845436b0f22bbd208dec3"
     },
@@ -136,6 +146,10 @@
       "officialAnnouncement": "https://investor.ciena.com/news/news-details/2026/Ciena-Announces-Reporting-Date-and-Web-Broadcast-for-Fiscal-Third-Quarter-2026-Results/default.aspx",
       "issuerOrigin": "https://investor.ciena.com",
       "issuerPathPrefixes": ["/news", "/financial-information", "/events-and-presentations"],
+      "barQueryWindow": {
+        "start": "2026-09-03T10:00:00.000000000Z",
+        "end": "2026-09-03T21:00:00.000000000Z"
+      },
       "expectedOriginalPlanId": "2de558628c32fe45bcce910da3b4c7aeddf082fde20cfe0ae42f02f92ede9d55",
       "expectedOriginalConfigurationDigest": "606a9da6153db7198ee22bade39f2cf06b34e8b9767adcd49db25e1c29fab9e5"
     },
@@ -155,6 +169,10 @@
         "/results-and-financials",
         "/events-and-presentations"
       ],
+      "barQueryWindow": {
+        "start": "2026-09-03T19:00:00.000000000Z",
+        "end": "2026-09-04T04:00:00.000000000Z"
+      },
       "expectedOriginalPlanId": "8bd74aabf23acc763b6a9fcdafd04df0d906cf95c85e820b0b76b8f29eab0c43",
       "expectedOriginalConfigurationDigest": "a246d9a3a70fc5e2477b3171e0fd61dc5107dba899114ec307180345f556202e"
     },
@@ -170,6 +188,10 @@
       "officialAnnouncement": "https://corporate.lululemon.com/newsroom/press-releases/2026/08-20-2026-113008522",
       "issuerOrigin": "https://corporate.lululemon.com",
       "issuerPathPrefixes": ["/newsroom", "/investors"],
+      "barQueryWindow": {
+        "start": "2026-09-03T19:00:00.000000000Z",
+        "end": "2026-09-04T04:00:00.000000000Z"
+      },
       "expectedOriginalPlanId": "773a55e9fb620870a1d32801dca45f62b0ff08c7ba9d8ea693f002b0a35e090e",
       "expectedOriginalConfigurationDigest": "f7547500398fdf9d8ac43e3007e23a6cdbc90fbb110d9e01d6f32be00bf97c12"
     }
