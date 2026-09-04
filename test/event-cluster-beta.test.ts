@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -10,6 +10,12 @@ import { SqliteEventLog } from "../src/adapters/sqlite/event-log.js";
 import { ManualClock } from "../src/core/clock.js";
 import { canonicalHash } from "../src/core/hash.js";
 import { canonicalJson, type JsonValue } from "../src/core/json.js";
+import {
+  checkpointEventClusterRun,
+  recoverEventClusterRunFromLog,
+  settleRecoveredEventClusterRun,
+  shouldAcquireRecoveredLane,
+} from "../src/application/event-cluster-runtime-recovery.js";
 import {
   amendEventPlan,
   compileCalendarCandidates,
@@ -496,6 +502,76 @@ test("cluster snapshots are byte-identical through memory and SQLite restart", a
   assert.equal(latestEventClusterSnapshot(restartedPage.events).stateDigest, cluster.stateDigest);
   assert.equal(database.pragma("integrity_check", { simple: true }), "ok");
   database.close();
+});
+
+test("an interrupted cluster resumes only pending lanes and settles idempotently", async (context) => {
+  const root = mkdtempSync(path.join(tmpdir(), "peas-event-cluster-recovery-"));
+  context.after(() =>
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }),
+  );
+  const databasePath = path.join(root, "cluster.sqlite");
+  const migrations = loadMigrations(path.join(process.cwd(), "migrations"));
+  const clock = new ManualClock(10_000);
+  const eventPlan = plan();
+  let cluster = activeCluster(eventPlan);
+  let database = openSqliteDatabase(databasePath, migrations);
+  let eventLog = new SqliteEventLog(database, { clock });
+
+  await checkpointEventClusterRun(eventLog, cluster);
+  cluster = recordEventClusterMember(
+    cluster,
+    eventPlan,
+    member("issuer-ir", "issuer-release", "release-1", "revision-1", {
+      providerId: "ir.recorded",
+    }),
+  );
+  await checkpointEventClusterRun(eventLog, cluster);
+  cluster = recordEventClusterMember(
+    cluster,
+    eventPlan,
+    member("sec", "sec-8-k", "0000769397-26-000059", "revision-1"),
+  );
+  await checkpointEventClusterRun(eventLog, cluster);
+  cluster = recordStableMissing(cluster, "transcript", "optional-source-unavailable", 7_000);
+  await checkpointEventClusterRun(eventLog, cluster);
+  const interruptedDigest = cluster.stateDigest;
+  database.close();
+
+  database = openSqliteDatabase(databasePath, migrations);
+  eventLog = new SqliteEventLog(database, { clock });
+  const recovered = await recoverEventClusterRunFromLog(eventLog, eventPlan);
+  assert.equal(recovered.classification, "incomplete");
+  assert.equal(recovered.cluster.stateDigest, interruptedDigest);
+  assert.deepEqual(recovered.completedLanes, ["sec", "issuer-ir", "transcript"]);
+  assert.deepEqual(recovered.pendingLanes, ["market"]);
+  assert.equal(shouldAcquireRecoveredLane(recovered, "sec"), false);
+  assert.equal(shouldAcquireRecoveredLane(recovered, "issuer-ir"), false);
+  assert.equal(shouldAcquireRecoveredLane(recovered, "transcript"), false);
+  assert.equal(shouldAcquireRecoveredLane(recovered, "market"), true);
+
+  const duplicateCheckpoint = await checkpointEventClusterRun(eventLog, recovered.cluster);
+  assert.equal(duplicateCheckpoint.disposition, "redelivery");
+  const settled = settleRecoveredEventClusterRun(
+    recovered.cluster,
+    eventPlan,
+    eventPlan.windows.settlementEndMs,
+  );
+  assert.equal(settled.status, "complete");
+  assert.equal(
+    settled.lanes.find((lane) => lane.lane === "market")?.stableMissingReason,
+    "not-observed-before-settlement",
+  );
+  assert.equal(
+    settleRecoveredEventClusterRun(settled, eventPlan, eventPlan.windows.settlementEndMs),
+    settled,
+  );
+  await checkpointEventClusterRun(eventLog, settled);
+  const duplicateSettlement = await checkpointEventClusterRun(eventLog, settled);
+  assert.equal(duplicateSettlement.disposition, "redelivery");
+  assert.equal(database.pragma("integrity_check", { simple: true }), "ok");
+  database.close();
+  assert.equal(existsSync(`${databasePath}-wal`), false);
+  assert.equal(existsSync(`${databasePath}-shm`), false);
 });
 
 test("the beta package exposes only zero prohibited effects", () => {
