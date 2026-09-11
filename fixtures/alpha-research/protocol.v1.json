@@ -7,10 +7,10 @@
   "hypotheses": ["H1", "H2"],
   "horizons": [5, 15, 30, 60, "close", "next-session"],
   "variants": [
-    {"id": "continuation", "hypothesis": "H1", "direction": 1, "thresholdBps": 0},
-    {"id": "reversal", "hypothesis": "H1", "direction": -1, "thresholdBps": 0},
-    {"id": "source-order", "hypothesis": "H2", "direction": 1, "thresholdBps": 0},
-    {"id": "high-reaction", "hypothesis": "H1", "direction": 1, "thresholdBps": 10000}
+    { "id": "continuation", "hypothesis": "H1", "direction": 1, "thresholdBps": 0 },
+    { "id": "reversal", "hypothesis": "H1", "direction": -1, "thresholdBps": 0 },
+    { "id": "source-order", "hypothesis": "H2", "direction": 1, "thresholdBps": 0 },
+    { "id": "high-reaction", "hypothesis": "H1", "direction": 1, "thresholdBps": 10000 }
   ],
   "simultaneityMs": 1000,
   "entryDelayMs": 60000,

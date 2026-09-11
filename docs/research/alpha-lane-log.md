@@ -19,3 +19,29 @@ No parameter changes after results without PM human gate. Numerical fixtures are
 oracles, not statistical evidence. Only SYNTHETIC_VALIDATION / NO_TRADE permitted.
 
 No provider, credential, financial, live-controller or merge authority. No recurring jobs.
+
+## Implementation and independent review preparation
+
+Provider-free implementation adds content-addressed manifest/snapshot, feature/label/trial/signal
+records and SQLite registry migration 011. Original normalized events are verified and retained;
+SEC clocks use the existing DST-aware parser. Research decimal encoding leaves kernel JSON intact.
+Initial six focused tests passed; additional rollback/missing-endpoint tests passed in full suite.
+One independent reviewer found a member-identity compatibility defect: identical raw artifact
+bytes may belong to SEC and IR independently. Repaired joins to lane/provider/record/revision keys,
+with a shared-bytes availability regression. Reviewer confirmed that finding resolved read-only.
+Added INSERT OR REPLACE guards so SQLite replacement cannot bypass append-only invariants.
+Full final checks and frozen-head CI/review remain required before terminal disposition.
+
+## Synthetic evidence (final source, separate compilation)
+
+Nine focused tests passed. Separate-process SQLite replay returned identical result bytes.
+Protocol ID: b9f9edfcddb310dcc36bc2420b6242cd51257b131c700952845ac21f793a2334.
+Manifest ID: ea13c8aa398437d341834e7edd1d72bd016d5abc70b98125fd3e96cee2d5500d.
+Evaluation ID: fc2f0f7441751059896445533557fb273ecc9ec4717c53422e70094f6c73f102.
+Four inputs produced 4 features, 24 labels, 96 trials (36 failed), and 96 partition/horizon signals.
+Result bytes SHA-256: 34aaf86646e54e0ff078421f8c2926ec4929d2af67c984317b451bd7980a362c.
+Artifacts retained outside repository at C:/Users/HyPol/alpha-research-evidence/.
+All results remain SYNTHETIC_VALIDATION / NO_TRADE. These counts are correctness evidence only.
+Final source-clock boundary check rejects malformed numeric/civil input even when an external
+snapshot has a consistent content/state hash. Ten focused tests now pass; synthetic result
+identities are unchanged. Frozen protocol parsed-content equality with 6d47226821e1f3729c82167062cf7de77bd48ce7 was verified.

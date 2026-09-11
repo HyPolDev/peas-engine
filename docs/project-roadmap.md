@@ -21,7 +21,25 @@ Use Notion for long-form research notes or a decision journal only if that becom
 Linear only if PEAS becomes a larger human engineering team that needs product-planning workflows.
 Do not maintain task state independently in Linear, Notion, and GitHub.
 
-## Current position
+## Current direction (reconciled 2026-09-11)
+
+Authoritative main is `fc364fff482131473588c7acb9a1b438ef8bdb59`, tree
+`dfdc1c729a3bff7664094af7ce4e7f7b66b563d7`. PR #18 durability recovery is merged.
+Operational beta acceptance remains incomplete: raw forward SEC evidence does not establish
+end-to-end EventCluster beta GO. AVO preparation/preflight is historical; its window expired.
+September 2-8 packets are not forward events as of this review.
+
+The authorized lanes are A: provider-free Alpha Research MVP, and B: future operational event
+preparation. Their implementation and operational gates are independent. The earlier 180-event
+prospective study remains useful but does not block provider-free research or a later authorized
+250-500-event historical feasibility screen. See [research design](research/alpha-research-mvp.md)
+and [implementation contract](research/alpha-research-implementation.md).
+
+This branch supplies synthetic correctness evidence only. Historical datasets, expectations/LLM
+access, live operation, financial effects and merge remain separate human gates. Earlier gate
+narrative below is retained as audit history, not current authority or a live-access instruction.
+
+## Historical position and gate chronology
 
 - Kernel V2 RC.2 is an immutable prerelease at
   `fe04e32f9b218b41b1c56bffd2a131fb32192f82`. The exact-SHA platform, scale, release, asset, and
