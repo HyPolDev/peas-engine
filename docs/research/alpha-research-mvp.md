@@ -298,4 +298,3 @@ paper brokerage and capital execution each remain separate later decisions.
 Authorize or reject a provider-free Alpha Research MVP implementation package on authoritative main.
 That authorization should not include historical-provider access, LLM API access, spending, shadow
 operation, brokerage or trading.
-
