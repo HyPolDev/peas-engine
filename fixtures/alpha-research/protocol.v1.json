@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "evidenceClass": "SYNTHETIC_VALIDATION",
+  "epoch": "synthetic-v1",
+  "featureVersion": "cutoff-v1",
+  "labelVersion": "delayed-bars-v1",
+  "hypotheses": ["H1", "H2"],
+  "horizons": [5, 15, 30, 60, "close", "next-session"],
+  "variants": [
+    {"id": "continuation", "hypothesis": "H1", "direction": 1, "thresholdBps": 0},
+    {"id": "reversal", "hypothesis": "H1", "direction": -1, "thresholdBps": 0},
+    {"id": "source-order", "hypothesis": "H2", "direction": 1, "thresholdBps": 0},
+    {"id": "high-reaction", "hypothesis": "H1", "direction": 1, "thresholdBps": 10000}
+  ],
+  "simultaneityMs": 1000,
+  "entryDelayMs": 60000,
+  "spreadBps": 2,
+  "slippageBps": 3,
+  "feeBps": 1,
+  "impactBps": 0,
+  "benchmarkWeights": [0.5, 0.5],
+  "universe": ["SYN"],
+  "excludedStatuses": ["stopped"],
+  "repairEventsExcluded": true,
+  "partitionBoundariesMs": [1767225600000, 1769904000000, 1772323200000, 1775001600000],
+  "missingPolicy": "record-unavailable-no-imputation",
+  "expectationsVersion": "unavailable-v1",
+  "llmVersion": "disabled-v1",
+  "uncertaintyMarginBps": 10,
+  "capacity": "unknown",
+  "environment": "node24.17.0/npm12.0.0",
+  "implementationVersion": "alpha-research-v1"
+}
