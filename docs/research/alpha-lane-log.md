@@ -60,3 +60,13 @@ including all seven former failures. A fresh dedicated synthetic-isolated.sqlite
 created and reopened in a separate process; manifest/evaluation/result identities above are
 unchanged. The operational directory still contains exactly ten migrations, and research has its
 own single migration. No operational credential or provider implementation was modified.
+
+## Canonical signed-zero repair
+
+A direct invariant probe found identity(-0) differed from identity(freeze(-0)). This could make a
+flat-return reversal's trial ID non-recomputable from returned fields. Signed zero now normalizes
+to numeric zero before canonical hashing. The regression checks both freeze identity-idempotence
+and all flat-return trial IDs. This is serialization correctness, not a protocol or result-driven
+parameter change. The sole reviewer independently confirmed the repair requirement. CI run
+34612904282 was cancelled before superseding its head. The healthy full local regression run
+continues; final exact-head CI will be authoritative for the one-line serialization repair.

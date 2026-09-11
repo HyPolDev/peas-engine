@@ -23,8 +23,9 @@ synthetic market dataset, all variants, partitions, exclusions and assumptions. 
 registry durably registers this manifest before `run` exposes results; its epoch cannot be changed.
 A pure `evaluateManifest` also supports deterministic correctness oracles and replay.
 
-Research decimal values use a reserved `$researchDecimal` canonical JSON tag; finite numbers round
-trip exactly under the pinned JavaScript runtime. The kernel's integer-only JSON contract is
+Research decimal values use a reserved `$researchDecimal` canonical JSON tag; signed zero
+canonicalizes to zero and other finite numbers round trip exactly under the pinned JavaScript
+runtime. The kernel's integer-only JSON contract is
 unchanged. Provider/market identities use existing contracts; the market input is an explicitly
 synthetic completed-minute-bar projection, not an authorized historical-provider loader.
 

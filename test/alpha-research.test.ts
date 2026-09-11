@@ -12,7 +12,7 @@ import { ManualClock } from "../src/core/clock.js";
 import { canonicalHash } from "../src/core/hash.js";
 import { canonicalJson } from "../src/core/json.js";
 import { type EventCluster, eventClusterSnapshotDraft } from "../src/domain/event-cluster-beta.js";
-import { identity, json, parseProtocol } from "../src/research/contracts.js";
+import { freeze, identity, json, parseProtocol } from "../src/research/contracts.js";
 import { evaluateManifest, freezeManifest } from "../src/research/engine.js";
 import { freezeResearchInput, verifyResearchArtifacts } from "../src/research/snapshot.js";
 import { ResearchRegistry } from "../src/research/sqlite-registry.js";
@@ -365,4 +365,24 @@ test("research migration set leaves the pinned operational schema unchanged", ()
   } finally {
     db.close();
   }
+});
+
+test("signed zero and flat-return record identities survive canonical freezing", async () => {
+  assert.equal(identity("probe", -0), identity("probe", freeze(-0)));
+  const input = await syntheticInput();
+  const flat = {
+    ...input,
+    dataset: {
+      ...input.dataset,
+      bars: input.dataset.bars.map((b) =>
+        b.instrumentId === "SYN" && b.endMs > input.cutoffMs ? { ...b, close: 102 } : b,
+      ),
+    },
+  };
+  const result = evaluateManifest(freezeManifest(protocol, [flat]));
+  for (const trial of result.trials) {
+    const { id, ...body } = trial;
+    assert.equal(identity("trial", body), id);
+  }
+  assert.ok(result.trials.some((t) => t.direction === -1 && t.grossBps === 0));
 });

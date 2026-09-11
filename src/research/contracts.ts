@@ -135,9 +135,7 @@ export function json(value: unknown): JsonValue {
   function encode(v: unknown): JsonValue {
     if (typeof v === "number") {
       if (!Number.isFinite(v)) throw new Error("research-nonfinite-number");
-      return Number.isSafeInteger(v) && !Object.is(v, -0)
-        ? v
-        : { $researchDecimal: Object.is(v, -0) ? "0" : String(v) };
+      return Number.isSafeInteger(v) ? (Object.is(v, -0) ? 0 : v) : { $researchDecimal: String(v) };
     }
     if (v === null || typeof v === "string" || typeof v === "boolean") return v;
     if (typeof v !== "object" || isProxy(v)) throw new Error("research-inert-json-required");
