@@ -45,3 +45,18 @@ All results remain SYNTHETIC_VALIDATION / NO_TRADE. These counts are correctness
 Final source-clock boundary check rejects malformed numeric/civil input even when an external
 snapshot has a consistent content/state hash. Ten focused tests now pass; synthetic result
 identities are unchanged. Frozen protocol parsed-content equality with 6d47226821e1f3729c82167062cf7de77bd48ce7 was verified.
+
+## Failed integration gate and isolated storage repair
+
+The initial full local suite completed with seven migration-integration failures. Appending research
+DDL as operational migration 011 invalidated the explicitly pinned ten-migration credential schema
+and a retention upgrade assertion. The repair moves research DDL to
+migrations/research/001_alpha_research.sql and opens a separate research database with the existing
+SQLite runner. Operational migrations and credential code are unchanged. This supersedes earlier
+migration-011 notes and requires no protocol or provider authority change. The old draft-head CI
+run 34611011090 was cancelled; new exact-head checks and independent review remain required.
+The isolated-storage repair passed all 94 targeted research/adapter/credential/retention tests,
+including all seven former failures. A fresh dedicated synthetic-isolated.sqlite database was
+created and reopened in a separate process; manifest/evaluation/result identities above are
+unchanged. The operational directory still contains exactly ten migrations, and research has its
+own single migration. No operational credential or provider implementation was modified.

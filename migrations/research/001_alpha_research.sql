@@ -1,3 +1,4 @@
+-- Dedicated research database: never append to the pinned operational migration set.
 CREATE TABLE research_manifests (
   id TEXT PRIMARY KEY,
   epoch TEXT NOT NULL UNIQUE,

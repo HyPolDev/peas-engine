@@ -185,7 +185,7 @@ test("identity, clocks, evidence class and provenance reject tampering", async (
 test("SQLite freezes epochs, persists failed variants, reopens and replays identical records", async () => {
   const directory = mkdtempSync(join(tmpdir(), "peas-research-"));
   const filename = join(directory, "research.sqlite");
-  const migrations = loadMigrations("migrations");
+  const migrations = loadMigrations("migrations/research");
   const manifest = freezeManifest(protocol, [await syntheticInput()]);
   let db = openSqliteDatabase(filename, migrations);
   try {
@@ -240,7 +240,7 @@ test("local artifact verification uses retained bytes only", async () => {
 });
 
 test("failed persistence attempt rolls back outputs and resumes without deleting failure history", async () => {
-  const db = openSqliteDatabase(":memory:", loadMigrations("migrations"));
+  const db = openSqliteDatabase(":memory:", loadMigrations("migrations/research"));
   try {
     const registry = new ResearchRegistry(db);
     const manifest = freezeManifest(protocol, [await syntheticInput()]);
@@ -336,5 +336,33 @@ test("self-hashed external snapshots cannot smuggle malformed source clocks", as
       () => freezeResearchInput({ ...input, snapshot }),
       /source-clock-invalid|source-clock-order/,
     );
+  }
+});
+
+test("research migration set leaves the pinned operational schema unchanged", () => {
+  assert.equal(loadMigrations("migrations").length, 10);
+  const research = loadMigrations("migrations/research");
+  assert.equal(research.length, 1);
+  assert.equal(research[0]?.version, 1);
+  const db = openSqliteDatabase(":memory:", research);
+  try {
+    assert.equal(
+      (
+        db
+          .prepare("SELECT count(*) AS n FROM sqlite_master WHERE name = 'research_manifests'")
+          .get() as { n: bigint }
+      ).n,
+      1n,
+    );
+    assert.equal(
+      (
+        db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE name = 'events'").get() as {
+          n: bigint;
+        }
+      ).n,
+      0n,
+    );
+  } finally {
+    db.close();
   }
 });

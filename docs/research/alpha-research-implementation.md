@@ -63,8 +63,10 @@ simple baseline before adoption. No API is wired.
 
 ## Durability and scope
 
-Migration 011 adds immutable manifest and append-only record tables to the existing SQLite
-migration path. Attempts start durably before evaluation; outputs and terminal success append in
+Dedicated `migrations/research/001_alpha_research.sql` adds immutable manifest and append-only
+record tables using the existing SQLite runner. Open a separate research database with
+`loadMigrations("migrations/research")`; the ten operational migrations and credential gates remain
+unchanged. Attempts start durably before evaluation; outputs and terminal success append in
 one transaction. Failed attempts append a stable reason. An interrupted start remains visible;
 resume appends a new attempt. Completed runs are idempotent and replay verifies every record.
 SQLite rows include features, labels, all trials, signals, attempt starts/ends and full result.
