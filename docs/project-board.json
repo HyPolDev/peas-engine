@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "project": "PEAS Engine",
-  "lastReviewed": "2026-08-28",
+  "lastReviewed": "2026-09-11",
   "operatingModel": {
     "execution": "GitHub Issues/Projects",
     "specification": "Repository docs, ADRs, fixtures, and evidence",
@@ -12,7 +12,7 @@
     "stage": "P1",
     "status": "in-progress",
     "branch": "main",
-    "codeBaselineCommit": "d4ffac5c08651189d808598d49fe3edf82e439b2",
+    "codeBaselineCommit": "fc364fff482131473588c7acb9a1b438ef8bdb59",
     "pr13MergeCommit": "7827704a370d7b73cce8f298e04f078586497a57",
     "pr14MergeCommit": "d4ffac5c08651189d808598d49fe3edf82e439b2",
     "pr14MergeTree": "2d09555b7fb0cf93e8d5d035b39dca75232b8ea2",
@@ -24,8 +24,8 @@
     "pr2dPublishedHead": "fb150828c0fe5e1272c246f1889be02aab8b0d90",
     "pr2dMergeCommit": "ebe959324e48faf73c325a97ed9200bd6c76c9a6",
     "release": "v0.2.0-kernel-rc.2",
-    "focus": "Freeze and independently review a provider-free EventPlan/EventCluster operational-beta package for 3-5 future clusters; P1-03/P1-04 implementation is merged, operational acceptance remains incomplete, and P1-06/P2 remain blocked",
-    "nextGate": "Pass provider-free local and exact-head Linux/Windows CI for the EventPlan/EventCluster package and obtain EVENT_CLUSTER_BETA_PACKAGE_GO before requesting merge authorization; live provider access remains a later exact human gate",
+    "focus": "Provider-free Alpha Research MVP and independently prepared future operational event; operational beta acceptance incomplete",
+    "nextGate": "Reviewed draft Alpha Research MVP PR with frozen-head Linux/Windows CI; no merge or live authority",
     "pr10Disposition": "superseded-historical-open-pending-separate-closure-authorization",
     "autodeskOperationalEvidence": {
       "accession": "0000769397-26-000059",
@@ -180,6 +180,20 @@
         "Automation cannot shorten the mandatory S1-S15 prospective lead or the exactly 65-regular-session recording window.",
         "This documentation change does not authorize or implement the automation workstream."
       ]
+    },
+    "codeBaselineTree": "dfdc1c729a3bff7664094af7ce4e7f7b66b563d7",
+    "pr18MergeCommit": "fc364fff482131473588c7acb9a1b438ef8bdb59",
+    "alphaResearch": {
+      "status": "provider-free-implementation",
+      "requirementsCommit": "773bd49a0356f86822c769f90675bf456b38b256",
+      "protocolFreezeCommit": "6d47226",
+      "evidenceClass": "SYNTHETIC_VALIDATION",
+      "laneA": "alpha-research",
+      "laneB": "future-event-preparation",
+      "operationalBeta": "incomplete",
+      "avoWindow": "expired",
+      "historicalFeasibility": "separately-gated-250-500-events",
+      "prospective180Events": "not-a-prerequisite-for-provider-free-research"
     }
   },
   "stages": [
